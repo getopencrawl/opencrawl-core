@@ -1,0 +1,27 @@
+name: Windows native release probe
+on: pull_request
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-dist-182cc8333713329083a0f508ed0e50c7681670c2
+          run-id: 44246190981
+          github-token: ${{ github.token }}
+      - name: Inspect the already built Windows binary
+        shell: pwsh
+        run: |
+          tar -xzf cli-dist.tgz dist/win32-x64 dist/cli
+          $binary=(Resolve-Path dist/win32-x64/bin/opencrawl.exe).Path
+          $expected=(Get-Content dist/win32-x64/package.json | ConvertFrom-Json).version
+          Write-Host "Manifest version $expected"
+          Get-Item $binary | Select-Object Name,Length
+          foreach ($option in @('--version','--help','status')) {
+            $out=& $binary $option 2>&1 | Out-String
+            Write-Host "Argument $option exit $LASTEXITCODE length $($out.Length)"
+            Write-Host ($out.Substring(0,[Math]::Min(450,$out.Length)) | ConvertTo-Json -Compress)
+          }
