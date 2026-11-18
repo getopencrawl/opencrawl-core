@@ -1,0 +1,11 @@
+{
+  "version": "0.4.103",
+  "revision": "ce19fff93ec882ed50316d326c9dc1b84a39ae4c",
+  "checksums": {
+    "opencrawl-darwin-x64.tgz": "f5f656f00f1624870c61b466824a33703243ff2b8d2b45c843d6a8b4f71beb04",
+    "opencrawl-linux-x64.tgz": "46f2ed18b15d6d8c80de620ba32f4fc6ed63535917700695a02e5c8b9c4711c4",
+    "opencrawl-darwin-arm64.tgz": "2dfa22c9608ab2e670092990cfabcce34f5b370c255d65bfa746b3da91df6955",
+    "opencrawl-linux-arm64.tgz": "370501c8f8df81105b27c9eb97845b826c1317feb4980e5e43f9f1cc6c074291",
+    "opencrawl-win32-x64.tgz": "42c9be8c822afbc00c67d12caca1ea4f8a7f9d5bea9a4110b9b4196f3c3812c2"
+  }
+}
