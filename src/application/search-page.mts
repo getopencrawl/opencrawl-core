@@ -2,7 +2,7 @@ import type {DiagnosticSearch, SearchResponse} from './reports.mjs';
 
 export const SEARCH_PAGE_SIZE = 25;
 export const SOURCE_WINDOW = 100;
-export const MAX_SEARCH_PAGE = Math.ceil(3 * SOURCE_WINDOW / SEARCH_PAGE_SIZE);
+export const MAX_SEARCH_PAGE = Math.ceil(4 * SOURCE_WINDOW / SEARCH_PAGE_SIZE);
 
 /** Each source contributes its first hit, then its second, and so on. Scores
  * from different indexes aren't comparable. Page only already-authorized hits. */
@@ -11,6 +11,7 @@ export function diagnosticPage(result: DiagnosticSearch, page: number): Diagnost
     result.sessions?.map(item => item.response) ?? [],
     result.connectors?.responses ?? [],
     result.memories ? [result.memories] : [],
+    result.board ? [result.board] : [],
   ];
   const counts = sources.map(responses => responses.reduce((sum, response) => sum + (response.hits?.hits?.length ?? 0), 0));
   const start = (page - 1) * SEARCH_PAGE_SIZE;
@@ -44,6 +45,7 @@ export function diagnosticPage(result: DiagnosticSearch, page: number): Diagnost
     sessions: result.sessions?.map(item => ({...item, response: slice(item.response, ranges[0])})),
     connectors: result.connectors && {...result.connectors, responses: result.connectors.responses?.map(response => slice(response, ranges[1]))},
     memories: result.memories && slice(result.memories, ranges[2]),
+    board: result.board && slice(result.board, ranges[3]),
     page: {number: page, hasNext, ...(windowLimited && !hasNext ? {windowLimited: true} : {})},
   };
 }

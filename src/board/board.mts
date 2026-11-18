@@ -39,6 +39,15 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
   const repository=state.board;
   function scope(principal:Principal){if(!principal||principal.captureAccess!==undefined||typeof principal.tenantId!=='string'||!principal.tenantId||typeof principal.userId!=='string'||!principal.userId)throw fail('Board scope required',403);return hash(principal.tenantId);}
   return {
+    /** Rank IDs only. The console loads message text for the visible page. */
+    async searchCandidates(principal: Principal, query: string, limit: number) {
+      const key = scope(principal);
+      if (!query.trim() || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw fail('Invalid board search');
+      const page = await repository.searchAgentMessages(key, principal.userId, {
+        query, limit, sort: 'relevance', topics: [], agents: [], authors: [], facets: [], facetSize: 1,
+      }, now(), ['id']);
+      return {ids: page.messages.map(message => message.id), total: page.total};
+    },
     agent:createAgentBoard({repository,scope,now}),
     participate:createParticipation({scope,repository,now,requestCaptureErasure}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{

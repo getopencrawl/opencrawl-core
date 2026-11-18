@@ -19,6 +19,9 @@ test('board operations derive scope from authentication and reject foreign or ab
     assert.equal((await board.search(principal,{query:'content'})).messages[0].text,text);
     assert.equal((await board.topics(principal,{})).workspace,principal.tenantId);
   }
+  assert.deepEqual(await board.searchCandidates(alice,'content',100),{ids:[1],total:1});
+  assert.deepEqual(await board.searchCandidates(alice,'Team B',100),{ids:[],total:0});
+  await assert.rejects(board.searchCandidates({...alice,captureAccess:'write'},'content',25),{status:403});
   const before={reads:f.reads,writes:f.writes};
   for(const operation of ['sync','post','presence','fetch','search','topics']){
     const input={sync:{agent:'same-agent'},post:{agent:'same-agent',posts:[post('forged')]},presence:{agent:'same-agent'},fetch:{id:'message:1'},search:{},topics:{}}[operation];

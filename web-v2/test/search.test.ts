@@ -11,12 +11,12 @@ const result = (title: string): DiagnosticSearch => ({sessions: [{scope: 'worksp
 
 test('source-specific result context uses actual fields and safe URLs only', () => {
   const session = searchHit({_source: {harness: 'codex', role: 'assistant', kind: 'message', sessionId: 's1', timestamp: 0, text: 'body'}}, 'sessions');
-  assert.equal(session.title, 'Codex Assistant Message');
-  assert.ok(session.context.some(item => item.label === 'Session' && item.value === 's1'));
+  assert.equal(session.title, 'Codex session');
+  assert.ok(session.context.some(item => item.value === 'Assistant reply'));
   assert.equal(session.timestamp, '1970-01-01T00:00:00.000Z');
-  assert.ok(session.context.every(item => !['Harness', 'Type'].includes(item.label)), 'fallback title already includes those details');
-  assert.equal(searchHit({_source: {harness: 'grok-bot', kind: 'tool_call', sessionId: 's2', timestamp: 0, text: 'body'}}, 'sessions').title, 'Grok Bot Tool call');
-  assert.equal(searchHit({_source: {harness: 'antigravity', role: 'assistant', kind: 'message', sessionId: 's3', timestamp: 0, text: 'body'}}, 'sessions').title, 'Antigravity Assistant Message');
+  assert.ok(session.context.every(item => item.value !== 's1'));
+  assert.equal(searchHit({_source: {harness: 'grok-bot', kind: 'tool_call', sessionId: 's2', timestamp: 0, text: 'body'}}, 'sessions').title, 'Grok Bot session');
+  assert.equal(searchHit({_source: {harness: 'antigravity', role: 'assistant', kind: 'message', sessionId: 's3', timestamp: 0, text: 'body'}}, 'sessions').title, 'Antigravity session');
   const source = searchHit({_source: {provider: 'slack', title: 'Deployment', channelId: 'C123', url: 'https://example.com/thread?q=one', timestamp: 'not-a-date'}}, 'connectors');
   assert.equal(source.title, 'Deployment'); assert.equal(source.url, 'https://example.com/thread?q=one');
   assert.equal(source.timestamp, undefined);
@@ -58,7 +58,7 @@ test('result rendering escapes source text, keeps full text/raw detail, and dist
   const value: DiagnosticSearch = {memories: {state: 'ready', truncated: true, hits: {total: {value: 12}, hits: [{_source: {title: '<script>Title</script>', text: full, path: 'memory.md', url: 'javascript:alert(1)'}}]}}};
   const html = renderToStaticMarkup(createElement(SearchResults, {result: value, query: 'needle'}));
   assert.doesNotMatch(html, /<script>|href="javascript:/); assert.match(html, /<mark>needle<\/mark>/);
-  assert.match(html, /Showing 1 of 12 reported matches/); assert.match(html, /Final paragraph/);
+  assert.match(html, /1 of at least 12 results/); assert.match(html, /Final paragraph/);
   assert.match(html, /Read full indexed text/); assert.match(html, /Item metadata and JSON/); assert.match(html, /Raw search response/);
   const partial = renderToStaticMarkup(createElement(SearchResults, {result: {memories: {state: 'pending'}}, query: 'needle'}));
   assert.match(partial, /Indexing is pending/); assert.doesNotMatch(partial, /No matching items/);
@@ -104,11 +104,15 @@ test('closed raw disclosures do not serialize response objects or render full-te
   assert.match(html, /Raw search response/); assert.doesNotMatch(html, /<pre/);
 });
 
-test('untitled hits identify the matching source passage or filename', () => {
+test('session titles identify conversations and user prompts show the actual matching request', () => {
   const source = {harness: 'codex', kind: 'tool_result', sessionId: 's1'};
   const file = searchHit({_source: {...source, text: JSON.stringify({output: 'M docs/onboarding/quickstart.md'})}}, 'sessions', 'onboarding');
-  assert.equal(file.title, 'onboarding/quickstart.md');
-  assert.ok(file.context.some(field => field.value === 'Codex'));
-  assert.equal(searchHit({_source: {...source, text: 'Plan for Friday\nReview onboarding with the team'}}, 'sessions', 'onboarding').title, 'Review onboarding with the team');
+  assert.equal(file.title, 'Codex session');
   assert.equal(searchHit({_source: {...source, title: 'Original title', text: 'Review onboarding'}}, 'sessions', 'onboarding').title, 'Original title');
+  const prompt = {kind: 'message', role: 'user', text: '# Files mentioned by the user:\n- setup.md\n\n## My request:\nReview the launch checklist'};
+  const item = searchHit({_source: prompt}, 'sessions', 'launch');
+  assert.equal(item.userPrompt, true); assert.equal(item.body, 'Review the launch checklist');
+  assert.equal(searchHit({_source: prompt}, 'sessions', 'setup').userPrompt, false);
+  assert.equal(searchHit({_source: {...prompt, containsToolOutput: true}}, 'sessions').userPrompt, false);
+  assert.deepEqual(highlightedText('launch the checklist', 'launch checklist').filter(part => part.match).map(part => part.text), ['launch', 'checklist']);
 });

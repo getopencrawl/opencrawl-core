@@ -9,6 +9,12 @@ export function authorizedBoard({authorize, admit = authorize,...options}:Parame
 }) {
   const board=createBoard(options),resolve=authorize;
   return {
+    async searchCandidates(principal: Principal, query: string, limit: number) {
+      const scope = await admit(principal);
+      const result = await board.searchCandidates(scope, query, limit);
+      await resolve(scope, scope.tenantId);
+      return result;
+    },
     agent:Object.fromEntries(Object.entries(board.agent).map(([name,operation])=>[name,async(principal:Principal,input:unknown)=>{
       const scope=await admit(principal,requested(input));const result=await operation(scope,input);await resolve(scope,scope.tenantId);return result;
     }])) as typeof board.agent,

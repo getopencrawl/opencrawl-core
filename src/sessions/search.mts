@@ -11,7 +11,7 @@ import {sessionScope} from './ingest.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
 import {visibleTo, createControls} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
-import {applySessionControl} from './library.mjs';
+import {applySessionControl, createSessionLibrary} from './library.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
 import {sessionOverlap} from './overlap.mjs';
 import {sessionContext} from './context.mjs';
@@ -62,6 +62,8 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       return {total:result.hits.total?.value??0,...(filtered?{truncated:true}:{}),hits:result.hits.hits.map(hit=>({id:hit._id,score:hit._score,...hit._source} as Passage))};
     }
   return {
+    resultTitles: options.store && options.prefix
+      ? createSessionLibrary({...options, store: options.store, prefix: options.prefix}).resultTitles : undefined,
     memories:createMemorySearch(options),
     identity:resolve.identity,
     ensureIndex:(principal: Principal)=>resolve(principal).ensureIndex(),

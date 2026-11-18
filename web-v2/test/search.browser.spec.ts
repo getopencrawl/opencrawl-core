@@ -14,8 +14,36 @@ const sessions = Array.from({length: 28}, (_, index) => ({
 }));
 const result: DiagnosticSearch = {
   sessions: [{scope: 'workspace', response: {hits: {total: {value: sessions.length}, hits: sessions}}}],
-  connectors: {responses: [{hits: {hits: [{_id: 'release', _source: {provider: 'notion', kind: 'page', title: 'Release notes', url: 'https://example.com/notes', text: 'The onboarding release notes are ready for review.'}}]}}]},
+  connectors: {responses: [{hits: {total: {value: 1}, hits: [{_id: 'release', _source: {provider: 'notion', kind: 'page', title: 'Release notes', url: 'https://example.com/notes', text: 'The onboarding release notes are ready for review.'}}]}}]},
 };
+
+for (const width of [390, 1280]) {
+  test(`prompt, board reply and connector document are distinguishable at ${width}px`, async ({page}, info) => {
+    await page.setViewportSize({width, height: 900});
+    const mixed: DiagnosticSearch = {
+      sessions: [{scope: 'workspace', response: {hits: {total: {value: 1}, hits: [{_source: {
+        title: 'Public beta launch', role: 'user', kind: 'message', userId: 'user', sessionId: 'beta', harness: 'codex',
+        text: 'Can we run through the launch checklist before we invite the first team?',
+      }}]}}}],
+      board: {hits: {total: {value: 1}, hits: [{_id: '42', _source: {channel: 'releases', author: 'release-review',
+        messageId: 42, threadId: 40, text: 'The launch checklist is ready for a final review.'}}]}},
+      connectors: {responses: [{hits: {total: {value: 1}, hits: [{_source: {provider: 'notion', kind: 'page',
+        title: 'Release playbook', url: 'https://example.com/playbook', text: 'Use the launch checklist to verify onboarding.'}}]}}]},
+    };
+    await page.route('**/api/debug/search', route => route.fulfill({json: diagnosticPage(mixed, 1)}));
+    await page.goto('/search');
+    const field = page.getByRole('searchbox', {name: 'Search query'});
+    await field.fill('launch checklist'); await field.press('Enter');
+    await expect(page.locator('.oc-search-summary')).toHaveText('3 results');
+    await expect(page.locator('.oc-search-prompt')).toContainText('User prompt');
+    await expect(page.getByRole('link', {name: 'Public beta launch'})).toHaveAttribute('href', /\/sessions\?/);
+    await expect(page.getByRole('link', {name: '#releases'})).toHaveAttribute('href', '/diagnostics?view=board&channel=releases&thread=40&message=42');
+    await expect(page.getByRole('link', {name: 'Release playbook'})).toHaveAttribute('href', 'https://example.com/playbook');
+    await expect(page.locator('.oc-search-hit mark')).toHaveText(['launch checklist', 'launch checklist', 'launch checklist']);
+    await page.evaluate(async () => {await document.fonts.ready;});
+    await page.screenshot({path: info.outputPath(`mixed-${width}.png`)});
+  });
+}
 
 for (const width of [390, 801, 1280, 1920]) {
   test(`playground pages real queries and shows the source title link at ${width}px`, async ({page}, info) => {
@@ -45,6 +73,9 @@ for (const width of [390, 801, 1280, 1920]) {
     await field.fill('onboarding'); await field.press('Enter');
     const hits = page.locator('.oc-search-hit');
     await expect(hits).toHaveCount(25);
+    const summary = page.locator('.oc-search-summary');
+    await expect(summary).toHaveText('1–25 of 29 results');
+    await expect(page.getByRole('heading', {name: /Agent sessions|Connected sources/})).toHaveCount(0);
     expect(await page.locator('.oc-search-group').first().evaluate(edges)).toEqual(libraryEdges);
     await expect(hits.first().getByRole('link')).toHaveAttribute('href', /\/sessions\?user=user&harness=codex&id=workspace-0/);
     await expect(page.getByRole('link', {name: 'Release notes', exact: true})).toHaveAttribute('href', 'https://example.com/notes');
@@ -57,7 +88,8 @@ for (const width of [390, 801, 1280, 1920]) {
     await next.focus(); await next.press('Enter');
     await expect(hits).toHaveCount(4);
     await expect(hits.first()).toContainText('25');
-    await expect(page.locator('.oc-search-summary')).toBeFocused();
+    await expect(summary).toBeFocused();
+    await expect(summary).toHaveText('26–29 of 29 results for “onboarding”');
     await expect(next).toBeDisabled();
     await expect(field).toHaveValue('edited draft');
     await page.getByRole('button', {name: 'Previous', exact: true}).click();

@@ -8,7 +8,7 @@ import {useBoard} from './use-board.js';
 
 export const topicHref = (topic = '') => '/diagnostics?view=board' + (topic ? '&channel=' + encodeURIComponent(topic) : '');
 const threadHref = (channel: string, id: number) => topicHref(channel) + '&thread=' + id;
-const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
+export const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
 const noCapture = () => {};

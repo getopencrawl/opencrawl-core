@@ -6,10 +6,44 @@ import type {createConnectorResolver} from '../integrations/resolver.mjs';
 import type {createBoard} from '../board/board.mjs';
 import {boardReadSchema} from '../board/board.mjs';
 import {errorInfo} from '../errors.mjs';
+import type {DiagnosticSearch} from './reports.mjs';
+import {excerpt} from '../search/presentation.mjs';
 export interface DiagnosticOptions {
   search?: ReturnType<typeof createSessionSearch> | null;
   connectors?: ReturnType<typeof createConnectorResolver> | null;
-  board?: Pick<ReturnType<typeof createBoard>, 'read'>;
+  board?: Pick<ReturnType<typeof createBoard>, 'read'> & Partial<Pick<ReturnType<typeof createBoard>, 'searchCandidates' | 'agent'>>;
+}
+async function nameSessionHits(result: DiagnosticSearch, principal: Principal, search: NonNullable<DiagnosticOptions['search']>) {
+  if (!search.resultTitles) return;
+  const unnamed = (result.sessions ?? []).flatMap(group => group.response.hits?.hits ?? []).flatMap(hit => {
+    const doc = hit._source;
+    if (!doc || typeof doc.title === 'string' && doc.title.trim()) return [];
+    const {userId, harness, sessionId} = doc;
+    return typeof userId === 'string' && typeof harness === 'string' && typeof sessionId === 'string'
+      ? [{doc, key: {userId, harness, sessionId}}] : [];
+  });
+  if (!unnamed.length) return;
+  const names = await search.resultTitles(principal, unnamed.map(item => item.key));
+  for (const {doc, key} of unnamed) {
+    const title = names.get(JSON.stringify([key.userId, key.harness, key.sessionId]));
+    if (title) doc.title = title;
+  }
+}
+
+async function boardText(result: DiagnosticSearch, principal: Principal, board: DiagnosticOptions['board'], query: string) {
+  const hits = result.board?.hits?.hits;
+  if (!hits?.length || !board?.agent) return;
+  const ids = hits.map(hit => Number(hit._id));
+  // The shared board reader admits at most twenty IDs per scoped bulk read.
+  const pages = await Promise.all([ids.slice(0, 20), ids.slice(20)].filter(batch => batch.length).map(batch =>
+    board.agent!.read(principal, {ids: batch, select: ['from', 'channel', 'thread', 'time', 'text']})));
+  const messages = pages.flatMap(page => page.messages);
+  for (const [index, hit] of hits.entries()) {
+    const message = messages[index];
+    if (!message || message.id !== ids[index] || typeof message.text !== 'string') throw new Error('Incomplete board result');
+    hit._source = {messageId: message.id, channel: message.channel, threadId: message.thread,
+      author: message.from, timestamp: message.time, ...excerpt(message.text, query)};
+  }
 }
 export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {name: string}, {
   search, connectors, board, principal, revalidate, respond, onSearch,
@@ -56,7 +90,7 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
             throw error;
           }
         };
-        const [sessions, connected, memories] = await Promise.all([
+        const [sessions, connected, memories, boardCandidates] = await Promise.all([
           Promise.all(scopes.map(async scope => ({scope: 'workspace', response: await read(() => search.search(scope, query))}))),
           connectors ? read(() => connectors.search(principal, query)) : {state: 'not_configured', responses: []},
           search.memories ? read(async () => {
@@ -64,13 +98,18 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
             return {state: 'ready', truncated: result.truncated, hits: {total: {value: result.total},
               hits: result.hits.map(({id, score, ...document}) => ({_id: id, _score: score, _source: document}))}};
           }) : {state: 'not_configured', hits: {total: {value: 0}, hits: []}},
+          board?.searchCandidates && board.agent ? board.searchCandidates(principal, query.query, query.limit) : undefined,
         ]);
+        const raw: DiagnosticSearch = {sessions, connectors: connected, memories,
+          ...(boardCandidates ? {board: {state: 'ready', hits: {total: {value: boardCandidates.total},
+            hits: boardCandidates.ids.map(id => ({_id: String(id)}))}}} : {})};
+        const result = page ? diagnosticPage(raw, page) : raw;
+        await Promise.all([nameSessionHits(result, principal, search), boardText(result, principal, board, query.query)]);
         // Revalidate membership after retrieval as well as before it.
         const status = await revalidate();
         if (status !== 200) return json(status, {error: status === 503 ? 'AUTH_UNAVAILABLE' : 'WORKSPACE_ACCESS_DENIED'});
         onSearch?.(input.query.length);
-        const result = {sessions, connectors: connected, memories};
-        return json(200, page ? diagnosticPage(result, page) : result);
+        return json(200, result);
       }
   } catch(error) {
     if(errorInfo(error).status===403)return respond(403,JSON.stringify({error:'WORKSPACE_ACCESS_DENIED'}),'application/json');

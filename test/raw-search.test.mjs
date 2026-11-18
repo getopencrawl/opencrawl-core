@@ -53,3 +53,28 @@ for (const operation of ['board','search']) test(`browser ${operation} permits m
   allowed=503;await run();assert.equal(response.status,503);assert.doesNotMatch(response.body,/scoped result/);
   const count=calls.length;options.principal=null;await run();assert.equal(response.status,403);assert.equal(calls.length,count);
 });
+
+test('playground resolves only visible message bodies and session titles before final membership check', async () => {
+  const principal={tenantId:'team',userId:'alice'}, titleKeys=[], boardReads=[];
+  const ids=Array.from({length:60},(_,i)=>i+1);
+  let status=200, sent;
+  const options={principal, revalidate:async()=>status, respond:(code,body)=>{sent={code,body};},
+    search:{search:async()=>({hits:{hits:[{_source:{userId:'alice',harness:'codex',sessionId:'beta',text:'launch'}}]}}),
+      resultTitles:async(scope,keys)=>{assert.deepEqual(scope,principal);titleKeys.push(keys);
+        return new Map([[JSON.stringify(['alice','codex','beta']),'Beta launch']]);}},
+    board:{searchCandidates:async(scope,query,limit)=>{assert.deepEqual(scope,principal);assert.equal(query,'launch');assert.equal(limit,100);return {ids,total:60};},
+      agent:{read:async(scope,{ids})=>{assert.deepEqual(scope,principal);boardReads.push(ids);
+        return {messages:ids.map(id=>({id,thread:1,channel:'release',from:'reviewer',time:'2026-11-18T00:00:00Z',text:'Launch post '+id}))};}}}};
+  const run=page=>diagnosticRequest(Readable.from([Buffer.from(JSON.stringify({query:'launch',page}))]),
+    new URL('https://app.example/api/debug/search'),{name:'debug-search'},options);
+  await run(1);
+  assert.equal(sent.code,200);
+  const first=JSON.parse(sent.body);
+  assert.equal(first.sessions[0].response.hits.hits[0]._source.title,'Beta launch');
+  assert.equal(first.board.hits.hits.length,24);assert.equal(first.board.hits.hits[23]._source.text,'Launch post 24');
+  assert.deepEqual(boardReads.map(batch=>batch.length),[20,4]);
+  await run(2);
+  assert.equal(titleKeys.length,1);
+  assert.deepEqual(boardReads.slice(2).flat(),ids.slice(24,49));
+  status=403;await run(1);assert.equal(sent.code,403);assert.doesNotMatch(sent.body,/Beta launch|Launch post/);
+});

@@ -84,8 +84,13 @@ test('library titles prefer verified native names, use original prompt text, and
     return Response.json({...empty,aggregations:{sessions:{buckets:[{key:['alice','codex','session'],doc_count:1,lastActivity:{value:Date.parse(at)},firstActivity:{value:Date.parse(at)},private:{doc_count:0},origin:{buckets:[]},host:{buckets:[]}}]}}});
   }});
   assert.equal((await library.list(principal)).sessions[0].title,'A saved chat name');
+  const key={userId:'alice',harness:'codex',sessionId:'session'};
+  const beforeTitles=reads;
+  assert.deepEqual([...(await library.resultTitles(principal,[key,key])).values()],['A saved chat name']);
+  assert.equal(reads-beforeTitles,1);
   mode='fallback';assert.equal((await library.list(principal)).sessions[0].title,'Actual request');
   mode='forged';await assert.rejects(library.list(principal),/title scope/);
+  await assert.rejects(library.resultTitles(principal,[key]),/title scope/);
   mode='source';await assert.rejects(library.list(principal),/title source/);
   const before=reads;await assert.rejects(library.list({...principal,captureAccess:'write'}),{status:403});assert.equal(reads,before);
 });

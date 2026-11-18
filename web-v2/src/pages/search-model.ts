@@ -1,6 +1,7 @@
 import type {DiagnosticHit, DiagnosticSearch, SearchResponse} from './types.js';
+import {promptText} from '../../../src/sessions/prompt-text.mjs';
 
-export type SearchSource = 'sessions' | 'connectors' | 'memories';
+export type SearchSource = 'sessions' | 'connectors' | 'memories' | 'board';
 export interface SearchGroup {
   id: SearchSource;
   label: string;
@@ -42,19 +43,39 @@ export function searchGroups(data: DiagnosticSearch): SearchGroup[] {
     ...(data.sessions?.length ? [group('sessions', 'Agent sessions', data.sessions.map(item => item.response))] : []),
     ...(data.connectors ? [group('connectors', 'Connected sources', data.connectors.responses || [], data.connectors.state, data.connectors.truncated)] : []),
     ...(data.memories ? [group('memories', 'Agent memories', [data.memories], data.memories.state, data.memories.truncated)] : []),
+    ...(data.board ? [group('board', 'Message board', [data.board], data.board.state, data.board.truncated)] : []),
   ];
+}
+
+/** Report the page range once. A missing source total or incomplete search can only support a lower bound. */
+export function resultSummary(groups: SearchGroup[], page: number, pageSize: number, hasNext: boolean, partial: boolean) {
+  const returned = groups.reduce((sum, group) => sum + group.hits.length, 0);
+  if (!returned) return '0 results shown';
+  const first = (page - 1) * pageSize + 1;
+  const last = first + returned - 1;
+  const range = first === last ? first.toLocaleString() : `${first.toLocaleString()}–${last.toLocaleString()}`;
+  const reported = groups.reduce((sum, group) => sum + (group.total ?? 0), 0);
+  const lowerBound = partial || groups.some(group => group.total === undefined || group.totalRelation === 'gte');
+  if (reported > last || (page > 1 && reported === last && !hasNext)) {
+    return `${range} of ${lowerBound ? 'at least ' : ''}${reported.toLocaleString()} results`;
+  }
+  if (page > 1 || hasNext) return `${returned === 1 ? 'Result' : 'Results'} ${range}`;
+  return `${returned.toLocaleString()} ${returned === 1 ? 'result' : 'results'}${lowerBound ? ' shown' : ''}`;
 }
 
 /** A verbatim snippet around the first literal query match, never HTML or a summary. */
 export function excerpt(value: string, query: string, limit = 700) {
-  const index = value.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
-  const start = index >= 0 && value.length > limit ? Math.max(0, index - 140) : 0;
+  const lower = value.toLowerCase(), needle = query.trim().toLowerCase();
+  let index = lower.indexOf(needle);
+  if (index < 0) index = needle.split(/\s+/u).map(word => lower.indexOf(word)).filter(at => at >= 0).sort((a,b) => a-b)[0] ?? -1;
+  const start = index >= 0 && value.length > limit ? Math.min(value.length - limit, Math.max(0, index - Math.floor(limit / 3))) : 0;
   return {text: value.slice(start, start + limit), leading: start > 0, trailing: start + limit < value.length};
 }
 export function highlightedText(value: string, query: string): Array<{text: string; match: boolean}> {
   if (!query.trim()) return [{text: value, match: false}];
   // Escaped literal matching keeps query operators and source markup inert.
-  const expression = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+  const terms = [...new Set([query.trim(), ...query.trim().split(/\s+/u)])].sort((a,b) => b.length-a.length);
+  const expression = new RegExp(terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'giu');
   const parts: Array<{text: string; match: boolean}> = [];
   let start = 0;
   for (const found of value.matchAll(expression)) {
@@ -83,6 +104,7 @@ function timestamp(value: unknown): string | undefined {
 }
 export interface SearchHitPresentation {
   title: string;
+  userPrompt: boolean;
   body: string;
   serverExcerpt: boolean;
   context: Array<{label: string; value: string}>;
@@ -119,16 +141,27 @@ export function searchHit(hit: DiagnosticHit, source: SearchSource, query = ''):
   const provider = readable(string(document.provider)), harness = readable(string(document.harness));
   const kind = readable(string(document.kind)), role = readable(string(document.role));
   const identity = source === 'connectors' ? provider : harness;
-  const type = [role, kind].filter(Boolean).join(' ');
-  const body = typeof document.text === 'string' ? document.text : '';
+  const indexed = typeof document.text === 'string' ? document.text : '';
+  const userMessage = source === 'sessions' && (document.role === 'user' || document.kind === 'user_message') &&
+    document.containsToolOutput !== true && !['tool_result', 'tool_call'].includes(string(document.kind));
+  const prompt = userMessage ? promptText(indexed) : null;
+  const queryTerms = query.toLowerCase().trim().split(/\s+/u);
+  const userPrompt = Boolean(prompt) && (prompt === indexed.trim() || queryTerms.some(term => prompt!.toLowerCase().includes(term)));
+  const body = userPrompt && prompt ? prompt : indexed;
+  const type = userMessage ? (userPrompt ? 'User prompt' : 'Session context')
+    : source === 'sessions' && role === 'Assistant' && kind === 'Message' ? 'Assistant reply' : [role, kind].filter(Boolean).join(' ');
+  const channel = string(document.channel);
   const suppliedTitle = string(document.title) || (source === 'memories' ? string(document.path) : '');
   const fallbackTitle = [identity, type].filter(Boolean).join(' ');
-  const title = suppliedTitle || passageTitle(body, query) || fallbackTitle || (source === 'memories' ? 'Agent memory' : 'Indexed item');
+  const title = source === 'board' ? (channel ? '#' + channel : 'Message board')
+    : suppliedTitle || (source === 'sessions' ? (harness ? harness + ' session' : 'Session history') : passageTitle(body, query) || fallbackTitle || (source === 'memories' ? 'Agent memory' : 'Indexed item'));
   const contextInTitle = title.toLocaleLowerCase() === fallbackTitle.toLocaleLowerCase();
   const context: SearchHitPresentation['context'] = [];
   if (!contextInTitle && identity && identity !== title) context.push({label: source === 'connectors' ? 'Source' : 'Harness', value: identity});
   if (!contextInTitle && type && type !== title) context.push({label: 'Type', value: type});
-  const fields = source === 'sessions' ? [['Project', 'project'], ['Session', 'sessionId']]
+  if (source === 'board') context.push({label: 'Type', value: document.threadId === document.messageId ? 'Board post' : 'Board reply'});
+  const fields = source === 'board' ? [['From', 'author']]
+    : source === 'sessions' ? [['Project', 'project']]
     : source === 'memories' ? [['Path', 'path'], ['Project', 'project']]
     : [['Channel', 'channelId'], ['Heading', 'heading']];
   for (const [label, key] of fields) {
@@ -141,6 +174,6 @@ export function searchHit(hit: DiagnosticHit, source: SearchSource, query = ''):
   const serverExcerpt = typeof excerpt === 'object' && excerpt !== null && 'totalChars' in excerpt &&
     count(excerpt.totalChars) && excerpt.totalChars > body.length;
   const url = safeSourceUrl(document.url);
-  return {title, body, serverExcerpt, context,
+  return {title, userPrompt, body, serverExcerpt, context,
     ...(date ? {timestamp: date.value, timestampLabel: date.label} : {}), ...(url ? {url} : {})};
 }

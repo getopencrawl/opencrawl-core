@@ -69,6 +69,7 @@ export interface DiagnosticSearch {
   sessions?: Array<{scope: string; response: SearchResponse}>;
   connectors?: {state?: string; truncated?: boolean; responses?: SearchResponse[]};
   memories?: SearchResponse & {truncated?: boolean};
+  board?: SearchResponse;
 }
 export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; channel?: string; threadId?: number; system?: true; replyCount?:number}
 export interface BoardReport {

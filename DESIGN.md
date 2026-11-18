@@ -888,13 +888,19 @@ The legacy `/diagnostics?view=search` URL redirects there. Its Page leads direct
 to the existing SearchInspector query form without an introductory paragraph.
 Align the query row and source sections to both edges of the centered workspace
 frame, as on Sessions. The header divider and shared 32px body inset lead
-directly into the field. Each source heading pairs its name with reported
-coverage above the list; snippets keep their readable measure inside that grid.
+directly into the field. Use one summary above the first hit for the visible
+range and reported total. Qualify incomplete totals, and repeat the submitted
+query only when the field has been edited. Source regions retain accessible
+names; label warnings with their source. Snippets keep their readable measure.
 Queries use the actual scoped adapter and SearchReader, not local sample filtering.
 Source-specific result rows use real titles, provider/harness, kind/role, available
 channel/session/path context and valid timestamps. Show the linked title first, followed by a quiet source trail and a compact
 15px excerpt with literal matches in bold. Full text retains original line breaks.
-Known session and memory references link to their scoped library readers.
+Session links use the captured conversation title or the library's first-prompt
+fallback. Keep the matching message in the excerpt. Give user prompts a subdued
+label and quoted treatment. Board posts link to the exact message and identify
+the channel and author. Connector hits identify the provider and link to the
+original document. Known memory references link to their scoped library reader.
 Use the existing workspace search form and a dice action, “Surprise me”, which
 runs a different example query. Page through up to 25 results across sources
 per request. Previous and Next use the submitted query and return keyboard

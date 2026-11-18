@@ -1,3 +1,5 @@
+import {promptText} from './prompt-text.mjs';
+export {promptText} from './prompt-text.mjs';
 import {historyActor} from '../integrations/replicas-senders.mjs';
 import type {Principal, ObjectStore, SessionEvent, JsonValue, EventIdentityStore} from './types.mjs';
 import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
@@ -44,16 +46,6 @@ const MAX_TEXT = 20000;
 function clip(text: string) {return text.length > MAX_TEXT ? {text: text.slice(0, MAX_TEXT), truncated: true} : {text, truncated: false};}
 function stringify(value: unknown) {if (typeof value === 'string') return value; try {return JSON.stringify(value, null, 2) ?? '';} catch {return '';}}
 function iso(value: unknown) {return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : typeof value === 'number' && Number.isFinite(value) ? new Date(value).toISOString() : null;}
-// Codex stores injected context and notifications as user-role records.
-const INJECTED = /^(?:# AGENTS\.md instructions\b|<(?:environment_context|external_codex_apps_\w+|subagent_notification|turn_aborted|user_instructions|system-reminder)\b)/;
-// Codex prefixes IDE context and attached files before the person's request.
-const CODEX_REQUEST = /^# (?:Context from my IDE setup|Files mentioned by the user):[\s\S]*?## My request for Codex:\s*/;
-/** The person's own words from a prompt, or null for injected context. */
-export function promptText(text: string) {
-  const trimmed = text.trimStart(), request = trimmed.replace(CODEX_REQUEST, '');
-  if (request !== trimmed) return request.trim() || null;
-  return INJECTED.test(trimmed) || /^# (?:Context from my IDE setup|Files mentioned by the user):/.test(trimmed) ? null : trimmed.trim() || null;
-}
 // Readable conversation kinds, and bookkeeping kinds that never render.
 const CONVERSATION = ['message', 'user_message', 'agent_message', 'replicas_event', 'replicas_tool', 'replicas_history_page'];
 const HIDDEN = ['token_count', 'hook', 'turn_metadata', ...TITLE_KINDS];
@@ -353,6 +345,15 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
     return {...key, deleted: true as const, pending: false as const, objects, documents};
   }
   return {
+    /** Resolve the same names as the library for one page of already-ranked hits. */
+    async resultTitles(principal: Principal, keys: SessionKey[]) {
+      sessionScope(principal);
+      if (keys.length > 25) fail(400, 'Too many session titles requested');
+      const unique = [...new Map(keys.map(key => [JSON.stringify([key.userId, key.harness, key.sessionId]), key])).values()];
+      const names = await titles(principal, unique);
+      if (!(await Promise.all(unique.map(key => readable(principal, key)))).every(Boolean)) fail(403, 'Session access changed');
+      return names;
+    },
     async list(principal: Principal, {scope = 'all', query = '', participant, limit = 50}: {scope?: unknown; query?: unknown; participant?: unknown; limit?: unknown} = {}) {
       const collection = reader(principal);
       if (!['all', 'mine'].includes(String(scope)) || typeof query !== 'string' || query.length > 500 || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 500) fail(400, 'Invalid session list');

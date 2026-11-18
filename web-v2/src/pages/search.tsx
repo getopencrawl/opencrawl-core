@@ -1,13 +1,14 @@
 import {useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
-import {Button, EmptyState, ExternalLink, Field, Input, LoadingState, Notice, Section} from '../design/components.js';
+import {Button, EmptyState, ExternalLink, Field, Input, LoadingState, Notice} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import type {ConsoleDataAdapter, DiagnosticHit, DiagnosticSearch} from './types.js';
-import {excerpt, highlightedText, searchGroups, searchHit} from './search-model.js';
+import {excerpt, highlightedText, resultSummary, searchGroups, searchHit} from './search-model.js';
 import type {SearchSource} from './search-model.js';
 import {diagnosticPage, SEARCH_PAGE_SIZE, SOURCE_WINDOW} from '../../../src/application/search-page.mjs';
 import {Link} from '../router.js';
 import {memoryHarness, memoryPath} from './memories.js';
 import {sessionHarness, sessionPath} from './sessions.js';
+import {messageHref} from './board.js';
 import {SearchReader} from './search-reader.js';
 import {accessFailure, consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 
@@ -35,8 +36,10 @@ function Highlight({text, query}: {text: string; query: string}) {
 }
 const examples = ['onboarding', 'launch checklist', 'design review', 'customer feedback', 'release notes', 'first prototype'];
 
-function libraryPath(hit: DiagnosticHit, source: SearchSource) {
-  const {userId, harness, sessionId, path} = hit._source ?? {};
+function sourcePath(hit: DiagnosticHit, source: SearchSource) {
+  const {userId, harness, sessionId, path, channel, messageId, threadId} = hit._source ?? {};
+  if (source === 'board' && typeof channel === 'string' && channel && typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0 &&
+      typeof threadId === 'number' && Number.isSafeInteger(threadId) && threadId > 0) return messageHref(channel, messageId, threadId);
   if (typeof userId !== 'string' || !userId || typeof harness !== 'string') return;
   if (source === 'sessions' && typeof sessionId === 'string' && sessionId) {
     const kind = sessionHarness(harness);
@@ -50,21 +53,25 @@ function libraryPath(hit: DiagnosticHit, source: SearchSource) {
 
 function SearchHit({hit, query, source}: {hit: DiagnosticHit; query: string; source: SearchSource}) {
   const item = searchHit(hit, source, query), preview = excerpt(item.body, query, 240);
-  const internal = libraryPath(hit, source);
-  const title = item.url ? <ExternalLink href={item.url}>{item.title}</ExternalLink>
-    : internal ? <Link to={internal}>{item.title}</Link> : item.title;
+  const internal = sourcePath(hit, source);
+  const sameText = item.userPrompt && item.title === item.body.trim();
+  const label = sameText ? <Highlight text={item.title} query={query}/> : item.title;
+  const title = internal ? <Link to={internal}>{label}</Link>
+    : item.url ? <ExternalLink href={item.url}>{label}</ExternalLink> : label;
+  const sourceIcon = {sessions: 'sessions', memories: 'memories', connectors: 'sources', board: 'diagnostics'} as const;
   return (
-    <article className="oc-search-hit">
-      <h3>{title}</h3>
+    <article className={`oc-search-hit${item.userPrompt ? ' oc-search-prompt' : ''}`}>
+      <h2>{title}</h2>
       <div className="oc-search-context">
+        <Icon name={sourceIcon[source]} size={14}/>
         {item.url && <span>{new URL(item.url).host}</span>}
-        {item.context.map(field => <span key={field.label} title={field.value}><span className="sr-only">{field.label} </span>{field.value}</span>)}
+        {item.context.map(field => <span key={field.label} className={field.label === 'Type' && item.userPrompt ? 'oc-search-prompt-label' : undefined} title={field.value}><span className="sr-only">{field.label} </span>{field.value}</span>)}
         {item.timestamp && <time dateTime={item.timestamp} title={new Date(item.timestamp).toLocaleString()}>{new Date(item.timestamp).toLocaleDateString(undefined, {dateStyle: 'medium'})}</time>}
       </div>
-      <p className="oc-search-excerpt">
+      {!sameText && <p className="oc-search-excerpt">
         {item.serverExcerpt && <span className="oc-search-excerpt-label">Excerpt — </span>}
         {item.body ? <>{preview.leading && '…'}<Highlight text={preview.text} query={query}/>{preview.trailing && '…'}</> : 'No indexed text was returned for this item.'}
-      </p>
+      </p>}
       <div className="oc-search-tools">
         {(preview.leading || preview.trailing) && <TextDisclosure body={item.body} serverExcerpt={item.serverExcerpt}/>}
         <JsonDisclosure label="Item metadata and JSON" value={hit}/>
@@ -72,8 +79,8 @@ function SearchHit({hit, query, source}: {hit: DiagnosticHit; query: string; sou
     </article>
   );
 }
-export function SearchResults({result: response, query, onPage, focusSummary = false}: {
-  result: DiagnosticSearch; query: string; onPage?(page: number): void; focusSummary?: boolean;
+export function SearchResults({result: response, query, onPage, focusSummary = false, showQuery = true}: {
+  result: DiagnosticSearch; query: string; onPage?(page: number): void; focusSummary?: boolean; showQuery?: boolean;
 }) {
   const [localPage, setLocalPage] = useState(1);
   const result = useMemo(() => response.page ? response : diagnosticPage(response, localPage), [response, localPage]);
@@ -81,7 +88,6 @@ export function SearchResults({result: response, query, onPage, focusSummary = f
   const summary = useRef<HTMLParagraphElement>(null);
   useEffect(() => {if (focusSummary || localPage > 1) summary.current?.focus();}, [focusSummary, localPage, result]);
   const page = result.page?.number ?? 1;
-  const first = (page - 1) * SEARCH_PAGE_SIZE + 1;
   const hasNext = result.page?.hasNext === true;
   const groups = searchGroups(result);
   const returned = groups.reduce((sum, group) => sum + group.hits.length, 0);
@@ -89,19 +95,17 @@ export function SearchResults({result: response, query, onPage, focusSummary = f
   return (
     <div className="oc-search-results">
       <p className="oc-search-summary" role="status" ref={summary} tabIndex={-1}>
-        {returned && (page > 1 || hasNext) ? `Results ${first}–${first + returned - 1} for “${query}”.` : `${returned.toLocaleString()} ${returned === 1 ? 'result' : 'results'} returned for “${query}”.`}
+        {resultSummary(groups, page, SEARCH_PAGE_SIZE, hasNext, partial)}{showQuery && ` for “${query}”`}
       </p>
       {result.partial && !groups.some(group => group.state !== 'ready') && <Notice tone="warning">Some sources did not complete. Returned results may be incomplete.</Notice>}
       {result.truncated && !groups.some(group => group.truncated) && <Notice tone="warning">Only part of the matching results was returned. Narrow the query for a more focused inspection.</Notice>}
       {!groups.length && <Notice tone="warning">The response did not include search coverage. Try the query again.</Notice>}
       {groups.length > 0 && !returned && page === 1 && !partial && <EmptyState title="No matching items" description="Try another query, or check the connected sources and captured sessions."/>}
       {groups.filter(group => group.hits.length || group.warnings.length).map(group => (
-        <Section key={group.id} className="oc-search-group" title={`${group.label} (${group.hits.length})`}
-          description={group.total !== undefined && (group.total > group.hits.length || group.totalRelation === 'gte')
-            ? `Showing ${group.hits.length.toLocaleString()} of ${group.totalRelation === 'gte' ? 'at least ' : ''}${group.total.toLocaleString()} reported matches.` : undefined}>
-          {group.warnings.length > 0 && <Notice tone="warning">{group.warnings.join(' ')}</Notice>}
-          <div>{group.hits.map((hit, index) => <SearchHit key={`${hit._id || 'item'}:${index}`} hit={hit} query={query} source={group.id}/>)}</div>
-        </Section>
+        <section key={group.id} className="oc-search-group" aria-label={`${group.label} (${group.hits.length})`}>
+          {group.warnings.length > 0 && <Notice tone="warning" title={group.label}>{group.warnings.join(' ')}</Notice>}
+          {group.hits.map((hit, index) => <SearchHit key={`${hit._id || 'item'}:${index}`} hit={hit} query={query} source={group.id}/>)}
+        </section>
       ))}
       {page > 1 && !returned && <p className="muted">The results changed. Return to the previous page or run the query again.</p>}
       {result.page?.windowLimited && <p className="oc-search-coverage">The playground checks up to {SOURCE_WINDOW} matches per source. Refine your query to explore further.</p>}
@@ -147,7 +151,7 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
       {snapshot.state === 'failed' && <Notice tone="danger">{snapshot.error}</Notice>}
       {snapshot.state === 'canceled' && <p role="status" className="muted">Query canceled.</p>}
       {busy && <LoadingState label="Running query"/>}
-      {snapshot.result && <SearchResults key={snapshot.query} result={snapshot.result} query={snapshot.query} focusSummary={paging.current} onPage={page => {paging.current = true; void reader.search(snapshot.query, page);}}/>}
+      {snapshot.result && <SearchResults key={snapshot.query} result={snapshot.result} query={snapshot.query} showQuery={query.trim() !== snapshot.query} focusSummary={paging.current} onPage={page => {paging.current = true; void reader.search(snapshot.query, page);}}/>}
     </section>
   );
 }
