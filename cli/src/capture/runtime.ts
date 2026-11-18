@@ -1,3 +1,4 @@
+import {allowedTime,confirmedPermission,readPermission,permittedBatch,type RecordingPermission} from './recording.ts';
 import {transcriptCheckpoint,transcriptIdentity,transcriptIdentityMatches} from './transcript-checkpoint.ts';
 import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, fstatSync, lstatSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream} from 'node:fs';
 import {gzip} from 'node:zlib';
@@ -47,11 +48,14 @@ export function harnessRoot(config:CaptureConfig,harness:Harness) {
   return root;
 }
 // Enrollment and every queued payload remain bound to their original destination.
-async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+const recordingPath=(config:Pick<CaptureConfig,'api'|'owner'>)=>join(captureDir(),'state','recording-'+hash(JSON.stringify([config.api,config.owner.tenantId,config.owner.userId]))+'.json');
+export async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
   // Keep a refreshed workload token paired with the owner verified by identity.
   let verifiedToken=token;
   const renew=token&&workspaceIdentityEnabled()?async(rejected:string)=>verifiedToken=await workspaceToken(config.api,rejected,signal):undefined;
-  const {principal,capabilities}=await request(config.api,'/api/sessions/identity',{signal},token,renew);
+  const cached:RecordingPermission|undefined=config.authPending?undefined:read(recordingPath(config))??undefined;
+  const {principal,capabilities,recording:response}=await request(config.api,'/api/sessions/identity',{signal,headers:{'x-opencrawl-recording':cached?.revision??'new'}},token,renew);
+  const recording=readPermission(response,cached);
   signal?.throwIfAborted();
   if(!principal?.userId || !principal?.tenantId)throw new CliError('CAPTURE_IDENTITY_MISSING','Deployment does not supply capture identity');
   // Authentication may finish after uninstall or another worker initializes a
@@ -62,13 +66,14 @@ async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortS
     if(!current || current.api!==config.api || (!pending && current.installationId!==config.installationId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
     if(!current.authPending && (current.owner.userId!==principal.userId || current.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_DESTINATION_CHANGED','Capture is enrolled to another account or team. Sign back into that destination; queued data has not moved. To change destination, uninstall and resolve or explicitly purge pending data before reinstalling.');
     config.owner=principal;
+    if(recording&&(!cached||cached.revision!==recording.revision||cached.paused!==recording.paused||recording.paused))atomicJson(recordingPath(config),recording);
     if(config.authPending){
       config.installationId=current.installationId==='pending'?randomUUID():current.installationId;
       config.authPending=false;
     }
     atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
   },20_000,signal);
-  return {principal,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
+  return {principal,recording,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
 }
 export async function refreshCaptureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
   return (await captureIdentity(config,token,signal)).principal;
@@ -87,11 +92,12 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   // Only retry operations whose payloads are read-only or content-addressed.
   // A lost response after storage must resend the same batch/blob, not lose it.
   const retryable=method==='GET'||method==='POST'&&['/api/sessions/batches','/api/sessions/memories'].includes(pathname)||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(pathname);
+  const deadline=pathname==='/api/sessions/recording'?55_000:20_000;
   const send=async()=>{
     for(let attempt=0;;attempt++){
       let response:Response;
       signal?.throwIfAborted();
-      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000),redirect:'error'});}
+      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(deadline)]):AbortSignal.timeout(deadline),redirect:'error'});}
       catch(error){if(signal?.aborted||!retryable||attempt===4)throw error;await pause(250*2**attempt,undefined,{signal});continue;}
       if(!retryable||attempt===4||![429,502,503,504].includes(response.status))return response;
       const retryAfter=response.headers.get('retry-after');
@@ -302,8 +308,13 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
   // to be another path. The egress boundary always scrubs these fields.
   if(meta.cwd!==undefined)batch.cwd=meta.cwd;
   batch.sessionId=meta.sessionId;
-  batch.events=batch.events.map(finalizeEventIdentity);
-  const serialized=JSON.stringify(batch),size=Buffer.byteLength(serialized);
+  batch.events=batch.events.map(({sourceTime,sourceTimeFrom,...event}:Record<string,unknown>)=>({
+    ...finalizeEventIdentity(event),...sourceTime!==undefined&&{sourceTime},...sourceTimeFrom!==undefined&&{sourceTimeFrom},
+  }));
+  const cachedPolicy=confirmedPermission(read(recordingPath(config))??undefined);
+  const permitted=permittedBatch(batch,cachedPolicy);
+  if(!permitted)return;
+  const serialized=JSON.stringify(permitted),size=Buffer.byteLength(serialized);
   if(size>16*1024*1024)throw new CliError('CAPTURE_BATCH_TOO_LARGE','A capture record exceeds the upload limit; retained locally for retry');
   enqueueLiveBatch(captureDir(),hash(serialized)+'.json',serialized,meta.captureMode!=='history');
 }
@@ -315,6 +326,8 @@ function enqueue(config:CaptureConfig,meta:any,events:any[],attachments:any[]) {
  * bytes. A changed event gets a new identity to avoid immutable-ID conflicts.
  */
 function prepareCaptureUpload(original:any) {
+  // Provenance bounds are local policy evidence, outside immutable wire event identity.
+  original={...original,events:original.events.map(({sourceTime,sourceTimeFrom,...event}:Record<string,unknown>)=>event)};
   const replacements=new Map<string,any>();
   for(const attachment of original.attachments)if(attachment.status==='captured') {
     const raw=readCaptureAttachment(attachment.sha256);
@@ -517,9 +530,10 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(parsed?.kind==='session_title') {
               const platform=await platformTitle(config,meta);
               if(platform)parsed.data={title:platform.title,titleType:'custom'};
-              if(parsed.data.titleType==='custom')meta.customTitle=parsed.data.title;
+              if(parsed.data.titleType==='custom'){meta.customTitle=parsed.data.title;meta.customTitleTime=platform?.timestamp??parsed.timestamp;}
               // A later automatic suggestion must not overwrite a manual rename.
               if(meta.customTitle)parsed.data={title:meta.customTitle,titleType:'custom'};
+              Object.assign(parsed,{sourceTime:meta.customTitle?meta.customTitleTime??null:parsed.timestamp});
             }
             if(parsed&&desktopAudit){parsed.timestamp=record._audit_timestamp??record.timestamp??null;parsed.parentId=record.parent_tool_use_id??null;}
             if(parsed && !captureExcluded(readCaptureConfig()??config,meta)) {
@@ -587,8 +601,8 @@ async function platformTitle(config:CaptureConfig,meta:any,force=false) {
 }
 function capturePlatformTitle(config:CaptureConfig,meta:any,{title,timestamp}:ReplicasTitle,captureMode:'history'|'live'='history') {
   if(meta.capturedTitle===title)return false;
-  enqueue(config,{...meta,captureMode},[{id:hash('replicas-title:'+meta.sessionId+':'+timestamp+':'+title),kind:'session_title',sequence:0,timestamp,data:{title,titleType:'custom'}}],[]);
-  meta.capturedTitle=title;meta.customTitle=title;
+  enqueue(config,{...meta,captureMode},[{id:hash('replicas-title:'+meta.sessionId+':'+timestamp+':'+title),kind:'session_title',sequence:0,timestamp,sourceTime:timestamp,data:{title,titleType:'custom'}}],[]);
+  meta.capturedTitle=title;meta.customTitle=title;meta.customTitleTime=timestamp;
   return true;
 }
 
@@ -596,7 +610,7 @@ function captureCodexTitle(config:CaptureConfig,meta:any,sessionScoped=false,cap
   if(!meta?.sessionId || meta.harness!=='codex' || captureExcluded(readCaptureConfig()??config,meta))return false;
   const native=sessionScoped?codexNativeSession(config.roots.codex,meta.sessionId)?.title:codexTitle(config.roots.codex,meta.sessionId);
   if(!native || meta.capturedTitle===native.title)return false;
-  enqueue(config,{...meta,captureMode},[{id:hash('codex-title:'+meta.sessionId+':'+native.timestamp+':'+native.title),kind:'session_title',sequence:0,timestamp:native.timestamp,data:{title:native.title}}],[]);
+  enqueue(config,{...meta,captureMode},[{id:hash('codex-title:'+meta.sessionId+':'+native.timestamp+':'+native.title),kind:'session_title',sequence:0,timestamp:native.timestamp,sourceTime:native.timestamp,data:{title:native.title}}],[]);
   meta.capturedTitle=native.title;
   return true;
 }
@@ -630,7 +644,7 @@ export async function refreshCapturedTitles() {
         let path:string;try{path=transcriptAllowed(meta.sourcePath,config,'claude-code');}catch{return;}
         const st=statSync(path);
         if(state.ino!==st.ino || st.size<state.offset)return;
-        let title:string|undefined,custom:string|undefined;
+        let title:string|undefined,custom:string|undefined,sourceTime:string|null=null;
         const stream=createReadStream(path,{end:state.offset-1}),lines=createInterface({input:stream,crlfDelay:Infinity});
         try {
           for await(const line of lines) {
@@ -639,14 +653,15 @@ export async function refreshCapturedTitles() {
             if(record.sessionId!==meta.sessionId)continue;
             const parsed=parseRecord('claude-code',record,0);
             if(parsed?.kind==='session_title'){
+              if(!custom||parsed.data.titleType==='custom')sourceTime=parsed.timestamp;
               if(parsed.data.titleType==='custom')custom=parsed.data.title;
               title=custom??parsed.data.title;
             }
           }
         } finally {lines.close();stream.destroy();}
         if(!title||title===meta.capturedTitle)return;
-        enqueue(config,{...meta,captureMode:'history'},[{id:hash('claude-title:'+meta.sessionId+':'+st.mtimeMs+':'+title),kind:'session_title',sequence:0,timestamp:st.mtime.toISOString(),data:{title,titleType:custom?'custom':'auto'}}],[]);
-        meta.capturedTitle=title;if(custom)meta.customTitle=custom;
+        enqueue(config,{...meta,captureMode:'history'},[{id:hash('claude-title:'+meta.sessionId+':'+st.mtimeMs+':'+title),kind:'session_title',sequence:0,timestamp:st.mtime.toISOString(),sourceTime,data:{title,titleType:custom?'custom':'auto'}}],[]);
+        meta.capturedTitle=title;if(custom){meta.customTitle=custom;meta.customTitleTime=sourceTime;}
         atomicJson(stateFile,{...state,meta});updated++;
       },Infinity);
     }
@@ -737,6 +752,7 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
     atomicJson(stateFile,state);events=[];attachments=[];eventBytes=0;
   };
   const file=notice.event.transcript_path;
+  const scanStart=new Date().toISOString(),policy=confirmedPermission(read(recordingPath(config)) as RecordingPermission|undefined);
   // Text transcript metadata is not the native JSONL fallback. Keep the
   // authoritative content hooks working without opening referenced text.
   if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
@@ -746,19 +762,20 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
         state.hooks={};state.transcript={};state.emitted={};delete state.thoughtHooks;delete state.startSequence;delete state.startAt;
         recordError(new CliError('CAPTURE_CURSOR_BOUNDARY_CHANGED','Cursor rewrote a pre-consent transcript boundary; earlier bytes remain excluded. New appended records and native content hooks continue.'));
       }
-      if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;}
-      if(record.data) {
-        const event=messages({id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
+      if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;delete state.scannedAt;}
+      if(record.data && (!policy?.windows.length || allowedTime(policy,scanStart,state.scannedAt??null))) {
+        const event=messages({sourceTimeFrom:state.scannedAt??null,sourceTime:scanStart,id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
           timestamp:record.data.role==='user'?(state.startAt??notice.at):notice.at,nativeId:null,parentId:null,turnId:notice.event.generation_id??null,agentId:null,data:record.data},'transcript');
         if(event){const transformed=attachmentTransform(event,attachments,session.cwd??homedir());events.push(transformed);eventBytes+=Buffer.byteLength(JSON.stringify(transformed));}
       }
       state.offset=record.offset;state.ino=record.ino;state.identity=record.identity;state.checkpoint=record.checkpoint;state.skipPartial=record.skipPartial;
       if(events.length>=100||attachments.length>=8||eventBytes>=1024*1024){await yieldToOwner();commit();}
     }
+    state.scannedAt=scanStart;
   }
   for(const event of transcriptOnly?[]:grokBotEvents(notice)) {
     if(cursorThoughtDuplicate(state.thoughtHooks,notice.event))continue;
-    const next=messages(event,'hooks');if(next)events.push(attachmentTransform(next,attachments,session.cwd??homedir()));
+    const next=messages({...event,sourceTime:notice.at},'hooks');if(next)events.push(attachmentTransform(next,attachments,session.cwd??homedir()));
   }
   if(!transcriptOnly)state.lastNotice=notice.id;commit();
   },Infinity);
@@ -1164,6 +1181,22 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     const staticToken=staticCaptureToken(config.api);
     let token=staticToken||(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const identity=await captureIdentity(config,token),principal=identity.principal;
+    if(identity.recording?.paused){
+      const confirmed=confirmedPermission(identity.recording);
+      // Retire confirmed private bytes without reading attachment blobs. Publish a
+      // sanitized replacement first so an interrupted cleanup preserves eligible events.
+      if(confirmed)for(const name of queuedNames().filter(n=>!isPendingLive(captureDir(),n))){
+        const path=join(captureDir(),'queue',name),batch=read(path);
+        if(batch?.owner?.userId!==principal.userId||batch.owner.tenantId!==principal.tenantId)continue;
+        const kept=permittedBatch(batch,confirmed);
+        if(kept?.events.length===batch.events.length)continue;
+        if(kept){const bytes=JSON.stringify(kept);enqueueLiveBatch(captureDir(),hash(bytes)+'.json',bytes,false);}
+        retryWindowsSharing(()=>unlinkSync(path));
+      }
+      if(wait)throw new CliError('RECORDING_PAUSED','Recording is paused for this account.');
+      return {uploaded:0,pausedRevision:identity.recording.revision};
+    }
+    const recordingHeaders:Record<string,string>=identity.recording?{'x-opencrawl-recording':identity.recording.revision}:{};
     token=identity.token??token;
     let useGzip=identity.gzip,cursorSupported=identity.cursor,antigravitySupported=identity.antigravity;
     // A long flush outlives a short-lived sign-in token. Renew before each request
@@ -1172,6 +1205,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       if(next===token)return token;
       const refreshed=await captureIdentity(config,next),current=refreshed.principal;
       useGzip=refreshed.gzip;cursorSupported=refreshed.cursor;antigravitySupported=refreshed.antigravity;
+      if(refreshed.recording?.paused||refreshed.recording?.revision!==identity.recording?.revision)throw new CliError('CAPTURE_PERMISSION_CHANGED','Recording permission changed. Recheck the queue before uploading.');
       if(current.userId!==principal.userId)throw new CliError('CAPTURE_OWNER_MISMATCH','Signed-in user changed during upload. Sign back in as the queued author; queued data is retained.');
       if(current.tenantId!==principal.tenantId)throw new CliError('CAPTURE_DESTINATION_CHANGED','Signed-in team changed during upload. Sign back into the original destination; queued data is retained.');
       return token=refreshed.token??next;
@@ -1213,7 +1247,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
       for(const a of batch.attachments)if(a.status==='captured'&&!acknowledged.has(a.sha256)){
         await attachments.ensure(attachmentScope,a.sha256,async()=>{
           const bytes=readCaptureAttachment(a.sha256);
-          const receipt=await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream'},body:bytes},await current(),renew);
+          const receipt=await request(config.api,'/api/sessions/attachments/'+a.sha256+'?'+new URLSearchParams({harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId}),{method:'PUT',headers:{'content-type':'application/octet-stream',...recordingHeaders,...identity.recording?.windows.length&&{'x-opencrawl-event-time':batch.events[0].timestamp}},body:bytes},await current(),renew);
           if(receipt?.sha256!==a.sha256||receipt.size!==bytes.length||receipt.discarded!==undefined&&receipt.discarded!=='session_deleted')throw new CliError('CAPTURE_RECEIPT_INVALID','Server did not confirm the attachment digest and size');
           return receipt.discarded===undefined;
         });
@@ -1225,7 +1259,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
         if(bytes.length<size*0.95){body=new Uint8Array(bytes);compressed=true;}
       }
       const sendBatch=async()=>{
-        try{return await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json',...(compressed?{'content-encoding':'gzip'}:{})},body},await current(),renew);}
+        try{return await request(config.api,'/api/sessions/batches',{method:'POST',headers:{'content-type':'application/json',...recordingHeaders,...(compressed?{'content-encoding':'gzip'}:{})},body},await current(),renew);}
         catch(error){
           // Restore can lose a previously acknowledged blob. Invalidate only
           // this batch's scoped receipts so the next attempt repairs storage.
@@ -1267,9 +1301,11 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
           if(captureExcluded(latest??config,batch)){excluded++;continue;}
           if(batch.harness==='cursor'&&!cursorSupported){unsupported.add('cursor');continue;}
           if(batch.harness==='antigravity'&&!antigravitySupported){unsupported.add('antigravity');continue;}
+          const permitted=permittedBatch(batch,identity.recording);
+          if(!permitted){retryWindowsSharing(()=>unlinkSync(join(captureDir(),'queue',name)));excluded++;continue;}
           scheduled++;
           if(batchDelayMs){const start=Math.max(Date.now(),nextUploadAt);nextUploadAt=start+batchDelayMs;await pause(Math.max(0,start-Date.now()));if(failure)break;}
-          try{await upload(name,batch);}
+          try{await upload(name,permitted);}
           catch(error){
             if(!(error instanceof CliError)||error.httpStatus!==413)throw error;
             atomicJson(join(captureDir(),'rejected',name),{status:413,digest:hash(readFileSync(join(captureDir(),'queue',name))),at:new Date().toISOString()});

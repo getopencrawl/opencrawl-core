@@ -33,6 +33,8 @@ export interface MemoryDocument {memory: Omit<MemorySummary, 'description'>; tex
 export interface Authors {authors?: Record<string, string>}
 
 export interface LibraryContract {
+  'recording/status': {input: Record<string,never>; output: import('../sessions/recording.mjs').RecordingStatus | {available:false}};
+  'recording/change': {input: {mode:import('../sessions/recording.mjs').PauseMode; revision:string}; output: import('../sessions/recording.mjs').RecordingStatus};
   'sessions/list': {input: {scope: LibraryScope; query?: string; participant?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
   'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number}; output: SessionTranscript & Authors};
   'sessions/visibility': {input: {harness: SessionHarness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};

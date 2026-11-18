@@ -67,6 +67,7 @@ export interface SelfhostApplicationOptions {
   contextSuggestions?:ContextSuggestionsExtension;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   setupState?:SetupState;
+  recording?:import('../sessions/recording.mjs').RecordingPolicy;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
   /** Lets an admin store an operator connector credential from the product. */
@@ -78,7 +79,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,setupState,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,setupState,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -143,7 +144,7 @@ export function selfhostApplication({settings,store,boardState,setupState,eventI
     const result=await workloads.identify(token);if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
   },onConnectionTest:async p=>{await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{await onboarding.mcp(p,info);}});
-  const capture=createCaptureHandler({credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:async(principal,batch)=>{await Promise.all([observe.session(principal,batch),setupObserver.session(principal,batch)]);}}),authenticate:async req=>{
+  const capture=createCaptureHandler({recording,credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:async(principal,batch)=>{await Promise.all([observe.session(principal,batch),setupObserver.session(principal,batch)]);}}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
     if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
@@ -158,7 +159,7 @@ export function selfhostApplication({settings,store,boardState,setupState,eventI
     return principal;
   }});
   const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson,inviteBeforeSetup:true});
-  const library=createLibraryApi({sessions,memories:createMemoryLibrary({store,prefix,...settings.search})});
+  const library=createLibraryApi({recording,sessions,memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     const result=await directory.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});

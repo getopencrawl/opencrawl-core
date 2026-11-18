@@ -1,0 +1,76 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {setTimeout as delay} from 'node:timers/promises';
+import {createServer} from 'node:http';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
+import {createRecordingPolicy} from '../dist/src/state/recording.mjs';
+import {createCaptureHandler,createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {createLibraryApi} from '../dist/src/sessions/library-http.mjs';
+import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+
+test('recording is fenced at commit with personal history, CAS, expiry and cross-receiver wakeup',{skip:!postgresUrl},async t=>{
+  const db=await applicationDatabaseFixture(t),a=createRecordingPolicy(db),b=createRecordingPolicy(db);
+  const person={tenantId:'team1',userId:'user1'},other={...person,userId:'user2'},elsewhere={...person,tenantId:'team2'};
+  const write=async()=>true, api=createLibraryApi({recording:a});
+  const initial=await api(person,'recording/status',{});
+  assert.deepEqual(initial,{revision:'0',paused:false,until:null});
+  await assert.rejects(api({...person,captureAccess:'write'},'recording/change',{mode:'hour',revision:'0'}),{status:403});
+  await assert.rejects(api(person,'recording/change',{mode:'hour',revision:'0',userId:'user2'}),{status:400});
+  const entered=Promise.withResolvers(),release=Promise.withResolvers();
+  const inflight=b.capture(person,'0',[],async()=>{entered.resolve();await release.promise;});
+  await entered.promise;
+  let done=false;
+  const toggle=api(person,'recording/change',{mode:'hour',revision:'0'}).then(value=>{done=true;return value;});
+  await delay(20);assert.equal(done,false);release.resolve();await inflight;
+  const paused=await toggle;
+  assert.equal(paused.paused,true);assert.ok(Math.abs(paused.until-Date.now()-3600000)<3000);
+  const history=await b.read(elsewhere,'0');
+  assert.equal(history.revision,paused.revision);assert.equal(history.windows.length,1);
+  assert.equal((await b.read(person,paused.revision)).windows,undefined);
+  await assert.rejects(b.capture(person,'0',[],write),{status:423});
+  await assert.rejects(a.change(person,'resume','0'),{status:409});
+  assert.equal(await b.capture(other,'0',[],write),true);
+  const timestamp=new Date(history.windows[0][0]).toISOString();
+  const wait=b.wait(person,paused.revision,AbortSignal.timeout(5000));
+  await delay(40);
+  const resumed=await a.change(elsewhere,'resume',paused.revision);
+  await wait;assert.equal(resumed.paused,false);
+  await assert.rejects(b.capture(person,'0',[],write),{status:412});
+  for(const time of [timestamp,null,'invalid'])await assert.rejects(b.capture(person,resumed.revision,[time],write),{status:422});
+  assert.equal(await b.capture(person,resumed.revision,[new Date().toISOString()],write),true);
+  const next=await a.change(person,'indefinite',resumed.revision);
+  assert.equal(next.until,null);assert.equal(next.paused,true);
+  // Simulate expiry of a timed pause using the database clock.
+  await db.pool.query("UPDATE opencrawl_recording_pauses SET end_ms=start_ms+1 WHERE namespace=$1 AND revision=$2",[db.namespace,next.revision]);
+  await delay(5);assert.equal((await b.read(person)).paused,false);
+});
+
+test('the receiver rejects a stale or paused body before ingest and scopes permission to the authenticated actor',{skip:!postgresUrl},async t=>{
+  const db=await applicationDatabaseFixture(t),recording=createRecordingPolicy(db);
+  const principal={userId:'owner',tenantId:'team'};
+  const dir=await mkdtemp(join(tmpdir(),'recording-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const ingest=createSessionIngest({store:createLocalSessionStore(dir)});
+  const server=createServer(createCaptureHandler({ingest,recording,authenticate:async()=>({...principal,captureAccess:'write'})}));
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const api='http://127.0.0.1:'+server.address().port+'/api/sessions/';
+  const state=await recording.change(principal,'indefinite','0');
+  const identities=await fetch(api+'identity',{headers:{'x-opencrawl-recording':'new'}}).then(r=>r.json());
+  assert.equal(identities.data.recording.paused,true);
+  assert.equal((await fetch(api+'identity')).status,423);
+  for(const [route,method] of [['batches','POST'],['memories','POST'],['attachments/'+'a'.repeat(64),'PUT']]){
+    assert.equal((await fetch(api+route,{method,body:'invalid'})).status,423);
+  }
+  const when=new Date().toISOString();await delay(5);
+  const green=await recording.change(principal,'resume',state.revision);
+  const batch={schemaVersion:1,owner:principal,installationId:'installation',sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message',timestamp:when}],attachments:[]};
+  assert.equal((await fetch(api+'batches',{method:'POST',headers:{'x-opencrawl-recording':'0'},body:JSON.stringify(batch)})).status,412);
+  assert.equal((await fetch(api+'identity')).status,426);
+  assert.equal((await fetch(api+'batches',{method:'POST',body:JSON.stringify(batch)})).status,412);
+  assert.equal((await fetch(api+'batches',{method:'POST',headers:{'x-opencrawl-recording':green.revision},body:JSON.stringify(batch)})).status,422);
+  batch.events[0].timestamp=new Date().toISOString();
+  assert.equal((await fetch(api+'batches',{method:'POST',headers:{'x-opencrawl-recording':green.revision},body:JSON.stringify(batch)})).status,200);
+});

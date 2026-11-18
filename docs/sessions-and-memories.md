@@ -3,6 +3,20 @@
 The console's **Sessions** and **Memories** pages let people read what their
 agents captured and control who else can.
 
+On **Sessions**, choose **Pause recording** and select **For 1 hour** or
+**Until I turn it back on**. **Resume recording** ends either pause early.
+The setting follows your signed-in identity across workspaces in this deployment.
+It applies to session uploads, attachments and native memory snapshots. Other
+people and separately authenticated shared workloads keep their own settings.
+
+The receiver serializes capture writes with pause changes. Clients receive a
+revision on their ordinary capture identity check. A daemon with queued work
+waits for a change notification while paused. Clients check the durable pause
+history before sending queued records or importing transcripts. Records with
+unverifiable times are excluded once a pause exists. Capture clients that
+predate the recording protocol must update to resume uploads after a pause.
+Native agent transcripts remain on the machine under the agent's own retention policy.
+
 - **Sessions** lists captured sessions newest first, with a word search and a
   Participants column. Click a person to filter the list to their sessions;
   remove the chip below search to clear the filter. The URL retains search and

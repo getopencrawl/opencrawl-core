@@ -5,6 +5,8 @@ import type {WorkspaceRole} from './api.ts';
 import {rpcTransportOptions, rpcRead as read, rpcWrite as write} from './transport.ts';
 export function createProductApi(webRpc: TRPCClient<ProductRouter> = createTRPCClient<ProductRouter>({links: [httpLink(rpcTransportOptions())]})) {
 const libraryOperations: {[O in LibraryOperation]: (input: LibraryContract[O]['input'], signal: AbortSignal) => Promise<LibraryContract[O]['output']>} = {
+  'recording/status':(input,signal)=>read(()=>webRpc.library.recording.status.query(input,{signal}),signal),
+  'recording/change':(input,signal)=>write(()=>webRpc.library.recording.change.mutate(input,{signal}),signal),
   'sessions/list':(input,signal)=>read(()=>webRpc.library.sessions.list.query(input,{signal}),signal),
   'sessions/read':(input,signal)=>read(()=>webRpc.library.sessions.read.query(input,{signal}),signal),
   'sessions/visibility':(input,signal)=>write(()=>webRpc.library.sessions.visibility.mutate(input,{signal}),signal),
