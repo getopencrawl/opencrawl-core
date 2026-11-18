@@ -9,6 +9,7 @@ import {collectCommand} from './capture/command.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 import {scheduleMemoryRefresh} from './capture/memory.ts';
 import {scheduleCliUpdate,updateCli} from './update.ts';
+import {findSetupConnection,nativeConnectionPrompt} from './setup/native-mcp.ts';
 import {launchClaudeSetup} from './setup/claude-launch.ts';
 import {spawn} from 'node:child_process';
 import {parseArgs, stripVTControlCharacters} from 'node:util';
@@ -347,7 +348,8 @@ export async function main(args = process.argv.slice(2)) {
         if(data&&'client' in data&&data.client==='claude-code'&&'agentPrompt' in data&&typeof data.agentPrompt==='string'&&!parsed.values.json&&process.stdin.isTTY&&process.stderr.isTTY){
           const claude=Bun.which('claude');
           if(claude){
-            return launchClaudeSetup(claude,{api,prompt:data.agentPrompt,needsLogin:'nativeMcpLoginRequired' in data&&data.nativeMcpLoginRequired===true});
+            const connection=await findSetupConnection('claude-code',claude,api);
+            return launchClaudeSetup(claude,{server:connection.name,prompt:nativeConnectionPrompt(data.agentPrompt,connection.name,api),needsLogin:!connection.skipLogin&&'nativeMcpLoginRequired' in data&&data.nativeMcpLoginRequired===true});
           }
         }
         if(data!==null)emit(data,formatSetupOutput(data));return 0;

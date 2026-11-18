@@ -8,13 +8,14 @@ import {launchCodexSetup} from './codex-launch.ts';
 import {launchAntigravitySetup} from './antigravity-launch.ts';
 import type {SetupUi} from './tui.tsx';
 import {labels,type PluginClient} from './plugins.ts';
+import {findSetupConnection,nativeConnectionPrompt,type NativeClient} from './native-mcp.ts';
 import {nativeLogin} from './native-login.ts';
 import {nativeTerminal} from './native-terminal.ts';
 import {inspectCodexHooks,type CodexHookReview} from '../capture/codex-hooks.ts';
 import {readCaptureConfig} from '../capture/runtime.ts';
 
 type Options={entry?:()=>ReturnType<typeof import('./entry.ts').terminalSetupEntry>;action?:'run'|'resume';values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
-type Dependencies={createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:()=>Promise<CodexHookReview>;pause?:(signal:AbortSignal)=>Promise<void>};
+type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:()=>Promise<CodexHookReview>;pause?:(signal:AbortSignal)=>Promise<void>};
 
 async function currentCodexReview():Promise<CodexHookReview>{
  const root=readCaptureConfig()?.roots.codex;
@@ -26,34 +27,38 @@ async function nativeCommand(command:string,args:string[],ui:SetupUi,title?:stri
  return nativeLogin(command,args,ui,title);
 }
 
-type NativeClient='claude-code'|'codex'|'antigravity';
 async function connectNativeClient(
  client:NativeClient, executable:string, api:string, ui:SetupUi,
  needsLogin:boolean, recording:boolean, retryAntigravity:boolean,
- native:typeof nativeCommand, inspectCodex:typeof currentCodexReview
+ native:typeof nativeCommand, inspectCodex:typeof currentCodexReview, findConnection:typeof findSetupConnection
 ):Promise<number|undefined>{
  const label=labels[client];
  const execute=(command:string,args:string[])=>native(command,args,ui,'Connect '+label);
+ if(client==='codex'&&recording){
+  for(;;){
+   const review=await inspectCodex();
+   if(review.state==='observed'&&review.total>0&&review.pending===0&&review.disabled===0)break;
+   const choice=await ui.action({title:'Review Codex hooks',description:'Codex asks which OpenCrawl hooks may run when you record sessions.',details:['Open /hooks in Codex and review the OpenCrawl entries.','When you finish, type /quit to return to setup.'],actions:[{id:'review',label:'Open Codex'},{id:'later',label:'Finish later'}]});
+   if(choice!=='review')return choice==='later'?0:2;
+   if(await execute(executable,[])!==0)return 2;
+   if(ui.signal.aborted)return 130;
+  }
+ }
+ ui.progress('Checking '+label,'Finding the OpenCrawl connection for this workspace.');
+ const connection=await findConnection(client,executable,api);
+ ui.signal.throwIfAborted();
+ needsLogin=needsLogin&&!connection.skipLogin;
+ const prompt=nativeConnectionPrompt(nativeSetupPrompt(api,client),connection.name,api);
  if(client==='antigravity'){
   if(retryAntigravity){
    const retry=await ui.action({title:'Antigravity verification is pending',description:'Reopen Antigravity to check the connection or sign in again.',actions:[{id:'verify',label:'Resume task'},{id:'connect',label:'Review connection'},{id:'later',label:'Finish later'}]});
    if(retry!=='verify'&&retry!=='connect')return retry==='later'?0:2;
    needsLogin=retry==='connect';
   }
-  const code=await launchAntigravitySetup(executable,api,nativeSetupPrompt(api,client),needsLogin,ui,execute);
+  const code=await launchAntigravitySetup(executable,connection.name,prompt,needsLogin,ui,execute);
   if(code!==0||ui.signal.aborted)return code||130;
  }else{
   const codex=client==='codex';
-  if(codex&&recording){
-   for(;;){
-    const review=await inspectCodex();
-    if(review.state==='observed'&&review.total>0&&review.pending===0&&review.disabled===0)break;
-    const choice=await ui.action({title:'Review Codex hooks',description:'Codex asks which OpenCrawl hooks may run when you record sessions.',details:['Open /hooks in Codex and review the OpenCrawl entries.','When you finish, type /quit to return to setup.'],actions:[{id:'review',label:'Open Codex'},{id:'later',label:'Finish later'}]});
-    if(choice!=='review')return choice==='later'?0:2;
-    if(await execute(executable,[])!==0)return 2;
-    if(ui.signal.aborted)return 130;
-   }
-  }
   const handoff=codex?{
    description:needsLogin?'Press Enter to open the sign-in page in your browser.':'Press Enter to open Codex and check the connection.',
    details:[...(needsLogin?['Approve access, then return to this terminal.','Codex will open and check the connection for you.','']:[]),'When Codex says it’s connected, type /quit to return to setup.'],
@@ -68,7 +73,7 @@ async function connectNativeClient(
    actions:[{id:'connect',label:handoff.button},{id:'later',label:'Finish later'}]
   });
   if(choice!=='connect')return choice==='later'?0:2;
-  const options={api,prompt:nativeSetupPrompt(api,client),needsLogin};
+  const options={server:connection.name,prompt,needsLogin};
   const notify=(message:string)=>ui.progress('Continue in '+label,message);
   const code=codex?await launchCodexSetup(executable,options,execute,notify)
    :await launchClaudeSetup(executable,{...options,returnToSetup:true},execute,notify);
@@ -88,7 +93,7 @@ export async function showDeviceCode(ui:Pick<SetupUi,'action'|'progress'>,url:st
 }
 
 /** Human setup and resume share a terminal. Machine commands keep their contracts. */
-export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,which=Bun.which,native=nativeCommand,inspectCodex=currentCodexReview,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
+export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,which=Bun.which,findConnection=findSetupConnection,native=nativeCommand,inspectCodex=currentCodexReview,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
  const ui=createUi?createUi():(await import('./tui.tsx')).createSetupUi();
  const action=options.action??'run';
  let destination:ReturnType<Options['readDestination']>|undefined;
@@ -189,7 +194,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       if(step?.kind==='native_tool'&&executable&&(client==='claude-code'||client==='codex'||client==='antigravity')){
        displayedInstruction=undefined;
        const code=await connectNativeClient(client,executable,api,ui,step.requiresSignIn,
-        Boolean(next&&'selections' in next&&next.selections?.forward[client]),lastLaunched===client,native,inspectCodex);
+        Boolean(next&&'selections' in next&&next.selections?.forward[client]),lastLaunched===client,native,inspectCodex,findConnection);
        if(code!==undefined)return code;
        lastLaunched=client;
        ui.progress('Checking setup','Checking the connection to '+label+'.');

@@ -1,5 +1,4 @@
 import {spawn} from 'node:child_process';
-import {setupPluginIdentity} from './plugins.ts';
 
 type Run = (command:string,args:string[])=>Promise<number>;
 const run:Run=(command,args)=>new Promise((resolve,reject)=>{
@@ -7,13 +6,13 @@ const run:Run=(command,args)=>new Promise((resolve,reject)=>{
  child.once('error',reject);child.once('exit',code=>resolve(code??1));
 });
 
-type ClaudeSetupOptions={api:string;prompt:string;needsLogin:boolean;returnToSetup?:boolean};
+type ClaudeSetupOptions={server:string;prompt:string;needsLogin:boolean;returnToSetup?:boolean};
 
 /** Native Claude owns its OAuth tokens. The CLI waits for its browser callback. */
-export async function launchClaudeSetup(claude:string,{api,prompt,needsLogin,returnToSetup}:ClaudeSetupOptions,execute:Run=run,notify:(message:string)=>void=message=>console.error(message)){
+export async function launchClaudeSetup(claude:string,{server,prompt,needsLogin,returnToSetup}:ClaudeSetupOptions,execute:Run=run,notify:(message:string)=>void=message=>console.error(message)){
  if(needsLogin){
   notify('Connect Claude Code: approve access in the browser. Setup continues automatically.');
-  const code=await execute(claude,['mcp','login',`plugin:${setupPluginIdentity(api).name}:opencrawl`]);
+  const code=await execute(claude,['mcp','login',server]);
   if(code!==0)return code;
  }
  notify('Opening a Claude Code session in this terminal to check the connection.');

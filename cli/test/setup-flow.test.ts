@@ -20,6 +20,7 @@ import {canInstallRecordingPlugin,installSetupPlugins,setupPluginIdentity} from 
 import type {SelectionScreen} from '../src/setup/select.ts';
 import {terminalSetupEntry} from '../src/setup/entry.ts';
 import {needsFirstRunSetup} from '../src/setup/first-run.ts';
+import {findSetupConnection} from '../src/setup/native-mcp.ts';
 import {runInteractiveSetup} from '../src/setup/interactive.ts';
 import type {SetupUi} from '../src/setup/tui.tsx';
 const setupCommand=(action:string,api:string,values:Parameters<typeof realSetupCommand>[2],dependencies:NonNullable<Parameters<typeof realSetupCommand>[3]>={})=>realSetupCommand(action,api,values,{platform:'darwin',canInstall:async()=>true,modeEligibility:()=>({eligible:values['capture-mode']==='daemon'||Boolean(readCaptureConfig()?.captureWorker||readCaptureConfig()?.daemonRequested),reason:'Fixture supervisor'}),daemonReady:async()=>true,installDaemon:async()=>({kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'}),...dependencies});
@@ -245,7 +246,7 @@ test('failed supervision stops before launching Claude native sign-in',async()=>
 test('Codex setup sends no task until native hook review completes, then starts a fresh task automatically',async()=>fixture(async(api,_dir,_observations,setCodex)=>{
  let trusted=false,choices=0;const calls:string[][]=[],screens:string[]=[];
  const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>{choices++;return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}));},action:async screen=>{screens.push(screen.title);return screen.title==='Review Codex hooks'?'review':screen.title==='Connect Codex to OpenCrawl'?'connect':'done';},close:()=>{},native:async run=>run()};
- const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,which:()=>'/native/codex',inspectCodex:async()=>({state:'observed',total:12,pending:trusted?0:12,disabled:0}),native:async(command,args)=>{
+ const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,which:()=>'/native/codex',findConnection:async()=>({name:setupPluginIdentity(api).name,skipLogin:false}),inspectCodex:async()=>({state:'observed',total:12,pending:trusted?0:12,disabled:0}),native:async(command,args)=>{
   calls.push([command,...args]);
   if(!args.length){expect(trusted).toBe(false);trusted=true;}
   else{expect(trusted).toBe(true);if(args[0]!=='mcp')setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});}
@@ -329,7 +330,7 @@ test('multi-agent setup resumes the approved browser action and advances to the 
   }
  };
  const run=(action:'run'|'resume')=>runInteractiveSetup({action,values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
-  createUi:()=>ui,which:name=>'/native/'+name,
+  createUi:()=>ui,which:name=>'/native/'+name,findConnection:async client=>({name:client==='claude-code'?'opencrawl':setupPluginIdentity(api).name,skipLogin:false}),
   inspectCodex:async()=>({state:'observed',total:1,pending:0,disabled:0}),
   native:async(command,args)=>{
    calls.push([command,...args]);
@@ -351,10 +352,31 @@ test('multi-agent setup resumes the approved browser action and advances to the 
  expect(await run('resume')).toBe(0);
  expect(screens).toEqual(['Connect Claude Code to OpenCrawl','Connect Claude Code to OpenCrawl','Connect Claude Code to OpenCrawl','Connect Codex to OpenCrawl']);
  expect(calls).toHaveLength(3);
- expect(calls[0]).toEqual(['/native/claude','mcp','login','plugin:'+setupPluginIdentity(api).name+':opencrawl']);
+ expect(calls[0]).toEqual(['/native/claude','mcp','login','opencrawl']);
  expect(calls[1][0]).toBe('/native/claude');
  expect(calls[1][1]).toContain('setup next --api '+api);
  expect(readSetupState(scope)?.selections).toEqual(saved.selections);
+},false,'claude-code'));
+
+test('Claude opens verification on its connected legacy server while workspace proof is still pending',()=>fixture(async(api,dir,_observations,setClient)=>{
+ mkdirSync(join(dir,'claude','projects'),{recursive:true});
+ const calls:string[][]=[];
+ const ui:SetupUi={signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),invite:async()=>{},
+  choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='claude-code'})),
+  progress:()=>{},close:()=>{},native:async run=>run(),action:async screen=>{
+   if(screen.title==='Setup complete')return 'done';
+   expect(screen.title).toBe('Connect Claude Code to OpenCrawl');expect(screen.actions?.[0]?.label).toBe('Open Claude Code');return 'connect';
+  }};
+ const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_api,run)=>run(),login:async()=>{}},{
+  createUi:()=>ui,which:()=>'/native/claude',findConnection:(client,binary,origin)=>findSetupConnection(client,binary,origin,async args=>
+   args[2]==='opencrawl'?['opencrawl:','  Status: ✓ Connected','  Type: http','  URL: '+api+'/mcp'].join('\n'):undefined),
+  native:async(_command,args)=>{
+   calls.push(args);expect(args).toHaveLength(1);expect(args[0]).toContain('Use native MCP server opencrawl at '+api+'/mcp');
+   setClient({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});return 130;
+  },
+  setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,installPlugins:async()=>({results:[{client:'claude-code',status:'installed'}],humanTasks:[]})}),
+ });
+ expect(code).toBe(0);expect(calls).toHaveLength(1);
 },false,'claude-code'));
 
 test('Antigravity opens native consent first and resumes its saved task after an incomplete attempt', async () => {
@@ -369,7 +391,7 @@ test('Antigravity opens native consent first and resumes its saved task after an
    action: async screen => {
     screens.push(screen.title);
     if (screen.title === 'Connect Antigravity') {
-     expect(screen.details).toContain(setupPluginIdentity(api).name + '_opencrawl');
+     expect(screen.details).toContain('opencrawl_opencrawl');
      return 'open';
     }
     if (screen.title === 'Antigravity verification is pending') return 'verify';
@@ -380,7 +402,7 @@ test('Antigravity opens native consent first and resumes its saved task after an
   const code = await runInteractiveSetup({
    values: {}, readDestination: () => ({api}), withOrigin: (_api, run) => run(), login: async () => {},
   }, {
-   createUi: () => ui, which: name => name === 'agy' ? '/native/agy' : null,
+   createUi: () => ui, which: name => name === 'agy' ? '/native/agy' : null, findConnection: async () => ({name:'opencrawl_opencrawl',skipLogin:false}),
    native: async (command, args) => {
     expect(command).toBe('/native/agy');
     calls.push(args);
