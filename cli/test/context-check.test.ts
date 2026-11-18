@@ -5,6 +5,8 @@ import {join,dirname,resolve} from 'node:path';
 import {setTimeout as pause} from 'node:timers/promises';
 import {checkEvent,checkOutput,hash,checkText,type CheckHarness} from '../src/context-check-events.ts';
 import {CheckStore,saveCheckSettings,checkBinding,type CheckInput} from '../src/context-check-state.ts';
+import {suggestionEventsSchema} from '../../src/search/suggestion-events.mts';
+import {flushSuggestionEvents} from '../src/context-suggestion-telemetry.ts';
 import {requestCheck,formatCheck} from '../src/context-check.ts';
 import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
 import {sessionFile} from '../src/session.ts';
@@ -27,8 +29,8 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
   const settings=saveCheckSettings(checkBinding(config,api),[harness]);
   const env:NodeJS.ProcessEnv={...process.env,OPENCRAWL_CONFIG_HOME:configHome,OPENCRAWL_PLUGIN_API:api,OPENCRAWL_PLUGIN_CLIENT:harness,OPENCRAWL_PLUGIN_NAME:identity.name,OPENCRAWL_PLUGIN_ROOT:nativeRoot};
   for(const key of ['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_API_URL'])delete env[key];
-  const run=async(event:unknown)=>{
-    const child=Bun.spawn([process.execPath,cli,'context-check','hook','--harness',harness,'--api',api],{env,stdin:new Blob([JSON.stringify(event)]),stdout:'pipe',stderr:'pipe'});
+  const run=async(event:unknown,native=false)=>{
+    const child=Bun.spawn(native&&process.platform!=='win32'?['/bin/sh',join(nativeRoot,'scripts/opencrawl-hook.sh'),'suggest']:[process.execPath,cli,...(native?['plugin-hook','--root',nativeRoot,'--action','suggest']:['context-suggestions','hook','--harness',harness,'--api',api])],{env:native?{...env,OPENCRAWL_CONFIG_HOME:'/unrelated',OPENCRAWL_TOKEN:'unrelated-token',OPENCRAWL_API_URL:'https://unrelated.example'}:env,stdin:new Blob([JSON.stringify(event)]),stdout:'pipe',stderr:'pipe'});
     const timeout=setTimeout(()=>child.kill(),5000);
     try{const [code,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);expect({code,err}).toEqual({code:0,err:''});return out;}finally{clearTimeout(timeout);}
   };
@@ -110,10 +112,11 @@ test('real native CLI hooks charge once, replay-free locally, and honor opt-out 
   const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
     expect(request.headers.get('authorization')).toBe('Bearer fixture-token');
     if(new URL(request.url).pathname==='/api/sessions/identity')return Response.json({schemaVersion:1,data:{principal:{tenantId:'tenant-a',userId:'user-a'}}});
+    if(new URL(request.url).pathname.endsWith('/events')){const payload=await request.json();expect(suggestionEventsSchema.safeParse(payload).success).toBe(true);return Response.json({schemaVersion:1,data:{accepted:payload.events.map((e:{id:string})=>e.id)}});}
     checks++;received.push(await request.json());return Response.json({schemaVersion:1,data:sample});
   }});
   try{for(const harness of ['codex','claude-code'] as const){const f=fixture(harness,`http://127.0.0.1:${server.port}`);try{
-    const before=checks,out=await f.run(prompt(harness));expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Retries use the same');expect(checks).toBe(before+1);
+    const before=checks,out=await f.run(prompt(harness),true);expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Retries use the same');expect(checks).toBe(before+1);
     expect(await f.run(prompt(harness))).toBe('');expect(checks).toBe(before+1);
     f.write(f.configFile,{...f.config,exclusions:{sessions:['native-session'],projects:[]}});expect(await f.run(prompt(harness,'prompt-2'))).toBe('');
     f.write(f.configFile,{...f.config,exclusions:{sessions:[],projects:[f.home]}});expect(await f.run(prompt(harness,'prompt-3'))).toBe('');
@@ -125,6 +128,7 @@ test('Cursor returns immediately and delivers one freshly authorized result for 
   let checks=0;
   const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
     if(new URL(request.url).pathname.endsWith('/identity'))return Response.json({schemaVersion:1,data:{principal:{tenantId:'tenant-a',userId:'user-a'}}});
+    if(new URL(request.url).pathname.endsWith('/events')){const payload=await request.json();return Response.json({schemaVersion:1,data:{accepted:payload.events.map((e:{id:string})=>e.id)}});}
     checks++;await pause(100);return Response.json({schemaVersion:1,data:sample});
   }});
   const f=fixture('cursor',`http://127.0.0.1:${server.port}`),store=new CheckStore(f.settings,'cursor');
@@ -152,3 +156,43 @@ test('changing the account or saved login during an in-flight check withholds it
     expect(await f.run(prompt('codex'))).toBe('');
   }finally{f.close();}}}finally{server.stop(true);}
 },10000);
+
+
+test('telemetry retries the same bounded metadata and withholds a different account',async()=>{
+  const f=fixture(),store=new CheckStore(f.settings,'codex');
+  try{
+    const task=store.enqueue(checkEvent('codex',prompt('codex'),f.config)!)!;
+    const first=store.pending();expect(first).toHaveLength(1);expect(suggestionEventsSchema.safeParse({events:first}).success).toBe(true);
+    expect(JSON.stringify(first)).not.toContain('deployment retry');expect(JSON.stringify(first)).not.toContain('fixture-token');
+    let posts=0,wrong=false,fail=true;const sent:string[]=[];
+    const fetcher=(async(url,init)=>{
+      if(String(url).endsWith('/identity'))return Response.json({data:{principal:wrong?{tenantId:'other',userId:'user-a'}:f.settings.owner}});
+      posts++;sent.push(String(init?.body));if(fail)throw Error('offline');
+      const payload=JSON.parse(String(init?.body));return Response.json({data:{accepted:payload.events.map((e:{id:string})=>e.id)}});
+    }) as typeof fetch;
+    await flushSuggestionEvents(store,()=>{},fetcher);expect(store.pending()).toEqual(first);
+    wrong=true;await flushSuggestionEvents(store,()=>{},fetcher);expect(posts).toBe(1);
+    wrong=false;fail=false;await flushSuggestionEvents(store,()=>{},fetcher);expect(posts).toBe(2);expect(sent[0]).toBe(sent[1]);expect(store.pending()).toHaveLength(0);
+    store.record(task,{stage:'handoff',results:1});expect(suggestionEventsSchema.safeParse({events:store.pending()}).success).toBe(true);
+  }finally{store.close();f.close();}
+});
+
+test('telemetry covers measured authorization latency but still bounds a stalled transport',async()=>{
+  const paths:string[]=[];
+  const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
+    const path=new URL(request.url).pathname;paths.push(path);
+    if(path.endsWith('/identity')){await pause(350);return Response.json({data:{principal:{tenantId:'tenant-a',userId:'user-a'}}});}
+    const body=await request.json() as {events:{id:string}[]};await pause(450);
+    return Response.json({data:{accepted:body.events.map(e=>e.id)}});
+  }});
+  const f=fixture('codex',server.url.origin),store=new CheckStore(f.settings,'codex');
+  try{
+    const task=store.enqueue(checkEvent('codex',prompt('codex'),f.config)!)!;
+    await flushSuggestionEvents(store,()=>{});
+    expect(paths).toEqual(['/api/sessions/identity','/api/context/suggestions/events']);expect(store.pending()).toHaveLength(0);
+    store.record(task,{stage:'handoff',results:1});const pending=store.pending();let calls=0;
+    const stalled=(async(_url,init)=>{calls++;return await new Promise<Response>((_resolve,reject)=>init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true}));}) as typeof fetch;
+    const start=performance.now();await flushSuggestionEvents(store,()=>{},stalled);
+    expect(performance.now()-start).toBeLessThan(2200);expect(calls).toBe(1);expect(store.pending()).toEqual(pending);
+  }finally{store.close();f.close();server.stop(true);}
+},5000);

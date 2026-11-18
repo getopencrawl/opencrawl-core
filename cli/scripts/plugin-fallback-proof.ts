@@ -1,4 +1,4 @@
-/** Real generated-hook delivery with a healthy synthetic receiver. Native client
+/** Real canonical-hook delivery with a healthy synthetic receiver. Native client
  * admission is fixture-owned; callers separately verify desktop trust and MCP. */
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync,existsSync,readdirSync} from 'node:fs';
@@ -9,7 +9,7 @@ import {captureDir,readCaptureConfig,type CaptureConfig} from '../src/capture/ru
 export async function prepareFallbackPlugins(command:string[],config:CaptureConfig,root:string){
  const pluginRoots=new Map<string,string>();
     const plugins=await installSetupPlugins(config.api,['claude-code','codex','cursor'],{home:root,command,which:()=>null});
-    // Fixture-owned native admission receipts: this checks compiled generated
+    // Fixture-owned native admission receipts: this checks compiled canonical
     // hook execution, not real assistant marketplace/trust acceptance.
     for(const row of plugins.results){
       assert(row.directory);pluginRoots.set(row.client,row.directory);
@@ -30,9 +30,9 @@ export async function proveOnlinePluginFallback(config:CaptureConfig,pluginRoots
           const records=harness==='claude-code'?[{type:'assistant',sessionId:session,uuid:session,message:{role:'assistant',content:[{type:'text',text}]}}]:[{type:'session_meta',payload:{id:session}},{type:'response_item',payload:{type:'message',role:'assistant',content:[{type:'output_text',text}]}}];
           writeFileSync(path,records.map(row=>JSON.stringify(row)).join('\n')+'\n');payload={session_id:session,hook_event_name:'Stop',transcript_path:path};
         }
-        const directory=pluginRoots.get(harness)!,hooks=JSON.parse(readFileSync(harness==='cursor'?join(config.roots.cursor!,'hooks.json'):join(directory,'hooks/hooks.json'),'utf8')).hooks;
+        const directory=pluginRoots.get(harness)!,hooks=JSON.parse(readFileSync(join(directory,'hooks/hooks.json'),'utf8')).hooks;
         const entries=hooks[harness==='cursor'?'afterAgentResponse':'Stop'].flatMap((row:any)=>row.hooks??[row]);
-        const hook=entries.find((row:any)=>row.command.includes('collect hook'));assert(hook);if(harness!=='cursor')assert.equal(hook.async,true);
+        const hook=entries.find((row:any)=>row.command.endsWith(' capture'));assert(hook);if(harness!=='cursor')assert.equal(hook.async,true);
         const env={...process.env,CLAUDE_PLUGIN_ROOT:directory,PLUGIN_ROOT:directory,CURSOR_PLUGIN_ROOT:directory};
         const child=Bun.spawn(['/bin/sh','-c','exec '+hook.command],{env,stdin:new Blob([JSON.stringify(payload)]),stdout:'pipe',stderr:'pipe'});children.push(child);outputs.push(new Response(child.stdout).text(),new Response(child.stderr).text());
         await until(()=>batches.some((batch:any)=>batch.harness===harness&&batch.events?.some((event:any)=>event.kind==='message'&&event.data?.role==='assistant'&&event.data.content?.some((part:any)=>part.type===(harness==='codex'?'output_text':'text')&&part.text===text))),25_000).catch(error=>{throw Error(harness+': '+error.message+'; received harnesses '+JSON.stringify(batches.map((batch:any)=>batch.harness))+'; local '+(existsSync(join(captureDir(),'last-error.json'))?readFileSync(join(captureDir(),'last-error.json'),'utf8'):'none'));});

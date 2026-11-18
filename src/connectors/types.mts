@@ -43,6 +43,7 @@ export interface PipelineOptions {
   binding: ConnectorBinding; store: ConnectorStore; search: ConnectorSearch;
   checkActive?: (binding: ConnectorBinding) => Promise<unknown>;
   heartbeat?: (progress: Record<string, number>) => void;
+  linear?: import('../integrations/linear-access.mjs').LinearAccess;
 }
 export interface PassageUnit { text: string; speaker?: string; startTime?: string; endTime?: string; heading?: string; }
 export interface TextPart { path: string; text: string; }

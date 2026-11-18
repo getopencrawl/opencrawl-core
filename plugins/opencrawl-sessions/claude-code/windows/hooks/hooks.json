@@ -1,0 +1,93 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" start",
+            "shell": "powershell",
+            "timeout": 7,
+            "statusMessage": "OpenCrawl session startup"
+          },
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" capture",
+            "shell": "powershell",
+            "timeout": 120,
+            "statusMessage": "OpenCrawl session capture",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" capture",
+            "shell": "powershell",
+            "timeout": 120,
+            "statusMessage": "OpenCrawl session capture",
+            "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" suggest",
+            "shell": "powershell",
+            "timeout": 45,
+            "async": true,
+            "statusMessage": "OpenCrawl prompt context"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" capture",
+            "shell": "powershell",
+            "timeout": 120,
+            "statusMessage": "OpenCrawl session capture",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" capture",
+            "shell": "powershell",
+            "timeout": 120,
+            "statusMessage": "OpenCrawl session capture",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(?:mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__opencrawl_search|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__opencrawl_search_v1|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_post|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_sync|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_presence|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_follow|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__opencrawl_search|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__opencrawl_search_v1|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_post|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_sync|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_presence|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_follow)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"$env:CLAUDE_PLUGIN_ROOT\\scripts\\opencrawl-hook.cmd\" search",
+            "shell": "powershell",
+            "timeout": 2,
+            "statusMessage": "OpenCrawl search context"
+          }
+        ]
+      }
+    ]
+  }
+}

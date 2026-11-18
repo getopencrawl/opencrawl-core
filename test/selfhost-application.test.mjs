@@ -521,3 +521,21 @@ test('self-host members read board and search over HTTP and tRPC while anonymous
     assert.equal((await f.request('/api/trpc/diagnostics.'+procedure+'?input='+encodeURIComponent(JSON.stringify(input)),'bob')).status,200);
   }
 });
+
+test('self-host context suggestions use the operator extension behind real local authentication',async t=>{
+  const observed=[];let judgments=0;
+  const f=await fixture(t,{contextSuggestions:{judgment:()=>{judgments++;return {version:'operator-v1',async plan(){return []},async shortlist(){return []},async rank(){return []}};},observe:async(p,events)=>observed.push({p,events})}});await f.admin();
+  const form=fields=>({method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
+  const device=await (await f.request('/api/cli/device',null,form({client_id:'opencrawl-cli'}))).json();
+  await f.post('/device','admin',{user_code:device.user_code,decision:'approve'});
+  const tokens=await (await f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:device.device_code}))).json();
+  assert.ok(tokens.access_token);
+  const send=(path,body,headers={})=>f.request(path,null,{method:'POST',headers:{authorization:'Bearer '+tokens.access_token,'content-type':'application/json',...headers},body:JSON.stringify(body)});
+  const input={eventId:'native-1',currentSession:{harness:'codex',sessionId:'local-session'},message:'Check local context'};
+  assert.equal((await send('/api/context/suggestions',input,{authorization:''})).status,401);
+  assert.equal((await send('/api/context/suggestions',input,{origin:'https://foreign.example'})).status,403);
+  assert.equal((await send('/api/context/suggestions',{...input,tenantId:'forged'})).status,400);assert.equal(judgments,0);
+  const response=await send('/api/context/suggestions',input);assert.equal(response.status,200);assert.equal((await response.json()).data.policyVersion,'operator-v1');assert.equal(judgments,1);
+  const e={id:'154224e0-b6be-4de4-9110-9d3b9da60c03',at:new Date().toISOString(),harness:'codex',stage:'observed',eventKey:'a'.repeat(64),sessionHash:'b'.repeat(64)};
+  const report=await send('/api/context/suggestions/events',{events:[e]});assert.equal(report.status,200);assert.deepEqual((await report.json()).data.accepted,[e.id]);assert.equal(observed.length,1);assert.equal(observed[0].p.tenantId,org);
+});

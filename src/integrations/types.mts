@@ -25,7 +25,7 @@ export interface IntegrationRecord {
   cleanupResourceVersion?: string;
   cleanupBlockedReason?: 'external-writer-proof-required' | null;
   disconnectedAt?: string; dataDeletedAt?: string | null; deletedObjects?: number;
-  settings?: {folderId?: string | number};
+  settings?: {folderId?: string | number; linearCustomersEnabled?: boolean};
 }
 export interface AirbyteMigration {
   format: number; nonce: string; oldDestinationId: string; definitionId: string; name: string; newDestinationId: string | null;
@@ -47,7 +47,7 @@ export interface ProviderData {
 }
 export interface ConnectorManifest {spec: {connection_specification: JsonRecord}; [key: string]: JsonValue | undefined}
 export interface ConnectorDefinition {name: string; manifest?: ConnectorManifest; docker?: {repository: string; tag: string}}
-export interface AccountInfo {label: string | null; workspace?: string | null; settings?: {folderId?: string | number}}
+export interface AccountInfo {label: string | null; workspace?: string | null; settings?: {folderId?: string | number; linearCustomersEnabled?: boolean}}
 export interface SourceConfigurationInput {startDate?: string; apiKey?: string; record?: IntegrationRecord; githubApp?: {app_id: string; private_key: string}}
 export interface CountInput {startDate?: string; record?: IntegrationRecord; now?: number; maxPages?: number}
 export interface GithubInstallation {id: string | number; account: {id: string | number; login: string}; repository_selection?: string; permissions?: Record<string, string>}
@@ -58,6 +58,7 @@ interface ProviderBase {
   unavailableReason?: string;
   owner(record: IntegrationRecord): string; connector: ConnectorDefinition;
   streams: Array<{name: string; syncMode: string; cursorField?: string[]}>;
+  streamsFor?(record: IntegrationRecord): ProviderBase['streams'];
   progressStream: string[]; progress?: Array<{stream: string; label: string; trailing?: boolean}>;
   primaryMetric?: string;
   units: [string, string]; schedule?: string; keys?: Record<string, string[]>;

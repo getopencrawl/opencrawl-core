@@ -25,12 +25,16 @@ function hooks(value:unknown):Hooks{
 /** Cursor 3.30 gates plugin hooks behind broad third-party imports. Native user
  * hooks are supported independently. Own only exact recorded entries, never a
  * command substring or another deployment's wrapper. */
-export async function reconcileCursorNativeHooks(root:string,directory:string,receipt:string,definition?:string,preflight=false){
+export async function reconcileCursorNativeHooks(root:string,directory:string,receipt:string,definition?:string,preflight=false,migrating=false){
  if(existsSync(root)&&lstatSync(root).isSymbolicLink())throw new CliError('CURSOR_HOOK_CONFLICT','Cursor configuration must be an ordinary directory.');
  return withFileLock(join(root,'.opencrawl-hooks.lock'),async()=>{
   const file=join(root,'hooks.json'),before=read(file),current=hooks(before.hooks),saved=read(receipt);
   if(Object.keys(saved).length&&(saved.file!==file||saved.directory!==directory))throw new CliError('CURSOR_HOOK_CONFLICT','Cursor hook ownership changed; existing hooks were preserved.');
   const prior=hooks(saved.hooks),desired=definition?hooks(JSON.parse(definition).hooks):{};
+  if(migrating){
+   const owned=Object.values(prior).flat(),entries=Object.values(current).flat();
+   if(before.enabled===false||entries.some(entry=>owned.some(row=>row.command===entry.command)&&(!owned.some(row=>isDeepStrictEqual(row,entry))||entry.enabled===false)))throw new CliError('CURSOR_HOOK_CONFLICT','An owned Cursor hook is disabled or changed. Preserve that choice and review migration to plugin hooks in Cursor before resuming.');
+  }
   const invocation=process.platform==='win32'?quote(join(directory,'scripts','opencrawl-cursor-native.cmd')):'/bin/sh '+quote(join(directory,'scripts','opencrawl-cursor-native.sh'));
   const rootCommand=process.platform==='win32'?'"%CURSOR_PLUGIN_ROOT%\\scripts\\opencrawl-hook.cmd"':'/bin/sh "$CURSOR_PLUGIN_ROOT/scripts/opencrawl-hook.sh"';
   for(const entries of Object.values(desired))for(const entry of entries){
@@ -59,6 +63,15 @@ export async function reconcileCursorNativeHooks(root:string,directory:string,re
   atomicJson(file,{...before,version:before.version??1,hooks:next});
   atomicJson(receipt,{file,directory,hooks:desired});
  });
+}
+
+/** One-time retirement of exact owned user entries. New hooks live only in the
+ * canonical plugin; modified/disabled entries require native review. */
+export async function retireCursorSetupHooks(api:string,root:string,preflight=false){
+ const key=createHash('sha256').update(apiOrigin(api)).digest('hex').slice(0,12);
+ const receipt=join(configDir(),'setup-plugins','cursor',key,'native-hooks.json');
+ if(!existsSync(receipt))return;
+ await reconcileCursorNativeHooks(root,join(root,'plugins','local','opencrawl-'+key),receipt,undefined,preflight,true);
 }
 
 export async function removeCursorSetupHooks(api:string,root?:string){

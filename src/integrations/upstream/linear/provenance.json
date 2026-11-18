@@ -1,0 +1,8 @@
+{
+  "repository": "airbytehq/airbyte",
+  "revision": "e39455951d08a0b9776389bee2052a54cb024c68",
+  "path": "airbyte-integrations/connectors/source-linear/manifest.yaml",
+  "version": "1.0.3",
+  "license": "ELv2",
+  "sha256": "e4a7788ab5a6f740cb6424cd411b53d92a4824d936a83dc8bd95fd573a0a91eb"
+}

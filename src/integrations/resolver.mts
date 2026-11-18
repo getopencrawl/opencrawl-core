@@ -4,7 +4,7 @@ import type {IntegrationRegistry} from './ports.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
 import {createConnectorSearch} from '../connectors/search.mjs';
 import {validateBinding} from '../connectors/scope.mjs';
-import type {createLinearSource} from './linear-source.mjs';
+import type {createLinearAccess} from './linear-access.mjs';
 import type {createDriveAccess} from './google-drive-access.mjs';
 export const INDEXED_PROVIDERS = Object.freeze(['slack', 'granola', 'circleback', 'notion', 'github', 'googledrive', 'linear'] as const);
 export const eligible = (record: IntegrationRecord): record is IntegrationRecord & {provider: typeof INDEXED_PROVIDERS[number]} => record.scope === 'team' && INDEXED_PROVIDERS.some(provider => provider === record.provider);
@@ -19,7 +19,7 @@ export interface ConnectorResolverOptions {
   /** Host policy authorizes the existing storage binding. Never provisions storage. */
   storage(record: IntegrationRecord): Promise<ReturnType<typeof createObjectStore>>;
   search(tenantId: string): ReturnType<typeof createConnectorSearch>;
-  linearAccess?(record: IntegrationRecord): Pick<ReturnType<typeof createLinearSource>, 'inspect'>;
+  linearAccess?(record: IntegrationRecord): ReturnType<typeof createLinearAccess>;
   driveAccess?(record: IntegrationRecord): ReturnType<typeof createDriveAccess>;
 }
 interface ConnectionCount {total: number; kinds: Record<string, number>}

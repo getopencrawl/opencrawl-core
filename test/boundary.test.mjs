@@ -10,7 +10,11 @@ const sourceRoot = new URL('../src/', import.meta.url);
 // A conservative regression lint for ordinary imports, not a JavaScript parser
 // or security sandbox. Review network/configuration coupling independently.
 function checkImports(source, file, root = sourceRoot) {
-  assert.doesNotMatch(source, /\b(?:import|require(?:\.resolve)?)\s*\(\s*(?!\s*["'])\S/, 'Computed imports need boundary review');
+  // Reviewed startup seam: only an operator's absolute local module path.
+  // Every other computed import remains subject to the ordinary guard.
+  const reviewed=file.href===new URL('selfhost/context-suggestions.mts',sourceRoot).href
+    ?source.replace('await import(pathToFileURL(path).href)',"await import('node:url')"):source;
+  assert.doesNotMatch(reviewed, /\b(?:import|require(?:\.resolve)?)\s*\(\s*(?!\s*["'])\S/, 'Computed imports need boundary review');
   for (const match of source.matchAll(/(?:\b(?:from|import)\s+|\b(?:import|require(?:\.resolve)?)\s*\(\s*)["']([^"']+)["']/g)) {
     const specifier = match[1];
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
@@ -71,6 +75,7 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
 
 test('boundary lint rejects common reverse dependencies and permits internal nesting', () => {
   const nested = new URL('feature/run.mjs', sourceRoot);
+  assert.throws(()=>checkImports('await import(other)',new URL('selfhost/context-suggestions.mts',sourceRoot)),/Computed imports/);
   assert.doesNotThrow(()=>checkImports("const history=['skip','import']; const fields=['from','to'];",nested));
   for (const source of [
     `import '@workos-inc/node';`,
