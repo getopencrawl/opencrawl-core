@@ -77,6 +77,7 @@
     "./application/onboarding": "./dist/src/application/onboarding.mjs",
     "./application/usage": "./dist/src/application/usage.mjs",
     "./application/usage-inventory": "./dist/src/application/usage-inventory.mjs",
+    "./integrations/credential-vault": "./dist/src/integrations/credential-vault.mjs",
     "./integrations/resolver": "./dist/src/integrations/resolver.mjs",
     "./application/onboarding-observer": "./dist/src/application/onboarding-observer.mjs",
     "./application/integration-callback": "./dist/src/application/integration-callback.mjs",

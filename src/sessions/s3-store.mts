@@ -348,3 +348,5 @@ async function storeError(res: Response, operation: string) {
   error.code = body.match(/<Code>([^<]*)</)?.[1];
   return error;
 }
+
+export {scopedCaptureStorage} from './raw-storage.mjs';
