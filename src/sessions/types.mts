@@ -52,6 +52,7 @@ export interface SessionBatch {
   schemaVersion: number; installationId: string; sessionId: string; harness: string; origin: string;
   owner: Principal; events: SessionEvent[]; attachments: Attachment[]; captureMode?: string;
   host?: string | null; receivedAt?: string; title?: string;
+  replicasSenders?: import("../integrations/replicas-senders.mjs").SenderEvidence;
   actorProfiles?: Record<string,unknown>;
 }
 export interface SessionIdentity {

@@ -24,7 +24,7 @@ declare global {
 async function request<T>(path: string, signal: AbortSignal, body?: unknown): Promise<T> {
   const response = await fetch(path, {signal, method: body === undefined ? 'GET' : 'POST', headers: {'content-type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
   const value: unknown = await response.json();
-  if (!response.ok) throw new ConsoleApiError(typeof value === 'object' && value && 'error' in value ? String(value.error) : 'Request failed', response.status);
+  if (!response.ok) throw new ConsoleApiError(typeof value === 'object' && value && 'error' in value ? typeof value.error==='object'&&value.error&&'message' in value.error?String(value.error.message):String(value.error) : 'Request failed', response.status);
   return value as T;
 }
 const adapter: OnboardingAdapter = {

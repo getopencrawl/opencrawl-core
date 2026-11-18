@@ -1,6 +1,10 @@
 /** Disposable branch-verification server. Run only against a dedicated test DB.
  * Production uses server.mts and durable Temporal dispatch. This preview indexes
  * synchronously into its own SQLite realm for a visible end-to-end assertion. */
+import {TestWorkflowEnvironment} from '@temporalio/testing';
+import {Worker} from '@temporalio/worker';
+import {replicasActivities} from '../src/sessions/temporal/replicas.mjs';
+import {sessionIndexingScheduler} from '../src/sessions/temporal/client.mjs';
 import {createServer} from 'node:http';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
@@ -31,7 +35,9 @@ const store=createLocalSessionStore(resolve(root,'objects'));
 const searchOptions={endpoint:'sqlite://'+resolve(root,'search.sqlite'),environment:'replicas-preview',tenantId};
 const search=createSessionSearch({...searchOptions,store,prefix});
 const pipeline=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>{if(batch.owner.tenantId!==tenantId)throw new Error('Preview tenant mismatch');return batch.owner;}});
-const imports=createReplicasImport({database,key:randomBytes(32),ingest:createSessionIngest({store,prefix,scheduleIndexing:key=>pipeline.processObject({key})}).putBatch,request:async(url,options)=>{
+const temporal=await TestWorkflowEnvironment.createLocal();
+const taskQueue='replicas-preview',scheduler=sessionIndexingScheduler({address:temporal.address,namespace:temporal.namespace??'default',sourceId:'replicas-preview',taskQueue,generation:'replicas-preview'});
+const imports=createReplicasImport({database,schedule:scheduler.scheduleReplicasImport,key:randomBytes(32),ingest:createSessionIngest({store,prefix,scheduleIndexing:key=>pipeline.processObject({key})}).putBatch,request:async(url,options)=>{
   const response=await fetch(url,options);
   if(!response.ok)console.log(JSON.stringify({upstreamStatus:response.status,path:new URL(String(url)).pathname}));
   if(String(url).endsWith('/whoami')&&response.ok){const value:unknown=await response.clone().json();if(!value||typeof value!=='object'||!('organization' in value)||!value.organization||typeof value.organization!=='object'||!('id' in value.organization)||value.organization.id!==expectedOrganization)throw new Error('Preview only permits the explicitly selected Replicas organization');}
@@ -41,6 +47,8 @@ const imports=createReplicasImport({database,key:randomBytes(32),ingest:createSe
   }
   return response;
 }});
+const worker=await Worker.create({connection:temporal.nativeConnection,namespace:temporal.namespace??'default',taskQueue,workflowsPath:new URL('../src/sessions/temporal/workflows.cjs',import.meta.url).pathname,activities:replicasActivities(imports)});
+const running=worker.run();
 const app=selfhostApplication({settings:{organizationId:tenantId,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:secret,setupToken:setup,registryPath:'unused',search:searchOptions},store,prefix,identity,boardState:{namespace:database.namespace,board},replicasImport:imports});
 let loginCookies:string[]=[];
 const server=createServer((req,res)=>{
@@ -56,4 +64,4 @@ const principal={tenantId,userId:admin!.userId},onboarding=createOnboardingStatu
 await onboarding.cli(principal);await onboarding.mcpTest(principal);await onboarding.session(principal,{schemaVersion:1,installationId:'fixture',sessionId:'fixture',origin:'unknown',owner:principal,attachments:[],harness:'codex',events:[{id:'fixture',kind:'message'}]});await onboarding.complete(principal);
 await writeFile(resolve(root,'preview-state.json'),JSON.stringify({namespace:database.namespace,tenantId,admin:principal.userId,expectedOrganization}),{mode:0o600});
 console.log('Branch verification server ready on port 48471. Only the explicitly selected Replicas organization is accepted.');
-for(const signal of ['SIGINT','SIGTERM'] as const)process.once(signal,()=>{server.closeAllConnections();server.close(()=>{identity.close();void database.close();});});
+for(const signal of ['SIGINT','SIGTERM'] as const)process.once(signal,()=>{server.closeAllConnections();server.close(async()=>{worker.shutdown();await running;await scheduler.close();await temporal.teardown();await identity.close();await database.close();});});

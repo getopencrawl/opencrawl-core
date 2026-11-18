@@ -150,7 +150,7 @@ export function selfhostApplication({settings,store,boardState,eventIdentities,p
     ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],
     ...['tokens.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
     ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
-    ...['googledrive','slack','granola','circleback','notion','github','linear'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
+    ...['googledrive','slack','granola','circleback','notion','github','linear','replicas'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
   return async(req:IncomingMessage,res:ServerResponse)=>{
     for(const [key,value] of Object.entries(securityHeaders))if(key!=='Strict-Transport-Security'||settings.url.startsWith('https:'))res.setHeader(key,key==='Content-Security-Policy'?value.replace(" https://api.workos.com https://*.authkit.app",''):value);

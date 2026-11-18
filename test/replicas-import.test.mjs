@@ -13,7 +13,7 @@ import {replicasEvents} from '../dist/src/integrations/replicas-events.mjs';
 const principal={tenantId:'org_test',userId:'admin'},organization={id:randomUUID(),name:'Own Replicas'};
 const chat={chat_id:randomUUID(),workspace_id:randomUUID(),workspace_name:'Archived workspace',workspace_status:'archived',provider:'claude',title:'Historical example',created_at:'2026-10-01T00:00:00Z',updated_at:'2026-10-01T00:00:00Z'};
 const event=(text,time='2026-10-01T00:00:00Z')=>({type:'claude-user',timestamp:time,payload:{message:{role:'user',content:[{type:'text',text}]}}});
-async function fixture(t,{failHandoff=false,answer}={}){
+async function fixture(t,{failHandoff=false,answer,schedule=async()=>{}}={}){
   const database=await applicationDatabaseFixture(t),key=randomBytes(32),store=memorySessionStore(),calls=[],handed=[];
   let handoffFails=failHandoff;
   const ingest=createSessionIngest({store,prefix:'history/v1',scheduleIndexing:async key=>{if(handoffFails){handoffFails=false;throw new Error('queue unavailable');}handed.push(key);}}).putBatch;
@@ -26,38 +26,39 @@ async function fixture(t,{failHandoff=false,answer}={}){
     assert.equal(path.pathname,`/v1/replica/${chat.workspace_id}/history`);
     return Response.json(path.searchParams.has('before_cursor')?{events:[event('older message')],before_cursor:null,total:1,has_more:false}:{events:[event('newer message','2026-10-02T00:00:00Z')],before_cursor:'older',total:1,has_more:true});
   };
-  const reopen=()=>createReplicasImport({database,key,ingest,request});
+  const reopen=()=>createReplicasImport({database,key,ingest,request,schedule});
   return {database,store,calls,handed,reopen,service:reopen()};
 }
-test('preview has no history reads; encrypted checkpoint survives restart, imports all pages and erases key',async t=>{
-  const f=await fixture(t);let status=await f.service.action(principal,{action:'preview',apiKey:'private-org-key'});
-  assert.equal(status.phase,'preview');assert.equal(f.calls.length,2);assert.equal(f.handed.length,0);
-  const row=(await f.database.pool.query('SELECT state,credential FROM opencrawl_replicas_imports WHERE namespace=$1',[f.database.namespace])).rows[0];
-  assert.ok(row.credential);assert.ok(!row.credential.includes(Buffer.from('private-org-key')));assert.ok(!JSON.stringify(row.state).includes('private-org-key'));
-  await assert.rejects(f.service.action(principal,{action:'step',id:status.id}),/approve/);
-  await assert.rejects(f.service.action({...principal,tenantId:'org_other'},{action:'start',id:status.id}),/changed/);
-  assert.equal(await f.service.status({...principal,tenantId:'org_other'}),null);
-  await f.service.action(principal,{action:'start',id:status.id});
-  status=await f.service.action(principal,{action:'step',id:status.id});assert.equal(status.events,1);assert.equal(status.phase,'importing');
-  status=await f.reopen().action(principal,{action:'step',id:status.id});assert.equal(status.phase,'complete');assert.equal(status.events,2);assert.equal(status.imported,1);
-  assert.equal((await f.database.pool.query('SELECT credential FROM opencrawl_replicas_imports WHERE namespace=$1',[f.database.namespace])).rows[0].credential,null);
-  const previous=[...f.handed];status=await f.service.action(principal,{action:'preview',apiKey:'private-org-key'});await f.service.action(principal,{action:'start',id:status.id});
-  for(let i=0;i<2;i++)await f.service.action(principal,{action:'step',id:status.id});
-  assert.deepEqual(f.handed.slice(2),previous,'repeat import reuses immutable batch paths');
+const job=(id,owner=principal)=>({tenantId:owner.tenantId,id});
+async function advance(service,id,owner=principal){await service.advance(job(id,owner));return service.status(owner);}
+test('connect verifies read access and hands off before returning; checkpoint survives restart',async t=>{
+  const jobs=[],f=await fixture(t,{schedule:async task=>jobs.push(task)});
+  const {id,phase}=await f.service.action(principal,{action:'connect',apiKey:'private-org-key'});
+  assert.equal(phase,'importing');assert.deepEqual(jobs,[job(id)]);assert.equal(f.calls.at(-1).searchParams.get('limit'),'1');
+  const query=()=>f.database.pool.query('SELECT state,credential FROM opencrawl_replicas_imports WHERE namespace=$1',[f.database.namespace]);
+  const row=(await query()).rows[0];assert.ok(row.credential);assert.ok(!row.credential.includes(Buffer.from('private-org-key')));assert.ok(!JSON.stringify(row.state).includes('private-org-key'));
+  assert.equal(await f.service.advance(job(id,{tenantId:'other'})),true);
+  assert.equal((await advance(f.service,id)).events,1);
+  const done=await advance(f.reopen(),id);assert.equal(done.phase,'complete');assert.equal(done.events,2);assert.equal(done.imported,1);
+  assert.equal((await query()).rows[0].credential,null);
 });
-test('failed durable indexing handoff leaves cursor unchanged and resume retries the same batch',async t=>{
-  const f=await fixture(t,{failHandoff:true});const {id}=await f.service.action(principal,{action:'preview',apiKey:'private-org-key'});await f.service.action(principal,{action:'start',id});
-  await assert.rejects(f.service.action(principal,{action:'step',id}),/queue unavailable/);
-  assert.equal((await f.service.status(principal)).events,0);
-  assert.equal((await f.reopen().action(principal,{action:'step',id})).events,1);
-  assert.equal(f.calls.filter(url=>url.pathname.endsWith('history')&&!url.searchParams.has('before_cursor')).length,2);
-  const disconnected=await f.service.action(principal,{action:'disconnect',id});assert.equal(disconnected.phase,'disconnected');
-  await assert.rejects(f.service.action(principal,{action:'step',id}),/approve/);
+test('Temporal rejection rolls back the connection and credential',async t=>{
+  const f=await fixture(t,{schedule:async()=>{throw Error('Temporal unavailable');}});
+  await assert.rejects(f.service.action(principal,{action:'connect',apiKey:'key'}),/Temporal unavailable/);
+  assert.equal(await f.service.status(principal),null);
+});
+test('failed handoff retains its checkpoint; reconnect fences old activities',async t=>{
+  const f=await fixture(t,{failHandoff:true});const connect=()=>f.service.action(principal,{action:'connect',apiKey:'key'});
+  const {id}=await connect();await assert.rejects(f.service.advance(job(id)),/queue unavailable/);
+  assert.equal((await f.service.status(principal)).events,0);assert.equal((await advance(f.reopen(),id)).events,1);
+  await f.service.fail(job(id),'Reconnect to resume.');assert.equal((await f.service.source(principal)).state,'error');
+  const resumed=await connect();assert.notEqual(resumed.id,id);assert.equal(resumed.events,1);
+  assert.equal(await f.service.advance(job(id)),true);assert.equal((await advance(f.service,resumed.id)).events,2);
 });
 test('personal keys and upstream bodies never become accepted credentials or exposed error text',async t=>{
   const database=await applicationDatabaseFixture(t),key=randomBytes(32);
   const service=createReplicasImport({database,key,ingest:async()=>{throw new Error('not allowed');},request:async()=>Response.json({organization,caller:'personal_api_key'})});
-  await assert.rejects(service.action(principal,{action:'preview',apiKey:'secret'}),/organization API key/);assert.equal(await service.status(principal),null);
+  await assert.rejects(service.action(principal,{action:'connect',apiKey:'secret'}),/organization API key/);assert.equal(await service.status(principal),null);
   const api=replicasApi('secret',async()=>new Response('upstream secret',{status:403}));await assert.rejects(api.identity(),error=>!error.message.includes('upstream secret')&&error.message.includes('denied'));
 });
 test('Replicas empty terminal history may omit its cursor; nonterminal pages cannot',async()=>{
@@ -99,11 +100,13 @@ test('every exported agent is imported; unreadable chats pause without skipping 
     if(url.pathname.endsWith('conversations'))return Response.json(url.searchParams.has('cursor')?{conversations:[second],total:2,next_cursor:null}:{conversations:[chat],total:2,next_cursor:'second-page'});
     if(url.pathname.endsWith('/history'))return denied?new Response('',{status:404}):Response.json({events:[{type:'muse-event',payload:{output:'complete retained event'}}],before_cursor:null});
   }});
-  let state=await f.service.action(principal,{action:'preview',apiKey:'key'});await f.service.action(principal,{action:'start',id:state.id});
-  await assert.rejects(f.service.action(principal,{action:'step',id:state.id}),/paused without skipping/);
+  await assert.rejects(f.service.action(principal,{action:'connect',apiKey:'key'}),/Team workspace visibility/);
+  assert.equal(await f.service.status(principal),null);denied=false;
+  let state=await f.service.action(principal,{action:'connect',apiKey:'key'});denied=true;
+  await assert.rejects(advance(f.service,state.id,principal),/Team workspace visibility/);
   assert.equal((await f.service.status(principal)).processed,0);assert.equal((await f.service.status(principal)).events,0);
   denied=false;
-  for(let i=0;i<5&&state.phase!=='complete';i++)state=await f.service.action(principal,{action:'step',id:state.id});
+  for(let i=0;i<5&&state.phase!=='complete';i++)state=await advance(f.service,state.id,principal);
   assert.equal(state.phase,'complete');assert.equal(state.processed,2);assert.equal(state.imported,2);assert.equal(state.events,2);assert.equal(state.pages,2);
 });
 test('repeated history cursors and transient failures cannot advance or duplicate a checkpoint',async t=>{
@@ -111,15 +114,15 @@ test('repeated history cursors and transient failures cannot advance or duplicat
   const f=await fixture(t,{answer:url=>{
     if(url.pathname.endsWith('/history'))return failure?new Response('do not expose secret',{status:500}):Response.json({events:[event('one')],before_cursor:'same'});
   }});
-  const {id}=await f.service.action(principal,{action:'preview',apiKey:'key'});await f.service.action(principal,{action:'start',id});await f.service.action(principal,{action:'step',id});
-  await assert.rejects(f.service.action(principal,{action:'step',id}),/repeated a history cursor/);assert.equal((await f.service.status(principal)).events,1);
-  failure=true;await assert.rejects(f.service.action(principal,{action:'step',id}),/could not read/);assert.equal((await f.service.status(principal)).events,1);assert.equal(f.handed.length,1);
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});await advance(f.service,id,principal);
+  await assert.rejects(advance(f.service,id,principal),/repeated a history cursor/);assert.equal((await f.service.status(principal)).events,1);
+  failure=true;await assert.rejects(advance(f.service,id,principal),/could not read/);assert.equal((await f.service.status(principal)).events,1);assert.equal(f.handed.length,1);
 });
 test('the same Replicas chat imported into two tenants gets separate immutable paths and owners',async t=>{
   const f=await fixture(t);
   for(const tenantId of ['org_a','org_b']){
-    const owner={...principal,tenantId};let state=await f.service.action(owner,{action:'preview',apiKey:'key'});await f.service.action(owner,{action:'start',id:state.id});
-    while(state.phase!=='complete')state=await f.service.action(owner,{action:'step',id:state.id});
+    const owner={...principal,tenantId};let state=await f.service.action(owner,{action:'connect',apiKey:'key'});
+    while(state.phase!=='complete')state=await advance(f.service,state.id,owner);
   }
   assert.equal(new Set(f.handed).size,4);assert.notEqual(f.handed[0].split('/users/')[0],f.handed[2].split('/users/')[0]);
 });
@@ -146,8 +149,8 @@ test('full history round-trips through immutable ingest, search and the session 
   ];
   const history={events,before_cursor:null,has_more:false,senders:[{sender_user_id:'native-person'}],history_version:7,goal:{text:'whole session'},codex_asp_transcript:{turns:[{id:'t',items:[{type:'future',output:'asp_turn_receipt'}]}]},unknown:{retained:true}};
   const request=async url=>Response.json(String(url).endsWith('whoami')?{organization,caller:'organization_api_key'}:String(url).includes('organization/conversations')?{conversations:[{...chat,provider:'future-agent'}],total:1,next_cursor:null}:history);
-  const service=createReplicasImport({database,key:randomBytes(32),request,ingest:createSessionIngest({store,prefix,scheduleIndexing:key=>pipeline.processObject({key})}).putBatch});
-  async function run(){let s=await service.action(principal,{action:'preview',apiKey:'key'});await service.action(principal,{action:'start',id:s.id});return service.action(principal,{action:'step',id:s.id});}
+  const service=createReplicasImport({database,schedule:async()=>{},key:randomBytes(32),request,ingest:createSessionIngest({store,prefix,scheduleIndexing:key=>pipeline.processObject({key})}).putBatch});
+  async function run(){let s=await service.action(principal,{action:'connect',apiKey:'key'});return advance(service,s.id,principal);}
   const state=await run();assert.equal(state.phase,'complete');assert.equal(state.events,6);assert.equal(state.turns,1);assert.equal(state.pages,1);
   const batches=[...store.data].filter(([key])=>key.endsWith('.json.gz')).map(([,bytes])=>JSON.parse(gunzipSync(bytes)));
   assert.deepEqual(batches.flatMap(b=>b.events).find(e=>e.kind==='replicas_history_page').data.replicasPage.response,history);
@@ -167,20 +170,64 @@ test('a large page splits into durable batches and a partial handoff retries wit
   const database=await applicationDatabaseFixture(t),store=memorySessionStore();const payload='x'.repeat(8*1024*1024);
   const history={events:[{type:'future-tool',payload:{output:payload}}],before_cursor:null};
   let calls=0,fail=true;const ingest=createSessionIngest({store,prefix:'large/v1',scheduleIndexing:async()=>{calls++;if(calls===2&&fail){fail=false;throw Error('second handoff failed');}}}).putBatch;
-  const service=createReplicasImport({database,key:randomBytes(32),ingest,request:async url=>Response.json(String(url).endsWith('whoami')?{organization,caller:'organization_api_key'}:String(url).includes('organization/conversations')?{conversations:[chat],total:1,next_cursor:null}:history)});
-  const {id}=await service.action(principal,{action:'preview',apiKey:'key'});await service.action(principal,{action:'start',id});
-  await assert.rejects(service.action(principal,{action:'step',id}),/second handoff/);assert.equal((await service.status(principal)).events,0);
-  const state=await service.action(principal,{action:'step',id});assert.equal(state.phase,'complete');assert.equal(state.events,1);assert.equal(state.pages,1);
+  const service=createReplicasImport({database,schedule:async()=>{},key:randomBytes(32),ingest,request:async url=>Response.json(String(url).endsWith('whoami')?{organization,caller:'organization_api_key'}:String(url).includes('organization/conversations')?{conversations:[chat],total:1,next_cursor:null}:history)});
+  const {id}=await service.action(principal,{action:'connect',apiKey:'key'});
+  await assert.rejects(advance(service,id,principal),/second handoff/);assert.equal((await service.status(principal)).events,0);
+  const state=await advance(service,id,principal);assert.equal(state.phase,'complete');assert.equal(state.events,1);assert.equal(state.pages,1);
   assert.equal([...store.data.keys()].filter(k=>k.endsWith('.json.gz')).length,2);
 });
 
 test('duplicate catalog entries preserve their metadata while counting one distinct session',async t=>{
   const f=await fixture(t,{answer:url=>url.pathname.endsWith('conversations')?Response.json({conversations:[chat,{...chat,title:'Another catalog label',provider:'future-agent'}],total:2,next_cursor:null}):url.pathname.endsWith('history')?Response.json({events:[event('same native history')],before_cursor:null}):null});
-  let status=await f.service.action(principal,{action:'preview',apiKey:'key'});await f.service.action(principal,{action:'start',id:status.id});
-  for(let i=0;i<2;i++)status=await f.service.action(principal,{action:'step',id:status.id});
+  let status=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<2;i++)status=await advance(f.service,status.id,principal);
   assert.equal(status.phase,'complete');assert.equal(status.processed,2);assert.equal(status.imported,1);assert.equal(status.pages,2);
   const {gunzipSync}=await import('node:zlib');const events=[...f.store.data].filter(([key])=>key.endsWith('.json.gz')).flatMap(([,bytes])=>JSON.parse(gunzipSync(bytes)).events);
   assert.equal(new Set(events.filter(e=>e.kind!=='replicas_history_page').map(e=>e.id)).size,1);
   assert.deepEqual(new Set(events.filter(e=>e.kind==='replicas_history_page').map(e=>e.data.replicasPage.conversation.title)),new Set([chat.title,'Another catalog label']));
   assert.ok((await f.service.source(principal)).rows.every(row=>row.done));
+});
+
+test('backfill resolves each authored message from the catalog or history, including previously archived batches',async()=>{
+  const {historyActor,replicasSenderEvidence,chunkSenderEvidence}=await import('../dist/src/integrations/replicas-senders.mjs');
+  const {participantProjection}=await import('../dist/src/sessions/participants.mjs');
+  const first=randomUUID(),second=randomUUID(),native=randomUUID();
+  const catalog={...chat,senders:[
+    {message_id:'prompt-1',sender_user_id:first,sender_email:'one@example.test'},
+    {message_id:native,sender_user_id:second,sender_email:'two@example.test'},
+    {message_id:'conflict',sender_user_id:first},
+  ]};
+  const prompt=(id,content='hello')=>({type:'claude-user',payload:{uuid:randomUUID(),replicasMessageId:id,message:{role:'user',content}}});
+  const history={senders:[
+    {message_id:'prompt-1',sender_user_id:first,sender_display_name:'Person One'},
+    {message_id:'conflict',sender_user_id:second},
+  ],events:[prompt('prompt-1'),{type:'codex-item',payload:{item:{id:native,type:'userMessage',content:'hello'}}},prompt('missing'),prompt('conflict'),prompt('prompt-1',[{type:'tool_result',content:'tool output'}])]};
+  const events=replicasEvents(catalog,history),batch={harness:'replicas',events,owner:{userId:'workload_replicas_test'}};
+  assert.deepEqual(events.slice(1).map(event=>historyActor(event,batch)?.userId),[first,second,undefined,undefined,undefined]);
+  const split=events.slice(1,3),metadata=chunkSenderEvidence(split,replicasSenderEvidence(catalog,history).replicasSenders);
+  assert.deepEqual(Object.keys(metadata.replicasSenders.senders).sort(),['prompt-1',native].sort());
+  assert.equal(historyActor(split[0],{...batch,...metadata,events:split}).name,'Person One');
+  assert.equal(participantProjection(events[1],batch).participantName,'Person One');assert.equal(participantProjection(events[2],batch).participantName,'two@example.test');
+});
+
+test('a real Temporal worker completes a paginated import after the request ends',async t=>{
+  const {TestWorkflowEnvironment}=await import('@temporalio/testing'),{Worker}=await import('@temporalio/worker');
+  const {replicasActivities}=await import('../dist/src/sessions/temporal/replicas.mjs');
+  const {sessionIndexingScheduler}=await import('../dist/src/sessions/temporal/client.mjs');
+  const env=await TestWorkflowEnvironment.createLocal(),taskQueue='replicas-'+randomUUID();
+  const scheduler=sessionIndexingScheduler({address:env.address,namespace:env.namespace??'default',taskQueue,sourceId:'history',generation:'v1'});
+  t.after(async()=>{await scheduler.close();await env.teardown();});
+  const f=await fixture(t,{schedule:scheduler.scheduleReplicasImport,failHandoff:true});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'test-private-key'});
+  assert.equal(f.handed.length,0);
+  const worker=await Worker.create({connection:env.nativeConnection,namespace:env.namespace??'default',taskQueue,
+    workflowsPath:new URL('../dist/src/sessions/temporal/workflows.cjs',import.meta.url).pathname,activities:replicasActivities(f.reopen())});
+  const handle=env.client.workflow.getHandle('replicas-history-'+id);
+  await worker.runUntil(()=>handle.result());
+  const state=await f.service.status(principal);assert.equal(state.phase,'complete');assert.equal(state.events,2);assert.equal(state.pages,2);
+  for(const event of (await handle.fetchHistory()).events){
+    for(const payload of event.workflowExecutionStartedEventAttributes?.input?.payloads??event.activityTaskScheduledEventAttributes?.input?.payloads??[]){
+      assert.deepEqual(JSON.parse(Buffer.from(payload.data).toString()),job(id));
+    }
+  }
 });

@@ -15,7 +15,7 @@ export function replicasError(message:string,status=400){return Object.assign(ne
 export function replicasApi(apiKey:string,request:typeof fetch=fetch){
   async function get<T>(path:string,schema:z.ZodType<T>):Promise<T>{
     const response=await request('https://api.replicas.dev/v1/'+path,{method:'GET',redirect:'error',signal:AbortSignal.timeout(20000),headers:{Authorization:'Bearer '+apiKey,'X-Replicas-Api-Version':'2026-10-07',Accept:'application/json'}});
-    if(!response.ok){await response.body?.cancel();throw replicasError(response.status===401||response.status===403?'Replicas denied access. Use an organization API key with access to retained conversations.':response.status===409?'This conversation has no retained history.':response.status===429?'Replicas is rate limiting this import. Wait a moment, then resume.':'Replicas could not read the retained history. Resume to retry.',response.status);}
+    if(!response.ok){await response.body?.cancel();throw replicasError(response.status===401||response.status===403?'Replicas denied access. Use an organization API key with access to retained conversations.':response.status===409?'This conversation has no retained history.':response.status===429?'Replicas is rate limiting this import. Try again shortly.':'Replicas could not read the retained history.',response.status);}
     // Bound streamed responses too; Content-Length is not authoritative.
     const reader=response.body?.getReader();if(!reader)throw replicasError('Replicas returned an empty response.',502);
     const chunks:Uint8Array[]=[];let bytes=0;
@@ -27,6 +27,6 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
   return {
     identity:()=>get('whoami',z.object({organization:z.object({id:uuid,name:z.string()}),caller:z.string()})),
     conversations:(next?:string|null)=>get('organization/conversations?'+new URLSearchParams({limit:'100',...(next?{cursor:next}:{})}),conversationsSchema),
-    history:(conversation:ReplicasConversation,before?:string|null)=>get('replica/'+conversation.workspace_id+'/history?'+new URLSearchParams({chat_id:conversation.chat_id,limit:'100',...(before?{before_cursor:before}:{})}),historySchema),
+    history:(conversation:ReplicasConversation,before?:string|null,limit=100)=>get('replica/'+conversation.workspace_id+'/history?'+new URLSearchParams({chat_id:conversation.chat_id,limit:String(limit),...(before?{before_cursor:before}:{})}),historySchema),
   };
 }

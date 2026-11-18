@@ -1,3 +1,5 @@
+import type {ReplicasJob} from '../../integrations/replicas-import.mjs';
+import type {replicasActivities} from './replicas.mjs';
 import type {SessionDeletionInput, SessionDeletionRecoveryInput, sessionDeletionActivities} from './deletion.mjs';
 import type {SessionTaskInput} from './worker.mjs';
 import type {SourcePage} from '../../connectors/workflow.mjs';
@@ -59,4 +61,14 @@ async function recoverSessionDeletionsV1(input: SessionDeletionRecoveryInput) {
   if (page.cursor) return continueAsNew<typeof recoverSessionDeletionsV1>({...input, cursor: page.cursor});
   return {completed: true};
 }
-export = {indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};
+const replicas=proxyActivities<ReturnType<typeof replicasActivities>>({startToCloseTimeout:'5 minutes',
+  retry:{initialInterval:'2 seconds',maximumInterval:'2 minutes',maximumAttempts:8}});
+const failureStatus=proxyActivities<Pick<ReturnType<typeof replicasActivities>,'markReplicasImportFailed'>>({startToCloseTimeout:'30 seconds',retry:{maximumInterval:'1 minute'}});
+async function importReplicasHistoryV1(job:ReplicasJob):Promise<void>{
+  for(let page=0;page<100;page++){
+    try{if(await replicas.importReplicasPage(job))return;}
+    catch(error){await failureStatus.markReplicasImportFailed(job);throw error;}
+  }
+  await continueAsNew<typeof importReplicasHistoryV1>(job);
+}
+export = {importReplicasHistoryV1, indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};

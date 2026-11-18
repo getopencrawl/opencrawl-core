@@ -1,3 +1,7 @@
+import {createReplicasImport} from '../integrations/replicas-import.mjs';
+import {hkdfSync} from 'node:crypto';
+import {createSessionIngest} from '../sessions/ingest.mjs';
+import {sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
 import {selfhostTemporalSettings} from './temporal-settings.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
@@ -44,7 +48,10 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
   const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
-  const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve});
+  const indexing=sessionIndexingScheduler({...config,taskQueue:sessionQueue,sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
+  const replicasImport=createReplicasImport({database,schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),
+    ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
+  const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,replicasImport});
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
   const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
   // An operator sets this only after the receiver and worker rollout is complete.
@@ -79,6 +86,6 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const stop=()=>{stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
   const runs=workers.map(x=>x.worker.run());tick();
-  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await Promise.all([database.close(),eventIdentities.close()]);}
+  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await Promise.all([database.close(),eventIdentities.close()]);}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

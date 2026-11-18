@@ -1,3 +1,4 @@
+import type {ReplicasJob} from '../../integrations/replicas-import.mjs';
 import type {Client, ConnectionOptions} from '@temporalio/client';
 import {ActivityExecutionAlreadyStartedError, ScheduleNotFoundError, WorkflowExecutionAlreadyStartedError, WorkflowIdReusePolicy} from '@temporalio/client';
 import {connectorClient} from '../../connectors/temporal/client.mjs';
@@ -108,6 +109,12 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
     return runtime;
   };
   return {
+    async scheduleReplicasImport(job:ReplicasJob){
+      const current=await connect();
+      await current.connection.withDeadline(Date.now()+10000,()=>current.client.workflow.start('importReplicasHistoryV1',{
+        workflowId:'replicas-history-'+job.id,taskQueue:config.taskQueue,args:[job],workflowIdConflictPolicy:'USE_EXISTING',
+        workflowIdReusePolicy:WorkflowIdReusePolicy.REJECT_DUPLICATE}));
+    },
     async schedule(key:string){const current=await connect();return current.connection.withDeadline<unknown>(Date.now()+10000,()=>config.mode==='workflow'?startSessionObjectWorkflow(current.client,{...config,key}):startSessionObjectIndexing(current.client,{...config,key}));},
     async close(){closed=true;if(runtime)await (await runtime).connection.close();},
   };

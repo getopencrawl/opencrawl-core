@@ -59,7 +59,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     finish: p.input(empty).mutation(({ctx})=>ctx.invoke<{workspaceUrl:string}>('/api/onboarding/finish','POST',{})),
   }),
   integrations: t.router({
-    replicasHistory:p.input(z.object({action:z.enum(['preview','start','step','disconnect']),apiKey:z.string().max(4000).optional(),id:z.string().uuid().optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<import('../integrations/replicas-import.mjs').ReplicasImportStatus>('/api/integrations/replicas/history','POST',input)),
+    replicasHistory:p.input(z.object({action:z.literal('connect'),apiKey:z.string().min(1).max(4000)}).strict()).mutation(({ctx,input})=>ctx.invoke<import('../integrations/replicas-import.mjs').ReplicasImportStatus>('/api/integrations/replicas/history','POST',input)),
     connect: p.input(z.object({provider,apiKey:z.string().max(4000).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok?:boolean;redirectUrl?:string}>('/api/integrations/'+input.provider+'/connect','POST',{apiKey:input.apiKey})),
     retry: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/retry','POST',{})),
     disconnect: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/disconnect','POST',{})),

@@ -7,7 +7,7 @@ import {sourceConnected} from './connector-card-model.ts';
 
 export interface ConnectorCardProps {
   source: SourceCard;
-  action: string;
+  action?: string;
   pending?: boolean;
   busy?: boolean;
   onAction: () => void;
@@ -46,5 +46,5 @@ export function ConnectorCard({source, action, pending = false, busy = false, on
     note={showProgress ? <SourceProgress source={source}/> : undefined}
     emptyMessage={showProgress ? undefined : source.synced === undefined ? 'Updating imported counts…' : 'No imported data yet.'}
     metadata={<span title={source.statusUnavailable && source.statusUpdatedAt ? `Last measured ${relativeTime(source.statusUpdatedAt)}` : undefined}>{!source.statusUnavailable && source.state === 'synced' && lastSynced ? `Synced ${relativeTime(lastSynced)}` : status.label}</span>}
-    action={<Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}{!compact && source.state !== 'error' && <Icon name="chevron-right" size={14}/>}</Button>}/>;
+    action={action && <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}{!compact && source.state !== 'error' && <Icon name="chevron-right" size={14}/>}</Button>}/>;
 }

@@ -1,24 +1,38 @@
 import {test,expect} from '@playwright/test';
-test('Replicas previews scope before importing, resumes after an error, and never persists the key in browser storage',async({page})=>{
-  const actions:string[]=[];
-  let fail=true;
-  const history={id:'f60f086a-d19b-47ee-bba7-c4f87f3587ec',organization:{id:'ab85158a-a7e9-49fa-902c-701f2bcc9321',name:'Getopencrawl'},phase:'preview',total:2,processed:0,imported:0,events:0,turns:0,pages:0,updatedAt:'2026-11-17T00:00:00Z',sample:[{title:'Archived conversation',workspace:'Sleeping workspace',provider:'claude'}]};
-  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',auth:'api-key',scope:'team',state:'disconnected'}]}}));
-  await page.route('**/api/integrations/replicas/history',route=>{
-    const input=route.request().postDataJSON() as {action:string;apiKey?:string};actions.push(input.action);
-    if(input.action==='preview'){expect(input.apiKey).toBe('test-org-key');return route.fulfill({json:history});}
-    if(input.action==='start'){history.phase='importing';return route.fulfill({json:history});}
-    if(fail){fail=false;return route.fulfill({status:503,json:{error:{message:'Import paused. Resume to retry.'}}});}
-    return route.fulfill({json:{...history,phase:'complete',processed:2,imported:2,events:12,turns:0,pages:2}});
+for(const width of [1440,390])test(`Replicas connects with one submission and runs after leaving the page at ${width}px`,async({page},info)=>{
+  await page.setViewportSize({width,height:width===390?844:900});
+  const shot=(name:string)=>page.screenshot({path:info.outputPath(`replicas-${width}-${name}.png`),fullPage:true});
+  const calls:string[]=[];
+  let state='disconnected',release=()=>{};
+  const hold=new Promise<void>(resolve=>{release=resolve;});
+  const history={id:'f60f086a-d19b-47ee-bba7-c4f87f3587ec',organization:{id:'ab85158a-a7e9-49fa-902c-701f2bcc9321',name:'Getopencrawl'},phase:'importing',total:2,processed:0,imported:0,events:0,turns:0,pages:0,updatedAt:'2026-11-17T00:00:00Z'};
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[
+    {provider:'github',name:'GitHub',auth:'oauth',scope:'team',state:'disconnected'},
+    {provider:'replicas',name:'Replicas',auth:'api-key',scope:'team',state,...state==='disconnected'?{}:{
+      history,rows:[{label:'Sessions',count:history.imported},{label:'Events',count:history.events}],synced:history.processed,total:2,message:state==='error'?'Reconnect to resume from the last saved page.':'Importing history in the background.'}},
+    {provider:'slack',name:'Slack',auth:'oauth',scope:'team',state:'disconnected'},
+  ]}}));
+  await page.route('**/api/integrations/replicas/history',async route=>{
+    const {action,apiKey}=route.request().postDataJSON();calls.push(action);
+    if(apiKey==='invalid')return route.fulfill({status:400,json:{error:{message:'Replicas denied access. Use an organization API key.'}}});
+    expect(apiKey).toBe('test-org-key');await hold;state='syncing';return route.fulfill({json:history});
   });
-  await page.goto('/integrations-fixture');await page.getByRole('button',{name:'Import history Replicas'}).click();
-  await page.getByLabel('Replicas organization API key').fill('test-org-key');await page.getByRole('button',{name:'Preview history'}).click();
-  await expect(page.getByText('Archived conversation — Sleeping workspace (claude)')).toBeVisible();expect(actions).toEqual(['preview']);
-  await expect(page.getByText(/Previously captured live sessions may overlap/)).toBeVisible();
-  await page.getByRole('button',{name:'Import into this workspace'}).click();
-  await expect(page.getByRole('button',{name:'Resume import'})).toBeVisible();expect(actions).toEqual(['preview','start','step']);
-  await page.getByRole('button',{name:'Resume import'}).click();await expect(page.getByText(/History import finished/)).toBeVisible();
-  expect(await page.evaluate(()=>JSON.stringify([localStorage,sessionStorage]))).not.toContain('test-org-key');
+  await page.goto('/integrations-fixture');
+  const open=page.getByRole('button',{name:'Connect Replicas'});await expect(open).toBeVisible();
+  expect(await page.locator('img[src$="/replicas.svg"]').evaluate((el:HTMLImageElement)=>el.complete&&el.naturalWidth>0)).toBe(true);
+  await shot('available');await open.click();
+  const dialog=page.getByRole('dialog'),key=dialog.getByLabel('Organization API key'),connect=dialog.getByRole('button',{name:'Connect',exact:true});
+  await expect(connect).toBeDisabled();await shot('dialog');
+  await key.fill('invalid');await connect.click();await expect(dialog.getByText(/Replicas denied access/)).toBeVisible();await shot('invalid');
+  await key.fill('test-org-key');await connect.click();await expect(dialog.getByText('Connecting…')).toBeVisible();await shot('checking');release();
+  await expect(dialog).toHaveCount(0);await expect(page.getByText(/Replicas connected/)).toBeVisible();await expect(open).toHaveCount(0);await shot('success');
+  await page.goto('about:blank');state='synced';Object.assign(history,{phase:'complete',processed:2,imported:2,events:12});
+  await page.goto('/integrations-fixture');await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await shot('complete');
+  Object.assign(history,{processed:0,imported:0,events:0,total:0});await page.reload();
+  await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await shot('empty');
+  state='error';history.phase='failed';
+  await page.reload();await expect(open).toBeVisible();await shot('background-error');
+  expect(calls).toEqual(['connect','connect']);expect(await page.evaluate(()=>JSON.stringify([localStorage,sessionStorage]))).not.toContain('test-org-key');
 });
 
 test('Replicas transcript exposes the entire original record beyond the display preview',async({page})=>{

@@ -1,3 +1,4 @@
+import {historyActor} from '../integrations/replicas-senders.mjs';
 import type {Principal, ObjectStore, SessionEvent, JsonValue, EventIdentityStore} from './types.mjs';
 import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
 import {gunzipSync} from 'node:zlib';
@@ -241,7 +242,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
     const cached = rendered.get(sourceKey);
     if (cached) {rendered.delete(sourceKey); rendered.set(sourceKey, cached); return cached.value;}
     const entry = {value: ingest.getBatch(principal, {...key, installationId, batchId}).then(batch => batch && new Map(batch.events.map(event => {
-      const actor=capturedActor(event,batch);
+      const actor=historyActor(event,batch)??capturedActor(event,batch);
       const raw=replicasRaw(event);
       return [event.id, {eventId: event.id, kind: event.kind, timestamp: iso(event.timestamp), entries: transcriptEntries(event),...(raw!==undefined?{raw}:{}),...(actor?{actor}:{})}];
     }))), size: 0};

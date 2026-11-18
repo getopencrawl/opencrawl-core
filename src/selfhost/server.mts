@@ -25,7 +25,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
-  const replicasImport=createReplicasImport({database,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
+  const replicasImport=createReplicasImport({database,schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
   const {server,shutdown}=createDrainableServer(selfhostApplication({settings,store,boardState,eventIdentities,prefix,identity,...services,replicasImport,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
   server.requestTimeout=60000;server.headersTimeout=10000;
   // Keep idle upstream sockets longer than Caddy's default two minutes.
