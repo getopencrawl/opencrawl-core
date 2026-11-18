@@ -74,11 +74,11 @@ img { max-width: 100%; }
 .oc-main:focus { outline: none; }
 .oc-content { container-type: inline-size; max-width: calc(var(--console-page-width) + 2 * var(--console-page-inset)); padding: var(--console-page-top) var(--console-page-inset) var(--console-page-bottom); margin: 0 auto; }
 /* A workspace Page owns the space below the mobile navigation or beside the sidebar. */
-.oc-app:has(.oc-content > .oc-page) { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
-.oc-main:has(.oc-content > .oc-page) { min-height: 0; }
+.oc-app:has(.oc-content .oc-page) { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
+.oc-main:has(.oc-content .oc-page) { min-height: 0; }
 .oc-content:has(> .oc-page) { height: 100%; padding-block: 0; }
 .oc-content > .oc-page { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.oc-content > .oc-page > .oc-page-header {
+.oc-content .oc-page > .oc-page-header {
   margin: 0 calc(-1 * var(--console-page-inset));
   padding: var(--space-4) var(--console-page-inset);
   max-height: 50dvh;
@@ -92,6 +92,21 @@ img { max-width: 100%; }
   overflow: auto;
   scroll-padding-block: var(--space-4);
 }
+/* Route extensions may wrap a Page with notices or links. Scroll those siblings
+   with the page and keep its header above the moving content. */
+.oc-main:has(.oc-content > .stack .oc-page) { position: relative; overflow: auto; }
+.oc-content:has(> .stack .oc-page) { padding-top: 0; }
+.oc-content > .stack .oc-page > .oc-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin-bottom: var(--console-page-header-gap);
+  background: var(--bg);
+}
+/* Readers already scroll internally. Allocate the remaining space below any notice. */
+.oc-content:has(> .stack .oc-conversation-page),
+.oc-content .stack:has(.oc-conversation-page) { height: 100%; min-height: 0; }
+.oc-content .stack > .oc-conversation-page { flex: 1; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .oc-mobile-header { display: none; }
 .oc-skip-link { position: fixed; inset: var(--space-3) auto auto var(--space-3); z-index: var(--console-z-skip); transform: translateY(-200%); padding: var(--space-3) var(--space-4); background: var(--primary); color: var(--on-primary); border-radius: var(--radius-control); }
 .oc-skip-link:focus { transform: none; }
@@ -205,9 +220,9 @@ img { max-width: 100%; }
   .oc-mobile-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); background: var(--surface); }
   .oc-mobile-header .oc-brand { font-size: var(--text-brand-compact); }
   .oc-app { display: block; }
-  .oc-app:has(.oc-content > .oc-page) { display: flex; flex-direction: column; }
-  .oc-app:has(.oc-content > .oc-page) > .oc-mobile-header { flex: none; }
-  .oc-main:has(.oc-content > .oc-page) { flex: 1; }
+  .oc-app:has(.oc-content .oc-page) { display: flex; flex-direction: column; }
+  .oc-app:has(.oc-content .oc-page) > .oc-mobile-header { flex: none; }
+  .oc-main:has(.oc-content .oc-page) { flex: 1; }
   body:has(.oc-menu-open) { overflow: hidden; }
   .oc-sidebar { --console-sidebar-width: min(300px, calc(100vw - var(--space-12))); width: var(--console-sidebar-width); padding-top: max(var(--space-4), env(safe-area-inset-top)); }
   .oc-nav-brand { min-height: var(--space-10); }

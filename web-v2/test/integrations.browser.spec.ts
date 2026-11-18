@@ -44,6 +44,26 @@ for (const viewport of [{width: 1440, height: 900}, {width: 390, height: 844}, {
     }
   });
 }
+for (const width of [1440, 390]) {
+  test(`route decorations scroll with the body under the workspace header at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width, height: 844});
+    await page.goto('/integrations-fixture');
+    const title = page.getByRole('heading', {level: 1, name: 'Integrations'});
+    const titleTop = () => title.evaluate(element => element.getBoundingClientRect().top);
+    await expect(page.getByRole('article')).toHaveCount(sources.length);
+    const baseline = await titleTop();
+
+    await page.goto('/integrations-fixture?decorated');
+    await expect(page.getByRole('article')).toHaveCount(sources.length);
+    expect(await titleTop()).toBe(baseline);
+    const terms = page.getByRole('link', {name: 'Connector terms'});
+    await terms.focus();
+    await expect(terms).toBeInViewport();
+    await expect(page.getByRole('article').first()).not.toBeInViewport();
+    expect(await titleTop()).toBe(baseline);
+    await expect(title).toBeInViewport({ratio: 1});
+  });
+}
 for(const width of [1440,600,390,320]) test(`available tiles precede connected cards and support search at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900});
   await page.goto('/integrations-fixture');
