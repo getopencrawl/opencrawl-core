@@ -50,7 +50,7 @@ export async function canInstallRecordingPlugin(id:string,options:PluginOptions=
   if(!binary)return false;
   if(!release.minimumHarnessVersion)return true;
   const nativeEnv={...env,HOME:home,USERPROFILE:home};
-  const version=options.runner?await options.runner(binary,['--version'],nativeEnv):await run(binary,['--version'],nativeEnv,5000);
+  const version=options.runner?await options.runner(binary,['--version'],nativeEnv):await runPluginCommand(binary,['--version'],nativeEnv,5000);
   return version.code===0&&!version.timedOut&&supportsMinimumVersion(release.harness,version.stdout?.trim()??'',release.minimumHarnessVersion);
 }
 export function setupPluginIdentity(api:string) {
@@ -132,7 +132,7 @@ export function pluginCommand(command:string,args:string[],env:NodeJS.ProcessEnv
   if(platform!=='win32'||!/[.](cmd|bat)$/i.test(command))return [command,args];
   return [join(env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-Command','& '+[command,...args].map(powershellQuote).join(' ')+'; exit $LASTEXITCODE']];
 }
-async function run(command:string,args:string[],env:NodeJS.ProcessEnv,timeout=45_000):Promise<CommandResult> {
+export async function runPluginCommand(command:string,args:string[],env:NodeJS.ProcessEnv,timeout=45_000):Promise<CommandResult> {
   const [executable,arguments_]=pluginCommand(command,args,env);
   return new Promise(resolve=>execFile(executable,arguments_,{env,timeout,maxBuffer:1024*1024,windowsHide:true},(error,stdout)=>resolve({code:error?typeof error.code==='number'?error.code:1:0,stdout,timedOut:error?.killed===true&&error.signal==='SIGTERM'})));
 }
@@ -218,7 +218,7 @@ function cursorPreparation(prior:{digest?:string;configHome?:string;preparedAt?:
 }
 export async function installSetupPlugins(api:string,selected:string[],options:PluginOptions={}) {
   if(selected.some(client=>!clients.includes(client as PluginClient)))throw new CliError('INVALID_USAGE','Choose a supported client from setup inventory.',64);
-  const identity=setupPluginIdentity(api),origin=identity.api,{home,env,which}=context(options),runner=options.runner??run;
+  const identity=setupPluginIdentity(api),origin=identity.api,{home,env,which}=context(options),runner=options.runner??runPluginCommand;
   const configHome=resolve(env.OPENCRAWL_CONFIG_HOME||env.XDG_CONFIG_HOME||join(home,'.config')),root=join(configHome,'opencrawl','setup-plugins');
   const command=options.command??setupCommandForSelf(),results:PluginResult[]=[],humanTasks:PluginHumanTask[]=[];
   const perform=async()=>{

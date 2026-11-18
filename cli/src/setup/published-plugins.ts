@@ -56,7 +56,7 @@ export function bindPublishedPackage(client:LocalPluginClient,api:string,source:
  for(const name of ['.mcp.json','mcp.json','mcp_config.json'])if(name in files)files[name]=mcp;
  files['.opencrawl-binding.json']=json({schemaVersion:1,client,api:origin,configHome:resolve(configHome),installationId,owner:{tenantId:owner.tenantId,userId:owner.userId},captureMode});
  files['.opencrawl-source.json']=json(source.source);
- files['skills/opencrawl-setup/SKILL.md']=setupAgentGuide(client,origin,profileSetupCommand(command,configHome,env),process.platform,client==='codex'?{name:identity.name,url:origin+'/mcp'}:undefined)+`\nUse the native MCP connection in plugin ${identity.name} for ${origin}.\n`;
+ files['skills/opencrawl-setup/SKILL.md']=setupAgentGuide(client,origin,profileSetupCommand(command,configHome,env),process.platform,client==='codex'?{name:identity.name,url:origin+'/mcp'}:undefined)+`\nVerify the native MCP connection selected by setup for ${origin}/mcp.\n`;
  return {...source,files};
 }
 
