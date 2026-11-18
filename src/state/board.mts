@@ -27,7 +27,9 @@ export interface BoardReader {
   participant(id:string):Promise<Participant|null>;
   participants():Promise<Record<string,Participant>>;
   profiles():Promise<Record<string,Omit<Participant,'pending'>>>;
-  profileByName(name:string,userId:string):Promise<{id:string}|null>;
+  profileByName(name:string,userId:string):Promise<{id:string;name:string}|null>;
+  onlinePeers(except:string,cutoff:number):Promise<Array<{agent:string;name:string;task:string}>>;
+  sharedUpdates(input:{after:number;through:number;channels?:string[];limit:number}):Promise<BoardMessage[]>;
   agentProfiles(input:{after:number;limit:number;cutoff:number;active:boolean;query:string}):Promise<Array<Omit<Participant,'pending'>>>;
   directory(input:{after:number;limit:number;cutoff:number}):Promise<{agents:Array<{id:string;participant:BoardProfile}>;total:number}>;
   agents():Promise<BoardState['agents']>;
@@ -37,6 +39,9 @@ export interface BoardReader {
 }
 export interface BoardTransaction extends BoardReader {
   blockPublication(agent:string):Promise<void>;
+  prepareRegistration(id:string,name:string|undefined,cutoff:number):Promise<void>;
+  refreshAgent(id:string,name:string,seen:number):Promise<void>;
+  expireAgents(cutoff:number):Promise<void>;
   publicationBlocked(agent:string):Promise<boolean>;
   putParticipant(id:string,value:Participant):Promise<void>;
   removeParticipant(id:string):Promise<void>;
@@ -173,8 +178,20 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       },
       async profiles(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent')).rows.map(row=>[row.agent,row.record]));},
       async profileByName(name,userId){
-        const row=(await query('SELECT agent FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND user_id=$3 AND lower(name)=lower($4) LIMIT 1',[userId,name])).rows[0];
-        return row?{id:row.agent}:null;
+        const row=(await query('SELECT agent,name FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND user_id=$3 AND lower(name)=lower($4) LIMIT 1',[userId,name])).rows[0];
+        return row?{id:row.agent,name:row.name}:null;
+      },
+      async onlinePeers(except,cutoff){
+        return (await query(`SELECT agent,name,record->>'task' AS task FROM opencrawl_board_participants
+          WHERE namespace=$1 AND tenant_hash=$2 AND agent<>$3 AND seen>$4 AND coalesce(record->>'left','false')<>'true'
+          ORDER BY agent`,[except,cutoff])).rows.map(row=>({agent:row.agent,name:row.name,task:row.task}));
+      },
+      async sharedUpdates({after,through,channels,limit}){
+        // A reader without a session can see shared board posts, never presence deliveries.
+        return (await query(`SELECT record FROM opencrawl_board_messages
+          WHERE namespace=$1 AND tenant_hash=$2 AND id>$3 AND id<=$4 AND NOT record ? 'onlineAudience'
+          AND ($5::text[] IS NULL OR topic=ANY($5) OR (topic='opencrawl' AND record->>'system'='true' AND NOT record ? 'threadId'))
+          ORDER BY id LIMIT $6`,[after,through,channels??null,limit])).rows.map(row=>row.record);
       },
       async agentProfiles({after,limit,cutoff,active,query:term}){
         return (await query(`SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND name<>'' AND (NOT $3::boolean OR (seen>$4 AND coalesce(record->>'left','false')<>'true')) AND strpos(lower(name||' '||coalesce(record->>'task','')),lower($5))>0 ORDER BY seen DESC,agent LIMIT $6 OFFSET $7`,[active,cutoff,term,limit,after])).rows.map(row=>row.record);
@@ -194,6 +211,18 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
       async publication({userId,agent,name,requestId,registered}){return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND author=$3 AND request_id=$4 AND(agent=$5 OR($6 AND lower(name)=lower($7) AND legacy_agent)) ORDER BY (agent=$5) DESC,id LIMIT 1`,[userId,requestId,agent,registered,name])).rows[0]?.record??null;},
       putParticipant,
+      async prepareRegistration(id,name,cutoff){
+        // The tenant head lock serializes expiry, name claims and the subsequent upsert.
+        await query('DELETE FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen<=$3 AND agent<>$4',[cutoff,id]);
+        if(name && (await query('SELECT 1 FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND lower(name)=lower($3) AND agent<>$4 LIMIT 1',[name,id])).rowCount)
+          throw fail('Agent name is already registered; choose a session-specific name',409);
+      },
+      async refreshAgent(id,name,seen){
+        await query(`UPDATE opencrawl_board_agents SET record=record || jsonb_build_object('name',$4::text,'seen',$5::bigint) WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3`,[id,name,seen]);
+      },
+      async expireAgents(cutoff){
+        await query("DELETE FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 AND (record->>'seen')::bigint<=$3",[cutoff]);
+      },
       async removeParticipant(id){await query('DELETE FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
       async putAgent(id,value){await query('INSERT INTO opencrawl_board_agents(namespace,tenant_hash,agent,record,position) VALUES($1,$2,$3,$4,(SELECT coalesce(max(position),0)+1 FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2)) ON CONFLICT(namespace,tenant_hash,agent) DO UPDATE SET record=EXCLUDED.record',[id,value]);},
       async removeAgent(id){await query('DELETE FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
@@ -312,7 +341,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
 const integer=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const messageFields={id:integer.min(1),timestamp:integer,agent:z.string(),author:z.string(),name:z.string(),topic:z.string(),text:z.string(),threadId:integer.min(1).optional(),replyTo:integer.min(1).optional(),mentionNames:z.array(z.string()).optional(),system:z.literal(true).optional()};
 const publication=z.strictObject({explicitMentions:z.array(z.string()),unresolvedMentions:z.array(z.string())});
-const messageSchema=z.strictObject({...messageFields,onlineAudience:z.array(z.string()).max(2048).optional(),captureRef:z.string().optional(),requestId:z.string(),mentions:z.array(z.string()).optional(),publication:publication.optional()});
+const messageSchema=z.strictObject({...messageFields,onlineAudience:z.array(z.string()).optional(),captureRef:z.string().optional(),requestId:z.string(),mentions:z.array(z.string()).optional(),publication:publication.optional()});
 const deliverySchema=z.strictObject({receipt:z.string().regex(/^[a-f0-9]{64}$/),createdAt:integer,through:integer,more:z.boolean(),messages:z.array(z.strictObject({...messageFields,mentions:z.array(z.string()).optional(),reasons:z.array(z.string())}))});
 const participantSchema=z.strictObject({userId:z.string().optional(),name:z.string(),task:z.string(),harness:z.string(),registeredAt:integer,seen:integer,left:z.boolean().optional(),topics:z.array(z.string()),followedThreads:z.array(integer.min(1)).optional(),mutedThreads:z.array(integer.min(1)).optional(),announced:z.boolean().optional(),captureRef:z.string().optional(),inboxAfter:integer.optional(),inboxLastReceipt:z.string().optional(),inboxPending:z.strictObject({ids:z.array(integer.min(1)).min(1).max(5),through:integer,cursor:z.string().regex(/^[a-f0-9]{64}$/)}).optional(),homepage:z.boolean().optional(),ackCursor:integer,lastPoll:integer.nullable(),lastAckAt:integer.nullable(),nextHomeAt:integer,pending:deliverySchema.nullable(),batches:integer,acknowledgedBatches:integer,lastDeliveryAt:integer.optional(),acknowledgedMessages:integer.optional(),lastReceipt:z.string().optional()});
 const boardSchema=z.strictObject({schema:z.literal(1),messages:z.array(messageSchema),agents:z.record(z.string(),z.strictObject({name:z.string(),topics:z.array(z.string()),seen:integer})),usage:z.strictObject({calls:integer,inputBytes:integer,outputBytes:integer}),participants:z.record(z.string(),participantSchema).optional()});
