@@ -25,3 +25,31 @@ jobs:
             Write-Host "Argument $option exit $LASTEXITCODE length $($out.Length)"
             Write-Host ($out.Substring(0,[Math]::Min(450,$out.Length)) | ConvertTo-Json -Compress)
           }
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          path: source
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Compare native entry naming
+        working-directory: source
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          bun install --cwd cli --frozen-lockfile --ignore-scripts
+          $entry=Join-Path $pwd 'cli/src/cli.ts'
+          $body=[IO.File]::ReadAllText($entry)
+          $body=$body.Replace('if (import.meta.main) {','console.error("entry",import.meta.main,process.argv.slice(0,3)); if (import.meta.main) {')
+          [IO.File]::WriteAllText($entry,$body)
+          @'
+          import {resolve} from 'node:path';
+          for(const [key,naming] of [['extensionless','[name]'],['exe','[name].exe'],['standard',undefined]]) {
+            const result=await Bun.build({entrypoints:[resolve('cli/src/cli.ts')],target:'bun',minify:true,jsx:{runtime:'automatic',development:false},define:{OPENCRAWL_VERSION:'"0.4.63"','process.env.NODE_ENV':'"production"','process.env.DEV':'"false"'},...(naming?{naming}:{}),compile:{target:'bun-windows-x64-baseline',outfile:resolve(key+'.exe')}});
+            if(!result.success)throw new AggregateError(result.logs,'probe build failed');
+            const run=Bun.spawnSync([resolve(key+'.exe'),'--version'],{stdout:'pipe',stderr:'pipe'});
+            console.log('VARIANT',key,JSON.stringify({status:run.exitCode,out:run.stdout.toString().slice(0,250),err:run.stderr.toString().slice(0,350)}));
+          }
+          '@ | Set-Content diagnose.mts
+          bun diagnose.mts
