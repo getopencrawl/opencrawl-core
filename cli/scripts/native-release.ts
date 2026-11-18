@@ -3,6 +3,7 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {nativeArchive} from './native-archive.ts';
+import {promoteNative} from './native-channel.ts';
 
 const root=resolve(import.meta.dir,'..'),dist=join(root,'dist'),output=join(root,'native');
 const manifest=JSON.parse(readFileSync(join(dist,'cli/package.json'),'utf8'));
@@ -45,16 +46,19 @@ if(!process.argv.includes('--publish')){
       run(['gh','release','create',tag,'--repo',repo,'--target',manifest.opencrawlRevision,'--title','OpenCrawl CLI '+manifest.version,'--notes-file',notes,'--latest=false','--draft']);
     }
     const assets=JSON.parse(run(['gh','release','view',tag,'--repo',repo,'--json','assets'])).assets as {name:string}[];
+    const missing:string[]=[];
     for(const name of files){
       if(assets.some(asset=>asset.name===name)){
         run(['gh','release','download',tag,'--repo',repo,'--pattern',name,'--dir',scratch]);
         if(digest(join(scratch,name))!==digest(join(output,name)))throw new Error('Existing immutable native asset differs: '+name);
-      }else run(['gh','release','upload',tag,join(output,name),'--repo',repo]);
+      }else missing.push(join(output,name));
     }
+    if(missing.length)run(['gh','release','upload',tag,...missing,'--repo',repo]);
     run(['gh','release','edit',tag,'--repo',repo,'--draft=false','--latest=false']);
     // The update channel must not advertise a native release until anonymous
     // downloads return the exact tested bytes, including through the asset CDN.
-    for(const name of files){
+    // Nine independent public reads, streamed into hashes with bounded memory.
+    const verified=await Promise.allSettled(files.map(async name=>{
       const deadline=Date.now()+120_000;
       for(;;){
         try{
@@ -65,6 +69,12 @@ if(!process.argv.includes('--publish')){
           break;
         }catch(error){if(String(error).includes('Published native asset differs:')||Date.now()>=deadline)throw error;await Bun.sleep(5000);}
       }
-    }
+    }));
+    for(const result of verified)if(result.status==='rejected')throw result.reason;
+    const checksums=Object.fromEntries(platforms.map(platform=>{
+      const name='opencrawl-'+platform+'.tgz';
+      return [name,digest(join(output,name))];
+    }));
+    promoteNative({version:receipt.version,revision:receipt.revision,checksums});
   }finally{rmSync(scratch,{recursive:true,force:true});}
 }

@@ -3,6 +3,9 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,readd
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
+import {createHash} from 'node:crypto';
+import {nativeChannelAt, nativeDownloads} from '../src/native-channel.ts';
+import {installNativeArchive} from '../src/update.ts';
 import {installBinary,nativeBin,nativeRoot,selectedBinary,update,cacheRoot} from '../src/distribution.ts';
 const {installNpm:install}=createRequire(import.meta.url)('../bin/opencrawl.cjs');
 
@@ -43,9 +46,27 @@ test('a custom command is preserved; an interrupted installation cannot become s
 }));
 test('native update selection keeps a newer installation and persists its check without npm',()=>fixture(async dir=>{
   await installBinary(executable(join(dir,'download')),'1.2.0');let installs=0;
-  const result=await update({force:true,current:'1.0.0',fetcher:Object.assign(async(url:string|URL|Request)=>{expect(String(url)).toBe('https://registry.npmjs.org/@getopencrawl%2fcli/latest');return Response.json({name:'@getopencrawl/cli',version:'1.1.0'});},{preconnect:()=>{}}),install:async()=>{installs++;}});
+  const checksums=Object.fromEntries(['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'].map(p=>['opencrawl-'+p+'.tgz','f'.repeat(64)]));
+  const now=Date.now();
+  const result=await update({force:true,current:'1.0.0',now:()=>now,fetcher:Object.assign(async(url:string|URL|Request)=>{expect(String(url)).toBe(nativeChannelAt(now));return Response.json({version:'1.1.0',revision:'a'.repeat(40),checksums});},{preconnect:()=>{}}),install:async()=>{installs++;}});
   expect(result).toEqual({updated:false,version:'1.2.0'});expect(installs).toBe(0);
   expect(JSON.parse(readFileSync(join(cacheRoot(),'update.json'),'utf8')).nextCheckAt).toBeGreaterThan(Date.now());
+}));
+test('a managed updater verifies one native archive before switching the existing launch path',()=>fixture(async dir=>{
+  await installBinary(executable(join(dir,'old')),'1.0.0');
+  const target=process.platform+'-'+process.arch, name='opencrawl-'+target+'.tgz', revision='a'.repeat(40);
+  const binaryName=process.platform==='win32'?'opencrawl.exe':'opencrawl';
+  const members={'package/package.json':JSON.stringify({name:'@getopencrawl/cli-'+target,version:'1.1.0',opencrawlRevision:revision}),
+    ['package/bin/'+binaryName]:'new binary','package/LICENSE':'license','package/THIRD_PARTY_NOTICES.txt':'notices','package/runtime/opencrawl.js':'runtime'};
+  const bytes=await new Bun.Archive(members,{compress:'gzip'}).bytes();
+  const release={version:'1.1.0',revision,checksums:{[name]:createHash('sha256').update(bytes).digest('hex')}};
+  const fetcher=Object.assign(async(url:RequestInfo|URL)=>{expect(String(url)).toBe(nativeDownloads+'1.1.0/'+name);return new Response(bytes);},{preconnect:()=>{}});
+  await expect(installNativeArchive({...release,checksums:{[name]:'b'.repeat(64)}},undefined,fetcher)).rejects.toThrow('integrity');
+  await expect(installNativeArchive({...release,revision:'c'.repeat(40)},undefined,fetcher)).rejects.toThrow('source');
+  expect(selectedBinary('1.0.0').version).toBe('1.0.0');
+  await installNativeArchive(release,undefined,fetcher);
+  expect(readFileSync(selectedBinary('1.0.0').file,'utf8')).toBe('new binary');
+  expect(JSON.parse(readFileSync(join(nativeRoot(),'installation.json'),'utf8')).version).toBe('1.1.0');
 }));
 test('npm preinstall places the exact platform executable and rejects mismatched packages before replacement',()=>fixture(async dir=>{
   const root=join(dir,'node_modules','@getopencrawl','cli'),platform=process.platform+'-'+process.arch;

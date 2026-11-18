@@ -1,7 +1,10 @@
 # Native Windows install. Requires only PowerShell and the Windows tar command.
 param([string]$Version = 'latest')
 $ErrorActionPreference = 'Stop'
-if ($Version -in @('latest', 'next')) { $Version = (Invoke-RestMethod 'https://registry.npmjs.org/@getopencrawl/cli/latest').version }
+if ($Version -in @('latest', 'next')) {
+  $epoch = [math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() / 30)
+  $Version = (Invoke-RestMethod "https://raw.githubusercontent.com/getopencrawl/opencrawl-core/cli-stable/release.json?epoch=$epoch").version
+}
 if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Usage: install.ps1 [latest|VERSION]' }
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'This release supports Windows x64.' }
 $archive = 'opencrawl-win32-x64.tgz'

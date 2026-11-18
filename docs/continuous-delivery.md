@@ -66,21 +66,31 @@ production rollout is active; it must use the automatic publication notification
 Early API health or controller success alone does not establish completion.
 A single successful sample establishes that run's latency, not a percentile or SLA.
 
-CLI changes on main allocate a version above all published CLI artifacts unless
-the committed version is already newer. The same version is used for the build
-and all Linux, macOS and Windows checks. All six packages advance `latest` only
-after their archives are downloadable. The `next` alias stays synchronized for
-installed clients, and staging tags are removed after promotion.
-Source provenance is included in the launcher package. No manual publish dispatch
-or version-reservation queue is needed after automation is enabled.
+## CLI delivery
+
+Native installers and managed native updates follow `release.json` on the
+`cli-stable` branch. The release job advances the pointer atomically after
+verifying anonymous downloads of the versioned GitHub assets. npm installations
+follow npm's `latest` tag. All six packages upload under a staging tag. Promotion
+waits until every tarball is downloadable with the expected source and integrity.
+The `next` alias follows `latest` for existing clients.
+The native release queue ends when the native pointer advances. npm publishing
+has its own ordered queue, allowing the next native release to ship during a scan.
+
+PRs build a candidate version above the occupied native tags and npm versions.
+Main rechecks the version, builds from its own checkout and compares the Git tree
+and distributed contents with the successful PR receipt. A changed version,
+payload or tree, or a missing receipt, runs all platform checks on main.
+Core CI owns the full core suite.
+
 Core declares its compatible released CLI in `package.json`
 (`opencrawlCliVersion`). Delivery verifies that exact version and its mainline
 source provenance, then stamps it into cloud setup and release metadata.
-Independent client builds and npm uploads do not block core. A server change
-requiring a newer client must explicitly advance this dependency after that
-client is released. Cloud installations keep an exact version pin.
+A server change requiring a newer client must explicitly advance this dependency
+after the client is released. Cloud installations keep an exact version pin.
 
 Merge changes only when they are ready for normal deployment. A one-time data
 transition must be encoded in the deployment path before merging dependent
 runtime changes. Failed validation leaves the current release serving; reruns
 and hosted reconciliation resume incomplete delivery.
+

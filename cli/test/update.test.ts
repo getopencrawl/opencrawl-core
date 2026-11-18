@@ -44,19 +44,6 @@ function registry(version='0.2.0',change:(name:string,files:Record<string,string
   return {origin,fetcher,get requests(){return requests;}};
 }
 
-test('fake registry metadata and tarballs retain identical bytes across timestamp boundaries',async()=>{
-  const r=registry(),names=['@getopencrawl/cli','@getopencrawl/cli-'+cli.target()];
-  const metadata=await Promise.all(names.map(async name=>(await r.fetcher(r.origin+'/'+encodeURIComponent(name)+'/0.2.0')).json()));
-  // Archive generation records timestamps, so cross a whole second before downloading.
-  await Bun.sleep(1100);
-  for(const item of metadata) {
-    const archives=await Promise.all([1,2].map(async()=>new Uint8Array(await(await r.fetcher(item.dist.tarball)).arrayBuffer())));
-    for(const archive of archives)expect('sha512-'+createHash('sha512').update(archive).digest('base64')).toBe(item.dist.integrity);
-    expect(archives[0]).toEqual(archives[1]);
-  }
-  expect(metadata[0].dist.integrity).not.toBe(metadata[1].dist.integrity);
-});
-
 test('successful checks persist one jittered 3–6 hour deadline and migrate daily receipts',async()=>fixture(async({root,cache})=>{
   const now=Date.now();let requests=0;
   const fetcher=async()=>{requests++;return Response.json({name:'@getopencrawl/cli',version:'0.1.0'});};

@@ -3,7 +3,10 @@
 set -eu
 version=${1:-latest}
 case "$version" in
-  latest|next) version=$(curl -fsSL --retry 3 https://registry.npmjs.org/@getopencrawl/cli/latest | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p') ;;
+  latest|next)
+    epoch=$(($(date +%s) / 30))
+    version=$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/getopencrawl/opencrawl-core/cli-stable/release.json?epoch=$epoch" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p')
+    ;;
 esac
 if ! printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
   echo 'Usage: install.sh [latest|VERSION]' >&2; exit 1

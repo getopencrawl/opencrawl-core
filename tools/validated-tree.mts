@@ -16,25 +16,28 @@ const sha = /^[a-f0-9]{40}$/;
 interface Pull {number: number; merged_at: string | null; merge_commit_sha: string; base: {ref: string; repo: {full_name: string}}; head: {sha: string; repo: {full_name: string}}}
 interface Run {id: number; run_attempt: number; head_sha: string; path: string; event: string; status: string; conclusion: string | null; head_repository: {full_name: string}}
 export interface Receipt {repository: string; tree: string; revision: string; head: string; run: number; attempt: number}
+interface CliPayload {version: string; payload: string}
 interface Artifact {id: number; name: string; expired: boolean}
 
 /** Only reuse a completed PR workflow for the exact merged source tree. Missing
  * evidence falls back to ordinary checks; a source pin is part of that tree. */
-export async function validatedTree(api: Api, repository: string, revision: string, tree: string, receipt: (artifact: number) => Promise<Receipt>): Promise<number | undefined> {
+export async function validatedTree(api: Api, repository: string, revision: string, tree: string, receipt: (artifact: number) => Promise<Receipt & Partial<CliPayload>>, cli?: CliPayload): Promise<number | undefined> {
   assert(sha.test(revision) && sha.test(tree), 'Expected immutable Git identities');
   const pulls = await api<Pull[]>(`commits/${revision}/pulls?per_page=100`);
   const merged = pulls.filter(p => p.merged_at && p.merge_commit_sha === revision && p.base.ref === 'main' && p.base.repo.full_name === repository && p.head.repo.full_name === repository);
   if (merged.length !== 1) return;
   const pull = merged[0]!;
-  const result = await api<{total_count: number; workflow_runs: Run[]}>(`actions/workflows/ci.yml/runs?event=pull_request&head_sha=${pull.head.sha}&per_page=100`);
+  const workflow = cli ? 'cli.yml' : 'ci.yml';
+  const result = await api<{total_count: number; workflow_runs: Run[]}>(`actions/workflows/${workflow}/runs?event=pull_request&head_sha=${pull.head.sha}&per_page=100`);
   if (result.total_count > 100) return;
-  const run = result.workflow_runs.filter(r => r.head_sha === pull.head.sha && r.event === 'pull_request' && r.head_repository.full_name === repository && r.path === '.github/workflows/ci.yml').sort((a, b) => b.id - a.id)[0];
+  const run = result.workflow_runs.filter(r => r.head_sha === pull.head.sha && r.event === 'pull_request' && r.head_repository.full_name === repository && r.path === '.github/workflows/'+workflow).sort((a, b) => b.id - a.id)[0];
   if (!run || run.status !== 'completed' || run.conclusion !== 'success') return;
   const artifacts = await api<{total_count: number; artifacts: Artifact[]}>(`actions/runs/${run.id}/artifacts?per_page=100`);
   if (artifacts.total_count > 100) return;
-  const matches = artifacts.artifacts.filter(a => a.name === 'core-validation' && !a.expired);
+  const matches = artifacts.artifacts.filter(a => a.name === (cli ? 'cli-validation' : 'core-validation') && !a.expired);
   if (matches.length !== 1) return;
   const proof = await receipt(matches[0]!.id);
+  if (cli && (!/^[a-f0-9]{64}$/.test(cli.payload) || !/^\d+\.\d+\.\d+$/.test(cli.version) || cli.payload !== proof.payload || cli.version !== proof.version)) return;
   if (proof.repository !== repository || proof.tree !== tree || proof.head !== pull.head.sha || proof.run !== run.id || proof.attempt !== run.run_attempt || !sha.test(proof.revision)) return;
   // The receipt names the synthetic merge commit actually checked, not just the
   // PR head. Verify its tree against GitHub as well as the protected merge.
@@ -53,10 +56,11 @@ export function runtimeChecksPassed(jobs: Record<string, {result: string}>, reus
 if (import.meta.main) {
   const git = (...args: string[]) => execFileSync('git', args, {encoding: 'utf8'}).trim();
   const repository = process.env.GITHUB_REPOSITORY!;
+  const cli = process.argv.includes('--cli') ? {version:process.env.RELEASE_VERSION!, payload:process.env.CLI_PAYLOAD!} : undefined;
   if (process.argv[2] === 'record') {
     const proof: Receipt = {repository, tree: git('rev-parse', 'HEAD^{tree}'), revision: git('rev-parse', 'HEAD'), head: process.env.PR_HEAD_SHA!, run: Number(process.env.GITHUB_RUN_ID), attempt: Number(process.env.GITHUB_RUN_ATTEMPT)};
     assert(process.env.GITHUB_EVENT_NAME === 'pull_request' && sha.test(proof.head), 'Only PR checks produce reusable validation');
-    writeFileSync('validation.json', JSON.stringify(proof) + '\n');
+    writeFileSync('validation.json', JSON.stringify({...proof,...cli}) + '\n');
   } else {
     let run: number | undefined;
     if (process.env.GITHUB_EVENT_NAME === 'push' && process.env.GITHUB_REF === 'refs/heads/main') {
@@ -69,7 +73,7 @@ if (import.meta.main) {
           const archive = join(scratch, 'validation.zip');
           writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
           return JSON.parse(execFileSync('unzip', ['-p', archive, 'validation.json'], {encoding: 'utf8', maxBuffer: 16_384})) as Receipt;
-        });
+        }, cli);
       } catch (error) {
         console.log('Reusable validation unavailable; running all checks:', error instanceof Error ? error.message : 'unknown error');
       } finally {rmSync(scratch, {recursive: true, force: true});}

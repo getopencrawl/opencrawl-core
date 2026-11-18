@@ -97,7 +97,7 @@ if (import.meta.main) {
   } else if (mode === 'cli-version') {
     const pkg = JSON.parse(readFileSync('cli/package.json', 'utf8'));
     if (process.env.RELEASE_VERSION) pkg.version = process.env.RELEASE_VERSION;
-    else if (process.env.GITHUB_EVENT_NAME === 'push') {
+    else if (process.env.GITHUB_EVENT_NAME === 'push' || process.env.GITHUB_EVENT_NAME === 'pull_request') {
       const inventories=await Promise.all(cliPackages.map(async name=>{
         const response=await fetch('https://registry.npmjs.org/'+encodeURIComponent(name),{signal:AbortSignal.timeout(30_000)});
         if(response.status===404)return [];
@@ -106,7 +106,11 @@ if (import.meta.main) {
         if(!metadata.versions||typeof metadata.versions!=='object'||Array.isArray(metadata.versions))throw Error('Invalid CLI registry inventory');
         return Object.keys(metadata.versions).filter(version=>/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version));
       }));
-      pkg.version=allocateCliVersion(pkg.version,inventories.flat());
+      // Native installs can advance while npm is still scanning (or unavailable
+      // after a partial publication). Never reallocate an occupied native tag.
+      const tags=execFileSync('git',['ls-remote','--tags','--refs','origin','refs/tags/cli-v*'],{encoding:'utf8'});
+      const versions=Array.from(tags.matchAll(/^[a-f0-9]{40}\s+refs\/tags\/cli-v(\d+\.\d+\.\d+)$/gm), match=>match[1]!);
+      pkg.version=allocateCliVersion(pkg.version,[...inventories.flat(),...versions]);
     }
     cliVersion(pkg.version);
     pkg.opencrawlRevision = process.env.GITHUB_SHA;

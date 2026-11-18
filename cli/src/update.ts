@@ -4,6 +4,7 @@ import {createHash,timingSafeEqual} from 'node:crypto';
 import {withFileLock} from './session.ts';
 import {retryWindowsSharing} from './filesystem.ts';
 import * as distribution from './distribution.ts';
+import {nativeDownloads, type NativeRelease} from './native-channel.ts';
 
 const PACKAGE='@getopencrawl/cli',REGISTRY='https://registry.npmjs.org';
 const MAX_ARCHIVE=160*1024*1024,MAX_UNPACKED=512*1024*1024;
@@ -13,7 +14,7 @@ const stages=new Set<string>();
 process.once('exit',()=>{for(const stage of stages)try{rmSync(stage,{recursive:true,force:true});}catch{}});
 type Launcher={cacheRoot:()=>string;target:()=>string;stable:(v:string)=>boolean;activeRoot:()=>string;
   updateDue:(state:unknown)=>boolean;
-  automaticUpdate:(options:{signal?:AbortSignal;install:(version:string)=>Promise<void>})=>Promise<unknown>};
+  automaticUpdate:(options:{signal?:AbortSignal;install:(version:string,native?:NativeRelease)=>Promise<void>})=>Promise<unknown>};
 function nativeDistribution():Launcher|undefined {
   if(!distribution.compiled())return;
   return {...distribution,automaticUpdate:async options=>{
@@ -28,7 +29,7 @@ function nativeDistribution():Launcher|undefined {
 export async function updateCli(){
   if(!distribution.compiled())throw new Error('Run update from the installed native executable.');
   const launcher=nativeDistribution()!;
-  return withFileLock(join(distribution.cacheRoot(),'update.lock'),()=>distribution.update({force:true,install:v=>installNativeRelease(v,{launcher})}));
+  return withFileLock(join(distribution.cacheRoot(),'update.lock'),()=>distribution.update({force:true,install:(version,native)=>installUpdate(version,launcher,undefined,native)}));
 }
 function readState(file:string):unknown {try{return JSON.parse(readFileSync(file,'utf8'));}catch{return null;}}
 async function bytes(response:Response,limit:number,signal?:AbortSignal) {
@@ -38,6 +39,39 @@ async function bytes(response:Response,limit:number,signal?:AbortSignal) {
   try {for(;;){signal?.throwIfAborted();const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit)throw new Error('Update download too large');chunks.push(value);}}
   finally{await reader.cancel().catch(()=>{});}
   return Buffer.concat(chunks);
+}
+
+export async function installNativeArchive(release:NativeRelease, signal?:AbortSignal, fetcher=fetch) {
+  const target=distribution.target(), archive='opencrawl-'+target+'.tgz';
+  const data=await bytes(await fetcher(nativeDownloads+release.version+'/'+archive,{signal}),MAX_ARCHIVE,signal);
+  if(createHash('sha256').update(data).digest('hex')!==release.checksums[archive])throw new Error('Native update integrity mismatch');
+  const executable='bin/'+(process.platform==='win32'?'opencrawl.exe':'opencrawl');
+  const required=['package.json',executable,'runtime/opencrawl.js','LICENSE','THIRD_PARTY_NOTICES.txt'];
+  const files=await new Bun.Archive(data).files();
+  if(files.size!==required.length)throw new Error('Unexpected native archive contents');
+  let size=0;
+  for(const path of required){
+    const file=files.get('package/'+path);
+    if(!file||!file.size||(size+=file.size)>MAX_UNPACKED)throw new Error('Incomplete native archive');
+  }
+  const manifest=JSON.parse(await files.get('package/package.json')!.text());
+  if(manifest.name!==PACKAGE+'-'+target||manifest.version!==release.version||manifest.opencrawlRevision!==release.revision)throw new Error('Native update source mismatch');
+  const root=distribution.cacheRoot();mkdirSync(root,{recursive:true,mode:0o700});
+  const stage=mkdtempSync(join(root,'.native-'));stages.add(stage);
+  try{
+    for(const path of required){
+      signal?.throwIfAborted();
+      const output=join(stage,path);mkdirSync(dirname(output),{recursive:true,mode:0o700});
+      await Bun.write(output,files.get('package/'+path)!);
+      chmodSync(output,path===executable?0o755:0o600);
+    }
+    signal?.throwIfAborted();
+    await distribution.installBinary(join(stage,executable),release.version);
+  }finally{rmSync(stage,{recursive:true,force:true});stages.delete(stage);}
+}
+
+function installUpdate(version:string,launcher:Launcher,signal?:AbortSignal,native?:NativeRelease){
+  return native ? installNativeArchive(native,signal) : installNativeRelease(version,{launcher,signal});
 }
 
 /** The two immutable npm artifacts have no runtime dependencies beyond the
@@ -101,7 +135,7 @@ export async function refreshCli({signal,launcher=nativeDistribution(),install}:
     signal?.throwIfAborted();
     // Another command may have completed while this one reached the lock.
     if(!launcher.updateDue(readState(state)))return;
-    await launcher.automaticUpdate({signal,install:install??(version=>installNativeRelease(version,{launcher,signal}))});
+    await launcher.automaticUpdate({signal,install:install??((version,native)=>installUpdate(version,launcher,signal,native))});
   },0,signal);}catch{} // A busy cache, sandbox or offline registry never blocks capture.
 }
 

@@ -6,6 +6,7 @@ const registryArgs = ['--registry=https://registry.npmjs.org', '--@getopencrawl:
 export async function publish({
   dist = resolve(import.meta.dir, '../dist'), channel = 'latest',
   dryRun = false, run = Bun.spawnSync, fetcher = fetch,
+  upload = async (args: string[], cwd: string) => Bun.spawn(args, {cwd, stdio: ['inherit', 'inherit', 'inherit']}).exited,
   sleep = (ms: number) => Bun.sleep(ms), now = Date.now,
 } = {}) {
   const folders = readdirSync(dist).filter(name => name !== 'cli').sort().concat('cli');
@@ -72,8 +73,8 @@ export async function publish({
       await sleep(15_000);
     }
   }
+  const pendingUploads: string[] = [];
   for (const folder of folders) {
-    if (folder === 'cli') await waitForAvailability(folders.filter(name => name !== 'cli'));
     const directory = join(dist, folder);
     const pkg = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
     const packed=run(['npm','pack','--dry-run','--json','--ignore-scripts'],{cwd:directory,stdout:'pipe',stderr:'pipe'});
@@ -93,11 +94,17 @@ export async function publish({
       continue;
     }
     if (existing && !existing.stderr.toString().includes('E404')) throw new Error(`Could not determine publication state for ${pkg.name}.`);
-    const result = run(dryRun ? ['npm', 'pack', '--dry-run'] : ['npm', 'publish', '--tag', stagingTag, '--access', 'public', ...registryArgs], {cwd: directory, stdio: ['inherit', 'inherit', 'inherit']});
-    if (result.exitCode) throw new Error(`Publication failed for ${pkg.name}; the launcher has not been promoted.`);
+    if (!dryRun) pendingUploads.push(directory);
   }
 
-  await waitForAvailability(['cli']);
+  // All six immutable packages can be scanned at once under the staging tag.
+  // Finish the preflight for all folders before sending the first upload.
+  const uploads = await Promise.allSettled(pendingUploads.map(async directory => {
+    const code = await upload(['npm', 'publish', '--tag', stagingTag, '--access', 'public', ...registryArgs], directory);
+    if (code !== 0) throw new Error(`Publication failed for ${directory}`);
+  }));
+  for (const result of uploads) if (result.status === 'rejected') throw result.reason;
+  await waitForAvailability(folders);
   if (!dryRun) {
     // Recheck every channel before any promotion, including resumable partial runs.
     for (const folder of folders) readTags(folder);

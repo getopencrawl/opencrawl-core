@@ -6,6 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,atomicFile,withFileLock} from './session.ts';
 import {CliError} from './oauth.ts';
+import {nativeChannelAt, parseNativeRelease, type NativeRelease} from './native-channel.ts';
 
 declare const OPENCRAWL_VERSION:string;
 export const version=typeof OPENCRAWL_VERSION==='string'?OPENCRAWL_VERSION:'0.2.0-dev';
@@ -50,17 +51,22 @@ export function delegateToNewest(args:string[]):number|undefined{
 }
 export const HOUR=60*60*1000;
 export function updateDue(state:any,now=Date.now()){const next=Number.isFinite(state?.nextCheckAt)?state.nextCheckAt:(state?.checkedAt||0)+6*HOUR;return !state||next<=now||next>now+6*HOUR;}
-export async function update({force=false,fetcher=fetch,install,signal,now=Date.now,random=Math.random,current=version}:{force?:boolean;fetcher?:typeof fetch;install:(v:string)=>Promise<void>;signal?:AbortSignal;now?:()=>number;random?:()=>number;current?:string}){
+export async function update({force=false,fetcher=fetch,install,signal,now=Date.now,random=Math.random,current=version}:{force?:boolean;fetcher?:typeof fetch;install:(v:string,native?:NativeRelease)=>Promise<void>;signal?:AbortSignal;now?:()=>number;random?:()=>number;current?:string}){
   const stateFile=join(cacheRoot(),'update.json'),before=selectedBinary(current).version;
   if(!force&&!updateDue(read(stateFile),now()))return {updated:false,version:before};
-  const response=await fetcher(REGISTRY+'/@getopencrawl%2fcli/'+CHANNEL,{redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000)});
+  const managed=read(join(nativeRoot(),'installation.json'))?.managed===true;
+  const response=await fetcher(managed ? nativeChannelAt(now()) : REGISTRY+'/@getopencrawl%2fcli/'+CHANNEL,{redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000)});
   if(!response.ok)throw new CliError('UPDATE_UNAVAILABLE','Could not check the OpenCrawl release channel. Retry opencrawl update.');
-  const latest=await response.json() as {name?:string;version?:string};
-  if(latest.name!==PACKAGE||!stable(latest.version))throw new Error('Invalid release metadata');
-  if(compare(latest.version,before)>0){await install(latest.version);signal?.throwIfAborted();if(!validRelease(releaseRoot(latest.version),latest.version))throw new Error('Incomplete release');}
+  const latest=await response.json();
+  const native=managed ? parseNativeRelease(latest) : undefined;
+  if((!managed&&latest.name!==PACKAGE)||!stable(latest.version))throw new Error('Invalid release metadata');
+  if(compare(latest.version,before)>0){
+    await install(latest.version,native);
+    signal?.throwIfAborted();
+    if(!(managed ? validNative(latest.version) : validRelease(releaseRoot(latest.version),latest.version)))throw new Error('Incomplete release');
+  }
   const selected=selectedBinary(current);
   atomicJson(join(cacheRoot(),'current.json'),{version:selected.version});
-  if(read(join(nativeRoot(),'installation.json'))?.managed===true&&selected.version!==before)await installBinary(selected.file,selected.version);
   const checkedAt=now();atomicJson(stateFile,{checkedAt,nextCheckAt:checkedAt+3*HOUR+Math.floor(random()*3*HOUR)});
   return {updated:compare(selected.version,before)>0,version:selected.version};
 }

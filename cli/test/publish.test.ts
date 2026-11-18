@@ -22,7 +22,7 @@ function registry(dist: string) {
     tags: {latest: '0.9.0', next: '0.9.0', 'next-pending': '0.9.0'} as Record<string, string>,
     packageTags: new Map<string, Record<string, string>>(),
     published: new Set<string>(), downloaded: new Set<string>(),
-    publishCalls: [] as string[], promotions: [] as string[],
+    publishCalls: [] as string[], promotions: [] as string[], uploadsInFlight: 0, peakUploads: 0,
     blocked: new Set<string>(), clock: 0, onSleep: () => {}, failPromotion: false, failAfterPromotions: Infinity,
     stalePackumentTags: false, tagResponse: undefined as string | undefined,
     metadata: new Map<string,Record<string,unknown>>(),
@@ -44,9 +44,7 @@ function registry(dist: string) {
       expect(state.published.has(pkg.name)).toBe(false); // immutable versions are never republished
       state.published.add(pkg.name);
       state.publishCalls.push(pkg.name);
-      if (pkg.name === cli) {
-        expect(state.downloaded.size).toBe(5);
-      }
+      expect(state.downloaded.size).toBe(0);
       expect(args[args.indexOf('--tag') + 1]).toBe('latest-pending');
       state.packageTags.get(pkg.name)!['latest-pending'] = pkg.version;
       return result(0);
@@ -73,7 +71,14 @@ function registry(dist: string) {
     if (!state.published.has(name)) return new Response('', {status: 404});
     return Response.json(state.metadata.get(name)??{version:'1.0.0',opencrawlRevision:revision,dist: {integrity,tarball: `https://registry.npmjs.org/${name}`}});
   }) as typeof fetch;
-  const execute = (dryRun = false) => publish({dist, dryRun, run, fetcher, now: () => state.clock, sleep: async () => { state.onSleep(); state.clock += 20 * 60_000; }});
+  const execute = (dryRun = false) => publish({dist, dryRun, run, fetcher,
+    upload: async (args, directory) => {
+      state.peakUploads = Math.max(state.peakUploads, ++state.uploadsInFlight);
+      await Promise.resolve();
+      try { return run(args, {cwd: directory}).exitCode; }
+      finally { state.uploadsInFlight--; }
+    },
+    now: () => state.clock, sleep: async () => { state.onSleep(); state.clock += 20 * 60_000; }});
   return {state, execute, cli,dist,revision,integrity};
 }
 
@@ -118,10 +123,11 @@ test('availability timeout leaves channel unchanged and a rerun resumes immutabl
   expect(state.promotions.length).toBe(12);
 }));
 
-test('a native tarball timeout cannot publish or promote the launcher', () => registryFixture(async ({state, execute, cli}) => {
+test('all six uploads are staged before the first availability wait, and one missing tarball prevents promotion', () => registryFixture(async ({state, execute, cli}) => {
   state.blocked.add(`${cli}-linux-x64`);
   await expect(execute()).rejects.toThrow('not downloadable');
-  expect(state.publishCalls).not.toContain(cli);
+  expect(state.publishCalls).toHaveLength(6);
+  expect(state.peakUploads).toBe(6);
   expect(state.promotions).toEqual([]);
 }));
 
@@ -174,7 +180,7 @@ test('mixed local platform provenance fails before publishing anything',()=>regi
 test('registry source mismatches at availability cannot promote the launcher',()=>registryFixture(async({state,execute,cli,integrity})=>{
   state.metadata.set(cli+'-linux-arm64',{version:'1.0.0',opencrawlRevision:'b'.repeat(40),dist:{integrity,tarball:'https://registry.npmjs.org/fixture'}});
   await expect(execute()).rejects.toThrow('Published package source mismatch');
-  expect(state.publishCalls).not.toContain(cli);expect(state.promotions).toEqual([]);
+  expect(state.publishCalls).toHaveLength(6);expect(state.promotions).toEqual([]);
 }));
 test('a launcher pointing at another platform version is rejected before publishing',()=>registryFixture(async({state,execute,cli,dist})=>{
   const file=join(dist,'cli','package.json'),pkg=JSON.parse(readFileSync(file,'utf8'));

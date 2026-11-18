@@ -16,8 +16,16 @@ function fixture() {
     if (path.startsWith('actions/runs/')) return {total_count: 1, artifacts: [artifact]};
     assert.equal(path, `git/commits/${tested}`); return commit;
   });
-  return {pull, run, runs, artifact, proof, commit, check: () => validatedTree(api, repository, revision, tree, async id => {assert.equal(id, 9); return proof;})};
+  return {pull, run, runs, artifact, proof, commit, check: cli => validatedTree(api, repository, revision, tree, async id => {assert.equal(id, 9); return proof;}, cli)};
 }
+test('CLI validation requires the CLI workflow, exact version and distributed payload',async()=>{
+  const f=fixture(), cli={version:'0.4.105',payload:'e'.repeat(64)};
+  f.run.path='.github/workflows/cli.yml'; f.artifact.name='cli-validation';Object.assign(f.proof,cli);
+  assert.equal(await f.check(cli),5);
+  assert.equal(await f.check({...cli,version:'0.4.106'}),undefined);
+  assert.equal(await f.check({...cli,payload:'f'.repeat(64)}),undefined);
+  f.run.path='.github/workflows/ci.yml';assert.equal(await f.check(cli),undefined);
+});
 test('reuse requires a merged same-repository PR and the exact tested Git tree', async () => {
   assert.equal(await fixture().check(), 5);
   for (const change of [

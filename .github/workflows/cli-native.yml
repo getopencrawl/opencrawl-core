@@ -1,0 +1,291 @@
+name: CLI native distribution
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        required: true
+permissions:
+  contents: read
+# Serialize from version selection through native promotion. npm scanning takes
+# place in the calling workflow after this lock has been released.
+concurrency:
+  group: opencrawl-cli-${{ github.event_name == 'pull_request' && github.run_id || github.ref }}
+  queue: max
+jobs:
+  build:
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      reuse: ${{ steps.proof.outputs.reuse }}
+      payload: ${{ steps.artifacts.outputs.payload }}
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Allocate the automatic CLI release version
+        id: version
+        run: node tools/delivery.mts cli-version
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: bun install --cwd cli --frozen-lockfile --ignore-scripts
+      - run: bun run --cwd cli typecheck
+      - run: bun cli/scripts/build.ts
+      - run: bun cli/scripts/native-release.ts
+      - run: bun cli/scripts/publish.ts --dry-run
+      - name: Identify the release contents tested on this tree
+        id: artifacts
+        run: bun cli/scripts/release-payload.ts
+      - name: Check for prior cross-platform validation of these same bytes
+        id: proof
+        env:
+          CLI_PAYLOAD: ${{ steps.artifacts.outputs.payload }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/validated-tree.mts check --cli
+      - run: tar -czf cli-dist.tgz -C cli dist native
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cli-dist-${{ github.sha }}
+          path: cli-dist.tgz
+          compression-level: 0
+          retention-days: 1
+  unit:
+    name: CLI tests (${{ matrix.os }})
+    needs: build
+    if: needs.build.outputs.reuse != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, runner: blacksmith-4vcpu-ubuntu-2404}
+          - {os: macos-15, runner: blacksmith-6vcpu-macos-15}
+          - {os: windows-2025, runner: blacksmith-4vcpu-windows-2025}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Use the version built for this source revision
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: node tools/delivery.mts cli-version
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: bun install --cwd cli --frozen-lockfile --ignore-scripts
+      - name: Windows subprocess timeout uses the current call clock
+        if: runner.os == 'Windows'
+        run: bun cli/scripts/windows-spawn-timeout-smoke.ts
+      - run: bun run --cwd cli test
+  checks:
+    name: checks (${{ matrix.os }})
+    needs: build
+    if: needs.build.outputs.reuse != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, runner: blacksmith-4vcpu-ubuntu-2404}
+          - {os: macos-15, runner: blacksmith-6vcpu-macos-15}
+          - {os: windows-2025, runner: blacksmith-4vcpu-windows-2025}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Use the version built for this source revision
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: node tools/delivery.mts cli-version
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: bun install --cwd cli --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-dist-${{ github.sha }}
+      - run: tar -xzf cli-dist.tgz -C cli
+      - run: bun cli/scripts/smoke.ts
+      - run: bun cli/scripts/update-smoke.ts
+      - run: bun cli/scripts/native-install-smoke.ts
+      - name: Prepare the ephemeral Linux runner user supervisor
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/daemon-supervisor-evidence"
+          OC_RUNNER_UID=$(id -u)
+          OC_RUNNER_USER=$(id -un)
+          test "$OC_RUNNER_UID" -ne 0
+          export XDG_RUNTIME_DIR="/run/user/$OC_RUNNER_UID"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          OC_MANAGER_MODE=existing
+          if ! systemctl --user show-environment >/dev/null 2>&1; then
+            test "$(cat /proc/1/comm)" = systemd
+            OC_LINGER_BEFORE=$(loginctl show-user "$OC_RUNNER_UID" --property=Linger --value)
+            case "$OC_LINGER_BEFORE" in
+              no)
+                # Record restoration before the mutation, including partial failures.
+                printf '%s\n' "$OC_RUNNER_USER" > "$RUNNER_TEMP/opencrawl-native-linger-enabled"
+                sudo loginctl enable-linger "$OC_RUNNER_USER"
+                ;;
+              yes) ;;
+              *) echo 'Cannot establish prior user-manager state'; exit 1 ;;
+            esac
+            sudo systemctl start "user@$OC_RUNNER_UID.service"
+            OC_MANAGER_MODE=prepared-on-ephemeral-runner
+          fi
+          systemctl --user show-environment >/dev/null
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          export OC_RUNNER_UID OC_MANAGER_MODE
+          node -e 'require("node:fs").writeFileSync(require("node:path").join(process.env.RUNNER_TEMP,"daemon-supervisor-evidence/linux-user-supervisor.json"),JSON.stringify({uid:Number(process.env.OC_RUNNER_UID),mode:process.env.OC_MANAGER_MODE,userManagerReachable:true,runnerOnly:true})+"\n")'
+      - name: Verify native supervision (Windows advisory pending interactive Task Scheduler proof)
+        id: native_supervisor
+        # New Windows setup is deferred; only its new supervisor proof is advisory.
+        # macOS/Linux supervision and every other Windows compatibility gate stay required.
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          NATIVE_BINARY="$(node -e 'const p=require("node:path");console.log(p.resolve("cli/dist",process.platform+"-"+process.arch,"bin",process.platform==="win32"?"opencrawl.exe":"opencrawl"))')"
+          bun cli/scripts/daemon-supervisor-smoke.ts "$RUNNER_TEMP/daemon-supervisor-evidence" "$NATIVE_BINARY"
+      - name: Verify daemon upgrade and fallback with the packaged executable
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          NATIVE_BINARY="$(node -e 'const p=require("node:path");console.log(p.resolve("cli/dist",process.platform+"-"+process.arch,"bin","opencrawl"))')"
+          bun cli/scripts/daemon-upgrade-smoke.ts "$RUNNER_TEMP/daemon-supervisor-evidence" "$NATIVE_BINARY"
+          bun cli/scripts/daemon-upgrade-smoke.ts "$RUNNER_TEMP/daemon-supervisor-evidence" "$NATIVE_BINARY" --plugin
+      - name: Report unverified Windows native worker
+        if: always() && runner.os == 'Windows' && steps.native_supervisor.outcome == 'failure'
+        shell: bash
+        run: |
+          printf '%s\n' 'Windows native worker supervision remains unverified. The failed supervisor receipt is retained in the Windows evidence artifact; this advisory is not a Windows readiness claim. macOS/Linux supervision and all other Windows compatibility checks remain required.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore only linger enabled for this ephemeral runner check
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/opencrawl-native-linger-enabled" ]; then
+            OC_RUNNER_USER=$(cat "$RUNNER_TEMP/opencrawl-native-linger-enabled")
+            test "$OC_RUNNER_USER" = "$(id -un)"
+            sudo loginctl disable-linger "$OC_RUNNER_USER"
+            rm "$RUNNER_TEMP/opencrawl-native-linger-enabled"
+          fi
+      - name: Retain native supervisor evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: cli-supervisor-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ runner.temp }}/daemon-supervisor-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+  process-ownership:
+    needs: build
+    if: needs.build.outputs.reuse != 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-dist-${{ github.sha }}
+      - run: tar -xzf cli-dist.tgz -C cli
+      - name: Capture ownership under non-reaping PID 1
+        env:
+          OPENCRAWL_TEST_STRESS: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror cli/scripts/process-ownership-init.c -o "$RUNNER_TEMP/process-ownership-init"
+          sudo env OPENCRAWL_TEST_STRESS="$OPENCRAWL_TEST_STRESS" unshare --fork --pid --mount-proc "$RUNNER_TEMP/process-ownership-init" "$(command -v node)" "$PWD/cli/scripts/process-ownership.mts" "$PWD/cli/dist"
+  validation:
+    name: CLI release validation
+    needs: [build, unit, checks, process-ownership]
+    if: always() && !cancelled()
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Require every CLI lane or an identical previously tested payload on main
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REUSE: ${{ needs.build.outputs.reuse }}
+        run: |
+          node --input-type=module <<'JS'
+          const jobs = JSON.parse(process.env.RESULTS);
+          const reuse = process.env.REUSE === 'true';
+          const expected = reuse ? 'skipped' : 'success';
+          if (jobs.build.result !== 'success' || (reuse && process.env.GITHUB_EVENT_NAME !== 'push') ||
+              !['unit', 'checks', 'process-ownership'].every(name => jobs[name]?.result === expected)) process.exit(1);
+          JS
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        if: github.event_name == 'pull_request'
+        with:
+          node-version: 24.22.2
+      - name: Record validated CLI payload and source
+        if: github.event_name == 'pull_request'
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          CLI_PAYLOAD: ${{ needs.build.outputs.payload }}
+        run: node tools/validated-tree.mts record --cli
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: github.event_name == 'pull_request'
+        with:
+          name: cli-validation
+          path: validation.json
+          retention-days: 2
+  release:
+    needs: [build, validation]
+    if: always() && !cancelled() && needs.validation.result == 'success' && inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-dist-${{ github.sha }}
+      - run: tar -xzf cli-dist.tgz -C cli
+      - name: Publish and verify native downloads before npm promotion
+        run: bun cli/scripts/native-release.ts --publish
+        env:
+          GH_TOKEN: ${{ github.token }}

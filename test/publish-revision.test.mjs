@@ -23,6 +23,10 @@ test('core may retain a published CLI after an upload failure, but every CLI sou
 });
 
 test('historical publication retains an exact released CLI with source provenance', () => {
+  const releaseJobs=['Native CLI / build','Native CLI / CLI release validation'].map(name=>({name,status:'completed',conclusion:'success'}));
+  validateCliChecks(releaseJobs);
+  assert.throws(()=>validateCliChecks(releaseJobs.slice(1)),/Incomplete CLI validation/);
+  assert.throws(()=>validateCliChecks(releaseJobs.map(job=>({...job,conclusion:'skipped'}))),/Incomplete CLI validation/);
   assert.equal(validateCli({version: '0.4.35', opencrawlRevision: revision}), '0.4.35');
   assert.throws(() => validateCli({version: 'next', opencrawlRevision: revision}));
   assert.throws(() => validateCli({version: '0.4.35'}), /provenance/);
