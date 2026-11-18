@@ -32,6 +32,10 @@ export class SearchReader {
     this.request?.abort(); this.request = null;
     this.publish({...this.value, result: null, state: 'canceled', error: ''});
   }
+  clear() {
+    this.request?.abort(); this.request = null;
+    this.publish({query: '', result: null, state: 'idle', error: ''});
+  }
   suspend() {if(this.request)this.cancel();}
   async search(input: string, page = 1) {
     const query = input.trim();

@@ -886,9 +886,10 @@ retains the unchanged capture and keyboard-scrollable raw text.
 Search playground is a separate administrative inspection route at `/search`.
 The legacy `/diagnostics?view=search` URL redirects there. Its Page leads directly
 to the existing SearchInspector query form without an introductory paragraph.
-Align the query row and source sections to both edges of the centered workspace
-frame, as on Sessions. The header divider and shared 32px body inset lead
-directly into the field. Use one summary above the first hit for the visible
+Center the initial form in the available page body, with a measured search field
+and its two actions underneath. Keep it centered while typing. Submitting docks
+the query row above the results at the shared 32px body inset and aligns both
+with the workspace frame, as on Sessions. Clearing the field restores the initial form. Use one summary above the first hit for the visible
 range and reported total. Qualify incomplete totals, and repeat the submitted
 query only when the field has been edited. Source regions retain accessible
 names; label warnings with their source. Snippets keep their readable measure.
@@ -906,10 +907,9 @@ runs a different example query. Page through up to 25 results across sources
 per request. Previous and Next use the submitted query and return keyboard
 focus to the updated results. The playground inspects the top 100 candidates per
 source, with source coverage available on each page. Highlight literal query text through React
-nodes, never HTML strings. Full text, item metadata and the response JSON remain
-intentional disclosures; closed disclosures do not render or serialize their
-large payloads. Preserve server excerpt metadata and label excerpts as such,
-never as the entire indexed document. Source links exist only for supplied absolute HTTP(S)
+nodes, never HTML strings. Keep result rows free of JSON and inspection controls.
+For long matches without a source link, offer the returned text on demand and
+distinguish a server excerpt from the full indexed text. Source links exist only for supplied absolute HTTP(S)
 URLs without embedded credentials; do not manufacture provider links from IDs.
 
 Returned rows are not total matches. Distinguish reported exact/lower-bound totals

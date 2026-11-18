@@ -12,7 +12,7 @@ for(const width of [1280,390])test(`members read the board and search through th
   await expect(page.getByRole('navigation',{name:'Message board channels'}).getByRole('link',{name:'engineering',exact:true})).toBeVisible();
   await page.goto('/search?full-app');
   await page.getByRole('searchbox',{name:'Search query'}).fill('test member search');
-  await page.getByRole('button',{name:'Run query',exact:true}).click();
+  await page.getByRole('button',{name:'Search',exact:true}).click();
   await expect.poll(()=>query).toBe('test member search');
   await expect(page.getByText(/Workspace admins|Ask an admin/)).toHaveCount(0);
   await page.goto('/onboarding/invite?full-app');
