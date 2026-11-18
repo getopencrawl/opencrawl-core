@@ -6,14 +6,15 @@ import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {configuration,plan,airbyteValues,prepareAirbyteChart,applicationName} from './install.mts';
+import {configuration,plan,airbyteValues,prepareAirbyteChart,applicationName,airbyteWorkspaceReceipt} from './install.mts';
+import {connectPostgres} from './runtime/postgres-connect.mts';
 const root=dirname(fileURLToPath(import.meta.url));
 const input={context:'test',url:'https://opencrawl.example.com',image:{tag:'sha-test'}};
 test('release packaging versions both archives without changing source or building images',()=>{
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-release-package-'));
   const original=readFileSync(join(root,'opencrawl/Chart.yaml'),'utf8');
   try{
-    const manifest=JSON.stringify({manifests:['amd64','arm64'].map(architecture=>({platform:{os:'linux',architecture}}))});
+    const manifest=JSON.stringify({mediaType:'application/vnd.oci.image.index.v1+json',manifests:['amd64','arm64'].map(architecture=>({platform:{os:'linux',architecture}}))});
     const stub=join(dir,'registry.mjs');
     writeFileSync(stub,`globalThis.fetch=async url=>{if(String(url).startsWith('https://ghcr.io/token?'))return Response.json({token:'fixture'});if(String(url).startsWith('https://ghcr.io/v2/'))return new Response(${JSON.stringify(manifest)},{headers:{'docker-content-digest':${JSON.stringify('sha256:'+createHash('sha256').update(manifest).digest('hex'))}}});throw Error('Unexpected network request')};`);
     const out=join(dir,'out');
@@ -30,12 +31,47 @@ test('release packaging versions both archives without changing source or buildi
 test('all shipped agent tools parse without installing dependencies',()=>{
   for(const file of ['install.mts','verify.mts','release-kit.mts','runtime/probe.mts']){const r=spawnSync(process.execPath,['--check',join(root,file)],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);}
 });
+test('conformance retries only refused PostgreSQL connections and closes each failed client',async()=>{
+  async function exercise(errors:string[]) {
+    let created=0, closed=0;
+    const db=await connectPostgres(()=>{
+      created++;
+      return {
+        async connect(){const code=errors.shift();if(code)throw Object.assign(new Error(code),{code});},
+        async end(){closed++;},
+      };
+    }).catch((error:NodeJS.ErrnoException)=>error.code);
+    return {created,closed,outcome:typeof db==='string'?db:'connected'};
+  }
+  assert.deepEqual(await exercise(['ECONNREFUSED']),{created:2,closed:1,outcome:'connected'});
+  assert.deepEqual(await exercise(['28P01']),{created:1,closed:1,outcome:'28P01'});
+  assert.deepEqual(await exercise(Array(7).fill('ECONNREFUSED')),{created:6,closed:6,outcome:'ECONNREFUSED'});
+});
 test('installation plan bundles all resources and preserves independent external choices',()=>{
   const all=configuration(input);assert.equal(plan(all).steps.length,3);
   const mixed=configuration({...input,databases:{app:{mode:'external',existingSecret:'app-db'}},opensearch:{mode:'external',url:'https://search.test'}});
   assert.equal(mixed.databases.temporal.mode,'bundled');assert.equal(mixed.databases.airbyte.mode,'bundled');assert.equal(mixed.opensearch.mode,'external');
   const external=configuration({...input,postgresql:{enabled:false},databases:{app:{mode:'external',existingSecret:'app-db'}},temporal:{mode:'external',address:'temporal.test:7233'},opensearch:{mode:'external',url:'https://search.test'},objectStorage:{mode:'external',endpoint:'https://s3.test',bucket:'existing',existingSecret:'s3'},airbyte:{mode:'disabled'}});
   assert.equal(plan(external).steps.length,2);assert.equal(plan(external).steps[0].components?.postgresql,false);assert.deepEqual(plan(external).databases,{app:'external'});
+});
+test('Airbyte bootstrap reads only the successful attempt of the completed Job',()=>{
+  const pod=(name:string,uid:string,phase:string,exitCode:number)=>({
+    metadata:{name,ownerReferences:[{kind:'Job',uid,controller:true}]},
+    status:{phase,containerStatuses:[{name:'bootstrap',state:{terminated:{exitCode}}}]},
+  });
+  const items=[pod('failed','current','Failed',1),pod('previous','obsolete','Succeeded',0),
+    pod('wrong-exit','current','Succeeded',1),pod('success','current','Succeeded',0)];
+  let receipt='{"workspaceId":"test-workspace"}';
+  const kube=(args:string[])=>{
+    if(args[0]==='wait'){assert.ok(args.includes('job/airbyte-bootstrap'));assert.ok(args.includes('jsonpath={.metadata.uid}'));return 'current';}
+    if(args[0]==='get'){assert.ok(args.includes('batch.kubernetes.io/controller-uid=current'));assert.ok(args.includes('--field-selector=status.phase=Succeeded'));return JSON.stringify({items});}
+    assert.deepEqual(args,['logs','pod/success','-c','bootstrap']);return receipt;
+  };
+  assert.equal(airbyteWorkspaceReceipt('airbyte-bootstrap',kube),'test-workspace');
+  receipt='{}';
+  assert.throws(()=>airbyteWorkspaceReceipt('airbyte-bootstrap',kube),/did not emit a workspace ID/);
+  items.pop();
+  assert.throws(()=>airbyteWorkspaceReceipt('airbyte-bootstrap',kube),/no successful bootstrap pod/);
 });
 test('upstream Airbyte references only supplied credentials in bundled and external DB modes',{skip:!process.env.AIRBYTE_CHART},()=>{
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-airbyte-contract-'));
@@ -86,6 +122,11 @@ test('application-only release renders with secret references and prevents SQL i
   const args=['template','sample',join(root,'opencrawl'),'--set','postgresql.enabled=false,temporal.enabled=false,opensearch.enabled=false,objectStorage.enabled=false,runtime.existingSecret=app-secrets,image.tag=sha-test'];
   const p=spawnSync(process.env.HELM||'helm',args,{encoding:'utf8'});assert.equal(p.status,0,p.stderr);
   assert.match(p.stdout,/name: sample-app\n/);assert.match(p.stdout,/name: sample-worker\n/);assert.ok(!p.stdout.includes('POSTGRES_PASSWORD'));
+  assert.ok(p.stdout.includes('command: ["node","deploy/application-state-init.mjs"]'));
+  assert.ok(p.stdout.includes("import './deploy/wait-storage.mjs'"));
+  const customInit=spawnSync(process.env.HELM||'helm',[...args,'--set-json','runtime.migrationCommand=["/custom-init"]'],{encoding:'utf8'});
+  assert.equal(customInit.status,0,customInit.stderr);
+  assert.ok(customInit.stdout.includes('command: ["/custom-init"]'));
   const override='custom-'.repeat(8),custom=configuration({...input,application:{nameOverride:override}});
   const renamed=spawnSync(process.env.HELM||'helm',[...args,'--set-string','nameOverride='+override],{encoding:'utf8'});assert.equal(renamed.status,0,renamed.stderr);
   for(const suffix of ['app','worker'])assert.ok(renamed.stdout.includes('name: '+applicationName(custom)+'-'+suffix+'\n'));

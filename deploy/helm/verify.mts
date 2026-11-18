@@ -19,13 +19,17 @@ if(values.exercise&&!kube(['get','secret',secret,'--ignore-not-found','-o','name
   if(values.existing)throw Error('Saved conformance account Secret is missing; refusing to recreate the fixture');
   apply({apiVersion:'v1',kind:'Secret',metadata:{name:secret},type:'Opaque',stringData:{CONFORMANCE_EMAIL:'helm-conformance@example.invalid',CONFORMANCE_PASSWORD:randomBytes(32).toString('hex'),CONFORMANCE_MARKER:'helmcheck'+randomBytes(12).toString('hex')}});
 }
-const script=readFileSync(join(dirname(fileURLToPath(import.meta.url)),'runtime/probe.mts'),'utf8');
-apply({apiVersion:'v1',kind:'ConfigMap',metadata:{name},data:{'probe.mts':script}});
+const runtime=join(dirname(fileURLToPath(import.meta.url)),'runtime');
+const files=['probe.mts','postgres-connect.mts'];
+const data=Object.fromEntries(files.map(file=>[file,readFileSync(join(runtime,file),'utf8')]));
+// Individual mounts keep Node's relative imports rooted at the runtime directory.
+const mounts=files.map(file=>({name:'conformance',mountPath:'/opencrawl/deploy/helm/runtime/'+file,subPath:file,readOnly:true}));
+apply({apiVersion:'v1',kind:'ConfigMap',metadata:{name},data});
 const appName=applicationName(c);
 const app=JSON.parse(kube(['get','deployment',appName+'-app','-o','json']));
 const spec=structuredClone(app.spec.template.spec),container=spec.containers[0];
 delete spec.initContainers;spec.restartPolicy='Never';
-spec.containers=[{name:'conformance',image:container.image,imagePullPolicy:container.imagePullPolicy,command:['node','/opencrawl/deploy/helm/runtime/probe.mts'],envFrom:[...container.envFrom,...(values.exercise?[{secretRef:{name:secret}}]:[])],env:[...(container.env||[]),{name:'CONFORMANCE_EXERCISE',value:String(!!values.exercise)},{name:'CONFORMANCE_EXISTING',value:String(!!values.existing)},{name:'CONFORMANCE_DENY_MARKER',value:values['deny-marker']||''},{name:'CONFORMANCE_APP_URL',value:`http://${appName}:${c.application.service?.port||8092}`}],securityContext:container.securityContext,volumeMounts:[...container.volumeMounts,{name:'conformance',mountPath:'/opencrawl/deploy/helm/runtime/probe.mts',subPath:'probe.mts',readOnly:true}],resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}];
+spec.containers=[{name:'conformance',image:container.image,imagePullPolicy:container.imagePullPolicy,command:['node','/opencrawl/deploy/helm/runtime/probe.mts'],envFrom:[...container.envFrom,...(values.exercise?[{secretRef:{name:secret}}]:[])],env:[...(container.env||[]),{name:'CONFORMANCE_EXERCISE',value:String(!!values.exercise)},{name:'CONFORMANCE_EXISTING',value:String(!!values.existing)},{name:'CONFORMANCE_DENY_MARKER',value:values['deny-marker']||''},{name:'CONFORMANCE_APP_URL',value:`http://${appName}:${c.application.service?.port||8092}`}],securityContext:container.securityContext,volumeMounts:[...container.volumeMounts,...mounts],resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}];
 spec.volumes.push({name:'conformance',configMap:{name}});
 kube(['delete','job',name,'--ignore-not-found','--wait=true']);
 apply({apiVersion:'batch/v1',kind:'Job',metadata:{name,labels:{'app.kubernetes.io/instance':c.release,'app.kubernetes.io/component':'conformance'}},spec:{backoffLimit:0,activeDeadlineSeconds:900,ttlSecondsAfterFinished:86400,template:{spec}}});

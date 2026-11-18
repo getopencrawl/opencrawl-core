@@ -79,6 +79,29 @@ export function prepareAirbyteChart(stateDir:string,archive:Uint8Array):string {
   return wrapper;
 }
 
+type BootstrapPod = {
+  metadata: {name: string; ownerReferences?: {uid: string; controller?: boolean; kind: string}[]};
+  status: {phase: string; containerStatuses?: {name: string; state: {terminated?: {exitCode: number}}}[]};
+};
+
+export function airbyteWorkspaceReceipt(jobName: string, kube: (args: string[]) => string): string {
+  const uid = kube(['wait','--for=condition=complete','job/'+jobName,'--timeout=300s','-o','jsonpath={.metadata.uid}']).trim();
+  if (!uid) fail('AIRBYTE_BOOTSTRAP','Completed Airbyte bootstrap Job has no UID');
+  // A completed Job can retain failed attempts. kubectl logs job/NAME can select one of them.
+  const {items}: {items: BootstrapPod[]} = JSON.parse(kube(['get','pods','-l','batch.kubernetes.io/controller-uid='+uid,
+    '--field-selector=status.phase=Succeeded','-o','json']));
+  const succeeded = items.find(pod => pod.status.phase === 'Succeeded' &&
+    pod.metadata.ownerReferences?.some(owner => owner.controller && owner.kind === 'Job' && owner.uid === uid) &&
+    pod.status.containerStatuses?.some(container => container.name === 'bootstrap' && container.state.terminated?.exitCode === 0));
+  if (!succeeded) throw Error('Completed Airbyte bootstrap Job has no successful bootstrap pod');
+  const logs = kube(['logs','pod/'+succeeded.metadata.name,'-c','bootstrap']).trimEnd();
+  try {
+    return required(JSON.parse(logs.split('\n').at(-1)!).workspaceId,'Airbyte workspace ID');
+  } catch {
+    throw Error('Successful Airbyte bootstrap pod did not emit a workspace ID');
+  }
+}
+
 async function install(c:Values,stateDir:string,through='application'){
   const chart=join(dirname(fileURLToPath(import.meta.url)),'opencrawl');mkdirSync(stateDir,{recursive:true,mode:0o700});chmodSync(stateDir,0o700);
   const kube=(args:string[],input?:string,optional=false)=>execute(process.env.KUBECTL||'kubectl',['--context',c.context,'--namespace',c.namespace,...args],input,optional);
@@ -128,10 +151,14 @@ async function install(c:Values,stateDir:string,through='application'){
     // Catalog repair is scoped to the pinned bundled Airbyte release. External Airbyte is never changed.
     const bootstrapEnv=[{name:'PG_TLS_ENABLED',value:String(!!d.tls)},{name:'PG_TLS_CA_PATH',value:d.caPath||''},{name:'PGHOST',value:d.mode==='bundled'?dbHost:d.host},{name:'PGPORT',value:String(d.port||5432)},{name:'PGDATABASE',value:d.name},{name:'PGUSER',value:d.user},{name:'PGPASSWORD',valueFrom:{secretKeyRef:{name:dbSecret,key:'DATABASE_PASSWORD'}}},{name:'AIRBYTE_URL',value:airbyteUrl},{name:'AIRBYTE_WORKSPACE_NAME',value:c.release},{name:'AIRBYTE_CLIENT_ID',valueFrom:{secretKeyRef:{name:secretName,key:'AB_INSTANCE_ADMIN_CLIENT_ID'}}},{name:'AIRBYTE_CLIENT_SECRET',valueFrom:{secretKeyRef:{name:secretName,key:'AB_INSTANCE_ADMIN_CLIENT_SECRET'}}}];
     const jobName=c.release+'-airbyte-bootstrap';kube(['delete','job',jobName,'--ignore-not-found','--wait=true']);
-    const code=`import pg from 'pg';import {readFileSync} from 'node:fs';const db=new pg.Client({ssl:process.env.PG_TLS_ENABLED==='true'?{rejectUnauthorized:true,...(process.env.PG_TLS_CA_PATH?{ca:readFileSync(process.env.PG_TLS_CA_PATH)}:{})}:false});await db.connect();try{await db.query(\"INSERT INTO declarative_manifest_image_version (major_version,image_version,created_at,updated_at,image_sha) VALUES (7,'7.45.1',now(),now(),'sha256:f98cd95b4263c30c76b23c67b9c43e817e4f6b000663081e91778748b50d32e1') ON CONFLICT (major_version) DO UPDATE SET image_version=EXCLUDED.image_version,image_sha=EXCLUDED.image_sha,updated_at=now()\");}finally{await db.end();}const url=process.env.AIRBYTE_URL; const r=await fetch(url+'/api/public/v1/applications/token',{redirect:'error',method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_id:process.env.AIRBYTE_CLIENT_ID,client_secret:process.env.AIRBYTE_CLIENT_SECRET,'grant-type':'client_credentials'})});if(!r.ok)throw Error('Airbyte authentication failed '+r.status);const {access_token}=await r.json();const headers={authorization:'Bearer '+access_token,'content-type':'application/json'};let list=await fetch(url+'/api/public/v1/workspaces?limit=100',{headers});if(!list.ok)throw Error('Workspace lookup failed');let matches=(await list.json()).data.filter(x=>x.name===process.env.AIRBYTE_WORKSPACE_NAME);if(matches.length>1)throw Error('Ambiguous workspace');let id=matches[0]?.workspaceId;if(!id){const r=await fetch(url+'/api/public/v1/workspaces',{method:'POST',headers,body:JSON.stringify({name:process.env.AIRBYTE_WORKSPACE_NAME})});if(!r.ok)throw Error('Workspace creation failed');id=(await r.json()).workspaceId;}if(!id)throw Error('Workspace ID absent');console.log(JSON.stringify({workspaceId:id}));`;
-    apply({apiVersion:'batch/v1',kind:'Job',metadata:{name:jobName,namespace:c.namespace},spec:{backoffLimit:3,activeDeadlineSeconds:600,ttlSecondsAfterFinished:86400,template:{spec:{restartPolicy:'Never',automountServiceAccountToken:false,imagePullSecrets:c.application.imagePullSecrets||[],nodeSelector:c.application.nodeSelector||{},tolerations:c.application.tolerations||[],volumes:airbyte.airbyteBootloader?.extraVolumes||[],containers:[{name:'bootstrap',volumeMounts:[...(airbyte.airbyteBootloader?.extraVolumeMounts||[]),...(airbyte.global?.extraVolumeMounts||[])],image:c.image.digest?c.image.repository+'@'+c.image.digest:c.image.repository+':'+c.image.tag,command:['node','--input-type=module','-e',code],env:bootstrapEnv}]}}}});
-    kube(['wait','--for=condition=complete','job/'+jobName,'--timeout=300s']);
-    workspaceId=JSON.parse(kube(['logs','job/'+jobName]).trim().split('\n').at(-1)!).workspaceId;
+    const helperName='postgres-connect.mts', helperPath='/opencrawl/deploy/helm/runtime/'+helperName;
+    const helper=readFileSync(join(dirname(fileURLToPath(import.meta.url)),'runtime',helperName),'utf8');
+    apply({apiVersion:'v1',kind:'ConfigMap',metadata:{name:jobName,namespace:c.namespace},data:{[helperName]:helper}});
+    const helperVolume={name:'bootstrap-postgres-connect',configMap:{name:jobName}};
+    const helperMount={name:helperVolume.name,mountPath:helperPath,subPath:helperName,readOnly:true};
+    const code=`import pg from 'pg';import {readFileSync} from 'node:fs';import {connectPostgres} from '${helperPath}';const db=await connectPostgres(()=>new pg.Client({connectionTimeoutMillis:15000,ssl:process.env.PG_TLS_ENABLED==='true'?{rejectUnauthorized:true,...(process.env.PG_TLS_CA_PATH?{ca:readFileSync(process.env.PG_TLS_CA_PATH)}:{})}:false}));try{await db.query(\"INSERT INTO declarative_manifest_image_version (major_version,image_version,created_at,updated_at,image_sha) VALUES (7,'7.45.1',now(),now(),'sha256:f98cd95b4263c30c76b23c67b9c43e817e4f6b000663081e91778748b50d32e1') ON CONFLICT (major_version) DO UPDATE SET image_version=EXCLUDED.image_version,image_sha=EXCLUDED.image_sha,updated_at=now()\");}finally{await db.end();}const url=process.env.AIRBYTE_URL; const r=await fetch(url+'/api/public/v1/applications/token',{redirect:'error',method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_id:process.env.AIRBYTE_CLIENT_ID,client_secret:process.env.AIRBYTE_CLIENT_SECRET,'grant-type':'client_credentials'})});if(!r.ok)throw Error('Airbyte authentication failed '+r.status);const {access_token}=await r.json();const headers={authorization:'Bearer '+access_token,'content-type':'application/json'};let list=await fetch(url+'/api/public/v1/workspaces?limit=100',{headers});if(!list.ok)throw Error('Workspace lookup failed');let matches=(await list.json()).data.filter(x=>x.name===process.env.AIRBYTE_WORKSPACE_NAME);if(matches.length>1)throw Error('Ambiguous workspace');let id=matches[0]?.workspaceId;if(!id){const r=await fetch(url+'/api/public/v1/workspaces',{method:'POST',headers,body:JSON.stringify({name:process.env.AIRBYTE_WORKSPACE_NAME})});if(!r.ok)throw Error('Workspace creation failed');id=(await r.json()).workspaceId;}if(!id)throw Error('Workspace ID absent');console.log(JSON.stringify({workspaceId:id}));`;
+    apply({apiVersion:'batch/v1',kind:'Job',metadata:{name:jobName,namespace:c.namespace},spec:{backoffLimit:3,activeDeadlineSeconds:600,ttlSecondsAfterFinished:86400,template:{spec:{restartPolicy:'Never',automountServiceAccountToken:false,imagePullSecrets:c.application.imagePullSecrets||[],nodeSelector:c.application.nodeSelector||{},tolerations:c.application.tolerations||[],volumes:[...(airbyte.airbyteBootloader?.extraVolumes||[]),helperVolume],containers:[{name:'bootstrap',volumeMounts:[...(airbyte.airbyteBootloader?.extraVolumeMounts||[]),...(airbyte.global?.extraVolumeMounts||[]),helperMount],image:c.image.digest?c.image.repository+'@'+c.image.digest:c.image.repository+':'+c.image.tag,command:['node','--input-type=module','-e',code],env:bootstrapEnv}]}}}});
+    workspaceId=airbyteWorkspaceReceipt(jobName,kube);
   }
   if(through==='airbyte')return;
   const runtimeSecret=c.release+'-runtime-credentials';

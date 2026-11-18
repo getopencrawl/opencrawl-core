@@ -2,7 +2,7 @@ apiVersion: v2
 name: opencrawl
 description: Single-instance OpenCrawl with independently replaceable infrastructure
 version: 0.2.0
-appVersion: "0.5.0"
+appVersion: "0.6.0"
 type: application
 kubeVersion: ">=1.30.0-0"
 annotations:

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
 import pg from 'pg';
+import {connectPostgres} from './postgres-connect.mts';
 import {sessionStorage} from '../../../dist/src/sessions/storage.mjs';
 import {connectorClient} from '../../../dist/src/connectors/temporal/client.mjs';
 import {selfhostTemporalSettings} from '../../../dist/src/selfhost/temporal-settings.mjs';
@@ -17,8 +18,9 @@ async function check(name:string,hint:string,run:()=>Promise<unknown>){
 const origin=required('OPENCRAWL_URL'),url=required('CONFORMANCE_APP_URL');
 const request=(path:string,init:RequestInit={})=>fetch(url+path,{...init,redirect:'manual',headers:{host:new URL(origin).host,...init.headers},signal:AbortSignal.timeout(30000)});
 await check('postgresql','Check OPENCRAWL_DATABASE_URL, TLS trust, DB ownership and migration Job.',async()=>{
-  const db=new pg.Client({connectionString:required('OPENCRAWL_DATABASE_URL'),connectionTimeoutMillis:15000});
-  await db.connect();try{const r=await db.query('SELECT rolsuper FROM pg_roles WHERE rolname=current_user');assert.equal(r.rows[0].rolsuper,false,'App must use a restricted role');}finally{await db.end();}
+  const connectionString=required('OPENCRAWL_DATABASE_URL');
+  const db=await connectPostgres(()=>new pg.Client({connectionString,connectionTimeoutMillis:15000}));
+  try{const r=await db.query('SELECT rolsuper FROM pg_roles WHERE rolname=current_user');assert.equal(r.rows[0].rolsuper,false,'App must use a restricted role');}finally{await db.end();}
 });
 const {store:storage}=sessionStorage();
 await check('object-storage','Check bucket existence, credentials, endpoint and network policies.',()=>storage.checkAccess());

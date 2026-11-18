@@ -20,7 +20,7 @@ runtime:
   extraVolumes: []
   extraVolumeMounts: []
   # The released runtime creates its PostgreSQL schema before writers start.
-  migrationCommand: [node, dist/src/state/initialize.mjs, initialize]
+  migrationCommand: [node, deploy/application-state-init.mjs]
   readinessCommand: [node, dist/src/state/initialize.mjs, verify]
   appResources:
     requests: {cpu: 250m, memory: 512Mi}

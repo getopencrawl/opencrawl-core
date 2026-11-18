@@ -6,6 +6,10 @@ on:
         description: 'Optional full mainline SHA to publish on the isolated revision channel'
         required: false
         type: string
+      stable_tag:
+        description: 'Optional existing stable v<version> tag on main to publish when main has advanced'
+        required: false
+        type: string
       cli_version:
         description: 'Optional already-published CLI version for a revision release'
         required: false
@@ -17,6 +21,9 @@ permissions:
 jobs:
   publish:
     if: github.ref == 'refs/heads/main'
+    concurrency:
+      group: core-package-${{ inputs.revision || 'stable' }}
+      cancel-in-progress: false
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -33,6 +40,22 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Select the tagged stable source on main
+        if: inputs.stable_tag != ''
+        env:
+          STABLE_TAG: ${{ inputs.stable_tag }}
+          REVISION: ${{ inputs.revision }}
+          CLI_VERSION: ${{ inputs.cli_version }}
+        run: |
+          set -euo pipefail
+          test -z "$REVISION" && test -z "$CLI_VERSION" || exit 1
+          [[ "$STABLE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          source=$(git rev-parse --verify "refs/tags/${STABLE_TAG}^{commit}")
+          git merge-base --is-ancestor "$source" "$GITHUB_SHA"
+          newest=$(git tag --merged "$GITHUB_SHA" --sort=-v:refname --list 'v[0-9]*' | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ && !found {print; found=1}')
+          test "$STABLE_TAG" = "$newest"
+          git checkout --detach "$source"
+          test "$STABLE_TAG" = "v$(node -p 'require("./package.json").version')"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.2
@@ -87,6 +110,12 @@ jobs:
           if(runs.total_count>100 || !checksPassed(runs.workflow_runs,revision,repository)) throw new Error('Stable packages require all distribution gates');
           appendFileSync(process.env.GITHUB_OUTPUT,'tag=latest\n');
           JS
+      - name: Publish verified multi-platform images under the stable core version
+        if: steps.publication.outputs.tag == 'latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ steps.source.outputs.revision }}
+        run: node deploy/helm/tag-stable-images.mts
       - name: Record the source revision in the package
         if: inputs.revision == ''
         run: node -e 'require("fs").writeFileSync("revision.json", JSON.stringify({revision:require("child_process").execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim()})+"\n")'

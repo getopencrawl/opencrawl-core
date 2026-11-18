@@ -8,20 +8,13 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {versionedChart} from './release.mts';
+import {publicIndex} from './image-index.mts';
 const {values}=parseArgs({options:{revision:{type:'string'},out:{type:'string'},version:{type:'string'},source:{type:'string'}}});
 if(!values.revision||!/^[a-f0-9]{40}$/.test(values.revision)||!values.out)throw Error('Use --revision FULL_GIT_SHA --out OUTPUT_DIRECTORY');
 const root=values.source?resolve(values.source):dirname(fileURLToPath(import.meta.url)),out=resolve(values.out),tag='sha-'+values.revision;
 async function publishedImage(name:string){
   const repository='getopencrawl/'+name;
-  const auth=await fetch('https://ghcr.io/token?service=ghcr.io&scope=repository:'+repository+':pull',{signal:AbortSignal.timeout(30000)});
-  if(!auth.ok)throw Error(`Image ${repository} is not anonymously pullable (HTTP ${auth.status})`);
-  const {token}=await auth.json();
-  const r=await fetch('https://ghcr.io/v2/'+repository+'/manifests/'+tag,{headers:{authorization:'Bearer '+token,accept:'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'},signal:AbortSignal.timeout(30000)});
-  if(!r.ok)throw Error(`Published image ${repository}:${tag} is unavailable (HTTP ${r.status})`);
-  const bytes=Buffer.from(await r.arrayBuffer()),digest='sha256:'+createHash('sha256').update(bytes).digest('hex');
-  if(r.headers.get('docker-content-digest')!==digest)throw Error('Registry manifest digest mismatch');
-  const platforms=JSON.parse(bytes.toString()).manifests?.map((x:{platform?:{os:string;architecture:string}})=>x.platform?.os+'/'+x.platform?.architecture)||[];
-  for(const p of ['linux/amd64','linux/arm64'])if(!platforms.includes(p))throw Error(`${repository} lacks ${p}`);
+  const {digest} = await publicIndex(repository, tag);
   return {repository:'ghcr.io/'+repository,tag,digest};
 }
 const [image,githubConnector]=await Promise.all([publishedImage('opencrawl-core'),publishedImage('source-github')]);

@@ -122,3 +122,39 @@ test('weekly stable selection uses the newest fully checked mainline candidate w
   await assert.rejects(stableCandidate([old,latest],repo,()=>true,async()=>false),/No mainline candidate/);
   await assert.rejects(stableCandidate([{...old,event:'pull_request'},foreign],repo,()=>true,async()=>true),/No mainline candidate/);
 });
+
+test('stable image tags preserve both original indexes, resume and reject existing conflicts before writing', async t => {
+  const {tagStableImages} = await import('./tag-stable-images.mts');
+  const mediaType = 'application/vnd.oci.image.index.v1+json';
+  const indexes = new Map<string, string>();
+  const writes: string[] = [];
+  const names = ['getopencrawl/opencrawl-core', 'getopencrawl/source-github'];
+  for (const name of names) indexes.set(name + ':sha-' + a, JSON.stringify({
+    mediaType, name, manifests: ['amd64', 'arm64'].map(architecture => ({platform: {os: 'linux', architecture}})),
+  }));
+  t.mock.method(globalThis, 'fetch', async (input: string, init: RequestInit) => {
+    const url = new URL(input);
+    assert.equal(url.origin, 'https://ghcr.io');
+    if (url.pathname === '/token') return Response.json({token: 'test-only'});
+    const [, repository, tag] = /^\/v2\/(.+)\/manifests\/([^/]+)$/.exec(url.pathname)!;
+    const key = repository + ':' + tag;
+    if (init.method === 'PUT') {
+      writes.push(key);
+      indexes.set(key, Buffer.from(init.body as Uint8Array).toString());
+      return new Response(null, {status: 201});
+    }
+    const bytes = indexes.get(key);
+    if (!bytes) return new Response(null, {status: 404});
+    return new Response(bytes, {headers: {'docker-content-digest': 'sha256:' + createHash('sha256').update(bytes).digest('hex')}});
+  });
+  const publish = () => tagStableImages('0.6.0', a, {user: 'fixture', password: 'fixture'});
+  const second = names[1] + ':0.6.0';
+  indexes.set(second, indexes.get(names[0] + ':sha-' + a)!);
+  await assert.rejects(publish, /different image/);
+  assert.deepEqual(writes, []);
+  indexes.delete(second);
+  await publish();
+  await publish();
+  assert.deepEqual(writes, names.map(name => name + ':0.6.0'));
+  for (const name of names) assert.equal(indexes.get(name + ':0.6.0'), indexes.get(name + ':sha-' + a));
+});
