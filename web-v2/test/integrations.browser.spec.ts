@@ -18,8 +18,13 @@ for (const viewport of [{width: 1440, height: 900}, {width: 390, height: 844}, {
     const titleTop = () => title.evaluate(element => element.getBoundingClientRect().top);
     const initialTop = await titleTop();
     expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
-    await cards.first().hover();
+    const pane = page.locator('.oc-page-scroll');
+    const box = await pane.boundingBox();
+    if (!box) throw new Error('Expected a visible workspace scroll pane');
+    // The gutter targets the page, including when a card has its own metric scroller.
+    await page.mouse.move(box.x + 4, box.y + box.height / 2);
     await page.mouse.wheel(0, 500);
+    await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBeGreaterThan(300);
     await expect(cards.first()).not.toBeInViewport();
     expect(await titleTop()).toBe(initialTop);
 
