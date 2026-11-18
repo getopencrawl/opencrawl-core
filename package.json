@@ -101,8 +101,7 @@
     "./selfhost/context-suggestions": "./dist/src/selfhost/context-suggestions.mjs",
     "./search/check": "./dist/src/search/check.mjs",
     "./search/check-http": "./dist/src/search/check-http.mjs",
-    "./integrations/linear-upstream": "./dist/src/integrations/linear-upstream.mjs",
-    "./integrations/linear-source": "./dist/src/integrations/linear-access.mjs"
+    "./integrations/linear-upstream": "./dist/src/integrations/linear-upstream.mjs"
   },
   "files": [
     "dist/src",

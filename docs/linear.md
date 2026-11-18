@@ -35,10 +35,7 @@ Disconnect immediately invalidates the source capability and retrieval.
 
 Changing a formerly private team's visibility may not update its children's
 `updatedAt`; run a full source refresh to collect those newly shared records.
-Existing indexed records always receive fresh read authorization. The alpha
-self-host distribution starts from an empty installation when replacing the
-retired two-stream format; hosted rollout must explicitly account for existing
-connections before adopting this source.
+Existing indexed records always receive fresh read authorization.
 
 Validation: `npm test` requires an isolated PostgreSQL test database via
 `OPENCRAWL_TEST_POSTGRES_URL`. `OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test

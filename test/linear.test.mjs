@@ -17,7 +17,6 @@ import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 import {createConnectorResolver} from '../dist/src/integrations/resolver.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 import {realmIndex} from '../dist/src/search/realm.mjs';
-import {digest} from '../dist/src/connectors/scope.mjs';
 
 const uuid=n=>String(n).padStart(8,'0')+'-1111-4111-8111-111111111111';
 const tenantId='org_linear', connectionId='int_'+'a'.repeat(26),workspaceId=uuid(100),teamId=uuid(101),issueId=uuid(1),at=Date.parse('2026-11-17T00:00:00Z');
@@ -137,21 +136,6 @@ test('project permission reads fit Linear complexity limits without truncating t
   const batches=f.calls.filter(c=>c.body.query.includes('OpenCrawlAccess'));
   assert.deepEqual(batches.map(c=>Object.keys(c.body.variables).length),[5,5,2]);
   for(const call of batches)assert.match(call.body.query,/teams\(first: 250, includeArchived: true\)/);
-});
-
-test('historical raw records retain identity and require valid scope receipts plus fresh access',async()=>{
-  const f=fixture(),raw={id:'issue:'+issueId,kind:'issue',title:'ENG-42: Shared issue',text:'Historical complete body',url:f.state.rows.issues.url,updatedAt:new Date(at).toISOString()};
-  const data={...raw,access:{policy:'linear-public-team-v1',tenantId,connectionId,workspaceId,teamId,checkedAt:at,contentHash:digest(raw)}};
-  const context=(await f.access.describeMany([linearResourceId('issues',data)])).get(raw.id);
-  const envelope={_airbyte_data:data,_airbyte_extracted_at:at};
-  const old=normalizeLinear(binding,'issues',envelope,'historical',context).at(-1);
-  const next=normalizeLinear(binding,'issues',{_airbyte_data:f.state.rows.issues,_airbyte_extracted_at:at},'upstream',context).at(-1);
-  assert.equal(old.id,next.id);assert.equal(old.document.sourceId,next.document.sourceId);
-  assert.match(old.document.text,/Historical complete body/);
-  for(const change of [{tenantId:'org_other'},{connectionId:'int_other'},{contentHash:'invalid'}])
-    assert.throws(()=>normalizeLinear(binding,'issues',{...envelope,_airbyte_data:{...data,access:{...data.access,...change}}},'historical',context),/historical Linear/);
-  assert.throws(()=>normalizeLinear(binding,'issues',{...envelope,_airbyte_data:{...data,text:'tampered'}},'historical',context),/historical Linear/);
-  f.state.rows.issues.team.visibility='private';assert.equal((await f.access.describeMany([raw.id])).size,0);
 });
 
 test('source transport permits only upstream reads, rejects partial data and preserves filtered page cursors',async()=>{

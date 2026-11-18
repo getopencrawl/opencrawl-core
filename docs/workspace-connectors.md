@@ -14,10 +14,10 @@ subteam resources require a future permission model and are not supported here.
 
 ## Indexed content
 
-- Linear: issue identifiers, titles and descriptions, plus issue comments from
-  public teams. Private and restricted teams are excluded. The
-  [Linear contract](linear-connector.md) specifies the Airbyte source and the
-  mandatory live resource checks for search and fetch.
+- Linear: all 20 upstream Airbyte streams, including issues, comments, projects,
+  planning, relationships, history and customer context. Private and restricted
+  resources are excluded. The [Linear contract](linear.md) specifies feature
+  availability and mandatory live checks before ingestion, indexing and retrieval.
 
 - Granola: `notes` title, summary markdown/text, date, attendees and source URL;
   `transcripts` speaker, text and start/end time. Private notes, attachments and
