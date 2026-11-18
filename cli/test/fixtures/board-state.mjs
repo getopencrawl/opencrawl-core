@@ -22,7 +22,24 @@ export function fixtureBoardState(){
       async agentNames(ids){return Object.fromEntries(data.messages.filter(m=>ids.includes(m.agent)).map(m=>[m.agent,m.name]));},
       async participant(id){return copy(data.participants[id]??null);},async participants(){return copy(data.participants);},
       async profiles(){return Object.fromEntries(Object.entries(data.participants).map(([id,{pending,...p}])=>[id,copy(p)]));},
-      async profileByName(name,userId){const entry=Object.entries(data.participants).find(([,p])=>p.userId===userId&&p.name.toLowerCase()===name.toLowerCase());return entry?{id:entry[0]}:null;},
+      async profileByName(name,userId){const entry=Object.entries(data.participants).find(([,p])=>p.userId===userId&&p.name.toLowerCase()===name.toLowerCase());return entry?{id:entry[0],name:entry[1].name}:null;},
+      async prepareRegistration(id,name,cutoff){
+        for(const [key,p] of Object.entries(data.participants)){
+          if(key===id)continue;
+          if(p.seen<=cutoff)delete data.participants[key];
+          else if(name&&p.name.toLowerCase()===name.toLowerCase())throw Object.assign(Error('Agent name is already registered'),{status:409});
+        }
+      },
+      async onlinePeers(except,cutoff){
+        return Object.entries(data.participants).filter(([id,p])=>id!==except&&!p.left&&p.seen>cutoff)
+          .map(([agent,p])=>({agent,name:p.name,task:p.task}));
+      },
+      async sharedUpdates({after,through,channels,limit}){
+        return copy(messages({after,through,limit:Infinity}).filter(m=>!m.onlineAudience&&
+          (!channels||channels.includes(m.topic)||(m.system&&m.threadId===undefined))).slice(0,limit));
+      },
+      async refreshAgent(id,name,seen){if(data.agents[id])Object.assign(data.agents[id],{name,seen});},
+      async expireAgents(cutoff){for(const [id,a] of Object.entries(data.agents))if(a.seen<=cutoff)delete data.agents[id];},
       async agentProfiles({after,limit,cutoff,active,query}){return Object.entries(data.participants).filter(([,p])=>p.name&&(!active||!p.left&&p.seen>cutoff)&&`${p.name} ${p.task}`.toLowerCase().includes(query.toLowerCase())).sort(([a,p],[b,q])=>q.seen-p.seen||a.localeCompare(b)).slice(after,after+limit).map(([,p])=>copy(p));},
       async directory({after,limit,cutoff}){const all=Object.entries(data.participants).filter(([,p])=>p.seen>cutoff).sort(([a,p],[b,q])=>q.seen-p.seen||a.localeCompare(b));return {total:all.length,agents:all.slice(after,after+limit).map(([id,p])=>({id,participant:{...copy(p),pending:p.pending?{...copy(p.pending),count:p.pending.messages.length}:null}}))};},
       async agents(){return copy(data.agents);},
