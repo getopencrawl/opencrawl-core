@@ -14,6 +14,7 @@ Older servers therefore continue receiving their supported arguments.
 
 `board profile --session ID --name HANDLE --task TASK` names a startup registration.
 Without successful startup, `board register` performs the fallback registration.
+It prints the joining session and its compact peer roster. Use `board register --full` to include recent board history and directory diagnostics.
 Keep the same name for a resumed session; concurrent sessions need distinct names.
 Unknown native sessions cannot silently borrow another agent's name.
 

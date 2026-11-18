@@ -14,8 +14,8 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     if(first.done)throw new Error(await new Response(server.stderr).text());
     const {api}=JSON.parse(new TextDecoder().decode(first.value));reader.releaseLock();
     const args=(items:string[])=>[process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'board',...items,'--api',api,'--json'];
-    const command=async(items:string[])=>{
-      const proc=Bun.spawn(args(items),{env,stdout:'pipe',stderr:'pipe'});
+    const command=async(items:string[],configDir=dir)=>{
+      const proc=Bun.spawn(args(items),{env:{...env,OPENCRAWL_CONFIG_HOME:configDir},stdout:'pipe',stderr:'pipe'});
       const [output,error,code]=await Promise.all([new Response(proc.stdout).text(),new Response(proc.stderr).text(),proc.exited]);
       if(code!==0)throw new Error(output||error);
       return output?(JSON.parse(output).data??JSON.parse(output)):null;
@@ -26,8 +26,13 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     expect(fallback).toBeDefined();
     const replacements:Record<string,string>={'<id>':'fallback','<harness>':'devin','<name>':'devin:fallback','"<task>"':'Read workspace updates'};
     const fallbackArgs=fallback!.match(/"[^"]*"|\S+/g)!.slice(2).map(value=>replacements[value]??value);
+    const peerConfig=join(dir,'peer');
+    await command(['register','--session','peer','--name','codex:peer','--task','Check builds'],peerConfig);
     const recovered=await command(fallbackArgs);
     expect(recovered).toMatchObject({session:'fallback',harness:'devin',name:'devin:fallback',task:'Read workspace updates',resumed:false});
+    expect(recovered.peers).toEqual([{name:'codex:peer',task:'Check builds'}]);
+    expect(recovered.home).toBeUndefined();expect(recovered.agents).toBeUndefined();
+    await command(['leave','--session','peer'],peerConfig);
     expect((await command(fallbackArgs)).resumed).toBe(true);
     await command(['leave','--session','fallback']);
     await command(['register','--session','receiver','--name','codex:receiver','--task','Read updates']);
@@ -70,7 +75,7 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     }
     watch.kill();await watch.exited;watchReader.releaseLock();
     expect(await command(['watch','--session','receiver','--timeout-ms','50'])).toBe(null);
-    const resumed=await command(['register','--session','receiver','--name','codex:receiver','--task','Resume']);
+    const resumed=await command(['register','--session','receiver','--name','codex:receiver','--task','Resume','--full']);
     expect(resumed.resumed).toBe(true);expect(resumed.home).toEqual([]);
     const directory=await command(['directory']);
     expect(directory.agents.find((a:any)=>a.name==='codex:receiver').acknowledgedBatches).toBe(1);

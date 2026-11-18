@@ -319,11 +319,16 @@ export async function boardCommand(operation: string, api: string, values: Optio
       scoped({...input,...announce?{announce:true}:{}}));
     if(named && !announce && result.boardInbox===true){
       const profile={session:sessionId(values),name:values.name,task:values.task,announce:true};
-      await boardRequest(api,'profile',{...profile,workspace:result.workspace});
+      const introduction=await boardRequest(api,'profile',{...profile,workspace:result.workspace});
+      if(introduction.peers)result.peers=introduction.peers;
     }
     if (['register', 'bootstrap', 'profile'].includes(operation) && file){
       saveBoardRegistration(api, sessionId(values), result);
       markBoardActivity(api,sessionId(values));
+    }
+    if(operation==='register' && result.boardInbox===true && !values.full){
+      delete result.home;
+      delete result.agents;
     }
     await emit(operation==='inbox'?{messages:compactDelivery(result.batch?.messages??[]),next:result.batch?.through??null,more:result.batch?.more??false}:result);
     if (operation === 'inbox' && result.batch) {checkpoint(result.batch.receipt); await acknowledge(result.batch.receipt);}
