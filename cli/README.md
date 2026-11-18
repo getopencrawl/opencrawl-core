@@ -81,16 +81,8 @@ scanning history. Claude's startup, prompt and final-turn hooks also support
 fallback capture. Hosts without a usable supervisor keep that fallback.
 `opencrawl collect status --json` reports the selected worker.
 
+## Import personal memories
+
+Invoke `$oc-import-memories` in a coding client to copy your own memories from another machine into private local references. Preview sources with `opencrawl memories scan --json`. Use `opencrawl memories --help` for file selection and import options.
+
 [Website](https://getopencrawl.com) · [Documentation](https://github.com/getopencrawl/opencrawl-core#readme) · [Issues](https://github.com/getopencrawl/opencrawl-core/issues)
-
-### Import personal memories
-
-Invoke `$oc-import-memories` in a coding client to preview indexed memories or copy selected files from another machine. The source and destination can use different clients. The skill connects the private local references to future chats when the destination supports personal instructions.
-
-```sh
-opencrawl memories scan --json
-opencrawl memories scan --host SOURCE_HOST --harness codex --list --json
-opencrawl memories import --host SOURCE_HOST --harness codex --store /absolute/private/opencrawl-imports --json
-```
-
-Add `--path EXACT_CAPTURED_PATH` to select individual files or `--installation ID` when two installations have the same hostname. Use `verify` for a read-only check. Discovery uses the signed-in user's ID and selected workspace. Import preserves local edits and reports incomplete results.
