@@ -81,4 +81,8 @@ scanning history. Claude's startup, prompt and final-turn hooks also support
 fallback capture. Hosts without a usable supervisor keep that fallback.
 `opencrawl collect status --json` reports the selected worker.
 
+## Import personal memories
+
+Invoke `$oc-import-memories` in a coding client to copy your own memories from another machine into private local references. Preview sources with `opencrawl memories scan --json`. Use `opencrawl memories --help` for file selection and import options.
+
 [Website](https://getopencrawl.com) · [Documentation](https://github.com/getopencrawl/opencrawl-core#readme) · [Issues](https://github.com/getopencrawl/opencrawl-core/issues)

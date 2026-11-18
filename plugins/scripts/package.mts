@@ -8,8 +8,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const cursorPluginFiles=['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','mcp.json','rules/opencrawl.mdc','skills/opencrawl/SKILL.md','skills/oc-incognito/SKILL.md','skills/oc-private/SKILL.md','skills/opencrawl-private/SKILL.md','skills/oc-readonly/SKILL.md'].sort();
-export const files = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'mcp_config.json', 'plugin.json', 'skills/oc-incognito/agents/openai.yaml','skills/oc-private/agents/openai.yaml','skills/opencrawl-private/agents/openai.yaml','skills/oc-readonly/agents/openai.yaml', 'skills/opencrawl/SKILL.md','skills/oc-incognito/SKILL.md','skills/oc-private/SKILL.md','skills/opencrawl-private/SKILL.md','skills/oc-readonly/SKILL.md'].sort();
+export const cursorPluginFiles=['.cursor-plugin/plugin.json','LICENSE','README.md','assets/icon.png','commands/setup.md','mcp.json','rules/opencrawl.mdc','skills/oc-import-memories/SKILL.md','skills/opencrawl/SKILL.md','skills/oc-incognito/SKILL.md','skills/oc-private/SKILL.md','skills/opencrawl-private/SKILL.md','skills/oc-readonly/SKILL.md'].sort();
+export const files = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'mcp_config.json', 'plugin.json', 'skills/oc-incognito/agents/openai.yaml','skills/oc-private/agents/openai.yaml','skills/opencrawl-private/agents/openai.yaml','skills/oc-readonly/agents/openai.yaml', 'skills/oc-import-memories/SKILL.md','skills/opencrawl/SKILL.md','skills/oc-incognito/SKILL.md','skills/oc-private/SKILL.md','skills/opencrawl-private/SKILL.md','skills/oc-readonly/SKILL.md'].sort();
 export function crc32(bytes: Buffer) { let crc = 0xffffffff; for (const byte of bytes) {
     crc ^= byte;
     for (let bit = 0; bit < 8; bit++)

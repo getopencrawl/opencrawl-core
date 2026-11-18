@@ -2,12 +2,12 @@ import {CliError, jsonRequest} from './oauth.ts';
 import {accessToken} from './session.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
-async function workspaceRequest(api: string, operation: 'search' | 'fetch', input: Record<string, unknown>, fetcher = fetch) {
-  const configured = await configuredToken('OPENCRAWL_TOKEN', api);
+async function workspaceRequest(api: string, operation: 'search' | 'fetch', input: Record<string, unknown>, fetcher = fetch, pinnedToken?:string) {
+  const configured = pinnedToken ?? await configuredToken('OPENCRAWL_TOKEN', api);
   let token = configured || await accessToken(api, undefined, fetcher);
   const request = () => jsonRequest(`${api}/api/search${operation === 'fetch' ? '/fetch' : ''}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}, body: JSON.stringify(input), signal: AbortSignal.timeout(70_000)}, fetcher);
   let result = await request();
-  if (result.response.status === 401 && (!configured || workspaceIdentityEnabled())) {token = await configuredToken('OPENCRAWL_TOKEN', api, token) || await accessToken(api, token, fetcher);result = await request();}
+  if (result.response.status === 401 && !pinnedToken && (!configured || workspaceIdentityEnabled())) {token = await configuredToken('OPENCRAWL_TOKEN', api, token) || await accessToken(api, token, fetcher);result = await request();}
   if (result.response.status === 401) throw new CliError('AUTH_REQUIRED', 'Sign in with opencrawl login, or configure your self-hosted search token.', 2);
   if (result.response.status === 403) throw new CliError('SEARCH_FORBIDDEN', 'This credential cannot search the selected workspace.', 2);
   if (result.response.status === 400) throw new CliError('INVALID_QUERY', 'Invalid query, filters or expired cursor. Run opencrawl search --help.', 64);
@@ -24,6 +24,11 @@ async function workspaceRequest(api: string, operation: 'search' | 'fetch', inpu
     throw new CliError('CONTEXT_UNAVAILABLE', 'This server did not return event context. Upgrade the server or fetch the passage without --context.');
   return data;
 }
+// An import binds identity and every passage read to the same authenticated credential.
+export const memoryReader = (api:string,token:string) => ({
+  search:(input:Record<string,unknown>)=>workspaceRequest(api,'search',input,fetch,token),
+  fetch:(input:Record<string,unknown>)=>workspaceRequest(api,'fetch',input,fetch,token),
+});
 export const searchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'search', input, fetcher);
 export const fetchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'fetch', input, fetcher);
 
