@@ -4,6 +4,7 @@ import {fetchRequestHandler} from '@trpc/server/adapters/fetch';
 import {z} from 'zod';
 import {libraryOperations} from '../sessions/library-http.mjs';
 import type {Bootstrap, TeamReport, SourceCard} from './types.mjs';
+import {MAX_SEARCH_PAGE} from './search-page.mjs';
 import type {UsageReport, DiagnosticSearch, BoardReport, OnboardingStatus, OnboardingSource, InvitationList, LibraryContract} from './types.mjs';
 
 export interface WebContext {usageSections?: boolean; invoke<T>(path: string, method?: 'GET' | 'POST', input?: object): Promise<T>}
@@ -35,7 +36,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     rename: p.input(z.object({name:z.string().max(100)}).strict()).mutation(({ctx,input}) => ctx.invoke<{ok:true;name:string}>('/api/console/team/organization','POST',input)),
   },
   diagnostics: t.router({
-    search: p.input(z.object({query:z.string().max(4000)}).strict()).query(({ctx,input}) => ctx.invoke<DiagnosticSearch>('/api/debug/search','POST',input)),
+    search: p.input(z.object({query:z.string().max(4000),page:z.number().int().min(1).max(MAX_SEARCH_PAGE).optional()}).strict()).query(({ctx,input}) => ctx.invoke<DiagnosticSearch>('/api/debug/search','POST',input)),
     board: p.input(z.object({channel:z.string().max(80).optional(),threadId:z.number().int().positive().optional(),rootsOnly:z.boolean().optional(),topic:z.string().max(200).optional(),before:z.number().int().positive().optional()}).strict()).query(({ctx,input}) => ctx.invoke<BoardReport>('/api/debug/board'+(Object.keys(input).length?'?'+new URLSearchParams(Object.entries(input).map(([k,v])=>[k,String(v)])) : ''))),
   }),
   library: t.router({

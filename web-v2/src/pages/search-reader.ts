@@ -33,14 +33,14 @@ export class SearchReader {
     this.publish({...this.value, result: null, state: 'canceled', error: ''});
   }
   suspend() {if(this.request)this.cancel();}
-  async search(input: string) {
+  async search(input: string, page = 1) {
     const query = input.trim();
     if (!query || query.length > 4000) return;
     this.request?.abort();
     const request = new AbortController(); this.request = request;
     this.publish({query, result: null, state: 'loading', error: ''});
     try {
-      const result = await this.adapter.search(query, request.signal);
+      const result = await this.adapter.search(query, request.signal, page);
       if (this.request === request && !request.signal.aborted) this.publish({query, result, state: 'complete', error: ''});
     } catch (failure) {
       if (this.request === request && !request.signal.aborted) this.publish({query, result: null, state: 'failed', error: message(failure)});

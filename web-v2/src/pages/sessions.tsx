@@ -9,7 +9,7 @@ import {failureMessage, failureStatus, useLibraryMutation, useResource} from './
 import {consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 
 const PAGE = 50, MAX = 500;
-const harnessOf = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' || value === 'replicas' ? value : null;
+export const sessionHarness = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' || value === 'replicas' ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }
@@ -39,7 +39,7 @@ function CapturedTokens({value}: {value?: number | null}) {
 /** Captured agent sessions: a searchable list and a transcript viewer. */
 export function SessionsPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
-  const userId = params.get('user'), harness = harnessOf(params.get('harness')), sessionId = params.get('id');
+  const userId = params.get('user'), harness = sessionHarness(params.get('harness')), sessionId = params.get('id');
   if (userId && harness && sessionId) return <SessionViewer key={consoleResourceKey(adapter).join(':') + sessionPath({userId, harness, sessionId})} adapter={adapter} reference={{userId, harness, sessionId}}/>;
   return <SessionList adapter={adapter}/>;
 }

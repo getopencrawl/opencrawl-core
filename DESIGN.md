@@ -888,8 +888,14 @@ The legacy `/diagnostics?view=search` URL redirects there. Its Page leads direct
 to the existing SearchInspector query form without an introductory paragraph.
 Queries use the actual scoped adapter and SearchReader, not local sample filtering.
 Source-specific result rows use real titles, provider/harness, kind/role, available
-channel/session/path context and valid timestamps. Body text uses the 15px prose
-token with preserved line breaks. Highlight literal query text through React
+channel/session/path context and valid timestamps. Show the linked title first, followed by a quiet source trail and a compact
+15px excerpt with literal matches in bold. Full text retains original line breaks.
+Known session and memory references link to their scoped library readers.
+Use the existing workspace search form and a dice action, “Surprise me”, which
+runs a different example query. Page through up to 25 results across sources
+per request. Previous and Next use the submitted query and return keyboard
+focus to the updated results. The playground inspects the top 100 candidates per
+source, with source coverage available on each page. Highlight literal query text through React
 nodes, never HTML strings. Full text, item metadata and the response JSON remain
 intentional disclosures; closed disclosures do not render or serialize their
 large payloads. Preserve server excerpt metadata and label excerpts as such,

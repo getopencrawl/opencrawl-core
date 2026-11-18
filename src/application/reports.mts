@@ -64,6 +64,7 @@ export interface SearchResponse {
   hits?: {total?: {value: number; relation?: 'eq' | 'gte'}; hits?: DiagnosticHit[]};
 }
 export interface DiagnosticSearch {
+  page?: {number: number; hasNext: boolean; windowLimited?: boolean};
   partial?: boolean; truncated?: boolean;
   sessions?: Array<{scope: string; response: SearchResponse}>;
   connectors?: {state?: string; truncated?: boolean; responses?: SearchResponse[]};
@@ -82,6 +83,6 @@ export interface ConsoleDataAdapter {
   usageHighlights?(signal: AbortSignal): Promise<UsageHighlights & {cacheScope: string}>;
   usageDetails?(signal: AbortSignal): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;
-  search(query: string, signal: AbortSignal): Promise<DiagnosticSearch>;
+  search(query: string, signal: AbortSignal, page?: number): Promise<DiagnosticSearch>;
   board(input: {channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
 }

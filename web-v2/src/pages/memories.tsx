@@ -9,7 +9,7 @@ import {sessionPath} from './sessions.js';
 import {useLibraryMutation, useResource} from './use-resource.js';
 import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
-const harnessOf = (value: string | null): Harness | null => value === 'claude-code' || value === 'codex' ? value : null;
+export const memoryHarness = (value: string | null): Harness | null => value === 'claude-code' || value === 'codex' ? value : null;
 export function memoryPath({userId, harness, path}: MemoryRef) {
   return '/memories?' + new URLSearchParams({user: userId, harness, path}).toString();
 }
@@ -17,7 +17,7 @@ export function memoryPath({userId, harness, path}: MemoryRef) {
 /** Current memory files agents have written, as captured by OpenCrawl. */
 export function MemoriesPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
-  const userId = params.get('user'), harness = harnessOf(params.get('harness')), path = params.get('path');
+  const userId = params.get('user'), harness = memoryHarness(params.get('harness')), path = params.get('path');
   if (userId && harness && path) return <MemoryViewer key={memoryPath({userId, harness, path})} adapter={adapter} reference={{userId, harness, path}}/>;
   return <MemoryList adapter={adapter}/>;
 }

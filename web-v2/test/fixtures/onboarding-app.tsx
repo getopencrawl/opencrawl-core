@@ -43,7 +43,7 @@ const progressiveUsageAdapter: ConsoleDataAdapter = {...usageAdapter,
   usageHighlights: signal => request('/api/console/usage/highlights', signal),
   usageDetails: signal => request('/api/console/usage/details', signal),
 };
-const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, search:(query,signal)=>request('/api/debug/search',signal,{query}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
+const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, search:(query,signal,page)=>request('/api/debug/search',signal,{query,page}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
 const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */

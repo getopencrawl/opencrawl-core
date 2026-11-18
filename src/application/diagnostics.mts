@@ -1,4 +1,5 @@
 import type {IncomingMessage} from 'node:http';
+import {diagnosticPage, MAX_SEARCH_PAGE, SOURCE_WINDOW} from './search-page.mjs';
 import type {Principal} from '../identity/types.mjs';
 import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createConnectorResolver} from '../integrations/resolver.mjs';
@@ -40,12 +41,14 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
         let decoded: unknown;
         try {decoded = JSON.parse(Buffer.concat(chunks).toString('utf8'));} catch {return json(400, {error: 'INVALID_JSON'});}
         const input = decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded as Record<string, unknown> : null;
-        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'query') ||
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'query' && key !== 'page') ||
           typeof input.query !== 'string' || !input.query.trim() || input.query.length > 4000) return json(400, {error: 'INVALID_QUERY'});
         if (!principal) return json(403, {error: 'WORKSPACE_ACCESS_DENIED'});
         if (!search) return json(503, {error: 'SEARCH_NOT_CONFIGURED'});
+        const page = input.page;
+        if (page !== undefined && (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > MAX_SEARCH_PAGE)) return json(400, {error: 'INVALID_QUERY'});
         const scopes = [principal];
-        const query = {query: input.query.trim(), limit: 20, raw: true};
+        const query = {query: input.query.trim(), limit: page ? SOURCE_WINDOW : 20, raw: true as const};
         const read = async <T,>(operation: () => Promise<T>) => {
           try {return await operation();}
           catch (error) {
@@ -66,7 +69,8 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
         const status = await revalidate();
         if (status !== 200) return json(status, {error: status === 503 ? 'AUTH_UNAVAILABLE' : 'WORKSPACE_ACCESS_DENIED'});
         onSearch?.(input.query.length);
-        return json(200, {sessions, connectors: connected, memories});
+        const result = {sessions, connectors: connected, memories};
+        return json(200, page ? diagnosticPage(result, page) : result);
       }
   } catch(error) {
     if(errorInfo(error).status===403)return respond(403,JSON.stringify({error:'WORKSPACE_ACCESS_DENIED'}),'application/json');

@@ -103,7 +103,7 @@ export function searchHit(hit: DiagnosticHit, source: SearchSource): SearchHitPr
   const context: SearchHitPresentation['context'] = [];
   if (!contextInTitle && identity && identity !== title) context.push({label: source === 'connectors' ? 'Source' : 'Harness', value: identity});
   if (!contextInTitle && type && type !== title) context.push({label: 'Type', value: type});
-  const fields = source === 'sessions' ? [['Session', 'sessionId'], ['Project', 'project']]
+  const fields = source === 'sessions' ? [['Project', 'project'], ['Session', 'sessionId']]
     : source === 'memories' ? [['Path', 'path'], ['Project', 'project']]
     : [['Channel', 'channelId'], ['Heading', 'heading']];
   for (const [label, key] of fields) {

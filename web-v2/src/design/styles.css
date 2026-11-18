@@ -549,29 +549,36 @@ img { max-width: 100%; }
 
 
 
-/* Diagnostics search: source context and readable evidence, with raw detail secondary. */
-.oc-search-inspector .query-form > .actions { flex-shrink: 0; }
-.oc-search-summary { color: var(--muted); overflow-wrap: anywhere; }
-.oc-search-group { margin-top: var(--space-6); padding-top: var(--space-5); padding-bottom: 0; }
-.oc-search-group > .oc-section-heading { margin-bottom: var(--space-4); }
-.oc-search-group > .oc-notice { margin-bottom: var(--space-4); }
-.oc-search-coverage { color: var(--muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
-.oc-search-hit { padding: var(--space-5) 0; }
-.oc-search-hit + .oc-search-hit { border-top: 1px solid var(--line); }
-.oc-search-hit:first-child { padding-top: 0; }
-.oc-search-hit h3 { font-size: var(--text-ui); line-height: var(--leading-ui); overflow-wrap: anywhere; }
-.oc-search-context { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: var(--space-2) 0 var(--space-4); color: var(--muted); font-size: var(--text-xs); }
-.oc-search-context > div { display: flex; gap: var(--space-1); min-width: 0; }
-.oc-search-context dt { flex-shrink: 0; }
-.oc-search-context dd { margin: 0; overflow-wrap: anywhere; }
-.oc-search-excerpt { max-width: 75ch; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-body); line-height: var(--leading-prose); }
-.oc-search-excerpt mark { color: var(--strong); background: var(--selection); }
+/* Search playground uses the same left edge for the query, hits and pager. */
 :where(.oc-external-link) { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); }
-.oc-search-source-link { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-height); margin-top: var(--space-2); font-size: var(--text-sm); }
-.oc-search-results > .oc-disclosure { margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.oc-search-inspector .query-form { max-width: var(--console-task-width); }
+.oc-search-inspector .query-form > .actions { flex-shrink: 0; }
+.oc-search-results { max-width: var(--console-task-width); min-width: 0; }
+.oc-search-summary, .oc-search-coverage, .oc-search-pagination > span { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.oc-search-group { margin-top: var(--space-5); padding: var(--space-4) 0 0; }
+.oc-search-group > .oc-section-heading { margin-bottom: var(--space-3); }
+.oc-search-group > .oc-section-heading h2 { color: var(--muted); font-size: var(--text-sm); font-weight: 500; }
+.oc-search-coverage, .oc-search-group > .oc-notice { margin-bottom: var(--space-3); }
+.oc-search-hit { min-width: 0; }
+.oc-search-hit + .oc-search-hit { margin-top: var(--space-5); }
+.oc-search-hit h3 { color: var(--text); font-size: var(--text-heading); line-height: var(--leading-ui); font-weight: 500; overflow-wrap: anywhere; }
+.oc-search-hit h3 a { display: inline; font-size: inherit; }
+.oc-search-hit h3 a svg { margin-left: var(--space-1); vertical-align: baseline; width: .72em; height: .72em; }
+.oc-search-context { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+.oc-search-context > span { max-width: min(100%, 32ch); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.oc-search-excerpt { max-width: 75ch; margin-top: var(--space-1); overflow-wrap: anywhere; font-size: var(--text-body); line-height: var(--leading-ui); }
+.oc-search-excerpt mark { color: var(--strong); background: transparent; font-weight: 700; }
+.oc-search-excerpt-label { color: var(--muted); }
+.oc-search-tools { display: flex; flex-wrap: wrap; gap: 0 var(--space-4); }
+.oc-search-tools .oc-disclosure { min-width: 0; max-width: 100%; margin: 0; font-size: var(--text-xs); }
+.oc-search-tools .oc-disclosure[open] { width: 100%; }
+.oc-search-tools summary { min-height: var(--space-8); }
+.oc-search-pagination { display: flex; gap: var(--space-4); align-items: center; margin-top: var(--space-6); }
+.oc-search-results > .oc-disclosure { margin-top: var(--space-5); padding-top: var(--space-2); border-top: 1px solid var(--line); }
 @media (max-width: 800px) {
   .oc-search-inspector .query-form > .actions { align-items: stretch; }
   .oc-search-inspector .query-form > .actions > .oc-button { flex: 1; }
+  .oc-search-tools summary { min-height: var(--control-height); }
 }
 
 /* Session and memory library: lists, owner controls and transcripts. */

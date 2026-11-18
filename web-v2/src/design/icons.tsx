@@ -28,6 +28,7 @@ const paths: Record<IconName, string> = {
   menu: 'M4 6h16 M4 12h16 M4 18h16',
   external: 'M15 3h6v6 M21 3 10 14 M10 3H3v18h18v-7',
   refresh: 'M20 7a9 9 0 1 0 1 9 M20 2v5h-5',
+  dice: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M7.5 7.5h.1 M16.5 7.5h.1 M12 12h.1 M7.5 16.5h.1 M16.5 16.5h.1',
   search: 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
   warning: 'm12 3 10 18H2Z M12 9v4 M12 17h.01',
   'arrow-right': 'M5 12h14m-5-5 5 5-5 5',

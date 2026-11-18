@@ -31,7 +31,7 @@ export interface Aggregation {
  * Scores and analyzed matching are backend-specific. */
 export interface IndexResponse<T extends SearchDocument = SearchDocument> {
   timed_out: boolean; _shards: {failed: number};
-  hits: {hits: IndexHit<T>[]; total: {relation: string; value: number}};
+  hits: {hits: IndexHit<T>[]; total: {relation: 'eq' | 'gte'; value: number}};
   aggregations?: Record<string, Aggregation>;
   docs: IndexHit<T>[];
   errors?: boolean;

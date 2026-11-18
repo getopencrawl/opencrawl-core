@@ -41,7 +41,8 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
   type ConnectorSearchInput = SearchInput;
   type ResourceAccess = (binding: ConnectorBinding, sourceId: string) => Promise<boolean>;
   type NormalizedResult = {hits: (ConnectorDocument & {id: string; score: number})[]; examined: number; truncated: boolean};
-  type RawResult = {responses: unknown[]; examined: number; truncated: boolean};
+  type RawResponse = Pick<SearchResponse, 'took' | 'timed_out' | '_shards'> & {hits: {hits: IndexHit<ConnectorDocument>[]}};
+  type RawResult = {responses: RawResponse[]; examined: number; truncated: boolean};
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}, resourceAccess?: ResourceAccess): Promise<RawResult>;
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}, resourceAccess?: ResourceAccess): Promise<NormalizedResult>;
   function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput, resourceAccess?: ResourceAccess): Promise<NormalizedResult | RawResult>;
@@ -52,7 +53,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || (!query.trim() && !id && (!order||order==='relevance')) || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
       const driveAccess = new Map<string, Promise<boolean>>();
-      const hits: (ConnectorDocument & {id: string; score: number})[] = [], responses: unknown[] = []; let after: IndexHit['sort'], examined = 0, more = true, capped = false;
+      const hits: (ConnectorDocument & {id: string; score: number})[] = [], responses: RawResponse[] = []; let after: IndexHit['sort'], examined = 0, more = true, capped = false;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
