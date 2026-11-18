@@ -27,6 +27,7 @@ for (const width of [390, 1280]) {
       return route.fulfill({json: diagnosticPage(result, input.page)});
     });
     await page.goto('/search');
+    await expect(page.getByRole('region', {name: 'Inspect search', exact: true})).toHaveCSS('border-top-width', '1px');
     const field = page.getByRole('searchbox', {name: 'Search query'});
     await field.fill('onboarding'); await field.press('Enter');
     const hits = page.locator('.oc-search-hit');

@@ -134,7 +134,7 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
   const busy = snapshot.state === 'loading';
   useEffect(() => () => reader.suspend(), [reader]);
   return (
-    <section className="oc-search-inspector" aria-label="Inspect search">
+    <Section className="oc-search-inspector" aria-label="Inspect search">
       <form className="query-form" onSubmit={event => {event.preventDefault(); run(query);}}>
         <Field label="Search query">
           <Input ref={input} type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={4000} required placeholder="Search your workspace"/>
@@ -149,6 +149,6 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
       {snapshot.state === 'canceled' && <p role="status" className="muted">Query canceled.</p>}
       {busy && <LoadingState label="Running query"/>}
       {snapshot.result && <SearchResults key={snapshot.query} result={snapshot.result} query={snapshot.query} focusSummary={paging.current} onPage={page => {paging.current = true; void reader.search(snapshot.query, page);}}/>}
-    </section>
+    </Section>
   );
 }
