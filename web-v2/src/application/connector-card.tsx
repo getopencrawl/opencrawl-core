@@ -32,10 +32,10 @@ export function SourceProgress({source}: {source: SourceCard}) {
 export function ConnectorCard({source, action, pending = false, busy = false, onAction}: ConnectorCardProps) {
   const compact = !sourceConnected(source);
   const status = sourceStatus(source);
-  if (!source.statusUnavailable && source.state === 'synced') status.label = source.history ? (source.history.imported ? 'Imported' : 'No history found') : 'Synced';
+  if (!source.statusUnavailable && source.state === 'synced') status.label = 'Synced';
   const lastSynced = source.lastSyncedAt && Number.isFinite(Date.parse(source.lastSyncedAt)) ? source.lastSyncedAt : null;
   const waitingForStatus = source.statusUnavailable || source.statusUpdatedAt === null;
-  const showProgress = waitingForStatus || source.state === 'error' || (!source.history && ['syncing', 'connecting'].includes(source.state));
+  const showProgress = waitingForStatus || ['syncing', 'error', 'connecting'].includes(source.state);
   return <IntegrationCard name={source.name} icon={providerIcon(source)} compact={compact} status={status}
     metrics={source.rows?.map(row => {
       const done = !source.statusUnavailable && (row.done || source.state === 'synced');
@@ -45,6 +45,6 @@ export function ConnectorCard({source, action, pending = false, busy = false, on
     metricsLabel={`${source.name} imported data`}
     note={showProgress ? <SourceProgress source={source}/> : undefined}
     emptyMessage={showProgress ? undefined : source.synced === undefined ? 'Updating imported counts…' : 'No imported data yet.'}
-    metadata={<span title={source.statusUnavailable && source.statusUpdatedAt ? `Last measured ${relativeTime(source.statusUpdatedAt)}` : undefined}>{!source.statusUnavailable && source.state === 'synced' && lastSynced && (!source.history || source.history.imported > 0) ? `${status.label} ${relativeTime(lastSynced)}` : status.label}</span>}
+    metadata={<span title={source.statusUnavailable && source.statusUpdatedAt ? `Last measured ${relativeTime(source.statusUpdatedAt)}` : undefined}>{!source.statusUnavailable && source.state === 'synced' && lastSynced ? `Synced ${relativeTime(lastSynced)}` : status.label}</span>}
     action={action && <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}{!compact && source.state !== 'error' && <Icon name="chevron-right" size={14}/>}</Button>}/>;
 }

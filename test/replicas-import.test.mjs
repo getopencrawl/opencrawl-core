@@ -185,7 +185,10 @@ test('duplicate catalog entries preserve their metadata while counting one disti
   const {gunzipSync}=await import('node:zlib');const events=[...f.store.data].filter(([key])=>key.endsWith('.json.gz')).flatMap(([,bytes])=>JSON.parse(gunzipSync(bytes)).events);
   assert.equal(new Set(events.filter(e=>e.kind!=='replicas_history_page').map(e=>e.id)).size,1);
   assert.deepEqual(new Set(events.filter(e=>e.kind==='replicas_history_page').map(e=>e.data.replicasPage.conversation.title)),new Set([chat.title,'Another catalog label']));
-  assert.ok((await f.service.source(principal)).rows.every(row=>row.done));
+  const card=await f.service.source(principal);
+  assert.equal(card.state,'synced');assert.deepEqual(card.units,['conversation record','conversation records']);
+  assert.equal(card.synced,2);assert.equal(card.total,2);assert.equal(card.rows.find(row=>row.label==='Sessions').count,1);
+  assert.ok(card.rows.every(row=>row.done));
 });
 
 test('backfill resolves each authored message from the catalog or history, including previously archived batches',async()=>{

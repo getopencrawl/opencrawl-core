@@ -21,7 +21,6 @@ export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral
 }
 
 export function sourceProgress(source: SourceCard): string {
-  if(source.history&&source.message)return source.message;
   if (source.statusUnavailable) return source.synced !== undefined ? 'Sync status is temporarily unavailable. Showing the last measurement.' : 'Sync status is temporarily unavailable. We’ll check again automatically.';
   if (source.statusUpdatedAt === null && source.statusRefreshing) return 'Checking sync status…';
   if(source.state==='setup-required')return source.setup?.requirement ? `${source.setup.requirement}.` : 'Your instance administrator needs to configure this connection.';

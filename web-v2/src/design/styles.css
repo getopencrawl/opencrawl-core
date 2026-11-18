@@ -400,6 +400,13 @@ img { max-width: 100%; }
 .oc-source-message { margin-top:var(--space-4); font-size:var(--text-sm); color:var(--pending); }
 .oc-source-message[data-state=error] { color:var(--danger); }
 .oc-source-message progress { display:block; width:100%; height:4px; margin-top:var(--space-3); accent-color:var(--brand-face); }
+/* Native Chrome progress clips the fill at the card's four-pixel height. */
+@media (forced-colors:none) {
+  .oc-source-message progress[value] { appearance:none; border:0; border-radius:2px; overflow:hidden; background:var(--line); }
+  .oc-source-message progress[value]::-webkit-progress-bar { background:var(--line); }
+  .oc-source-message progress[value]::-webkit-progress-value { background:var(--brand-face); }
+  .oc-source-message progress[value]::-moz-progress-bar { background:var(--brand-face); }
+}
 .oc-source-detail-account { display:flex; align-items:center; gap:var(--space-3); margin-bottom:var(--space-5); }
 .oc-source-detail-account > div { flex:1; min-width:0; }
 .oc-source-detail-account p { font-size:var(--text-sm); color:var(--muted); }

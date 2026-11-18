@@ -152,7 +152,7 @@ function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </>}
-    {replicasSource&&<ReplicasHistoryDialog adapter={adapter} onClose={()=>setReplicasSource(null)} onConnected={result=>{setReplicasSource(null);setActionError('');setSuccess(result.phase==='complete'?'Replicas connected. No retained history was found.':'Replicas connected. Your session history is importing in the background.');void reload();}}/>}
+    {replicasSource&&<ReplicasHistoryDialog adapter={adapter} onClose={()=>setReplicasSource(null)} onConnected={result=>{setReplicasSource(null);setActionError('');setSuccess(result.phase==='complete'?'Replicas connected. No retained history was found.':'Replicas connected. Your history import started in the background.');void reload();}}/>}
     <Dialog open={confirmation !== null} onClose={() => {if (!pending) setConfirmation(null);}} title={`Disconnect ${confirmation?.name ?? 'source'}?`} description={confirmation ? disconnectDescription(confirmation) : undefined} actions={<><Button disabled={pending !== null} onClick={() => setConfirmation(null)}>Cancel</Button><Button variant="danger" disabled={pending !== null} onClick={remove}>{pending ? 'Disconnecting…' : 'Disconnect and delete'}</Button></>}>
       {actionError && <Notice tone="danger">{actionError}</Notice>}
     </Dialog>

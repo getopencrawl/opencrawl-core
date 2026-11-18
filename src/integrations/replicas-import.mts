@@ -106,8 +106,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const phase=history?.phase;
     const state=phase==='complete'?'synced':phase==='importing'?'syncing':phase==='failed'?'error':'disconnected';
     return {provider:'replicas',name:'Replicas',description:'Import session history from your Replicas organization.',auth:'api-key',scope:'team',state,
-      account:history?.organization.name,synced:history?.processed,total:history?.total,
-      message:state==='syncing'?'Importing history in the background.':history?.error,
+      account:history?.organization.name,synced:history?.processed,total:history?.total,units:['conversation record','conversation records'],
+      message:history?.error,
       lastSyncedAt:phase==='complete'?history?.updatedAt:undefined,
       rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'},{label:'Events',count:history.events,done:phase==='complete'}]:[],history:history??undefined};
   }

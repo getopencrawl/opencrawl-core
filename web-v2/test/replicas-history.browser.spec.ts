@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 for(const width of [1440,390])test(`Replicas connects with one submission and runs after leaving the page at ${width}px`,async({page},info)=>{
+  await page.clock.install();
   await page.setViewportSize({width,height:width===390?844:900});
   const shot=(name:string)=>page.screenshot({path:info.outputPath(`replicas-${width}-${name}.png`),fullPage:true});
   const calls:string[]=[];
@@ -9,7 +10,7 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[
     {provider:'github',name:'GitHub',auth:'oauth',scope:'team',state:'disconnected'},
     {provider:'replicas',name:'Replicas',auth:'api-key',scope:'team',state,...state==='disconnected'?{}:{
-      history,rows:[{label:'Sessions',count:history.imported},{label:'Events',count:history.events}],synced:history.processed,total:2,message:state==='error'?'Reconnect to resume from the last saved page.':'Importing history in the background.'}},
+      history,rows:[{label:'Sessions',count:history.imported},{label:'Events',count:history.events}],synced:history.processed,total:history.total,units:['conversation record','conversation records'],message:state==='error'?'Reconnect to resume from the last saved page.':undefined}},
     {provider:'slack',name:'Slack',auth:'oauth',scope:'team',state:'disconnected'},
   ]}}));
   await page.route('**/api/integrations/replicas/history',async route=>{
@@ -25,13 +26,17 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await expect(connect).toBeDisabled();await shot('dialog');
   await key.fill('invalid');await connect.click();await expect(dialog.getByText(/Replicas denied access/)).toBeVisible();await shot('invalid');
   await key.fill('test-org-key');await connect.click();await expect(dialog.getByText('Connecting…')).toBeVisible();await shot('checking');release();
-  await expect(dialog).toHaveCount(0);await expect(page.getByText(/Replicas connected/)).toBeVisible();await expect(open).toHaveCount(0);await shot('success');
+  await expect(dialog).toHaveCount(0);await expect(page.getByText(/Replicas connected/)).toBeVisible();await expect(open).toHaveCount(0);
+  const progress=page.getByRole('progressbar',{name:'Replicas import progress'});
+  await expect(progress).toHaveAttribute('value','0');await expect(progress).toHaveAttribute('max','2');await shot('success');
+  Object.assign(history,{processed:1,imported:1,events:8});await page.clock.runFor(30_001);
+  await expect(progress).toHaveAttribute('value','1');await expect(page.getByText('1 of 2 conversation records imported')).toBeVisible();await shot('progress');
   await page.goto('about:blank');state='synced';Object.assign(history,{phase:'complete',processed:2,imported:2,events:12});
-  await page.goto('/integrations-fixture');await expect(page.getByText('Imported',{exact:true}).first()).toBeVisible();await shot('complete');
+  await page.goto('/integrations-fixture');await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await expect(progress).toHaveCount(0);await shot('complete');
   Object.assign(history,{processed:0,imported:0,events:0,total:0});await page.reload();
-  await expect(page.getByText('No history found',{exact:true}).first()).toBeVisible();await shot('empty');
+  await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await expect(page.getByLabel('Replicas imported data').getByText('0',{exact:true})).toHaveCount(2);await shot('empty');
   state='error';history.phase='failed';
-  await page.reload();await expect(open).toBeVisible();await shot('background-error');
+  await page.reload();await expect(open).toBeVisible();await expect(page.getByText('Needs attention',{exact:true}).first()).toBeVisible();await expect(page.getByText('Reconnect to resume from the last saved page.')).toBeVisible();await shot('background-error');
   expect(calls).toEqual(['connect','connect']);expect(await page.evaluate(()=>JSON.stringify([localStorage,sessionStorage]))).not.toContain('test-org-key');
 });
 
