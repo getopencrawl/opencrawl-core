@@ -394,12 +394,12 @@ The sidebar starts 16px from the top. Keep the wordmark optically aligned with
 the mark using its scoped 2px adjustment. Integrations uses the shared plug icon.
 The footer divider remains the only persistent horizontal rule in navigation.
 
-Content is centered at 1200px within the remaining area, with 32px side insets,
-48px top padding and 64px bottom padding. At 800px and below, the same navigation
+Content is centered at 1200px within the remaining area, with 32px side insets
+and 64px bottom padding. At 800px and below, the same navigation
 tree becomes a focus-managed drawer bounded by 300px and the viewport minus 48px.
 The mobile header retains Brand and its navigation control. Background content
 becomes inert while the drawer is open; Escape, the backdrop and selecting a
-page dismiss it. Content padding becomes 32px, 16px and 40px. There is no alternate
+page dismiss it. Content insets become 16px at the sides and 40px at the bottom. There is no alternate
 page-specific sidebar or navigation implementation.
 
 Compose shared stacks, rows, action groups, split rows, two-column form grids,
@@ -412,8 +412,10 @@ a card. Page headers reserve a consistent description and action area.
 ### Workspace page contract
 
 Use `Page` for every sidebar destination. `AppShell` owns the centered 1200px
-content frame, 32px horizontal insets, 48px top inset and 64px bottom inset.
-At 800px and below these insets become 16px horizontally, 32px above and 40px below.
+content frame, 32px horizontal insets and 64px bottom inset. The page header
+sits in a stationary top bar with 16px vertical padding and a bottom divider.
+Only the body below it scrolls. At 800px and below the bar stays beneath the
+mobile navigation, with 16px horizontal insets and 40px below the body.
 The workspace document reserves its scrollbar gutter so short and long pages do
 not shift; focused onboarding retains its original geometry.
 Feature wrappers add no width, centering, top padding or page-title typography.

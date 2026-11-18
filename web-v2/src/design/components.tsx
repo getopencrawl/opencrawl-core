@@ -78,7 +78,12 @@ export type PageProps = Omit<SurfaceProps, 'title'> & Omit<PageHeaderProps, 'var
   bodyClassName?: string;
 };
 export function Page({title, description, actions, bodyWidth = 'wide', bodyClassName = '', className = '', children, ...props}: PageProps) {
-  return <div {...props} className={`oc-page ${className}`}><PageHeader title={title} description={description} actions={actions}/><div className={`oc-page-body oc-page-body-${bodyWidth} ${bodyClassName}`}>{children}</div></div>;
+  return <div {...props} className={`oc-page ${className}`}>
+    <PageHeader title={title} description={description} actions={actions}/>
+    <div className="oc-page-scroll">
+      <div className={`oc-page-body oc-page-body-${bodyWidth} ${bodyClassName}`}>{children}</div>
+    </div>
+  </div>;
 }
 export function Section({title, description, actions, children, className = '', headingLevel = 2, ...props}: Omit<SurfaceProps, 'title'> & {title?: ReactNode; description?: ReactNode; actions?: ReactNode; headingLevel?: 2 | 3}) {
   const id = useId();

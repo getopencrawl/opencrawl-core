@@ -7,6 +7,38 @@ test.beforeEach(async({page,request})=>{
   await request.post('/__test/reset',{data:{}});
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:sources}}));
 });
+for (const viewport of [{width: 1440, height: 900}, {width: 390, height: 844}, {width: 667, height: 375}]) {
+  test(`workspace header stays in place while scrolling at ${viewport.width}px`, async ({page}) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/integrations-fixture');
+    const title = page.getByRole('heading', {level: 1, name: 'Integrations'});
+    const cards = page.getByRole('article');
+    await expect(cards).toHaveCount(sources.length);
+    await page.evaluate(() => document.fonts.ready);
+    const titleTop = () => title.evaluate(element => element.getBoundingClientRect().top);
+    const initialTop = await titleTop();
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
+    await cards.first().hover();
+    await page.mouse.wheel(0, 500);
+    await expect(cards.first()).not.toBeInViewport();
+    expect(await titleTop()).toBe(initialTop);
+
+    const lastAction = cards.last().getByRole('button', {name: 'Manage'});
+    await lastAction.focus();
+    await expect(lastAction).toBeInViewport();
+    await expect(title).toBeInViewport({ratio: 1});
+    expect(await titleTop()).toBe(initialTop);
+    if (viewport.width <= 800) {
+      const menu = page.getByRole('button', {name: 'Open workspace navigation'});
+      await expect(menu).toBeInViewport();
+      await menu.click();
+      await expect(page.getByRole('navigation', {name: 'Workspace navigation'})).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeFocused();
+      await expect(lastAction).toBeInViewport();
+    }
+  });
+}
 for(const width of [1440,600,390,320]) test(`available tiles precede connected cards and support search at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900});
   await page.goto('/integrations-fixture');
