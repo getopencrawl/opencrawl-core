@@ -119,11 +119,13 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
       const key=scope(principal),args=presenceSchema.parse(input),topics=channelNames(args);clientName(args.agent);
       if(args.workspace!==undefined&&args.workspace!==principal.tenantId)throw fail('Workspace scope mismatch',403);
       return repository.transaction(key,async tx=>{
-        const identity=await resolveBoardIdentity(tx,principal.userId,args.agent),time=now(),agents=await tx.agents();
+        const identity=await resolveBoardIdentity(tx,principal.userId,args.agent),time=now();
         if(!args.leave)await requireBoardParticipation(tx,identity.agent);
-        for(const [id,a]of Object.entries(agents))if(a.seen<=time-ttl||(identity.registered&&id!==identity.agent&&a.name.toLowerCase()===identity.name.toLowerCase()&&id===boardIdentity(principal.userId,a.name))){await tx.removeAgent(id);delete agents[id];}
+        await tx.expireAgents(time-ttl);
+        const oldId=boardIdentity(principal.userId,identity.name);
+        if(identity.registered&&oldId!==identity.agent)await tx.removeAgent(oldId);
         if(args.leave)await tx.removeAgent(identity.agent);
-        else {if(!agents[identity.agent]&&Object.keys(agents).length>=128)throw fail('Active agent limit reached',429);await tx.putAgent(identity.agent,{name:identity.name,topics,seen:time});}
+        else await tx.putAgent(identity.agent,{name:identity.name,topics,seen:time});
         return {agent:identity.agent,...args.leave?{left:true}:{channels:topics,expiresAt:time+ttl}};
       });
     },

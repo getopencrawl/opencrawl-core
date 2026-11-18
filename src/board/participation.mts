@@ -1,4 +1,4 @@
-import {announceOnline,onlineWindow} from './inbox.mjs';
+import {announceOnline,onlineWindow,profileRetentionMs} from './inbox.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
@@ -14,7 +14,7 @@ const session = text(200);
 const name = z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9:_.-]*$/);
 const topic = text(80);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const aliveMs = 180_000, retainMs = 30 * 24 * 3600_000;
+const aliveMs = 180_000;
 const workspace = {workspace: text(200).optional()};
 export const participationSchemas = {
   incognito: z.strictObject({currentSession:currentSessionSchema,...workspace}),
@@ -58,7 +58,7 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
     }
     const time=now(),id='session'in args?boardIdentity(principal.userId,args.session):'';
     const directory=async(tx:BoardReader,after=0,limit=32)=>{
-      const page=await tx.directory({after,limit,cutoff:time-retainMs});
+      const page=await tx.directory({after,limit,cutoff:time-profileRetentionMs});
       return {...page,agents:page.agents.map(({id:agent,participant:p})=>({agent,name:p.name,task:p.task,harness:p.harness,seen:p.seen,
         listening:!p.left&&Number(p.lastPoll)>time-aliveMs,left:Boolean(p.left),topics:p.topics,channels:p.topics,registeredAt:p.registeredAt,lastPoll:p.lastPoll,lastAckAt:p.lastAckAt,
         acknowledgedThrough:p.ackCursor,pending:p.pending?{receipt:p.pending.receipt,createdAt:p.pending.createdAt,messages:p.pending.count}:null,
@@ -69,15 +69,11 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
       const {head}=await tx.metadata();let p=await tx.participant(id);
       if(operation!=='leave'&&operation!=='inbox')await requireBoardParticipation(tx,id);
       if(operation==='register'||operation==='bootstrap'||operation==='profile'){
-        const profiles=await tx.profiles(),requestedName=operation==='bootstrap'?undefined:args.name;
+        const requestedName=operation==='bootstrap'?undefined:args.name;
         if(requestedName)clientName(requestedName);
-        for(const [otherId,other]of Object.entries(profiles)){
-          if(otherId!==id&&other.seen<=time-retainMs){await tx.removeParticipant(otherId);delete profiles[otherId];}
-          else if(requestedName&&otherId!==id&&other.name.toLowerCase()===requestedName.toLowerCase())throw fail('Agent name is already registered; choose a session-specific name',409);
-        }
+        await tx.prepareRegistration(id,requestedName,time-profileRetentionMs);
         if(operation==='profile'&&!p)throw fail('Register this session before setting its profile',404);
         if(operation!=='bootstrap'&&p?.name&&p.name!==args.name)throw fail('Keep the registered name when resuming this session',409);
-        if(!p&&Object.keys(profiles).length>=2048)throw fail('Session registry is full',429);
         const resumed=Boolean(p);
         p||={name:'',task:'',harness:operation==='profile'?'other':args.harness,registeredAt:time,seen:time,topics:[],inboxAfter:head,ackCursor:head,lastPoll:null,lastAckAt:null,nextHomeAt:time+60000,pending:null,batches:0,acknowledgedBatches:0};
         const announce=p.announced || (operation!=='bootstrap' && args.announce);
@@ -85,9 +81,9 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
         Object.assign(p,{userId:principal.userId,seen:time,left:false});
         if(operation!=='bootstrap')Object.assign(p,{name:args.name,task:args.task});
         if(operation!=='profile')p.harness=args.harness;
-        const peers=announce?await announceOnline(tx,id,p,profiles,time):undefined;
+        const peers=announce?await announceOnline(tx,id,p,time):undefined;
         await tx.putParticipant(id,p);
-        const presence=(await tx.agents())[id];if(presence)await tx.putAgent(id,{...presence,name:p.name,seen:time});
+        await tx.refreshAgent(id,p.name,time);
         return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,...peers?.length?{peers}:{},boardProtocol:2,boardInbox:true,
           subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(visibleMessage),agents:(await directory(tx,0,8)).agents}:{})};
       }

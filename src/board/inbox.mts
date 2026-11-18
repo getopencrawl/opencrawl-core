@@ -4,19 +4,19 @@ import type {BoardMessage, Participant} from './types.mjs';
 import {messagePage} from './messages.mjs';
 import {fail} from './channels.mjs';
 export const onlineWindow=15*60_000;
-type Profile=Omit<Participant,'pending'>;
+export const profileRetentionMs=30*24*3600_000;
 
 /** Share the declared task with online peers and introduce them to the joining agent. */
-export async function announceOnline(tx:BoardTransaction, id:string, participant:Participant, profiles:Record<string,Profile>, time:number) {
+export async function announceOnline(tx:BoardTransaction, id:string, participant:Participant, time:number) {
   if(participant.announced || !participant.name || !participant.task || !participant.userId)return;
   participant.announced=true;
-  const peers=Object.entries(profiles).filter(([key,p])=>key!==id && !p.left && p.seen>time-onlineWindow);
+  const peers=await tx.onlinePeers(id,time-onlineWindow);
   if(!peers.length)return;
-  const audience=peers.map(([key])=>key);
+  const audience=peers.map(peer=>peer.agent);
   await tx.append({agent:id,author:participant.userId,name:participant.name,topic:'presence',timestamp:time,
     requestId:'online:'+randomUUID(),text:`${participant.name} is online (${participant.harness}). ${participant.task}`,
     onlineAudience:audience});
-  return peers.flatMap(([,peer])=>peer.name && peer.task ? [{name:peer.name,task:peer.task}] : []);
+  return peers.flatMap(peer=>peer.name && peer.task ? [{name:peer.name,task:peer.task}] : []);
 }
 
 /** The model-facing checkpoint is independent of the CLI stdout receipt. Only

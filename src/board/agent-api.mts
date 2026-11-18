@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {announceOnline,onlineWindow,readInbox} from './inbox.mjs';
+import {announceOnline,onlineWindow,profileRetentionMs,readInbox} from './inbox.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader,BoardTransaction} from '../state/board.mjs';
 import type {BoardMessage} from './types.mjs';
@@ -33,24 +33,34 @@ const activeMs=15*60*1000;
 const validName=/^[a-zA-Z0-9][a-zA-Z0-9:_.-]*$/;
 
 /** The native session is account-bound, never a request-supplied user or tenant. */
-async function resolveIdentity(tx:BoardReader,userId:string,input:Identity){
+async function findIdentity(tx:BoardReader,userId:string,input:Identity){
   const session=input.currentSession?.sessionId??input.session;
   if(input.currentSession&&input.session&&input.currentSession.sessionId!==input.session)throw fail('Conflicting session identities');
+  let agent:string;
   if(session){
-    const id=boardIdentity(userId,session),participant=await tx.participant(id);
-    if(!participant)throw fail('Register the current session before using the board',409);
-    if(participant.userId!==undefined&&participant.userId!==userId)throw fail('Session is not owned by this account',403);
-    if(input.agent&&participant.name.toLowerCase()!==input.agent.replace(/^@/,'').toLowerCase())throw fail('Agent does not match the current session',409);
-    if(!participant.name)throw fail('Set this session name and task with board profile',409);
-    clientName(participant.name);
-    return {agent:id,name:participant.name,userId,registered:true,participant};
+    agent=boardIdentity(userId,session);
+  }else{
+    if(!input.agent)return null;
+    clientName(input.agent);
+    const found=await tx.profileByName(input.agent.replace(/^@/,''),userId);
+    if(!found)return null;
+    agent=found.id;
   }
-  if(!input.agent)throw fail('Native session unavailable; supply your registered agent handle',400);
-  clientName(input.agent);
-  const found=await tx.profileByName(input.agent.replace(/^@/,''),userId);
-  if(!found)throw fail('Agent is not registered to this account; use board_presence with session, name and task',409);
-  const participant=(await tx.participant(found.id))!;
-  return {agent:found.id,name:participant.name,userId,registered:true,participant};
+  const participant=await tx.participant(agent);
+  if(!participant)return null;
+  if(participant.userId!==undefined&&participant.userId!==userId)throw fail('Session is not owned by this account',403);
+  if(input.agent && participant.name && participant.name.toLowerCase()!==input.agent.replace(/^@/,'').toLowerCase())throw fail('Agent does not match the current session',409);
+  if(participant.name)clientName(participant.name);
+  return {agent,name:participant.name,userId,registered:true,participant};
+}
+
+async function resolveIdentity(tx:BoardReader,userId:string,input:Identity){
+  const identity=await findIdentity(tx,userId,input);
+  if(identity?.name)return identity;
+  if(identity)throw fail('Set this session name and task with board profile',409);
+  if(input.currentSession||input.session)throw fail('Register the current session before using the board',409);
+  if(input.agent)throw fail('Agent is not registered to this account; use board_presence with session, name and task',409);
+  throw fail('Native session unavailable; supply your registered agent handle',400);
 }
 const namesFor=(tx:BoardReader,messages:Array<Pick<BoardMessage,'mentions'|'mentionNames'>>)=>tx.agentNames([...new Set(messages.flatMap(message=>message.mentionNames?[]:message.mentions??[]))]);
 async function followThread(tx:BoardTransaction,id:string,thread:number,following:boolean){
@@ -106,11 +116,22 @@ export function createAgentBoard({repository,scope,now}:{repository:BoardReposit
     },
     async sync(principal:Principal,input:unknown){
       const args=agentSyncSchema.parse(input),key=checked(principal,args);
-      return repository.read(key,async tx=>{const identity=await resolveIdentity(tx,principal.userId,args),{head}=await tx.metadata(),after=args.after??head;
+      return repository.read(key,async tx=>{
+        const identity=await findIdentity(tx,principal.userId,args);
+        const {head}=await tx.metadata();
+        // Preserve the registered reader’s existing cursor contract.
+        // Without a matched registration only return shared posts. Never guess a session.
+        const after=args.after??(identity ? head : await tx.headBefore(now()-onlineWindow));
         if(after>head)throw fail('Cursor exceeds board history');
-        const rows=await tx.unread({after,through:head,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name,limit:args.limit+1});
-        const names=await namesFor(tx,rows),messages=messagePage(rows.map(m=>({...selectMessage(agentMessage(m,names),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit),more=messages.length<rows.length;
-        return {messages,next:more?messages.at(-1)!.id:head,more};
+        const window={after,through:head,limit:args.limit+1};
+        const rows=identity
+          ? await tx.unread({...window,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name})
+          : await tx.sharedUpdates({...window,channels:args.channels});
+        const names=await namesFor(tx,rows);
+        const messages=messagePage(rows.map(m=>({...selectMessage(agentMessage(m,names),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
+        const more=messages.length<rows.length;
+        return {messages,next:more?messages.at(-1)!.id:head,more,...(!identity?{scope:'workspace',
+          guidance:'Showing shared board posts. To receive personal updates, pass the native currentSession from startup or a registered agent handle.'}:{})};
       });
     },
     async post(principal:Principal,input:unknown){
@@ -143,20 +164,18 @@ export function createAgentBoard({repository,scope,now}:{repository:BoardReposit
         await requireBoardParticipation(tx,id);
         let p=await tx.participant(id);const name=args.name??p?.name??args.agent;
         if(!name||!validName.test(name))throw fail('Supply a valid agent name when registering');clientName(name);
-        const profiles=await tx.profiles();
-        for(const [otherId,other] of Object.entries(profiles))if(otherId!==id&&other.seen<=now()-30*24*3600000){await tx.removeParticipant(otherId);delete profiles[otherId];}
-        if(!p&&Object.keys(profiles).length>=2048)throw fail('Session registry is full',429);
-        if(Object.entries(profiles).some(([otherId,other])=>otherId!==id&&other.name.toLowerCase()===name.toLowerCase()))throw fail('Agent name is already registered',409);
+        const time=now();
+        await tx.prepareRegistration(id,name,time-profileRetentionMs);
         if(args.agent&&name.toLowerCase()!==args.agent.replace(/^@/,'').toLowerCase())throw fail('Agent does not match the current session',409);
         if(p?.name&&p.name!==name)throw fail('Keep the registered name when resuming this session',409);
         if(!p&&!session)throw fail('A session is required to register');
-        const time=now(),head=(await tx.metadata()).head;
+        const head=(await tx.metadata()).head;
         p??={userId:principal.userId,name,task:args.task??'',harness:args.currentSession?.harness??'other',registeredAt:time,seen:time,topics:[],inboxAfter:head,ackCursor:head,lastPoll:null,lastAckAt:null,nextHomeAt:time+60000,pending:null,batches:0,acknowledgedBatches:0};
         if(p.userId!==undefined&&p.userId!==principal.userId)throw fail('Session is not owned by this account',403);
         const announce=args.announce??(p.announced || p.left || args.name!==undefined || args.task!==undefined);
         if(p.left||p.seen<=time-onlineWindow)p.announced=false;
         Object.assign(p,{userId:principal.userId,name,seen:time,left:args.leave,...args.task!==undefined?{task:args.task}:{},...args.channels?{topics:[...new Set(args.channels)]}:{}});
-        const peers=announce&&!args.leave?await announceOnline(tx,id,p,profiles,time):undefined;
+        const peers=announce&&!args.leave?await announceOnline(tx,id,p,time):undefined;
         await tx.putParticipant(id,p);
         // Remove only obsolete presence for this same account-owned identity.
         await tx.removeAgent(id);await tx.removeAgent(boardIdentity(principal.userId,name));
