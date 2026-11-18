@@ -19,7 +19,7 @@ const visibility = z.enum(['team', 'private']);
 const scope = z.enum(['all', 'mine']).default('all');
 export const libraryOperations = {
   'recording/status':z.strictObject({}),
-  'recording/change':z.strictObject({mode:z.enum(['hour','indefinite','resume']),revision:z.string().max(40)}),
+  'recording/change':z.strictObject({mode:z.enum(['hour','indefinite','resume']),revision:z.string().max(40),subject:z.string().max(160)}),
   'sessions/list': z.strictObject({scope, participant: z.string().refine(validParticipant).optional(), query: z.string().max(500).default(''), limit: z.number().int().min(1).max(500).default(50)}),
   'sessions/read': z.strictObject({userId: id, harness, sessionId: id, cursor: z.string().max(2048).nullish(), limit: z.number().int().min(1).max(200).default(100)}),
   'sessions/visibility': z.strictObject({harness, sessionId: id, visibility}),
@@ -36,7 +36,7 @@ export const isLibraryOperation = (value: string): value is LibraryOperation => 
  * supplies the principal; owner checks and visibility live in the libraries. */
 export function createLibraryApi({sessions, memories, recording}: {sessions?: ReturnType<typeof createSessionLibrary> | null; memories?: ReturnType<typeof createMemoryLibrary> | null; recording?: RecordingPolicy}) {
   return async (principal: Principal, operation: string, input: unknown) => {
-    sessionScope(principal);
+    const subject=sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Capture credentials cannot manage sessions or memories');
     if (!isLibraryOperation(operation)) fail(404, 'Unknown operation');
     const parsed = libraryOperations[operation].safeParse(input ?? {});
@@ -45,11 +45,12 @@ export function createLibraryApi({sessions, memories, recording}: {sessions?: Re
       if(!recording && operation==='recording/status')return {available:false};
       if(!recording)fail(503,'Recording controls are unavailable');
       if(operation==='recording/change'){
-        const {mode,revision}=libraryOperations['recording/change'].parse(parsed.data);
-        return recording.change(principal,mode,revision);
+        const change=libraryOperations['recording/change'].parse(parsed.data);
+        if(change.subject!==subject)fail(409,'Your workspace or account changed. Reload the page to update recording.');
+        return {...await recording.change(principal,change.mode,change.revision),subject};
       }
       const {revision,paused,until}=await recording.read(principal);
-      return {revision,paused,until};
+      return {revision,paused,until,subject};
     }
     const [resource, action] = operation.split('/') as ['sessions' | 'memories', string];
     const library = resource === 'sessions' ? sessions : memories;

@@ -5,7 +5,8 @@ agents captured and control who else can.
 
 On **Sessions**, choose **Pause recording** and select **For 1 hour** or
 **Until I turn it back on**. **Resume recording** ends either pause early.
-The setting follows your signed-in identity across workspaces in this deployment.
+The pause applies to agents signed in as you in the workspace where you clicked it.
+Your agents in other workspaces continue recording.
 It applies to session uploads, attachments and native memory snapshots. Other
 people and separately authenticated shared workloads keep their own settings.
 

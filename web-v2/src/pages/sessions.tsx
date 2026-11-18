@@ -103,7 +103,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     next.set('participant', person.id); next.set('participantName', personName(person));
     return '/sessions?' + next.toString();
   };
-  return <Page title="Sessions" actions={<RecordingControl adapter={adapter}/>} description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
+  return <Page title="Sessions" actions={<RecordingControl key={consoleResourceKey(adapter).join(':')} adapter={adapter}/>} description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them." bodyClassName="oc-library">
     {removal.error && !removing && <Notice tone="danger">{removal.error}</Notice>}
     {visibilityChange.error && <Notice tone="danger">{visibilityChange.error}</Notice>}
     <form className="query-form" role="search" onSubmit={event => {event.preventDefault(); update({q: draft.trim()});}}>

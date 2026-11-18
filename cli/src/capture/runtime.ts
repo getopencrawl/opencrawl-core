@@ -1208,7 +1208,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
         if(kept){const bytes=JSON.stringify(kept);enqueueLiveBatch(captureDir(),hash(bytes)+'.json',bytes,false);}
         retryWindowsSharing(()=>unlinkSync(path));
       }
-      if(wait)throw new CliError('RECORDING_PAUSED','Recording is paused for this account.');
+      if(wait)throw new CliError('RECORDING_PAUSED','Your recording is paused in this workspace.');
       return {uploaded:0,pausedRevision:identity.recording.revision};
     }
     const recordingHeaders:Record<string,string>=identity.recording?{'x-opencrawl-recording':identity.recording.revision}:{};

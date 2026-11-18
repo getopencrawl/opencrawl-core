@@ -24,9 +24,7 @@ export function createRecordingPolicy(db: ApplicationDatabase): RecordingPolicy 
     return preparing;
   }
   function scope(p: Principal) {
-    sessionScope(p);
-    // User IDs belong to the deployment's identity provider and survive workspace switches.
-    return [db.namespace,p.userId];
+    return [db.namespace,sessionScope(p)];
   }
   async function lock(c: PoolClient, key: string[], exclusive: boolean) {
     const fn = exclusive ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
