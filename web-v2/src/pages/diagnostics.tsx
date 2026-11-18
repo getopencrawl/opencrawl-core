@@ -18,5 +18,5 @@ export function DiagnosticsPage({adapter}: {adapter: ConsoleDataAdapter; canInsp
 }
 
 export function SearchPlaygroundPage({adapter}: {adapter: ConsoleDataAdapter; canInspect?: boolean}) {
-  return <Page title="Search playground"><SearchInspector adapter={adapter}/></Page>;
+  return <Page title="Search playground" className="oc-playground-page"><SearchInspector adapter={adapter}/></Page>;
 }
