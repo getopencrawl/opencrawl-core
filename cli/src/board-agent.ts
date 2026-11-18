@@ -71,7 +71,7 @@ export function renderBoard(data:Record<string,unknown>,values:Values,stdout:Pic
 export async function agentBoardCommand(operation:string,api:string,values:Values,positionals:string[]){
   const input=agentBoardInput(operation,values,positionals);
   const remote=operation==='reply'?'post':operation==='unfollow'?'follow':operation;
-  if(operation==='presence'&&!input.leave&&(input.name||input.task)&&supportsInbox(api))input.announce=true;
+  if(operation==='presence'&&!input.leave&&(input.name||input.task)&&supportsInbox(api))input.announce??=true;
   const data=await boardRequest(api,'v2/'+remote,input);
   if(operation==='presence'&&!input.leave)markBoardActivity(api,input.session);
   renderBoard(data,values);

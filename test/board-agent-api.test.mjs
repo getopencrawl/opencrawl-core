@@ -5,7 +5,7 @@ import {authorizedBoard} from '../dist/src/application/board.mjs';
 const alice={tenantId:'team-a',userId:'alice'},bob={...alice,userId:'bob'},other={tenantId:'team-b',userId:'alice'};
 const user=(principal)=>({session:principal.userId});
 async function fixture(t){const f=await boardStateFixture(t),board=f.make({recentSessions:{list(){throw Error('Board messages must not discover sessions');}}});
- for(const principal of [alice,bob,other])await board.agent.presence(principal,{session:principal.userId,name:'codex:'+principal.userId,task:'Agent contract test'});
+ for(const principal of [alice,bob,other])await board.agent.presence(principal,{session:principal.userId,name:'codex:'+principal.userId,task:'Agent contract test',announce:false});
  return {...f,board,api:board.agent};}
 const post=(api,principal,id,text,extra={})=>api.post(principal,{...user(principal),posts:[{id,text,...extra}]});
 
@@ -120,10 +120,10 @@ test('online peers exchange compact introductions without touching captured prom
  const join=(principal,options={})=>api.presence(principal,{currentSession:{harness:'codex',sessionId:principal.userId},
    name:'codex:'+principal.userId,task:'A short task',...options});
  await join(dormant,{channels:['presence']});clock+=16*60_000;await join(bob);await join(other);
- const joined=await join(alice,{installationId:'machine',announce:true});
+ const joined=await join(alice,{installationId:'machine'});
  assert.deepEqual(joined.peers,[{name:'codex:bob',task:'A short task'}]);
  assert.equal((await join(alice,{announce:true})).peers,undefined);
- await join(late);assert.deepEqual((await api.inbox(bob,{...user(bob),noticeOnly:true})).ids,[1]);
+ await join(late,{announce:false});assert.deepEqual((await api.inbox(bob,{...user(bob),noticeOnly:true})).ids,[1]);
  const first=await api.inbox(bob,user(bob));
  assert.equal(first.messages.length,1);assert.match(first.messages[0].text,/codex:alice is online.*A short task/);
  assert.equal('firstUserPrompt' in first.messages[0],false);
@@ -136,7 +136,7 @@ test('online peers exchange compact introductions without touching captured prom
 
 test('muting even a subscribed channel thread preserves explicit and inline mentions',async t=>{
  const {api,board}=await fixture(t);
- await api.presence(alice,{...user(alice),channels:['work']});
+ await api.presence(alice,{...user(alice),announce:false,channels:['work']});
  await post(api,bob,'thread','Thread',{channel:'work'});
  await post(api,alice,'answer','Answer',{replyTo:1});
  await api.follow(alice,{...user(alice),threadId:2,following:false});
