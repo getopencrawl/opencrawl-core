@@ -27,9 +27,9 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await key.fill('test-org-key');await connect.click();await expect(dialog.getByText('Connecting…')).toBeVisible();await shot('checking');release();
   await expect(dialog).toHaveCount(0);await expect(page.getByText(/Replicas connected/)).toBeVisible();await expect(open).toHaveCount(0);await shot('success');
   await page.goto('about:blank');state='synced';Object.assign(history,{phase:'complete',processed:2,imported:2,events:12});
-  await page.goto('/integrations-fixture');await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await shot('complete');
+  await page.goto('/integrations-fixture');await expect(page.getByText('Imported',{exact:true}).first()).toBeVisible();await shot('complete');
   Object.assign(history,{processed:0,imported:0,events:0,total:0});await page.reload();
-  await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await shot('empty');
+  await expect(page.getByText('No history found',{exact:true}).first()).toBeVisible();await shot('empty');
   state='error';history.phase='failed';
   await page.reload();await expect(open).toBeVisible();await shot('background-error');
   expect(calls).toEqual(['connect','connect']);expect(await page.evaluate(()=>JSON.stringify([localStorage,sessionStorage]))).not.toContain('test-org-key');
