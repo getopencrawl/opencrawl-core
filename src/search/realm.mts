@@ -4,7 +4,7 @@ import type {TenantPrincipal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {Corpus, SearchDocument, DocumentItem, IndexHit, OpenSearchResponse, QueryBody, RealmOptions, IndexTransportOptions, Mapping, SearchRealm} from './types.mjs';
 import {signRequest} from '../sessions/s3-store.mjs';
-import {realmMapping,passageFields,memoryProjectionFields,sessionTokenFields,sessionParticipantFields,sessionSearchContextFields} from './mapping.mjs';
+import {realmMapping,passageFields,memoryProjectionFields,sessionTokenFields,sessionParticipantFields,sessionSearchContextFields,sessionCaptureFields} from './mapping.mjs';
 export {realmMapping};
 import {fail,realmIndex,realmField,realmDocument} from './realm-format.mjs';
 export {realmIndex,realmField,realmDocument};
@@ -12,6 +12,7 @@ import {createSqliteRealm} from './sqlite.mjs';
 import {patchScript} from './mutations.mjs';
 import {bulkItemLine,INITIAL_BULK_TARGET_BYTES} from './bulk.mjs';
 import {openSearchAggregations} from './aggregations.mjs';
+const optionalSessionFields={...sessionSearchContextFields,...sessionCaptureFields};
 const gzip=promisify(gzipCallback);
 const corpora = new Set(['connector','session','board','memory']);
 function compatible(actual: Mapping | undefined,expected: Mapping): boolean {
@@ -41,12 +42,12 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
       try{await request('',{settings:{number_of_shards:1,number_of_replicas:replicas},mappings:{...realmMapping,_meta:{schema:1,tenantId}}},'PUT');}
       catch(caught){const e=serviceError(caught);if(e.status!==400||e.type!=='resource_already_exists_exception')throw e;}
       let mapping=(await request<Record<string, {mappings: Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
-      for(const [key,expected] of Object.entries(sessionSearchContextFields)){
+      for(const [key,expected] of Object.entries(optionalSessionFields)){
         const actual=mapping?.properties?.session?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible search context mapping');
       }
       // The only in-place schema upgrade is an additive normalization revision.
       // Validate ownership and every existing field before making any change.
-      const withoutSearchContext=(value:Mapping)=>{for(const key of Object.keys(sessionSearchContextFields))delete value.properties?.session?.properties?.[key];return value;};
+      const withoutSearchContext=(value:Mapping)=>{for(const key of Object.keys(optionalSessionFields))delete value.properties?.session?.properties?.[key];return value;};
       const withoutParticipants=(value:Mapping)=>{withoutSearchContext(value);for(const key of Object.keys(sessionParticipantFields))delete value.properties?.session?.properties?.[key];return value;};
       const withoutTokens=(value:Mapping)=>{withoutParticipants(value);delete value.properties?.session?.properties?.capturedTokens;return value;};
       const withoutProjection=(value:Mapping)=>{for(const key of Object.keys(memoryProjectionFields))delete value.properties?.memory?.properties?.[key];return withoutTokens(value);};
@@ -94,8 +95,9 @@ export function createOpenSearchRealm({endpoint,index,tenantId,environment='self
         mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId===tenantId&&mapping?._meta?.schema===1&&compatible(mapping,withoutSearchContext(structuredClone(realmMapping)))&&!compatible(mapping,realmMapping)){
-        for(const [key,expected] of Object.entries(sessionSearchContextFields)){const actual=mapping.properties?.session?.properties?.[key];if(actual&&!compatible(actual,expected))throw fail('Incompatible search context mapping');}
-        await request('/_mapping',{properties:{session:{properties:sessionSearchContextFields}}},'PUT');
+        const existing=mapping.properties?.session?.properties??{};
+        const missing=Object.fromEntries(Object.entries(optionalSessionFields).filter(([key])=>!existing[key]));
+        await request('/_mapping',{properties:{session:{properties:missing}}},'PUT');
         mapping=(await request<Record<string,{mappings:Mapping}>>('/_mapping',undefined,'GET'))?.[index!]?.mappings;
       }
       if(mapping?._meta?.tenantId!==tenantId||mapping?._meta?.schema!==1||!compatible(mapping,realmMapping))throw fail('Realm mapping or tenant mismatch; migrate to a new generation');

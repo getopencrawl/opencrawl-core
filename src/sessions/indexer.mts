@@ -82,6 +82,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
     available.add(event.id);
   }
   if(selected&&[...selected].some(id=>!available.has(id)))throw new Error('Selected event is absent from stored batch');
+  const captureMode=batch.captureMode==='history'||batch.captureMode==='live'?batch.captureMode:'unknown';
   const documents=[];
   for(const event of batch.events){
     if(selected&&!selected.has(event.id))continue;
@@ -101,7 +102,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
         harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,containsToolOutput:hasToolOutput,role:projected.data?.role??(event.kind==='agent_message'&&event.data?.author==='assistant'?'assistant':null),
         timestamp:typeof event.timestamp==='string'?event.timestamp:null,receivedAt:batch.receivedAt,
-        sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,...participantProjection(event,batch),...(chunk===0?{capturedTokens}:{}),text:chunks[chunk]!.text,sourceKey:key,
+        sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,...participantProjection(event,batch),...(chunk===0?{capturedTokens,captureMode}:{}),text:chunks[chunk]!.text,sourceKey:key,
         passageVersion:PASSAGE_VERSION,textStart:chunks[chunk]!.start,textEnd:chunks[chunk]!.end,chunkCount:chunks.length,
         ...(batch.title?{title:batch.title}:{}),
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,

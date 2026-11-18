@@ -37,7 +37,7 @@ for (const backend of ['sqlite', 'opensearch']) {
     const realm=createRealm(options), collection=realm.collection('session'), library=createSessionLibrary(options), ingest=createSessionIngest({store,prefix});
     t.after(async()=>{if(backend==='opensearch')await fetch(endpoint+'/'+realm.index,{method:'DELETE'});await rm(directory,{recursive:true,force:true});});
     if(backend==='opensearch') {
-      const legacy=structuredClone(realmMapping);delete legacy.properties.session.properties.capturedTokens;
+      const legacy=structuredClone(realmMapping);delete legacy.properties.session.properties.capturedTokens;delete legacy.properties.session.properties.captureMode;
       await fetch(endpoint+'/'+realm.index,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({settings:{number_of_shards:1,number_of_replicas:0},mappings:{...legacy,_meta:{schema:1,tenantId}}})});
     }
     await realm.ensureIndex();
@@ -48,6 +48,10 @@ for (const backend of ['sqlite', 'opensearch']) {
       const receipt=await ingest.putBatch(owner,{schemaVersion:1,owner,harness:'codex',sessionId,installationId,origin:'cli',captureMode:'history',events,attachments:[]});
       const key=[...store.data.keys()].find(k=>k.endsWith('/'+receipt.batchId+'.json.gz'));
       const batch=JSON.parse(gunzipSync(store.data.get(key))), docs=batchDocuments({prefix,key,batch,principal:owner});
+      for (const mode of ['history','live',undefined]) {
+        const projected=batchDocuments({prefix,key,batch:{...batch,captureMode:mode},principal:owner});
+        for (const {document} of projected) assert.equal(document.captureMode,document.chunk===0?(mode??'unknown'):undefined);
+      }
       const expected=events.reduce((n,e)=>n+capturedEventTokens('codex',e),0);
       assert.ok(docs.length>3,'large tool result spans multiple search passages');
       assert.equal(docs.reduce((n,d)=>n+(d.document.capturedTokens??0),0),expected,'one token count per event');
