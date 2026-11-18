@@ -161,6 +161,7 @@ export function createCaptureHandler({ingest, authenticate, recording, search=un
       const url = new URL(req.url ?? '', 'http://capture');
       if(principal.captureAccess==='write' && !(
         req.method==='GET' && ['/api/sessions/identity','/api/sessions/recording'].includes(url.pathname) ||
+        req.method==='HEAD' && url.pathname==='/api/sessions/recording' ||
         req.method==='POST' && url.pathname==='/api/sessions/batches' ||
         req.method==='POST' && url.pathname==='/api/sessions/memories' ||
         req.method==='PUT' && /^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(url.pathname))) return send(403,{error:{code:'CAPTURE_WRITE_ONLY'}});
@@ -190,6 +191,10 @@ export function createCaptureHandler({ingest, authenticate, recording, search=un
         if(policy.paused)fail(423,'Recording is paused');
         if((revision??'0')!==policy.revision)fail(412,'Refresh recording permission');
       };
+      if(req.method==='HEAD'&&url.pathname==='/api/sessions/recording'){
+        if(!recording || !revision)return send(412,{error:{code:'RECORDING_PERMISSION_UNAVAILABLE'}});
+        await admit();res.writeHead(204,{'cache-control':'no-store'});res.end();return;
+      }
       const write=<T,>(times:readonly unknown[],run:()=>Promise<T>)=>recording ? recording.capture(principal,revision,times,run) : run();
       if(req.method==='GET' && url.pathname==='/api/sessions/search') {
         if(!search)return send(503,{error:{code:'SEARCH_NOT_CONFIGURED'}});

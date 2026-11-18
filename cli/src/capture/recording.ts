@@ -6,6 +6,7 @@ export function readPermission(value:unknown, previous?:RecordingPermission):Rec
   if(value===undefined&&!previous)return undefined; // A deployment predating recording controls.
   if(!value||typeof value!=='object')throw invalid();
   const data=value as Record<string,unknown>;
+  if(previous&&previous.revision!=='0'&&data.revision==='0')throw invalid();
   const windows=data.windows??(data.revision===previous?.revision?previous?.windows:undefined);
   if(typeof data.revision!=='string'||!(/^(0|[0-9a-f-]{36})$/).test(data.revision)||typeof data.paused!=='boolean'||
     !(data.until===null||typeof data.until==='number'&&Number.isSafeInteger(data.until))||!Array.isArray(windows)||

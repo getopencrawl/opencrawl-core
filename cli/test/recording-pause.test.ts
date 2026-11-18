@@ -22,6 +22,7 @@ test('a paused flush sends zero payload bytes, and an offline mixed queue resume
       const known=req.headers['x-opencrawl-recording'];
       res.end(JSON.stringify({data:{principal,recording:{paused,revision,until:paused?to:null,...known!==revision&&{windows:[[from,to]]}}}}));return;
     }
+    if(req.method==='HEAD'){res.writeHead(423);res.end();return;}
     wire.push(body.toString());expect(req.headers['x-opencrawl-recording']).toBe(revision);
     res.end(JSON.stringify({data:{stored:true,batchId:hash(body)}}));
   });
@@ -45,6 +46,11 @@ test('a paused flush sends zero payload bytes, and an offline mixed queue resume
     expect(requests.map(r=>r.path)).toEqual(['/api/sessions/identity','/api/sessions/identity','/api/sessions/batches']);
     expect(wire[0]).toContain('keep before');expect(wire[0]).toContain('keep after');
     expect(wire[0]).not.toContain('private words');expect(wire[0]).not.toContain(privateBlob.sha256);
+    writeFileSync(join(captureDir(),'queue','large.json'),JSON.stringify({...batch,
+      events:[event('d',to+1,{text:'x'.repeat(300*1024)})],attachments:[]}));
+    await expect(flushCaptures()).rejects.toThrow('423');
+    expect(requests.slice(-2)).toEqual([{path:'/api/sessions/identity',bytes:0},{path:'/api/sessions/recording',bytes:0}]);
+    expect(wire).toHaveLength(1);
   }finally{
     server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));
     for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];
@@ -57,4 +63,5 @@ test('a missing or invalid sentinel cannot downgrade a known recording policy',(
   expect(()=>readPermission(undefined,previous)).toThrow();
   expect(()=>readPermission({revision:randomUUID(),paused:false,until:null},previous)).toThrow();
   expect(readPermission({revision:'0',paused:false,until:null},previous)).toEqual(previous);
+  expect(()=>readPermission(previous,{...previous,revision:randomUUID()})).toThrow();
 });

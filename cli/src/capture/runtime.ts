@@ -92,12 +92,24 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   // Only retry operations whose payloads are read-only or content-addressed.
   // A lost response after storage must resend the same batch/blob, not lose it.
   const retryable=method==='GET'||method==='POST'&&['/api/sessions/batches','/api/sessions/memories'].includes(pathname)||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(pathname);
+  const permission=new Headers(init.headers).get('x-opencrawl-recording');
+  const bytes=typeof init.body==='string'?Buffer.byteLength(init.body):ArrayBuffer.isView(init.body)?init.body.byteLength:0;
   const deadline=pathname==='/api/sessions/recording'?55_000:20_000;
   const send=async()=>{
     for(let attempt=0;;attempt++){
       let response:Response;
       signal?.throwIfAborted();
-      try {response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(deadline)]):AbortSignal.timeout(deadline),redirect:'error'});}
+      try {
+        // A large upload or retry may be far removed from the flush's admission.
+        // Recheck without opening a payload stream. A receiver still fences the final write.
+        if(permission&&bytes&&(bytes>=256*1024||attempt>0)){
+          const check=await fetch(api+'/api/sessions/recording',{method:'HEAD',headers:{authorization:'Bearer '+token,'x-opencrawl-recording':permission},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000),redirect:'error'});
+          if(check.status!==204){
+            await check.body?.cancel();
+            return new Response(JSON.stringify({error:{code:'RECORDING_PERMISSION_UNAVAILABLE'}}),{status:check.ok?412:check.status});
+          }
+        }
+        response=await fetch(api+path,{...init,headers:{...init.headers,authorization:'Bearer '+token},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(deadline)]):AbortSignal.timeout(deadline),redirect:'error'});}
       catch(error){if(signal?.aborted||!retryable||attempt===4)throw error;await pause(250*2**attempt,undefined,{signal});continue;}
       if(!retryable||attempt===4||![429,502,503,504].includes(response.status))return response;
       const retryAfter=response.headers.get('retry-after');
@@ -762,7 +774,7 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
         state.hooks={};state.transcript={};state.emitted={};delete state.thoughtHooks;delete state.startSequence;delete state.startAt;
         recordError(new CliError('CAPTURE_CURSOR_BOUNDARY_CHANGED','Cursor rewrote a pre-consent transcript boundary; earlier bytes remain excluded. New appended records and native content hooks continue.'));
       }
-      if(record.start===0&&state.offset>0){state.transcript={};state.offset=0;delete state.scannedAt;}
+      if(record.start===0&&(state.offset>0||state.ino!==undefined&&state.ino!==record.ino)){state.transcript={};state.offset=0;delete state.scannedAt;}
       if(record.data && (!policy?.windows.length || allowedTime(policy,scanStart,state.scannedAt??null))) {
         const event=messages({sourceTimeFrom:state.scannedAt??null,sourceTime:scanStart,id:hash('cursor-transcript:'+session.sessionId+':'+record.start),kind:'message',sequence:record.data.role==='user'?(state.startSequence??notice.sequence):notice.sequence,
           timestamp:record.data.role==='user'?(state.startAt??notice.at):notice.at,nativeId:null,parentId:null,turnId:notice.event.generation_id??null,agentId:null,data:record.data},'transcript');
@@ -771,7 +783,10 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
       state.offset=record.offset;state.ino=record.ino;state.identity=record.identity;state.checkpoint=record.checkpoint;state.skipPartial=record.skipPartial;
       if(events.length>=100||attachments.length>=8||eventBytes>=1024*1024){await yieldToOwner();commit();}
     }
-    state.scannedAt=scanStart;
+    // A trailing partial line may already contain bytes from the pause.
+    // Only a complete, unchanged EOF proves a lower bound for the next record.
+    const tail=statSync(file);
+    if(state.ino===tail.ino&&state.offset===tail.size)state.scannedAt=scanStart;
   }
   for(const event of transcriptOnly?[]:grokBotEvents(notice)) {
     if(cursorThoughtDuplicate(state.thoughtHooks,notice.event))continue;

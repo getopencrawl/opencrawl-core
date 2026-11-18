@@ -69,6 +69,8 @@ test('the receiver rejects a stale or paused body before ingest and scopes permi
   const batch={schemaVersion:1,owner:principal,installationId:'installation',sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message',timestamp:when}],attachments:[]};
   assert.equal((await fetch(api+'batches',{method:'POST',headers:{'x-opencrawl-recording':'0'},body:JSON.stringify(batch)})).status,412);
   assert.equal((await fetch(api+'identity')).status,426);
+  assert.equal((await fetch(api+'recording',{method:'HEAD',headers:{'x-opencrawl-recording':'0'}})).status,412);
+  assert.equal((await fetch(api+'recording',{method:'HEAD',headers:{'x-opencrawl-recording':green.revision}})).status,204);
   assert.equal((await fetch(api+'batches',{method:'POST',body:JSON.stringify(batch)})).status,412);
   assert.equal((await fetch(api+'batches',{method:'POST',headers:{'x-opencrawl-recording':green.revision},body:JSON.stringify(batch)})).status,422);
   batch.events[0].timestamp=new Date().toISOString();
