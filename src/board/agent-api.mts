@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {announceOnline,onlineWindow,profileRetentionMs,readInbox} from './inbox.mjs';
+import {bindPresenceSession,type PreviewFactory} from './presence-prompts.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader,BoardTransaction} from '../state/board.mjs';
 import type {BoardMessage} from './types.mjs';
@@ -73,7 +74,7 @@ async function followThread(tx:BoardTransaction,id:string,thread:number,followin
 
 /** One agent contract shared by MCP and /api/board/v2. Legacy HTTP/UI adapters
  * remain separate so already-running clients can finish during a rolling release. */
-export function createAgentBoard({repository,scope,now}:{repository:BoardRepository;scope(p:Principal):string;now():number}){
+export function createAgentBoard({repository,scope,now,previews}:{repository:BoardRepository;scope(p:Principal):string;now():number;previews:PreviewFactory}){
   const checked=(p:Principal,input:{workspace?:string})=>{const key=scope(p);if(input.workspace!==undefined&&input.workspace!==p.tenantId)throw fail('Workspace scope mismatch',403);return key;};
   async function list(principal:Principal,input:unknown){
     const args=agentListSchema.parse(input),key=checked(principal,args);
@@ -106,17 +107,20 @@ export function createAgentBoard({repository,scope,now}:{repository:BoardReposit
     async inbox(principal:Principal,input:unknown){
       const args=agentInboxSchema.parse(input),key=checked(principal,args);
       if(args.noticeOnly&&args.acknowledge)throw fail('A notification cannot acknowledge messages');
-      return repository.transaction(key,async tx=>{
+      const preview=previews(principal,key);
+      return preview.finish(repository.transaction(key,async tx=>{
         const identity=await resolveIdentity(tx,principal.userId,args);
-        const {rows,ids,...state}=await readInbox(tx,key,identity.agent,principal.userId,identity.participant,args.acknowledge,args.noticeOnly,now());
+        const bound=bindPresenceSession(identity.participant,principal,args.currentSession?.sessionId??args.session,undefined,args.currentSession?.harness);
+        const {rows,ids,...state}=await readInbox(tx,key,identity.agent,principal.userId,identity.participant,args.acknowledge,args.noticeOnly,now(),bound);
         if(args.noticeOnly)return {ids,more:state.more,...state.left?{left:true}:{}};
         const names=await namesFor(tx,rows);
-        return {...state,messages:rows.map(row=>({...agentMessage(row,names),...replyNotification(row.threadId)}))};
-      });
+        return {...state,messages:rows.map(row=>preview.message({...agentMessage(row,names),...replyNotification(row.threadId)},row))};
+      }));
     },
     async sync(principal:Principal,input:unknown){
       const args=agentSyncSchema.parse(input),key=checked(principal,args);
-      return repository.read(key,async tx=>{
+      const preview=previews(principal,key);
+      return preview.finish(repository.read(key,async tx=>{
         const identity=await findIdentity(tx,principal.userId,args);
         const {head}=await tx.metadata();
         // Preserve the registered reader’s existing cursor contract.
@@ -130,9 +134,10 @@ export function createAgentBoard({repository,scope,now}:{repository:BoardReposit
         const names=await namesFor(tx,rows);
         const messages=messagePage(rows.map(m=>({...selectMessage(agentMessage(m,names),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
         const more=messages.length<rows.length;
+        messages.forEach((message,i)=>preview.message(message,rows[i]));
         return {messages,next:more?messages.at(-1)!.id:head,more,...(!identity?{scope:'workspace',
           guidance:'Showing shared board posts. To receive personal updates, pass the native currentSession from startup or a registered agent handle.'}:{})};
-      });
+      }));
     },
     async post(principal:Principal,input:unknown){
       const args=agentPostSchema.parse(input),key=checked(principal,args);
@@ -157,7 +162,8 @@ export function createAgentBoard({repository,scope,now}:{repository:BoardReposit
     },
     async presence(principal:Principal,input:unknown){
       const args=agentPresenceSchema.parse(input),key=checked(principal,args);
-      return repository.transaction(key,async tx=>{
+      const preview=previews(principal,key);
+      return preview.finish(repository.transaction(key,async tx=>{
         const session=args.currentSession?.sessionId??args.session;
         if(args.currentSession&&args.session&&args.currentSession.sessionId!==args.session)throw fail('Conflicting session identities');
         const id=session?boardIdentity(principal.userId,session):(await resolveIdentity(tx,principal.userId,args)).agent;
@@ -175,12 +181,13 @@ export function createAgentBoard({repository,scope,now}:{repository:BoardReposit
         const announce=args.announce??(p.announced || p.left || args.name!==undefined || args.task!==undefined);
         if(p.left||p.seen<=time-onlineWindow)p.announced=false;
         Object.assign(p,{userId:principal.userId,name,seen:time,left:args.leave,...args.task!==undefined?{task:args.task}:{},...args.channels?{topics:[...new Set(args.channels)]}:{}});
-        const peers=announce&&!args.leave?await announceOnline(tx,id,p,time):undefined;
+        bindPresenceSession(p,principal,session,args.installationId,args.currentSession?.harness);
+        const peers=announce&&!args.leave?await announceOnline(tx,id,p,time,preview):undefined;
         await tx.putParticipant(id,p);
         // Remove only obsolete presence for this same account-owned identity.
         await tx.removeAgent(id);await tx.removeAgent(boardIdentity(principal.userId,name));
         return {name,active:!args.leave,channels:p.topics,...peers?.length?{peers}:{}};
-      });
+      }));
     },
     async agents(principal:Principal,input:unknown){
       const args=agentDirectorySchema.parse(input),key=checked(principal,args);

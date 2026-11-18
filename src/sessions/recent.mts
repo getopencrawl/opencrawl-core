@@ -7,6 +7,7 @@ import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
 import {createControls, visibleTo} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
+import {parseSessionReference} from './session-reference.mjs';
 import {promptText} from './library.mjs';
 import {preview} from '../board/disclosure.mjs';
 import {replicasProjection} from './replicas-record.mjs';
@@ -41,36 +42,31 @@ export function sessionMessage(event: SessionEvent) {
  * original events from immutable capture. No new projection or reindex needed. */
 export function createRecentSessions({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
-  async function read(principal: Principal, {signal, summary = false, id, field = 'context'}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField} = {}) {
+  async function read(principal: Principal, {signal, summary = false, id, field = 'context', openingPrompt = false}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField; openingPrompt?: boolean} = {}) {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});
-    let selection: string[] | undefined;
-    if (id !== undefined) {
-      try {
-        const encoded = id.replace(/^session:/, '');
-        const value: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-        if (!id.startsWith('session:') || !Array.isArray(value) || value.length !== 5 || value.some(key => typeof key !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(key)) || Buffer.from(JSON.stringify(value)).toString('base64url') !== encoded) throw new Error();
-        if (value[0] !== principal.tenantId) throw Object.assign(new Error('Session not found or no longer available.'), {status: 404});
-        selection = value.slice(1);
-      } catch (error) {if ((error as {status?: number}).status) throw error; throw Object.assign(new Error('Invalid session reference.'), {status: 400});}
-    }
+    const ref = id === undefined ? undefined : parseSessionReference(id, openingPrompt);
+    if (ref && ref[0] !== principal.tenantId) throw Object.assign(new Error('Session not found or no longer available.'), {status: 404});
+    const selection = ref?.slice(1);
     const collection = resolve(principal).collection('session');
     const query = (body: QueryBody) => {signal?.throwIfAborted(); return collection.search(principal, body);};
     // max descending selects the correct top buckets across shards. Use the
     // canonical event timestamp (receipt fallback), never backfill upload time.
     const result = await query({size: 0, query: {bool: {filter: [{term: {[f('chunk')]: 0}}, visibleTo('session', principal),
-      ...(selection ? identityFields.map((key, i) => ({term: {[f(key)]: selection![i]}})) : [])]}}, aggs: {
+      ...(selection ? identityFields.flatMap((key, i) => selection[i] === null ? [] : [{term: {[f(key)]: selection[i]}}]) : [])]}}, aggs: {
       recent: {multi_terms: {terms: identityFields.map(key => ({field: f(key)})), size: 10,
         order: [{lastActivity: 'desc'}, {_key: 'asc'}]}, aggs: {lastActivity: {max: {field: 'timestamp'}}}},
     }});
     const buckets = result.aggregations?.recent?.buckets as unknown as RecentBucket[] | undefined;
     if (!Array.isArray(buckets) || buckets.length > 10) throw invalid();
+    // An incomplete reference must resolve to exactly one visible capture.
+    if (openingPrompt && buckets.length !== 1) return [];
     const sessions = [];
     for (const bucket of buckets) {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 4 || bucket.key.some(value => typeof value !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(value)) || !Number.isFinite(bucket.lastActivity?.value)) throw invalid();
       const identity = {userId: bucket.key[0], harness: bucket.key[1], installationId: bucket.key[2], sessionId: bucket.key[3]};
       if (!isSessionHarness(identity.harness)) throw invalid();
-      if (selection && bucket.key.some((key, i) => key !== selection![i])) throw invalid();
+      if (selection && bucket.key.some((key, i) => selection[i] !== null && key !== selection[i])) throw invalid();
       async function authorize() {
         const control = await controls.read({...principal, userId: identity.userId}, 'sessions', identity.harness, identity.sessionId);
         return !control?.deletedAt && !(control?.visibility === 'private' && identity.userId !== principal.userId);
@@ -117,7 +113,11 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
             const source = await original(hit);
             if (!source) return null;
             const {event, batch} = source, message = sessionMessage(event);
-            if (message?.role === role) return {text: message.text, timestamp: iso(event.timestamp), receivedAt: iso(batch.receivedAt), eventId: event.id};
+            if (message?.role === role) {
+              // The first-glance view is bounded in Unicode code points. Full session reads retain the original.
+              const text = openingPrompt ? Array.from(message.text.slice(0, 2000)).slice(0, 1000).join('') : message.text;
+              return {text, timestamp: iso(event.timestamp), receivedAt: iso(batch.receivedAt), eventId: event.id};
+            }
           }
           if (found.hits.hits.length < 20) return null;
           after = found.hits.hits.at(-1)!.sort;
@@ -127,7 +127,7 @@ export function createRecentSessions({store, prefix, ...options}: RealmOptions &
         return null;
       }
       let title = null, titleTimestamp = null;
-      const metadata = await query({size: 20, query: {bool: {filter: [...filter,
+      const metadata = openingPrompt ? {hits: {hits: []}} : await query({size: 20, query: {bool: {filter: [...filter,
         {terms: {[f('kind')]: TITLE_KINDS}}]}}, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]});
       for (const hit of metadata.hits.hits) {
         const source = await original(hit);

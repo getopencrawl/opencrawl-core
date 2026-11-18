@@ -1,13 +1,14 @@
 import {createHash, randomUUID} from 'node:crypto';
 import type {BoardTransaction} from '../state/board.mjs';
 import type {BoardMessage, Participant} from './types.mjs';
+import type {PreviewFactory} from './presence-prompts.mjs';
 import {messagePage} from './messages.mjs';
 import {fail} from './channels.mjs';
 export const onlineWindow=15*60_000;
 export const profileRetentionMs=30*24*3600_000;
 
 /** Share the declared task with online peers and introduce them to the joining agent. */
-export async function announceOnline(tx:BoardTransaction, id:string, participant:Participant, time:number) {
+export async function announceOnline(tx:BoardTransaction, id:string, participant:Participant, time:number, previews:ReturnType<PreviewFactory>) {
   if(participant.announced || !participant.name || !participant.task || !participant.userId)return;
   participant.announced=true;
   const peers=await tx.onlinePeers(id,time-onlineWindow);
@@ -15,16 +16,15 @@ export async function announceOnline(tx:BoardTransaction, id:string, participant
   const audience=peers.map(peer=>peer.agent);
   await tx.append({agent:id,author:participant.userId,name:participant.name,topic:'presence',timestamp:time,
     requestId:'online:'+randomUUID(),text:`${participant.name} is online (${participant.harness}). ${participant.task}`,
-    onlineAudience:audience});
-  return peers.flatMap(peer=>peer.name && peer.task ? [{name:peer.name,task:peer.task}] : []);
+    onlineAudience:audience,...participant.captureRef?{captureRef:participant.captureRef}:{}});
+  return peers.filter(peer=>peer.name && peer.task).map(previews.peer);
 }
 
 /** The model-facing checkpoint is independent of the CLI stdout receipt. Only
  * the exact previously offered page can be confirmed. Concurrent readers replay
  * that page even when subscriptions change or another message arrives. */
-export async function readInbox(tx:BoardTransaction, scope:string, id:string, userId:string, p:Participant, acknowledge:string|undefined, noticeOnly:boolean, time:number) {
+export async function readInbox(tx:BoardTransaction, scope:string, id:string, userId:string, p:Participant, acknowledge:string|undefined, noticeOnly:boolean, time:number, dirty=false) {
   if(p.left)return {rows:[],ids:[],cursor:null,more:false,left:true};
-  let dirty=false;
   if(acknowledge && acknowledge!==p.inboxLastReceipt){
     if(p.inboxPending?.cursor!==acknowledge)throw fail('Cursor does not match this session’s pending inbox page',409);
     p.inboxAfter=p.inboxPending.through;

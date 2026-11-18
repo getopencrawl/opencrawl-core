@@ -113,25 +113,83 @@ test('the handled cursor is independent of stdout, stable under concurrency, and
  assert.deepEqual(await api.inbox(alice,{...user(alice),acknowledge:next.cursor}),{messages:[],cursor:null,more:false});
 });
 
-test('online peers exchange compact introductions without touching captured prompts',async t=>{
- const f=await boardStateFixture(t);let clock=10_000_000,fetches=0;
- const board=f.make({now:()=>clock,recentSessions:{async fetch(){fetches++;throw Error('Unexpected capture read');}}});
+test('online introductions show the visible opening prompt on the first delivery in both directions',async t=>{
+ const f=await boardStateFixture(t);let clock=10_000_000,visible=true,reads=0;
+ const recentSessions={async list(){return [];},async read(reader,{id,openingPrompt,field}){
+   const [tenant,owner,harness,installation,session]=JSON.parse(Buffer.from(id.slice(8),'base64url'));
+   assert.equal(reader.tenantId,tenant);assert.equal(owner,session);assert.equal(harness,'codex');
+   assert.equal(installation,owner==='alice'?'machine':null);
+   assert.equal(field,'firstUserMessage');assert.equal(openingPrompt,true);
+   reads++;
+   if(!visible)return [];
+   return [{firstUserMessage:{text:'The first request for '+owner}}];
+ }};
+ const board=f.make({now:()=>clock,recentSessions});
  const api=board.agent,dormant={...alice,userId:'dormant'},late={...alice,userId:'late'};
  const join=(principal,options={})=>api.presence(principal,{currentSession:{harness:'codex',sessionId:principal.userId},
    name:'codex:'+principal.userId,task:'A short task',...options});
- await join(dormant,{channels:['presence']});clock+=16*60_000;await join(bob);await join(other);
+ await join(dormant,{channels:['presence']});clock+=16*60_000;
+ await board.participate(bob,'bootstrap',{session:'bob',harness:'codex'});
+ await board.participate(bob,'profile',{session:'bob',name:'codex:bob',task:'A short task',announce:true});
+ await join(other);
  const joined=await join(alice,{installationId:'machine'});
- assert.deepEqual(joined.peers,[{name:'codex:bob',task:'A short task'}]);
+ assert.deepEqual(joined.peers,[{name:'codex:bob',task:'A short task',firstUserPrompt:'The first request for bob'}]);
  assert.equal((await join(alice,{announce:true})).peers,undefined);
- await join(late,{announce:false});assert.deepEqual((await api.inbox(bob,{...user(bob),noticeOnly:true})).ids,[1]);
- const first=await api.inbox(bob,user(bob));
- assert.equal(first.messages.length,1);assert.match(first.messages[0].text,/codex:alice is online.*A short task/);
- assert.equal('firstUserPrompt' in first.messages[0],false);
+ await join(late,{announce:false});
+ assert.deepEqual((await api.inbox(bob,{...user(bob),noticeOnly:true})).ids,[1]);
+ const metadata=await api.sync(bob,{...user(bob),after:0,select:['metadata']});
+ assert.equal(metadata.messages.length,1);assert.equal('text' in metadata.messages[0],false);
+ assert.equal(reads,1);
+ const first=await api.inbox(bob,user(bob)), native=await board.participate(bob,'inbox',user(bob));
+ const text='codex:alice is online (codex). A short task\n\nOpening user prompt\nThe first request for alice';
+ assert.equal(first.messages.length,1);assert.equal(first.messages[0].text,text);
+ assert.equal(native.batch.messages[0].text,text);
+ assert.equal((await api.sync(bob,{...user(bob),after:0})).messages[0].text,text);
+ assert.equal((await board.sync(bob,{agent:'codex:bob',after:0})).messages[0].preview,text);
  assert.deepEqual(await api.inbox(bob,user(bob)),first);
  for(const peer of [dormant,late,other,alice])assert.deepEqual((await api.inbox(peer,user(peer))).messages,[]);
- await api.presence(alice,{...user(alice),leave:true});await board.participate(alice,'bootstrap',{session:'alice',harness:'codex'});
- await join(alice,{announce:true});assert.deepEqual((await api.inbox(bob,{...user(bob),acknowledge:first.cursor})).messages.map(m=>m.id),[2]);
- assert.equal(fetches,0);
+ assert.doesNotMatch(JSON.stringify(await f.repository.exportLegacy(boardTenant(alice.tenantId))),/The first request/);
+ assert.doesNotMatch(JSON.stringify([joined,first,native]),/captureRef/);
+ visible=false;
+ const replay=await api.inbox(bob,user(bob)), nativeReplay=await board.participate(bob,'inbox',user(bob));
+ assert.equal(replay.cursor,first.cursor);assert.equal(nativeReplay.batch.receipt,native.batch.receipt);
+ assert.equal(replay.messages[0].text,'codex:alice is online (codex). A short task');assert.equal(nativeReplay.batch.messages[0].text,replay.messages[0].text);
+ await api.presence(alice,{...user(alice),leave:true});const resumed=await board.participate(alice,'bootstrap',{session:'alice',harness:'codex'});
+ assert.ok(resumed.peers.length>0 && resumed.peers.every(peer=>!peer.firstUserPrompt));
+ assert.equal((await join(alice,{announce:true})).peers,undefined);
+ assert.deepEqual((await api.inbox(bob,{...user(bob),acknowledge:first.cursor})).messages.map(m=>m.id),[2]);
+});
+
+test('incognito during an introduction suppresses the in-flight prompt and subsequent replay',async t=>{
+ const f=await boardStateFixture(t),board=f.make({requestCaptureErasure:async()=>({deleted:true,pending:false})});
+ await board.agent.presence(bob,{session:'bob',name:'codex:bob',task:'Read introductions',announce:false});
+ await board.participate(alice,'bootstrap',{session:'alice',harness:'codex'});
+ await board.participate(alice,'profile',{session:'alice',name:'codex:alice',task:'Declared task',announce:true});
+ const fetchStarted=Promise.withResolvers(),release=Promise.withResolvers();
+ const pendingBoard=f.make({recentSessions:{async read(){fetchStarted.resolve();await release.promise;return [{firstUserMessage:{text:'Hidden request'}}];}}});
+ const pending=pendingBoard.agent.inbox(bob,user(bob));await fetchStarted.promise;
+ await board.participate(alice,'incognito',{currentSession:{sessionId:'alice',harness:'codex'}});release.resolve();
+ for(const delivery of [await pending,await pendingBoard.agent.inbox(bob,user(bob))]){
+   assert.equal(delivery.messages[0].text,'codex:alice is online (codex). Declared task');
+ }
+});
+
+test('a slow source leaves its task visible and other peers keep their ready prompts',async t=>{
+ const f=await boardStateFixture(t),base=f.make({});
+ const join=(api,principal,announce)=>api.presence(principal,{session:principal.userId,name:'codex:'+principal.userId,task:'Declared task',announce});
+ await join(base.agent,alice,false);await join(base.agent,bob,false);
+ const late=Promise.withResolvers();
+ const board=f.make({sessionTimeoutMs:100,recentSessions:{async read(_,{id}){
+   const [,owner]=JSON.parse(Buffer.from(id.slice(8),'base64url'));
+   if(owner==='alice')await late.promise;
+   return [{firstUserMessage:{text:'Opening request from '+owner}}];
+ }}});
+ const {peers}=await join(board.agent,{...alice,userId:'new'},true);
+ late.resolve();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(peers.sort((a,b)=>a.name.localeCompare(b.name)),[
+   {name:'codex:alice',task:'Declared task'},
+   {name:'codex:bob',task:'Declared task',firstUserPrompt:'Opening request from bob'},
+ ]);
 });
 
 test('muting even a subscribed channel thread preserves explicit and inline mentions',async t=>{

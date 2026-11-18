@@ -28,7 +28,7 @@ export interface BoardReader {
   participants():Promise<Record<string,Participant>>;
   profiles():Promise<Record<string,Omit<Participant,'pending'>>>;
   profileByName(name:string,userId:string):Promise<{id:string;name:string}|null>;
-  onlinePeers(except:string,cutoff:number):Promise<Array<{agent:string;name:string;task:string}>>;
+  onlinePeers(except:string,cutoff:number):Promise<Array<{agent:string;name:string;task:string;captureRef?:string}>>;
   sharedUpdates(input:{after:number;through:number;channels?:string[];limit:number}):Promise<BoardMessage[]>;
   agentProfiles(input:{after:number;limit:number;cutoff:number;active:boolean;query:string}):Promise<Array<Omit<Participant,'pending'>>>;
   directory(input:{after:number;limit:number;cutoff:number}):Promise<{agents:Array<{id:string;participant:BoardProfile}>;total:number}>;
@@ -182,9 +182,9 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         return row?{id:row.agent,name:row.name}:null;
       },
       async onlinePeers(except,cutoff){
-        return (await query(`SELECT agent,name,record->>'task' AS task FROM opencrawl_board_participants
+        return (await query(`SELECT agent,name,record->>'task' AS task,record->>'captureRef' AS capture_ref FROM opencrawl_board_participants
           WHERE namespace=$1 AND tenant_hash=$2 AND agent<>$3 AND seen>$4 AND coalesce(record->>'left','false')<>'true'
-          ORDER BY agent`,[except,cutoff])).rows.map(row=>({agent:row.agent,name:row.name,task:row.task}));
+          ORDER BY agent`,[except,cutoff])).rows.map(row=>({agent:row.agent,name:row.name,task:row.task,captureRef:row.capture_ref??undefined}));
       },
       async sharedUpdates({after,through,channels,limit}){
         // A reader without a session can see shared board posts, never presence deliveries.

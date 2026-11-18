@@ -1,4 +1,5 @@
 import {announceOnline,onlineWindow,profileRetentionMs} from './inbox.mjs';
+import {bindPresenceSession,type PreviewFactory} from './presence-prompts.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
@@ -35,7 +36,7 @@ type Command = {[K in Operation]: {operation: K; args: z.output<typeof participa
 
 /** All state transitions and delivery receipts commit in one PostgreSQL transaction. */
 export type RequestCaptureErasure = (principal:Principal, session:z.output<typeof currentSessionSchema>)=>Promise<{deleted:boolean;pending:boolean}>;
-export function createParticipation({scope,repository,now,requestCaptureErasure}:{scope(principal:Principal):string;repository:BoardRepository;now():number;requestCaptureErasure?:RequestCaptureErasure}) {
+export function createParticipation({scope,repository,now,requestCaptureErasure,previews}:{scope(principal:Principal):string;repository:BoardRepository;now():number;requestCaptureErasure?:RequestCaptureErasure;previews:PreviewFactory}) {
   return async function participate(principal:Principal,requestedOperation:string,input:unknown={}){
     const key=scope(principal),schema=participationSchemas[requestedOperation as Operation];
     if(!schema)throw fail('Unknown board operation',404);
@@ -65,7 +66,8 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
         batches:p.batches,acknowledgedBatches:p.acknowledgedBatches,lastDeliveryAt:p.lastDeliveryAt||null,acknowledgedMessages:p.acknowledgedMessages||0}))};
     };
     if(operation==='directory')return repository.read(key,async tx=>{const {agents,total}=await directory(tx,args.after);return {workspace:principal.tenantId,agents,through:(await tx.metadata()).head,total,next:args.after+agents.length<total?args.after+agents.length:null};});
-    return repository.transaction(key,async tx=>{
+    const preview=previews(principal,key);
+    return preview.finish(repository.transaction(key,async tx=>{
       const {head}=await tx.metadata();let p=await tx.participant(id);
       if(operation!=='leave'&&operation!=='inbox')await requireBoardParticipation(tx,id);
       if(operation==='register'||operation==='bootstrap'||operation==='profile'){
@@ -81,7 +83,8 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
         Object.assign(p,{userId:principal.userId,seen:time,left:false});
         if(operation!=='bootstrap')Object.assign(p,{name:args.name,task:args.task});
         if(operation!=='profile')p.harness=args.harness;
-        const peers=announce?await announceOnline(tx,id,p,time):undefined;
+        bindPresenceSession(p,principal,args.session,operation==='bootstrap'?undefined:args.installationId);
+        const peers=announce?await announceOnline(tx,id,p,time,preview):undefined;
         await tx.putParticipant(id,p);
         await tx.refreshAgent(id,p.name,time);
         return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,...peers?.length?{peers}:{},boardProtocol:2,boardInbox:true,
@@ -106,8 +109,10 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
         const message=await publishMessage(tx,{userId:principal.userId,agent:id,name:p.name,registered:true},{...args,channel:channelName(args)},time);p.seen=time;
         result={agent:id,accepted:[message.id],mentions:message.mentions??[],...mentionWarning(message.publication?.unresolvedMentions??[])};
       }else if(operation==='inbox'){
+        const bound=bindPresenceSession(p,principal,args.session);
         if(args.receipt&&args.receipt!==p.pending?.receipt)throw fail('Delivery is no longer pending; do not acknowledge another batch',409);
         dirty=ownerMissing||!p.lastPoll||time-p.lastPoll>=60000;if(dirty)p.lastPoll=p.seen=time;
+        dirty ||= bound;
         if(!p.pending){
           // Select only deliverable rows; irrelevant history is skipped in SQL.
           // One lookahead row preserves the legacy through/more receipt boundary.
@@ -121,9 +126,15 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
           }
         }
         const names=await tx.agentNames([...new Set((p.pending?.messages??[]).flatMap(m=>m.mentionNames?[]:m.mentions??[]))]);
-        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>({...m,...replyNotification(m.threadId),mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id}))}:null,pollAfterMs:10000};
+        const introductions=p.pending?.messages.filter(m=>m.reasons.includes('presence')).map(m=>m.id)??[];
+        const sources=new Map((introductions.length?await tx.messagesByIds(introductions):[]).map(row=>[row.id,row]));
+        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>{
+          const view={...m,...replyNotification(m.threadId),mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id};
+          const source=sources.get(m.id);
+          return source?preview.message(view,source):view;
+        })}:null,pollAfterMs:10000};
       }
       if(dirty)await tx.putParticipant(id,p);return result;
-    });
+    }));
   };
 }

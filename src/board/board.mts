@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema,searchParameters,searchMessages} from './search.mjs';
 import {createParticipation,type RequestCaptureErasure} from './participation.mjs';
+import {presencePreviews} from './presence-prompts.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
 import {fail, announcementChannel, channelSchema, channelName, channelNames, clientName, threadIdSchema, visibleMessage} from './channels.mjs';
 import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
@@ -37,6 +38,7 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
   if(!state?.board)throw fail('PostgreSQL board state is required',503);
   if(!Number.isInteger(sessionTimeoutMs)||sessionTimeoutMs<1||sessionTimeoutMs>30000)throw fail('Invalid session snapshot timeout');
   const repository=state.board;
+  const previews=presencePreviews(repository,recentSessions,sessionTimeoutMs);
   function scope(principal:Principal){if(!principal||principal.captureAccess!==undefined||typeof principal.tenantId!=='string'||!principal.tenantId||typeof principal.userId!=='string'||!principal.userId)throw fail('Board scope required',403);return hash(principal.tenantId);}
   return {
     /** Rank IDs only. The console loads message text for the visible page. */
@@ -48,8 +50,8 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
       }, now(), ['id']);
       return {ids: page.messages.map(message => message.id), total: page.total};
     },
-    agent:createAgentBoard({repository,scope,now}),
-    participate:createParticipation({scope,repository,now,requestCaptureErasure}),
+    agent:createAgentBoard({repository,scope,now,previews}),
+    participate:createParticipation({scope,repository,now,requestCaptureErasure,previews}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
       const channel=args.channel!==undefined||args.topic!==undefined?channelName(args):undefined;
       const root=args.threadId!==undefined?await tx.message(args.threadId):null;
@@ -145,14 +147,15 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
         try{sessions=await Promise.race([recentSessions.list(principal,{signal:controller.signal}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Session snapshot timeout'));},sessionTimeoutMs);})]);}
         catch(caught){const error=serviceError(caught);if(error.status===403||error.status===401)throw error;sessionState='unavailable';}finally{clearTimeout(timer);}
       }
-      return repository.read(key,async tx=>{
+      const introductions=previews(principal,key);
+      return introductions.finish(repository.read(key,async tx=>{
         const {head}=await tx.metadata(),identity=await resolveBoardIdentity(tx,principal.userId,args.agent),agentId=identity.agent,agentName=identity.name,start=args.after??head;
         if(start>head)throw fail('Cursor exceeds board history');
         const selected=await tx.unread({after:start,through:head,topics:args.topics,userId:principal.userId,agent:agentId,name:agentName,limit:6}),messages=[];let cursor=head,bytes=0;
-        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,channel:m.topic,threadId:m.threadId??m.id,...m.system?{system:true}:{},preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(message);bytes+=size;}
+        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,channel:m.topic,threadId:m.threadId??m.id,...m.system?{system:true}:{},preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(introductions.message(message,m));bytes+=size;}
         const output={agent:agentId,cursor,more:cursor<head,messages,recentSessions:sessions,recentSessionsStatus:{state:sessionState,limit:10,order:'lastActivityAt_desc',source:'indexed_capture'}};
         return output;
-      });
+      }));
     },
   };
 }

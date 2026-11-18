@@ -83,9 +83,10 @@ test('selected session fetch pages only requested text and detects changed conte
 
 test('selected reply fetch skips unrelated history reads and still rechecks visibility', async () => {
   const store=memorySessionStore(), prefix='sessions/selected', owner={tenantId:'team',userId:'alice'}, reader={...owner,userId:'bob'};
+  const firstText='🧪'.repeat(999)+'xTAIL';
   const identity={userId:'alice',harness:'claude-code',installationId:'device',sessionId:'long-session'};
   const ingest=createSessionIngest({store,prefix}), docs=[];
-  for (const [id,role,text] of [['first','user','Original request'],['answer','assistant','Latest answer']]) {
+  for (const [id,role,text] of [['first','user',firstText],['answer','assistant','Latest answer']]) {
     await ingest.putBatch(owner,{schemaVersion:1,owner,...identity,origin:'desktop',attachments:[],events:[{
       id,kind:'message',timestamp:'2026-11-10T00:00:00Z',sequence:docs.length,data:{role,content:[{type:'text',text}]},
     }]});
@@ -93,7 +94,7 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
     docs.push(batchDocuments({prefix,key,batch,principal:owner})[0]);
   }
   const id='session:'+Buffer.from(JSON.stringify([owner.tenantId,...Object.values(identity)])).toString('base64url');
-  let queryCount=0, revoke=false;
+  let queryCount=0, revoke=false,ambiguous=false;
   const controls=createControls({store,prefix});
   const readStore={...store,async get(key,options){
     const value=await store.get(key,options);
@@ -105,7 +106,11 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
     const body=JSON.parse(options.body), query=JSON.stringify(body.query);
     assert.ok(query.includes('"tenantId":"team"'));
     const base={timed_out:false,_shards:{failed:0},hits:{hits:[]}};
-    if(body.aggs) return Response.json({...base,aggregations:{recent:{buckets:[{key:Object.values(identity),lastActivity:{value:Date.parse('2026-11-10T00:00:00Z')}}]}}});
+    if(body.aggs) {
+      const bucket={key:Object.values(identity),lastActivity:{value:Date.parse('2026-11-10T00:00:00Z')}};
+      const second={...bucket,key:[identity.userId,identity.harness,'other-device',identity.sessionId]};
+      return Response.json({...base,aggregations:{recent:{buckets:ambiguous?[bucket,second]:[bucket]}}});
+    }
     if(query.includes('session_metadata'))return Response.json(base);
     const assistant=query.includes('"assistant"');
     // Simulates hundreds of user-role tool results. Reading this unrelated
@@ -117,14 +122,23 @@ test('selected reply fetch skips unrelated history reads and still rechecks visi
   const board=createBoard({state:{board:{}},recentSessions:recent});
   const args={workspace:'team',id,field:'latestAssistantMessage'};
   const result=await board.fetch(reader,args);
-  assert.equal(result.text,'Latest answer');assert.equal(result.session.title,'Original request');assert.equal(result.session.partial,false);
+  assert.equal(result.text,'Latest answer');assert.equal(result.session.title,'🧪'.repeat(59)+'…');assert.equal(result.session.partial,false);
   assert.deepEqual(Object.keys(result.messages),['latestAssistantMessage']);
   assert.equal(queryCount,4);
+  const ref='session:'+Buffer.from(JSON.stringify(['team','alice',null,null,'long-session'])).toString('base64url');
+  const opening=async(principal,id)=> (await recent.read(principal,{id,openingPrompt:true,field:'firstUserMessage'}))[0]?.firstUserMessage?.text;
+  for(const identity of [id,ref])assert.equal(await opening(reader,identity),'🧪'.repeat(999)+'x');
+  assert.equal(queryCount,8); // One scoped lookup and one first-message query per introduction.
+  ambiguous=true;assert.equal(await opening(reader,ref),undefined);ambiguous=false;
+  await assert.rejects(recent.fetch(reader,ref),{status:400});
   const before=queryCount;
+  await assert.rejects(opening({...reader,tenantId:'foreign'},ref),{status:404});
   await assert.rejects(recent.fetch({...reader,tenantId:'foreign'},id,{field:'latestAssistantMessage'}),{status:404});
   assert.equal(queryCount,before);
   revoke=true;
   await assert.rejects(board.fetch(reader,args),{status:404});
+  assert.equal(await opening(reader,ref),undefined);
+  assert.equal(await opening(owner,ref),'🧪'.repeat(999)+'x');
 });
 
 test('real realm: newest ten org sessions, original first/last text, tool exclusion, timestamps and source isolation', {skip:!endpoint}, async t => {
