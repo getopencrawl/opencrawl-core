@@ -103,3 +103,12 @@ test('closed raw disclosures do not serialize response objects or render full-te
   const html = renderToStaticMarkup(createElement(JsonDisclosure, {label: 'Raw search response', value}));
   assert.match(html, /Raw search response/); assert.doesNotMatch(html, /<pre/);
 });
+
+test('untitled hits identify the matching source passage or filename', () => {
+  const source = {harness: 'codex', kind: 'tool_result', sessionId: 's1'};
+  const file = searchHit({_source: {...source, text: JSON.stringify({output: 'M docs/onboarding/quickstart.md'})}}, 'sessions', 'onboarding');
+  assert.equal(file.title, 'onboarding/quickstart.md');
+  assert.ok(file.context.some(field => field.value === 'Codex'));
+  assert.equal(searchHit({_source: {...source, text: 'Plan for Friday\nReview onboarding with the team'}}, 'sessions', 'onboarding').title, 'Review onboarding with the team');
+  assert.equal(searchHit({_source: {...source, title: 'Original title', text: 'Review onboarding'}}, 'sessions', 'onboarding').title, 'Original title');
+});

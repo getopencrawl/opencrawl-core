@@ -49,7 +49,7 @@ function libraryPath(hit: DiagnosticHit, source: SearchSource) {
 }
 
 function SearchHit({hit, query, source}: {hit: DiagnosticHit; query: string; source: SearchSource}) {
-  const item = searchHit(hit, source), preview = excerpt(item.body, query, 240);
+  const item = searchHit(hit, source, query), preview = excerpt(item.body, query, 240);
   const internal = libraryPath(hit, source);
   const title = item.url ? <ExternalLink href={item.url}>{item.title}</ExternalLink>
     : internal ? <Link to={internal}>{item.title}</Link> : item.title;

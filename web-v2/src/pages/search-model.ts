@@ -90,16 +90,41 @@ export interface SearchHitPresentation {
   timestampLabel?: string;
   url?: string;
 }
-export function searchHit(hit: DiagnosticHit, source: SearchSource): SearchHitPresentation {
+/** Untitled hits borrow a literal piece of the matching passage. Tool output
+ * often contains a filename inside a JSON string or a list of changed paths. */
+function passageTitle(body: string, query: string): string {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return '';
+  const index = body.toLowerCase().indexOf(needle);
+  if (index < 0) return '';
+  const around = body.slice(Math.max(0, index - 120), index + needle.length + 120);
+  const line = around.split(/\r?\n|\\[rn]/u).find(part => part.toLowerCase().includes(needle))?.trim();
+  if (!line) return '';
+  const path = line.match(/[^\s"'<>:{}[\],\\]+\/[^\s"'<>:{}[\],\\]+/gu)
+    ?.find(part => part.toLowerCase().includes(needle));
+  if (path) {
+    const label = path.split('/').filter(Boolean).slice(-2).join('/');
+    if (label.length <= 90) return label;
+  }
+  if (/[{}]|":/u.test(line)) return '';
+  if (line.length <= 90) return line;
+  const match = line.toLowerCase().indexOf(needle);
+  const start = Math.max(0, match - 32);
+  const words = line.slice(start, start + 88).replace(start ? /^\S*\s+/u : /^$/u, '').trimEnd();
+  return (start ? '…' : '') + words + (start + 88 < line.length ? '…' : '');
+}
+
+export function searchHit(hit: DiagnosticHit, source: SearchSource, query = ''): SearchHitPresentation {
   const document = hit._source || {};
   const provider = readable(string(document.provider)), harness = readable(string(document.harness));
   const kind = readable(string(document.kind)), role = readable(string(document.role));
   const identity = source === 'connectors' ? provider : harness;
   const type = [role, kind].filter(Boolean).join(' ');
+  const body = typeof document.text === 'string' ? document.text : '';
   const suppliedTitle = string(document.title) || (source === 'memories' ? string(document.path) : '');
   const fallbackTitle = [identity, type].filter(Boolean).join(' ');
-  const title = suppliedTitle || fallbackTitle || (source === 'memories' ? 'Agent memory' : 'Indexed item');
-  const contextInTitle = !suppliedTitle || suppliedTitle.toLocaleLowerCase() === fallbackTitle.toLocaleLowerCase();
+  const title = suppliedTitle || passageTitle(body, query) || fallbackTitle || (source === 'memories' ? 'Agent memory' : 'Indexed item');
+  const contextInTitle = title.toLocaleLowerCase() === fallbackTitle.toLocaleLowerCase();
   const context: SearchHitPresentation['context'] = [];
   if (!contextInTitle && identity && identity !== title) context.push({label: source === 'connectors' ? 'Source' : 'Harness', value: identity});
   if (!contextInTitle && type && type !== title) context.push({label: 'Type', value: type});
@@ -112,7 +137,6 @@ export function searchHit(hit: DiagnosticHit, source: SearchSource): SearchHitPr
   }
   const dates = [['timestamp', 'Recorded'], ['modifiedAt', 'Modified'], ['receivedAt', 'Received']] as const;
   const date = dates.map(([key, label]) => ({value: timestamp(document[key]), label})).find(item => item.value);
-  const body = typeof document.text === 'string' ? document.text : '';
   const excerpt = document.excerpt;
   const serverExcerpt = typeof excerpt === 'object' && excerpt !== null && 'totalChars' in excerpt &&
     count(excerpt.totalChars) && excerpt.totalChars > body.length;
