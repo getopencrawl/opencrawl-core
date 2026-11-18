@@ -28,13 +28,14 @@ for (const width of [390, 1280]) {
       board: {hits: {total: {value: 1}, hits: [{_id: '42', _source: {channel: 'releases', author: 'release-review',
         messageId: 42, threadId: 40, text: 'The launch checklist is ready for a final review.'}}]}},
       connectors: {responses: [{hits: {total: {value: 1}, hits: [{_source: {provider: 'notion', kind: 'page',
-        title: 'Release playbook', url: 'https://example.com/playbook', text: 'Use the launch checklist to verify onboarding.'}}]}}]},
+        title: 'Release playbook', url: 'https://example.com/playbook', text: 'Use the launch checklist to verify onboarding. Start with an empty workspace, connect a source, and make sure the first result opens the original document. Invite a teammate to repeat the flow, then record anything that would slow down the next team.'}}]}}]},
     };
     await page.route('**/api/debug/search', route => route.fulfill({json: diagnosticPage(mixed, 1)}));
     await page.goto('/search');
     const field = page.getByRole('searchbox', {name: 'Search query'});
     await field.fill('launch checklist'); await field.press('Enter');
     await expect(page.locator('.oc-search-summary')).toHaveText('3 results');
+    await expect(page.locator('.oc-search-hit details, .oc-search-results > details')).toHaveCount(0);
     await expect(page.locator('.oc-search-prompt')).toContainText('User prompt');
     await expect(page.getByRole('link', {name: 'Public beta launch'})).toHaveAttribute('href', /\/sessions\?/);
     await expect(page.getByRole('link', {name: '#releases'})).toHaveAttribute('href', '/diagnostics?view=board&channel=releases&thread=40&message=42');
@@ -64,15 +65,24 @@ for (const width of [390, 801, 1280, 1920]) {
     const inspector = page.getByRole('region', {name: 'Inspect search', exact: true});
     await expect(inspector).toHaveCSS('border-top-width', '0px');
     const form = inspector.locator('form');
-    expect(await form.evaluate(edges)).toEqual(libraryEdges);
+    const center = (element: Element) => {
+      const {left, top, width, height} = element.getBoundingClientRect();
+      return {x: left + width / 2, y: top + height / 2};
+    };
+    const bodyCenter = await page.locator('main .oc-page-scroll').evaluate(center);
+    const formCenter = await form.evaluate(center);
+    expect(Math.abs(formCenter.x - bodyCenter.x)).toBeLessThan(1);
+    expect(Math.abs(formCenter.y - bodyCenter.y)).toBeLessThan(1);
+    await page.screenshot({path: info.outputPath(`empty-${width}.png`)});
     const header = page.locator('main .oc-page-header');
     await expect(header).toHaveCSS('border-bottom-width', '1px');
     const headerBottom = await header.evaluate(element => element.getBoundingClientRect().bottom);
-    expect(await form.evaluate(element => element.getBoundingClientRect().top) - headerBottom).toBe(32);
     const field = page.getByRole('searchbox', {name: 'Search query'});
     await field.fill('onboarding'); await field.press('Enter');
     const hits = page.locator('.oc-search-hit');
     await expect(hits).toHaveCount(25);
+    expect(await form.evaluate(edges)).toEqual(libraryEdges);
+    expect(await form.evaluate(element => element.getBoundingClientRect().top) - headerBottom).toBe(32);
     const summary = page.locator('.oc-search-summary');
     await expect(summary).toHaveText('1–25 of 29 results');
     await expect(page.getByRole('heading', {name: /Agent sessions|Connected sources/})).toHaveCount(0);
@@ -99,5 +109,12 @@ for (const width of [390, 801, 1280, 1920]) {
     await expect(field).not.toHaveValue('edited draft');
     await expect(hits).toHaveCount(25);
     expect(calls.at(-1)).toEqual({query: await field.inputValue(), page: 1});
+    await field.fill('');
+    await expect(hits).toHaveCount(0);
+    await expect(summary).toHaveCount(0);
+    await expect(field).toBeFocused();
+    expect(await form.evaluate(center)).toEqual(formCenter);
+    await field.fill('new draft');
+    expect(await form.evaluate(center)).toEqual(formCenter);
   });
 }

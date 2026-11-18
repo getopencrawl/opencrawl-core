@@ -549,6 +549,13 @@ img { max-width: 100%; }
 .oc-search-inspector { display: grid; gap: var(--space-6); min-width: 0; }
 .oc-search-inspector .query-form { margin: 0; }
 .oc-search-inspector .query-form > .actions { flex-shrink: 0; }
+.oc-search-input { position: relative; flex: 1; min-width: 0; }
+.oc-search-input > .oc-icon { position: absolute; top: 50%; inset-inline-start: var(--space-3); transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.oc-search-input > .oc-input { padding-inline-start: var(--space-10); }
+.oc-content > .oc-page > .oc-page-scroll:has(.oc-search-start) { display: grid; align-items: safe center; padding-block: var(--console-page-header-gap); }
+.oc-search-start .query-form { width: 100%; max-width: var(--console-form-width); margin-inline: auto; flex-direction: column; align-items: center; gap: var(--space-4); }
+.oc-search-start .oc-search-input { width: 100%; }
+.oc-search-start .oc-input { min-height: var(--space-12); font-size: var(--text-body); }
 .oc-search-results { min-width: 0; }
 .oc-search-summary, .oc-search-coverage, .oc-search-pagination > span { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .oc-search-group { margin-top: var(--space-4); }
@@ -565,20 +572,12 @@ img { max-width: 100%; }
 .oc-search-prompt .oc-search-excerpt { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--secondary-line); }
 .oc-search-excerpt { max-width: 75ch; margin-top: var(--space-1); overflow-wrap: anywhere; font-size: var(--text-body); line-height: var(--leading-ui); }
 .oc-search-hit mark { color: inherit; background: transparent; font-weight: 700; }
-.oc-search-excerpt-label { color: var(--muted); }
-.oc-search-tools { display: flex; flex-wrap: wrap; gap: 0 var(--space-4); margin-top: var(--space-1); }
-.oc-search-tools .oc-disclosure { min-width: 0; max-width: 100%; margin: 0; font-size: var(--text-xs); }
-.oc-search-tools .oc-disclosure[open] { width: 100%; }
-.oc-search-tools summary { min-height: var(--space-8); }
+.oc-search-hit > .oc-disclosure { margin-top: var(--space-1); font-size: var(--text-sm); }
 .oc-search-pagination { display: flex; gap: var(--space-4); align-items: center; justify-content: center; margin-top: var(--space-8); }
-.oc-search-results > .oc-disclosure { margin-top: var(--space-5); padding-top: var(--space-2); border-top: 1px solid var(--line); }
 @container (max-width: 600px) {
   .oc-search-inspector .query-form { flex-direction: column; align-items: stretch; }
   .oc-search-inspector .query-form > .actions { align-items: stretch; }
   .oc-search-inspector .query-form > .actions > .oc-button { flex: 1; }
-}
-@media (max-width: 800px) {
-  .oc-search-tools summary { min-height: var(--control-height); }
 }
 
 /* Session and memory library: lists, owner controls and transcripts. */

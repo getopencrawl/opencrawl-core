@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
-import {Button, EmptyState, ExternalLink, Field, Input, LoadingState, Notice} from '../design/components.js';
+import {Button, EmptyState, ExternalLink, Input, LoadingState, Notice} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import type {ConsoleDataAdapter, DiagnosticHit, DiagnosticSearch} from './types.js';
 import {excerpt, highlightedText, resultSummary, searchGroups, searchHit} from './search-model.js';
@@ -68,14 +68,11 @@ function SearchHit({hit, query, source}: {hit: DiagnosticHit; query: string; sou
         {item.context.map(field => <span key={field.label} className={field.label === 'Type' && item.userPrompt ? 'oc-search-prompt-label' : undefined} title={field.value}><span className="sr-only">{field.label} </span>{field.value}</span>)}
         {item.timestamp && <time dateTime={item.timestamp} title={new Date(item.timestamp).toLocaleString()}>{new Date(item.timestamp).toLocaleDateString(undefined, {dateStyle: 'medium'})}</time>}
       </div>
-      {!sameText && <p className="oc-search-excerpt">
-        {item.serverExcerpt && <span className="oc-search-excerpt-label">Excerpt — </span>}
-        {item.body ? <>{preview.leading && '…'}<Highlight text={preview.text} query={query}/>{preview.trailing && '…'}</> : 'No indexed text was returned for this item.'}
+      {!sameText && item.body && <p className="oc-search-excerpt">
+        {(preview.leading || item.serverExcerpt?.leading) && '…'}<Highlight text={preview.text} query={query}/>{(preview.trailing || item.serverExcerpt?.trailing) && '…'}
       </p>}
-      <div className="oc-search-tools">
-        {(preview.leading || preview.trailing) && <TextDisclosure body={item.body} serverExcerpt={item.serverExcerpt}/>}
-        <JsonDisclosure label="Item metadata and JSON" value={hit}/>
-      </div>
+      {!sameText && !internal && !item.url && (preview.leading || preview.trailing) &&
+        <TextDisclosure body={item.body} serverExcerpt={Boolean(item.serverExcerpt)}/>}
     </article>
   );
 }
@@ -114,7 +111,6 @@ export function SearchResults({result: response, query, onPage, focusSummary = f
         <span aria-current="page">Page {page}</span>
         <Button onClick={() => changePage(page + 1)} disabled={!hasNext}>Next<Icon name="chevron-right" size={16}/></Button>
       </div>}
-      <JsonDisclosure label="Raw search response" value={response}/>
     </div>
   );
 }
@@ -123,11 +119,15 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
   const model=useConsoleModel(consoleResourceKey(adapter,'search'),()=>({draft:'',reader:new SearchReader({search:async(query,signal,page)=>{try{return await adapter.search(query,signal,page);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}})}));
   const [draft,setDraft]=useState({model,value:model.draft});
   const query=draft.model===model?draft.value:model.draft;
-  const setQuery=(value:string)=>{model.draft=value;setDraft({model,value});};
   const input = useRef<HTMLInputElement>(null);
   const reader = model.reader;
   const snapshot = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot);
   const paging = useRef(false);
+  function setQuery(value: string) {
+    model.draft = value;
+    setDraft({model, value});
+    if (!value.trim() && snapshot.state !== 'idle') reader.clear();
+  }
   function run(value: string) {paging.current = false; void reader.search(value);}
   function surprise() {
     const choices = examples.filter(example => example !== query && example !== snapshot.query);
@@ -137,13 +137,14 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
   const busy = snapshot.state === 'loading';
   useEffect(() => () => reader.suspend(), [reader]);
   return (
-    <section className="oc-search-inspector" aria-label="Inspect search">
+    <section className={snapshot.state === 'idle' ? 'oc-search-inspector oc-search-start' : 'oc-search-inspector'} aria-label="Inspect search">
       <form className="query-form" onSubmit={event => {event.preventDefault(); run(query);}}>
-        <Field label="Search query">
-          <Input ref={input} type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={4000} required placeholder="Search your workspace"/>
-        </Field>
+        <div className="oc-search-input">
+          <Icon name="search" size={18}/>
+          <Input ref={input} aria-label="Search query" type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={4000} required placeholder="Search your workspace"/>
+        </div>
         <div className="actions">
-          <Button type="submit" variant="primary" disabled={!query.trim()} aria-busy={busy || undefined}><Icon name="search" size={16}/>Run query</Button>
+          <Button type="submit" variant="primary" disabled={!query.trim()} aria-busy={busy || undefined}>Search</Button>
           {!busy && <Button onClick={surprise}><Icon name="dice" size={18}/>Surprise me</Button>}
           {busy && <Button onClick={() => {reader.cancel(); input.current?.focus();}}>Cancel</Button>}
         </div>

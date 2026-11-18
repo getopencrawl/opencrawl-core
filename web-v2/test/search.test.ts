@@ -50,16 +50,16 @@ test('groups preserve lower-bound totals, source coverage, truncation and failed
 
 test('a hit whose server excerpt is shorter than its source is marked as an excerpt', () => {
   const hit = {_id: 'connectors:one', _source: {title: 'Page', text: 'Body', url: 'https://example.com/page', excerpt: {start: 0, end: 4, totalChars: 400}}};
-  assert.equal(searchHit(hit, 'connectors').serverExcerpt, true);
+  assert.deepEqual(searchHit(hit, 'connectors').serverExcerpt, {leading: false, trailing: true});
 });
 
-test('result rendering escapes source text, keeps full text/raw detail, and distinguishes partial from empty', () => {
+test('result rendering escapes source text, preserves unlinked full text, and distinguishes partial from empty', () => {
   const full = 'Prefix '.repeat(150) + '<script>needle</script>\n\nFinal paragraph';
   const value: DiagnosticSearch = {memories: {state: 'ready', truncated: true, hits: {total: {value: 12}, hits: [{_source: {title: '<script>Title</script>', text: full, path: 'memory.md', url: 'javascript:alert(1)'}}]}}};
   const html = renderToStaticMarkup(createElement(SearchResults, {result: value, query: 'needle'}));
   assert.doesNotMatch(html, /<script>|href="javascript:/); assert.match(html, /<mark>needle<\/mark>/);
   assert.match(html, /1 of at least 12 results/); assert.match(html, /Final paragraph/);
-  assert.match(html, /Read full indexed text/); assert.match(html, /Item metadata and JSON/); assert.match(html, /Raw search response/);
+  assert.match(html, /Read full indexed text/); assert.doesNotMatch(html, /Item metadata and JSON|Raw search response/);
   const partial = renderToStaticMarkup(createElement(SearchResults, {result: {memories: {state: 'pending'}}, query: 'needle'}));
   assert.match(partial, /Indexing is pending/); assert.doesNotMatch(partial, /No matching items/);
   const empty = renderToStaticMarkup(createElement(SearchResults, {result: {memories: {state: 'ready', hits: {hits: []}}}, query: 'needle'}));
@@ -76,6 +76,16 @@ test('the latest submitted query wins even when an aborted request resolves late
   pending[1]!.resolve(result('second')); await second;
   pending[0]!.resolve(result('first')); await first;
   assert.equal(reader.snapshot().query, 'second'); assert.deepEqual(reader.snapshot().result, result('second'));
+});
+
+test('clearing an in-flight search restores the blank form even if the response arrives later', async () => {
+  let finish: (data: DiagnosticSearch) => void = () => {};
+  const reader = new SearchReader({search: () => new Promise(resolve => {finish = resolve;})});
+  const pending = reader.search('first');
+  reader.clear();
+  finish(result('late'));
+  await pending;
+  assert.deepEqual(reader.snapshot(), {state: 'idle', query: '', result: null, error: ''});
 });
 
 test('cancel clears pending data and suppresses late completion without changing the submitted query', async () => {

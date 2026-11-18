@@ -106,7 +106,7 @@ export interface SearchHitPresentation {
   title: string;
   userPrompt: boolean;
   body: string;
-  serverExcerpt: boolean;
+  serverExcerpt?: {leading: boolean; trailing: boolean};
   context: Array<{label: string; value: string}>;
   timestamp?: string;
   timestampLabel?: string;
@@ -171,9 +171,12 @@ export function searchHit(hit: DiagnosticHit, source: SearchSource, query = ''):
   const dates = [['timestamp', 'Recorded'], ['modifiedAt', 'Modified'], ['receivedAt', 'Received']] as const;
   const date = dates.map(([key, label]) => ({value: timestamp(document[key]), label})).find(item => item.value);
   const excerpt = document.excerpt;
-  const serverExcerpt = typeof excerpt === 'object' && excerpt !== null && 'totalChars' in excerpt &&
-    count(excerpt.totalChars) && excerpt.totalChars > body.length;
+  const serverExcerpt = excerpt && typeof excerpt === 'object' && 'totalChars' in excerpt &&
+    count(excerpt.totalChars) && excerpt.totalChars > indexed.length
+    ? {leading: 'start' in excerpt && count(excerpt.start) && excerpt.start > 0,
+      trailing: !('end' in excerpt) || !count(excerpt.end) || excerpt.end < excerpt.totalChars}
+    : undefined;
   const url = safeSourceUrl(document.url);
-  return {title, userPrompt, body, serverExcerpt, context,
+  return {title, userPrompt, body, context, ...(serverExcerpt ? {serverExcerpt} : {}),
     ...(date ? {timestamp: date.value, timestampLabel: date.label} : {}), ...(url ? {url} : {})};
 }
