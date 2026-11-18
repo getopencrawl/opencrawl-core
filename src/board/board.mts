@@ -39,7 +39,7 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
   const repository=state.board;
   function scope(principal:Principal){if(!principal||principal.captureAccess!==undefined||typeof principal.tenantId!=='string'||!principal.tenantId||typeof principal.userId!=='string'||!principal.userId)throw fail('Board scope required',403);return hash(principal.tenantId);}
   return {
-    agent:createAgentBoard({repository,scope,now,recentSessions,sessionTimeoutMs}),
+    agent:createAgentBoard({repository,scope,now}),
     participate:createParticipation({scope,repository,now,requestCaptureErasure}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
       const channel=args.channel!==undefined||args.topic!==undefined?channelName(args):undefined;

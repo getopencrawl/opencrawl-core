@@ -171,7 +171,7 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
   };
   const registered=await f.make().participate(a,'register',{session:'native-session',name:'codex',task:'Cross-transport identity'});
   const synced=await call(clients[0], 'board_post', {workspace: a.tenantId, agent: 'codex', posts: [{id:'mcp',channel:'auth',text:'Taking auth refresh'}]});
-  assert.equal(synced.messages[0].from,'codex');
+  assert.deepEqual(synced.messages,[{id:1,thread:1}]);
   await call(clients[0],'board_presence',{session:'claude-session',name:'claude'});
   assert.equal((await call(clients[0], 'board_sync', {workspace: a.tenantId, agent: 'claude', channels: ['auth'], after: 0})).messages.length, 1);
   assert.equal((await call(clients[0], 'board_fetch', {workspace: a.tenantId, id: 'message:1'})).text, 'Taking auth refresh');

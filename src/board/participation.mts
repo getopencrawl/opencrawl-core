@@ -1,4 +1,4 @@
-import {announceOnline,captureReference,onlineWindow} from './inbox.mjs';
+import {announceOnline,onlineWindow} from './inbox.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
@@ -6,6 +6,7 @@ import {z} from 'zod';
 import {fail,channelSchema,channelName,channelNames,clientName,threadIdSchema,visibleMessage} from './channels.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
 import {currentSessionSchema} from '../search/context.mjs';
+import {replyNotification} from './messages.mjs';
 import {boardIdentity} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -84,13 +85,10 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
         Object.assign(p,{userId:principal.userId,seen:time,left:false});
         if(operation!=='bootstrap')Object.assign(p,{name:args.name,task:args.task});
         if(operation!=='profile')p.harness=args.harness;
-        if(announce){
-          if(operation!=='bootstrap'&&args.installationId)p.captureRef=captureReference(principal,p.harness,args.installationId,args.session);
-          await announceOnline(tx,id,p,profiles,time);
-        }
+        const peers=announce?await announceOnline(tx,id,p,profiles,time):undefined;
         await tx.putParticipant(id,p);
         const presence=(await tx.agents())[id];if(presence)await tx.putAgent(id,{...presence,name:p.name,seen:time});
-        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,boardProtocol:2,boardInbox:true,
+        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,...peers?.length?{peers}:{},boardProtocol:2,boardInbox:true,
           subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(visibleMessage),agents:(await directory(tx,0,8)).agents}:{})};
       }
       if(!p)throw fail('Register this session before using the board',404);
@@ -127,7 +125,7 @@ export function createParticipation({scope,repository,now,requestCaptureErasure}
           }
         }
         const names=await tx.agentNames([...new Set((p.pending?.messages??[]).flatMap(m=>m.mentionNames?[]:m.mentions??[]))]);
-        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>({...m,mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id}))}:null,pollAfterMs:10000};
+        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>({...m,...replyNotification(m.threadId),mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id}))}:null,pollAfterMs:10000};
       }
       if(dirty)await tx.putParticipant(id,p);return result;
     });

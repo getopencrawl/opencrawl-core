@@ -9,9 +9,11 @@ async function fixture(t){const f=await boardStateFixture(t),board=f.make({recen
  return {...f,board,api:board.agent};}
 const post=(api,principal,id,text,extra={})=>api.post(principal,{...user(principal),posts:[{id,text,...extra}]});
 
-test('full messages have exactly one shape through read, list, search, thread, post and sync',async t=>{
+test('post receipts omit sender text while read, list, search, thread and sync return the full message',async t=>{
  const {api}=await fixture(t),body='First line\n\n'+('complete evidence '.repeat(1600));
- const sent=await post(api,alice,'root',body,{channel:'work'}),message=sent.messages[0];
+ const sent=await post(api,alice,'root',body,{channel:'work'});
+ assert.deepEqual(sent,{messages:[{id:1,thread:1}]});
+ const [message]=(await api.read(alice,{ids:[1]})).messages;
  assert.deepEqual(Object.keys(message),['id','from','channel','thread','replyTo','time','text','mentions']);assert.equal(message.text,body);
  for(const result of [await api.read(bob,{ids:[message.id]}),await api.list(bob,{channels:['work']}),await api.search(bob,{query:'evidence'}),await api.thread(bob,{threadId:message.id}),await api.sync(bob,{...user(bob),channels:['work'],after:0})])assert.deepEqual(result.messages,[message]);
  const empty=await api.sync(bob,{...user(bob),after:message.id});assert.deepEqual(empty,{messages:[],next:1,more:false});assert.ok(JSON.stringify(empty).length<60);
@@ -39,13 +41,13 @@ test('list/search support sender handles, IDs, roots, ordering and stable whole-
 });
 
 test('explicit mentions resolve handles and reject unknown targets atomically',async t=>{
- const {api}=await fixture(t);const message=(await post(api,alice,'tag','Hello',{channel:'work',mentions:['@codex:bob']})).messages[0];assert.deepEqual(message.mentions,['codex:bob']);
- assert.deepEqual((await api.sync(bob,{...user(bob),after:0})).messages,[message]);
+ const {api}=await fixture(t);const message=(await post(api,alice,'tag','Hello',{channel:'work',mentions:['@codex:bob']})).messages[0];assert.deepEqual(message,{id:1,thread:1});
+ assert.deepEqual((await api.sync(bob,{...user(bob),after:0})).messages[0].mentions,['codex:bob']);
  await assert.rejects(api.post(alice,{...user(alice),posts:[{id:'rolled-back',text:'One',channel:'work'},{id:'invalid',text:'Two',channel:'work',mentions:['missing']}]}),{status:404});
  assert.deepEqual((await api.list(alice,{})).messages.map(m=>m.id),[1]);
  await assert.rejects(post(api,alice,'tag','Changed',{channel:'work',mentions:['codex:bob']}),{status:409});
  assert.deepEqual((await post(api,alice,'tag','Hello',{channel:'work',mentions:['@codex:bob']})).messages,[message]);
- const inline=await post(api,alice,'inline','An unknown @package can be literal text',{channel:'work'});assert.match(inline.warning,/unregistered/);assert.deepEqual(inline.messages[0].mentions,[]);
+ const inline=await post(api,alice,'inline','An unknown @package can be literal text',{channel:'work'});assert.match(inline.warning,/unregistered/);assert.deepEqual(inline.messages,[{id:2,thread:2}]);
 });
 
 test('starting and joining a thread follows its replies through both MCP-style sync and native delivery',async t=>{
@@ -73,7 +75,7 @@ test('session identity, scope, lifecycle and final authorization remain explicit
  await api.presence(alice,{session:'alice'});
  assert.deepEqual((await api.agents(bob,{limit:1})).agents.length,1);
  assert.deepEqual((await api.agents(bob,{query:'ALICE'})).agents.map(p=>p.name),['codex:alice']);
- assert.equal((await api.post(alice,{agent:'@CODEX:ALICE',posts:[{id:'handle',channel:'work',text:'By handle'}]})).messages[0].from,'codex:alice');
+ assert.equal((await api.post(alice,{agent:'@CODEX:ALICE',full:true,posts:[{id:'handle',channel:'work',text:'By handle'}]})).messages[0].from,'codex:alice');
  await assert.rejects(api.presence(alice,{session:'alice',agent:'codex:bob'}),{status:409});
  await post(api,alice,'back','Back',{channel:'work'});
  assert.equal((await board.participate(alice,'inbox',{session:'alice'})).left,undefined);
@@ -111,49 +113,52 @@ test('the handled cursor is independent of stdout, stable under concurrency, and
  assert.deepEqual(await api.inbox(alice,{...user(alice),acknowledge:next.cursor}),{messages:[],cursor:null,more:false});
 });
 
-test('online transitions deliver status once per online peer and resolve the first human prompt as the current reader',async t=>{
- const fixture=await boardStateFixture(t);
- let clock=10_000_000,allow=true;const calls=[];
- const prompt='🪐'.repeat(1001)+'unshared suffix';
- const board=fixture.make({now:()=>clock,recentSessions:{async fetch(reader,id,{field}){
-   calls.push(reader.userId);
-   assert.deepEqual(JSON.parse(Buffer.from(id.slice(8),'base64url').toString()),[alice.tenantId,'alice','codex','machine','alice']);
-   assert.equal(field,'firstUserMessage');
-   if(!allow)throw Object.assign(Error('Unavailable'),{status:403});
-   return {firstUserMessage:{text:prompt}};
- }}});
- const api=board.agent;
- const dormant={...alice,userId:'dormant'},late={...alice,userId:'late'};
- const join=(principal,options={})=>api.presence(principal,{currentSession:{harness:'codex',sessionId:principal.userId},name:'codex:'+principal.userId,task:'A task',...options});
+test('online peers exchange compact introductions without touching captured prompts',async t=>{
+ const f=await boardStateFixture(t);let clock=10_000_000,fetches=0;
+ const board=f.make({now:()=>clock,recentSessions:{async fetch(){fetches++;throw Error('Unexpected capture read');}}});
+ const api=board.agent,dormant={...alice,userId:'dormant'},late={...alice,userId:'late'};
+ const join=(principal,options={})=>api.presence(principal,{currentSession:{harness:'codex',sessionId:principal.userId},
+   name:'codex:'+principal.userId,task:'A short task',...options});
  await join(dormant,{channels:['presence']});clock+=16*60_000;await join(bob);await join(other);
- await join(alice,{installationId:'machine',announce:true});await join(alice,{announce:true});
- await join(late);assert.deepEqual((await api.inbox(bob,{...user(bob),noticeOnly:true})).ids,[1]);assert.deepEqual(calls,[]);
- const first=await api.inbox(bob,user(bob));assert.equal(first.messages.length,1);assert.equal(first.messages[0].firstUserPrompt,'🪐'.repeat(1000));
- assert.match(first.messages[0].text,/codex:alice is online.*A task/);
- assert.deepEqual(calls,['bob']);allow=false;
- const replay=await api.inbox(bob,user(bob));assert.equal(replay.cursor,first.cursor);assert.equal('firstUserPrompt' in replay.messages[0],false);
- for(const principal of [dormant,late,other,alice])assert.deepEqual((await api.inbox(principal,user(principal))).messages,[]);
- assert.equal(JSON.stringify(await api.read(bob,{ids:[1]})).includes('🪐'),false);
- assert.equal(JSON.stringify(await fixture.repository.exportLegacy(boardTenant(alice.tenantId))).includes('🪐'),false);
- await api.presence(alice,{...user(alice),leave:true});
- await board.participate(alice,'bootstrap',{session:'alice',harness:'codex'});
- await join(alice,{announce:true});
- assert.deepEqual((await api.inbox(bob,{...user(bob),acknowledge:first.cursor})).messages.map(m=>m.id),[2]);
+ const joined=await join(alice,{installationId:'machine',announce:true});
+ assert.deepEqual(joined.peers,[{name:'codex:bob',task:'A short task'}]);
+ assert.equal((await join(alice,{announce:true})).peers,undefined);
+ await join(late);assert.deepEqual((await api.inbox(bob,{...user(bob),noticeOnly:true})).ids,[1]);
+ const first=await api.inbox(bob,user(bob));
+ assert.equal(first.messages.length,1);assert.match(first.messages[0].text,/codex:alice is online.*A short task/);
+ assert.equal('firstUserPrompt' in first.messages[0],false);
+ assert.deepEqual(await api.inbox(bob,user(bob)),first);
+ for(const peer of [dormant,late,other,alice])assert.deepEqual((await api.inbox(peer,user(peer))).messages,[]);
+ await api.presence(alice,{...user(alice),leave:true});await board.participate(alice,'bootstrap',{session:'alice',harness:'codex'});
+ await join(alice,{announce:true});assert.deepEqual((await api.inbox(bob,{...user(bob),acknowledge:first.cursor})).messages.map(m=>m.id),[2]);
+ assert.equal(fetches,0);
 });
 
-test('incognito stops a prompt already being fetched and suppresses replays while erasure is pending',async t=>{
- const f=await boardStateFixture(t),started=Promise.withResolvers(),finish=Promise.withResolvers();
- let fetches=0;
- const board=f.make({requestCaptureErasure:async()=>({deleted:false,pending:true}),recentSessions:{
-   async fetch(){fetches++;started.resolve();await finish.promise;return {firstUserMessage:{text:'held capture'}};}
- }});
- await board.agent.presence(bob,{session:'bob',name:'codex:bob',task:'Read'});
- const currentSession={harness:'codex',sessionId:'alice'};
- await board.agent.presence(alice,{currentSession,name:'codex:alice',task:'Write',announce:true,installationId:'machine'});
- const reading=board.agent.inbox(bob,user(bob));await started.promise;
- const result=await board.participate(alice,'incognito',{currentSession});
- assert.equal(result.boardBlocked,true);finish.resolve();
- const page=await reading;assert.equal(page.messages.length,1);assert.equal('firstUserPrompt' in page.messages[0],false);
- assert.deepEqual(await board.agent.inbox(bob,user(bob)),page);
- assert.equal(fetches,1);
+test('muting even a subscribed channel thread preserves explicit and inline mentions',async t=>{
+ const {api,board}=await fixture(t);
+ await api.presence(alice,{...user(alice),channels:['work']});
+ await post(api,bob,'thread','Thread',{channel:'work'});
+ await post(api,alice,'answer','Answer',{replyTo:1});
+ await api.follow(alice,{...user(alice),threadId:2,following:false});
+ await post(api,bob,'muted','Routine update',{replyTo:2});
+ await post(api,bob,'direct','Need your input',{replyTo:3,mentions:['codex:alice']});
+ await post(api,bob,'inline','@codex:alice there is new evidence',{replyTo:1});
+ await post(api,bob,'new','A separate thread',{channel:'work'});
+ const hint='opencrawl board unfollow 1';
+ for(const rows of [(await api.sync(alice,{...user(alice),after:0})).messages,(await api.inbox(alice,user(alice))).messages,
+   (await board.participate(alice,'inbox',user(alice))).batch.messages]){
+   assert.deepEqual(rows.map(m=>[m.id,m.unfollow]),[[1,undefined],[4,hint],[5,hint],[6,undefined]]);
+ }
+});
+
+test('fifty metadata rows fit in one page regardless of stored message size',async t=>{
+ const {api}=await fixture(t);
+ for(let i=0;i<51;i++)await post(api,alice,'large-'+i,'evidence '.repeat(1200),{channel:'work'});
+ const args={channels:['work'],select:['id','from'],order:'oldest',limit:50};
+ const page=await api.list(bob,args);
+ assert.deepEqual(page.messages,Array.from({length:50},(_,i)=>({id:i+1,from:'codex:alice'})));
+ assert.deepEqual((await api.list(bob,{...args,cursor:page.next})).messages,[{id:51,from:'codex:alice'}]);
+ const summary=(await api.search(bob,{query:'evidence',select:['metadata'],limit:50})).messages;
+ assert.equal(summary.length,50);assert.equal('text' in summary[0],false);
+ assert.deepEqual(Object.keys(summary[0]).sort(),['channel','from','id','mentions','replyTo','thread','time']);
 });

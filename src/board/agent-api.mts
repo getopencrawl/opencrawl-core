@@ -1,6 +1,5 @@
 import {z} from 'zod';
-import {announceOnline,captureReference,inboxMessages,onlineWindow,readInbox} from './inbox.mjs';
-import type {createRecentSessions} from '../sessions/recent.mjs';
+import {announceOnline,onlineWindow,readInbox} from './inbox.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader,BoardTransaction} from '../state/board.mjs';
 import type {BoardMessage} from './types.mjs';
@@ -8,7 +7,7 @@ import {currentSessionSchema} from '../search/context.mjs';
 import {boardIdentity} from './identity.mjs';
 import {channelSchema,channelName,clientName,fail} from './channels.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
-import {agentMessage,messageId,messagePage,messageSelection,selectMessage,threadRoot} from './messages.mjs';
+import {agentMessage,messageId,messagePage,replyNotification,messageSelection,selectMessage,threadRoot} from './messages.mjs';
 
 const short=z.string().trim().min(1).max(200);
 const workspace=short.optional();
@@ -23,7 +22,7 @@ export const agentThreadSchema=z.strictObject({workspace,threadId:messageId,...p
 export const agentSearchSchema=agentListSchema.extend({order:z.enum(['oldest','newest','relevance']).default('relevance')});
 export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,channels:z.array(channelSchema).max(32).optional(),after:z.number().int().nonnegative().optional()});
 export const agentInboxSchema=z.strictObject({workspace,...identity,acknowledge:z.string().regex(/^[a-f0-9]{64}$/).optional(),noticeOnly:z.boolean().default(false)});
-export const agentPostSchema=z.strictObject({workspace,...identity,posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
+export const agentPostSchema=z.strictObject({workspace,...identity,full:z.boolean().optional().describe('Return complete published messages instead of compact receipts.'),posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
   text:z.string().min(1),replyTo:messageId.optional(),threadId:messageId.optional().describe('Compatibility alias for replyTo.'),mentions:z.array(short).max(32).default([]),follow:z.boolean().default(true)})).min(1).max(20)});
 export const agentFollowSchema=z.strictObject({workspace,...identity,threadId:messageId,following:z.boolean().default(true)});
 export const agentPresenceSchema=z.strictObject({workspace,...identity,announce:z.boolean().optional(),installationId:short.optional(),name:z.string().trim().min(3).max(80).optional(),task:z.string().trim().max(240).optional(),channels:z.array(channelSchema).max(32).optional(),leave:z.boolean().default(false)});
@@ -64,26 +63,30 @@ async function followThread(tx:BoardTransaction,id:string,thread:number,followin
 
 /** One agent contract shared by MCP and /api/board/v2. Legacy HTTP/UI adapters
  * remain separate so already-running clients can finish during a rolling release. */
-export function createAgentBoard({repository,scope,now,recentSessions,sessionTimeoutMs=15000}:{recentSessions?:Pick<ReturnType<typeof createRecentSessions>,'fetch'>;sessionTimeoutMs?:number;repository:BoardRepository;scope(p:Principal):string;now():number}){
+export function createAgentBoard({repository,scope,now}:{repository:BoardRepository;scope(p:Principal):string;now():number}){
   const checked=(p:Principal,input:{workspace?:string})=>{const key=scope(p);if(input.workspace!==undefined&&input.workspace!==p.tenantId)throw fail('Workspace scope mismatch',403);return key;};
   async function list(principal:Principal,input:unknown){
     const args=agentListSchema.parse(input),key=checked(principal,args);
     if(args.since&&args.until&&Date.parse(args.since)>Date.parse(args.until))throw fail('since must not be later than until');
     const thread=args.thread===undefined?undefined:await repository.read(key,async tx=>(await threadRoot(tx,args.thread!)).root.id);
-    const result=await repository.search(key,principal.userId,{query:args.query,topics:args.channels,agents:args.from,authors:[],sort:args.order,
+    const result=await repository.searchAgentMessages(key,principal.userId,{query:args.query,topics:args.channels,agents:args.from,authors:[],sort:args.order,
       after:args.after,before:args.before,thread,rootsOnly:args.rootsOnly,since:args.since,until:args.until,limit:args.limit,
-      facets:args.facets.map(field=>field==='channel'?'topic':field),facetSize:5,cursor:args.cursor},now());
-    const names=await repository.read(key,tx=>namesFor(tx,result.messages));
-    return {messages:result.messages.map(message=>selectMessage(agentMessage(message,names),args.select)),next:result.next,
+      facets:args.facets.map(field=>field==='channel'?'topic':field),facetSize:5,cursor:args.cursor},now(),args.select);
+    return {messages:result.messages,next:result.next,
       ...result.facets?{facets:Object.fromEntries(Object.entries(result.facets).map(([key,value])=>[key==='topic'?'channel':key,value]))}:{}};
   }
   return {
     list,search:(principal:Principal,input:unknown)=>list(principal,agentSearchSchema.parse(input)),
     async read(principal:Principal,input:unknown){
       const args=agentReadSchema.parse(input),key=checked(principal,args);
-      return repository.read(key,async tx=>{const rows=await tx.messagesByIds(args.ids),names=await namesFor(tx,rows),messages=[],byId=new Map(rows.map(message=>[message.id,message]));
-        for(const id of args.ids){const message=byId.get(id);if(!message)throw fail(`Message ${id} not found`,404);messages.push(selectMessage(agentMessage(message,names),args.select));}
-        return {messages};
+      return repository.read(key,async tx=>{
+        const rows=await tx.agentMessagesByIds(args.ids,args.select);
+        const byId=new Map(rows.map(row=>[row.id,row]));
+        return {messages:args.ids.map(id=>{
+          const message=byId.get(id);
+          if(!message)throw fail(`Message ${id} not found`,404);
+          return message;
+        })};
       });
     },
     async thread(principal:Principal,input:unknown){
@@ -93,38 +96,20 @@ export function createAgentBoard({repository,scope,now,recentSessions,sessionTim
     async inbox(principal:Principal,input:unknown){
       const args=agentInboxSchema.parse(input),key=checked(principal,args);
       if(args.noticeOnly&&args.acknowledge)throw fail('A notification cannot acknowledge messages');
-      const page=await repository.transaction(key,async tx=>{
+      return repository.transaction(key,async tx=>{
         const identity=await resolveIdentity(tx,principal.userId,args);
-        const {rows,...state}=await readInbox(tx,key,identity.agent,principal.userId,identity.participant,args.acknowledge,args.noticeOnly,now());
-        if(args.noticeOnly)return {...state,items:[]};
-        return {...state,items:await inboxMessages(tx,rows)};
+        const {rows,ids,...state}=await readInbox(tx,key,identity.agent,principal.userId,identity.participant,args.acknowledge,args.noticeOnly,now());
+        if(args.noticeOnly)return {ids,more:state.more,...state.left?{left:true}:{}};
+        const names=await namesFor(tx,rows);
+        return {...state,messages:rows.map(row=>({...agentMessage(row,names),...replyNotification(row.threadId)}))};
       });
-      if(args.noticeOnly)return {ids:page.ids,more:page.more,...page.left?{left:true}:{}};
-      const messages=await Promise.all(page.items.map(async({message,captureRef})=>{
-        if(!captureRef||!recentSessions)return message;
-        try{
-          const record=await recentSessions.fetch(principal,captureRef,{field:'firstUserMessage',signal:AbortSignal.timeout(sessionTimeoutMs)});
-          const prompt=record.firstUserMessage?.text;
-          if(prompt)return {...message,firstUserPrompt:Array.from(prompt.slice(0,2000)).slice(0,1000).join('')};
-        }catch{ /* Capture is optional. Keep delivering the board page if it is unavailable. */ }
-        return message;
-      }));
-      // An incognito request blocks publication immediately, even while capture
-      // erasure is pending. Recheck after the slower capture reads have finished.
-      const withPrompts=page.items.filter((_,i)=>'firstUserPrompt' in messages[i]);
-      if(withPrompts.length){
-        const authors=[...new Set(withPrompts.map(item=>item.agent))];
-        const blocked=new Set(await repository.read(key,tx=>tx.blockedPublications(authors)));
-        for(const [i,item] of page.items.entries())if(blocked.has(item.agent))messages[i]=item.message;
-      }
-      return {messages,cursor:page.cursor,more:page.more,...page.left?{left:true}:{}};
     },
     async sync(principal:Principal,input:unknown){
       const args=agentSyncSchema.parse(input),key=checked(principal,args);
       return repository.read(key,async tx=>{const identity=await resolveIdentity(tx,principal.userId,args),{head}=await tx.metadata(),after=args.after??head;
         if(after>head)throw fail('Cursor exceeds board history');
         const rows=await tx.unread({after,through:head,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name,limit:args.limit+1});
-        const names=await namesFor(tx,rows),messages=messagePage(rows.map(m=>selectMessage(agentMessage(m,names),args.select)),args.limit),more=messages.length<rows.length;
+        const names=await namesFor(tx,rows),messages=messagePage(rows.map(m=>({...selectMessage(agentMessage(m,names),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit),more=messages.length<rows.length;
         return {messages,next:more?messages.at(-1)!.id:head,more};
       });
     },
@@ -139,7 +124,7 @@ export function createAgentBoard({repository,scope,now,recentSessions,sessionTim
           if(thread&&thread.root.topic!==channel)throw fail('Reply target belongs to another channel',404);
           const message=await publishMessage(tx,identity,{id:post.id,channel,text:post.text,threadId:thread?.root.id,replyTo:target,mentions:post.mentions.map(name=>name.replace(/^@/,''))},now());
           if(post.follow&&!identity.participant.mutedThreads?.includes(message.threadId??message.id))await followThread(tx,identity.agent,message.threadId??message.id,true);
-          messages.push(agentMessage(message));unresolved.push(...message.publication?.unresolvedMentions??[]);
+          messages.push(args.full?agentMessage(message):{id:message.id,thread:message.threadId??message.id});unresolved.push(...message.publication?.unresolvedMentions??[]);
         }
         const participant=(await tx.participant(identity.agent))!;participant.seen=now();await tx.putParticipant(identity.agent,participant);
         return {messages,...mentionWarning(unresolved)};
@@ -171,14 +156,11 @@ export function createAgentBoard({repository,scope,now,recentSessions,sessionTim
         const announce=args.announce??p.announced;
         if(p.left||p.seen<=time-onlineWindow)p.announced=false;
         Object.assign(p,{userId:principal.userId,name,seen:time,left:args.leave,...args.task!==undefined?{task:args.task}:{},...args.channels?{topics:[...new Set(args.channels)]}:{}});
-        if(announce&&!args.leave){
-          if(args.installationId&&session)p.captureRef=captureReference(principal,p.harness,args.installationId,session);
-          await announceOnline(tx,id,p,profiles,time);
-        }
+        const peers=announce&&!args.leave?await announceOnline(tx,id,p,profiles,time):undefined;
         await tx.putParticipant(id,p);
         // Remove only obsolete presence for this same account-owned identity.
         await tx.removeAgent(id);await tx.removeAgent(boardIdentity(principal.userId,name));
-        return {name,active:!args.leave,channels:p.topics};
+        return {name,active:!args.leave,channels:p.topics,...peers?.length?{peers}:{}};
       });
     },
     async agents(principal:Principal,input:unknown){

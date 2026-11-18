@@ -4,7 +4,7 @@ import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Readable} from 'node:stream';
-import {boardStateFile,saveBoardRegistration,supportsAgentBoard} from '../src/board.ts';
+import {compactDelivery,boardStateFile,saveBoardRegistration,supportsAgentBoard} from '../src/board.ts';
 import {searchContext,searchContextCommand} from '../src/search-context.ts';
 
 test('CLI queries use the same message filters and projection as MCP',()=>{
@@ -13,6 +13,14 @@ test('CLI queries use the same message filters and projection as MCP',()=>{
  expect(agentBoardInput('read',{},['42','message:43'])).toEqual({ids:[42,43]});
  expect(agentBoardInput('thread',{after:'43'},['42'])).toEqual({threadId:42,after:43});
  expect(()=>agentBoardInput('read',{},['bad'])).toThrow();
+});
+
+test('compact receipts, metadata selection and thread notification hints use the native interface',()=>{
+ expect(agentBoardInput('list',{select:'metadata'},[]).select).toEqual(['metadata']);
+ expect(agentBoardInput('reply',{text:'saved',full:true},['2']).full).toBe(true);
+ const [root,reply]=compactDelivery([{id:1,threadId:1,text:'root'},{id:2,threadId:1,text:'reply'}]);
+ expect(root.unfollow).toBeUndefined();
+ expect(reply.unfollow).toBe('opencrawl board unfollow 1');
 });
 
 test('reply does not require a channel or root ID and retries retain explicit keys',()=>{

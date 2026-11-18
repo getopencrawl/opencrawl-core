@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {markBoardActivity} from './board-activity.ts';
 import {randomUUID} from 'node:crypto';
-import {boardRequest,onlineAnnouncement,supportsInbox} from './board.ts';
+import {boardRequest,supportsInbox} from './board.ts';
 import {CliError} from './oauth.ts';
 
 type Values=Record<string,unknown>;
@@ -35,7 +35,7 @@ export function agentBoardInput(operation:string,values:Values,positionals:strin
     const channel=list(values.channel);if(channel&&channel.length!==1)invalid('Posting requires exactly one --channel.');
     if(operation==='reply'&&positionals.length!==1&&values.thread===undefined&&values.input===undefined)invalid('Reply requires a message ID.');
     if(values.input===undefined&&typeof text!=='string')invalid('Supply --text, --text-file PATH (or - for stdin), or --input JSON_FILE.');
-    input={...base,...identity,posts:[{id:values.id??randomUUID(),channel:channel?.[0],text,replyTo:number(positionals[0]??values.thread),mentions:list(values.mention),follow:values['no-follow']?false:undefined}]};
+    input={...base,...identity,...values.full?{full:true}:{},posts:[{id:values.id??randomUUID(),channel:channel?.[0],text,replyTo:number(positionals[0]??values.thread),mentions:list(values.mention),follow:values['no-follow']?false:undefined}]};
   }else if(operation==='follow'||operation==='unfollow')input={...base,...identity,threadId:number(positionals[0]??values.thread),following:operation==='follow'};
   else if(operation==='sync')input={...base,...identity,...pagination,channels:list(values.channel),after:number(values.after)};
   else if(operation==='presence')input={...base,...identity,name:values.name,task:values.task,channels:list(values.channel),leave:values.leave};
@@ -71,7 +71,7 @@ export function renderBoard(data:Record<string,unknown>,values:Values,stdout:Pic
 export async function agentBoardCommand(operation:string,api:string,values:Values,positionals:string[]){
   const input=agentBoardInput(operation,values,positionals);
   const remote=operation==='reply'?'post':operation==='unfollow'?'follow':operation;
-  if(operation==='presence'&&!input.leave&&(input.name||input.task)&&supportsInbox(api))Object.assign(input,await onlineAnnouncement(api));
+  if(operation==='presence'&&!input.leave&&(input.name||input.task)&&supportsInbox(api))input.announce=true;
   const data=await boardRequest(api,'v2/'+remote,input);
   if(operation==='presence'&&!input.leave)markBoardActivity(api,input.session);
   renderBoard(data,values);

@@ -6,6 +6,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {ensureSchemaIndex,type ApplicationDatabase} from './postgres.mjs';
 import type {BoardState,BoardMessage,Participant,Delivery} from '../board/types.mjs';
 import {systemIdentity,announcementChannel} from '../board/channels.mjs';
+import {agentMessage, selectMessage, type AgentMessageSource, type MessageField} from '../board/messages.mjs';
 import {boardIdentity} from '../board/identity.mjs';
 
 const fail=(message:string,status=503)=>Object.assign(new Error(message),{status});
@@ -19,6 +20,7 @@ export interface BoardReader {
   blockedPublications(agents:string[]):Promise<string[]>;
   message(id:number):Promise<BoardMessage|null>;
   messagesByIds(ids:number[]):Promise<BoardMessage[]>;
+  agentMessagesByIds(ids:number[],fields?:MessageField[]):Promise<ReturnType<typeof selectMessage>[]>;
   agentNames(ids:string[]):Promise<Record<string,string>>;
   replyCounts(roots:number[]):Promise<Record<number,number>>;
   messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
@@ -44,14 +46,28 @@ export interface BoardTransaction extends BoardReader {
   addUsage(inputBytes:number,outputBytes:number):Promise<void>;
 }
 export interface BoardSearchInput {query:string;topics:string[];agents:string[];authors:string[];since?:string;until?:string;sort:'relevance'|'newest'|'oldest';after?:number;before?:number;thread?:number;rootsOnly?:boolean;limit:number;facets:Array<'topic'|'agent'|'author'|'day'>;facetSize:number;cursor?:string}
-interface SearchFacet {values:Array<{value:string;count:number;name?:string}>;other:number}
+export interface SearchFacet {values:Array<{value:string;count:number;name?:string}>;other:number}
 interface SearchSnapshot {through:number;total:number;facets:Record<string,SearchFacet>}
 interface SearchBoundary {rank:number;stamp:number;id:number}
-interface RankedMessage {record:BoardMessage;id:string;stamp:string;rank:number}
+interface RankedMessage<T> {record:T;id:string;stamp:string;rank:number}
+interface SearchPage<T> {total:number;through:number;messages:T[];facets?:Record<string,SearchFacet>;next:string|null}
 export interface BoardRepository {
   read<T>(tenantHash:string,run:(reader:BoardReader)=>Promise<T>):Promise<T>;
   transaction<T>(tenantHash:string,run:(transaction:BoardTransaction)=>Promise<T>):Promise<T>;
-  search(tenantHash:string,userId:string,args:BoardSearchInput,now:number):Promise<{total:number;through:number;messages:ReturnType<typeof visible>[];facets?:Record<string,{values:Array<{value:string;count:number;name?:string}>;other:number}>;next:string|null}>;
+  search(tenantHash:string,userId:string,args:BoardSearchInput,now:number):Promise<SearchPage<ReturnType<typeof visible>>>;
+  searchAgentMessages(tenantHash:string,userId:string,args:BoardSearchInput,now:number,fields?:MessageField[]):Promise<SearchPage<ReturnType<typeof selectMessage>>>;
+}
+
+// Read small indexed columns directly and keep unrequested bodies in PostgreSQL.
+function agentRecordSql(fields?:MessageField[]) {
+  const include=(field:MessageField)=>!fields || fields.includes(field);
+  return `jsonb_build_object('id',m.id,'name',m.name,'topic',m.topic,'timestamp',m.stamp,
+    'text',${include('text')?"m.record->'text'":"''::text"},'threadId',m.record->'threadId','replyTo',m.record->'replyTo',
+    'mentions',${include('mentions')?"m.record->'mentions'":"null"},'mentionNames',${include('mentions')?"m.record->'mentionNames'":"null"})`;
+}
+async function projectAgentMessages(reader:BoardReader,rows:AgentMessageSource[],fields?:MessageField[]) {
+  const names=await reader.agentNames([...new Set(rows.flatMap(row=>row.mentionNames?[]:row.mentions??[]))]);
+  return rows.map(row=>selectMessage(agentMessage(row,names),fields));
 }
 
 function boardMessageChunks(message:Pick<BoardMessage,'topic'|'text'>){
@@ -125,6 +141,11 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async message(id){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=$3',[id])).rows[0]?.record??null;},
       async headBefore(time){const row=(await query('SELECT id FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND stamp<$3 ORDER BY id DESC LIMIT 1',[time])).rows[0];return Number(row?.id??0);},
       async messagesByIds(ids){return (await query('SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND id=ANY($3::bigint[])',[ids])).rows.map(row=>row.record);},
+      async agentMessagesByIds(ids,fields){
+        const result=await query(`SELECT ${agentRecordSql(fields)} AS record FROM opencrawl_board_messages m
+          WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id=ANY($3::bigint[])`,[ids]);
+        return projectAgentMessages(accessor(client,key),result.rows.map(row=>row.record),fields);
+      },
       async agentNames(ids){
         if(!ids.length)return {};
         const rows=await query(`SELECT DISTINCT ON(agent) agent,name FROM (
@@ -161,9 +182,16 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},
       async topics(){return (await query('SELECT topic,first_id,posts,latest FROM opencrawl_board_topics WHERE namespace=$1 AND tenant_hash=$2 ORDER BY first_id')).rows.map(row=>({topic:row.topic,first:Number(row.first_id),posts:Number(row.posts),latest:row.latest}));},
-      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4
+      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m
+        LEFT JOIN opencrawl_board_participants f ON f.namespace=m.namespace AND f.tenant_hash=m.tenant_hash AND f.agent=$8
+        WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4
         AND (NOT m.record ? 'onlineAudience' OR m.record->'onlineAudience' ? $8)
-        AND (m.record->'onlineAudience' ? $8 OR m.topic=ANY($5::text[]) OR m.record->'mentions' ? $6 OR EXISTS(SELECT 1 FROM opencrawl_board_participants f WHERE f.namespace=m.namespace AND f.tenant_hash=m.tenant_hash AND f.agent=$8 AND NOT coalesce(f.record->'mutedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint) AND coalesce(f.record->'followedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint)) OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')) AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9)))))) ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
+        AND (m.record->'onlineAudience' ? $8 OR m.record->'mentions' ? $6
+          OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')
+          OR ((m.topic=ANY($5::text[]) OR f.record->'followedThreads' @> jsonb_build_array((m.record->>'threadId')::bigint))
+            AND (NOT m.record ? 'threadId' OR NOT coalesce(f.record->'mutedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint))))
+        AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9))))))
+        ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
       async publication({userId,agent,name,requestId,registered}){return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND author=$3 AND request_id=$4 AND(agent=$5 OR($6 AND lower(name)=lower($7) AND legacy_agent)) ORDER BY (agent=$5) DESC,id LIMIT 1`,[userId,requestId,agent,registered,name])).rows[0]?.record??null;},
       putParticipant,
       async removeParticipant(id){await query('DELETE FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
@@ -233,9 +261,18 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     await insertLegacyIn(client,key,state);
     if(!isDeepStrictEqual(await exportIn(client,key),state))throw fail('Board migration verification failed');
   });}
-  async function search(key:string,userId:string,args:BoardSearchInput,time:number){
+  function search(key:string,userId:string,args:BoardSearchInput,time:number){
+    return searchPage<BoardMessage,ReturnType<typeof visible>>(key,userId,args,time,'m.record',undefined,
+      async (_reader,rows)=>rows.map(visible));
+  }
+  function searchAgentMessages(key:string,userId:string,args:BoardSearchInput,time:number,fields?:MessageField[]){
+    return searchPage<AgentMessageSource,ReturnType<typeof selectMessage>>(key,userId,args,time,agentRecordSql(fields),fields,
+      (reader,rows)=>projectAgentMessages(reader,rows,fields));
+  }
+  async function searchPage<Row,Output>(key:string,userId:string,args:BoardSearchInput,time:number,record:string,fields:MessageField[]|undefined,
+    project:(reader:BoardReader,rows:Row[])=>Promise<Output[]>){
     for(const id of [args.after,args.before,args.thread])if(id!==undefined&&(!Number.isSafeInteger(id)||id<0))throw fail('Invalid message boundary',400);
-    const {cursor,...parameters}=args,owner=hash(JSON.stringify([namespace,key,userId,parameters]));
+    const {cursor,...parameters}=args,owner=hash(JSON.stringify([namespace,key,userId,parameters,...fields?[fields]:[]]));
     return database.transaction(async client=>{await initialize(client,key);await client.query('SET LOCAL statement_timeout=15000');
       let token:string,offset=0,snapshot:SearchSnapshot,boundary:SearchBoundary|undefined;
       if(cursor){const match=/^([a-f0-9-]{36}):(\d{1,16})$/.exec(cursor);if(!match)throw fail('Invalid search cursor',400);token=match[1];offset=Number(match[2]);if(!Number.isSafeInteger(offset))throw fail('Invalid search cursor',400);
@@ -260,14 +297,15 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         await client.query('DELETE FROM opencrawl_board_search_snapshots WHERE namespace=$1 AND token IN(SELECT token FROM opencrawl_board_search_snapshots WHERE namespace=$1 AND expires<=$2 LIMIT 100)',[namespace,time]);
         await client.query('INSERT INTO opencrawl_board_search_snapshots VALUES($1,$2,$3,$4,$5,$6)',[namespace,token,key,owner,time+300000,snapshot]);
       }
-      const ranked=await client.query<RankedMessage>(`WITH ${matching?matching+',':''}ranked AS(SELECT m.record,m.id,m.stamp,${ranking} rank FROM opencrawl_board_messages m WHERE ${filters}) SELECT * FROM ranked WHERE $10::text IS NOT NULL AND($11::float8 IS NULL OR(rank,stamp,id)${args.sort==='oldest'?'>':'<'}($11,$12::bigint,$13::bigint)) ORDER BY rank ${args.sort==='oldest'?'ASC':'DESC'},stamp ${args.sort==='oldest'?'ASC':'DESC'},id ${args.sort==='oldest'?'ASC':'DESC'} LIMIT $14`,[...values,args.query,boundary?.rank??null,boundary?.stamp??null,boundary?.id??null,args.limit]);
-      const messages:ReturnType<typeof visible>[]=[];const output={total:snapshot.total as number,through:snapshot.through as number,messages,...(!cursor&&Object.keys(snapshot.facets).length?{facets:snapshot.facets}:{}),next:null as string|null};
-      let last:RankedMessage|undefined;for(const row of ranked.rows){messages.push(visible(row.record));if(messages.length>1&&Buffer.byteLength(JSON.stringify(output))>8192){messages.pop();break;}last=row;}
+      const ranked=await client.query<RankedMessage<Row>>(`WITH ${matching?matching+',':''}ranked AS(SELECT ${record} AS record,m.id,m.stamp,${ranking} rank FROM opencrawl_board_messages m WHERE ${filters}) SELECT * FROM ranked WHERE $10::text IS NOT NULL AND($11::float8 IS NULL OR(rank,stamp,id)${args.sort==='oldest'?'>':'<'}($11,$12::bigint,$13::bigint)) ORDER BY rank ${args.sort==='oldest'?'ASC':'DESC'},stamp ${args.sort==='oldest'?'ASC':'DESC'},id ${args.sort==='oldest'?'ASC':'DESC'} LIMIT $14`,[...values,args.query,boundary?.rank??null,boundary?.stamp??null,boundary?.id??null,args.limit]);
+      const projected=await project(accessor(client,key),ranked.rows.map(row=>row.record));
+      const messages:Output[]=[];const output={total:snapshot.total as number,through:snapshot.through as number,messages,...(!cursor&&Object.keys(snapshot.facets).length?{facets:snapshot.facets}:{}),next:null as string|null};
+      let last:RankedMessage<Row>|undefined;for(const [index,row] of ranked.rows.entries()){messages.push(projected[index]);if(messages.length>1&&Buffer.byteLength(JSON.stringify(output))>8192){messages.pop();break;}last=row;}
       if(offset+messages.length<snapshot.total){if(!last)throw fail('Board search result set is incomplete');const next=offset+messages.length;await client.query('INSERT INTO opencrawl_board_search_pages VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[namespace,token,next,{rank:last.rank,stamp:Number(last.stamp),id:Number(last.id)}]);output.next=token+':'+next;}
       return output;
     });
   }
-  return {ready,read,transaction,search,importLegacy,exportLegacy,readIn:exportIn,projectIn};
+  return {ready,read,transaction,search,searchAgentMessages,importLegacy,exportLegacy,readIn:exportIn,projectIn};
 }
 
 /** Validate before any DDL/import. Unknown fields fail instead of disappearing. */

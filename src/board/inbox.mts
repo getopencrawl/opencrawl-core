@@ -1,30 +1,22 @@
 import {createHash, randomUUID} from 'node:crypto';
-import type {BoardReader, BoardTransaction} from '../state/board.mjs';
+import type {BoardTransaction} from '../state/board.mjs';
 import type {BoardMessage, Participant} from './types.mjs';
-import {agentMessage,messagePage} from './messages.mjs';
+import {messagePage} from './messages.mjs';
 import {fail} from './channels.mjs';
-import {isSessionHarness,type Principal} from '../sessions/types.mjs';
-
-export function captureReference(principal:Principal,harness:string,installation:string,session:string){
-  const key=[principal.tenantId,principal.userId,harness,installation,session];
-  if(isSessionHarness(harness)&&key.every(part=>/^[A-Za-z0-9_.:-]{1,200}$/.test(part)))return 'session:'+Buffer.from(JSON.stringify(key)).toString('base64url');
-}
-
 export const onlineWindow=15*60_000;
 type Profile=Omit<Participant,'pending'>;
 
-/** Record the status and audience as they were at announcement time. The prompt
- * stays in session storage and is resolved as the reader at delivery time. */
+/** Share the declared task with online peers and introduce them to the joining agent. */
 export async function announceOnline(tx:BoardTransaction, id:string, participant:Participant, profiles:Record<string,Profile>, time:number) {
   if(participant.announced || !participant.name || !participant.task || !participant.userId)return;
   participant.announced=true;
-  const audience=Object.entries(profiles)
-    .filter(([key,p])=>key!==id && !p.left && p.seen>time-onlineWindow)
-    .map(([key])=>key);
-  if(!audience.length)return;
+  const peers=Object.entries(profiles).filter(([key,p])=>key!==id && !p.left && p.seen>time-onlineWindow);
+  if(!peers.length)return;
+  const audience=peers.map(([key])=>key);
   await tx.append({agent:id,author:participant.userId,name:participant.name,topic:'presence',timestamp:time,
     requestId:'online:'+randomUUID(),text:`${participant.name} is online (${participant.harness}). ${participant.task}`,
-    onlineAudience:audience,...participant.captureRef?{captureRef:participant.captureRef}:{}});
+    onlineAudience:audience});
+  return peers.flatMap(([,peer])=>peer.name && peer.task ? [{name:peer.name,task:peer.task}] : []);
 }
 
 /** The model-facing checkpoint is independent of the CLI stdout receipt. Only
@@ -69,11 +61,4 @@ export async function readInbox(tx:BoardTransaction, scope:string, id:string, us
   if(!p.lastPoll||time-p.lastPoll>=60_000){p.lastPoll=p.seen=time;dirty=true;}
   if(dirty)await tx.putParticipant(id,p);
   return {rows,ids:p.inboxPending?.ids??[],cursor:p.inboxPending?.cursor??null,more:!!p.inboxPending&&p.inboxPending.through<head};
-}
-
-export async function inboxMessages(tx:BoardReader, rows:BoardMessage[]){
-  const names=await tx.agentNames([...new Set(rows.flatMap(m=>m.mentionNames?[]:m.mentions??[]))]);
-  const authors=[...new Set(rows.filter(row=>row.captureRef).map(row=>row.agent))];
-  const blocked=new Set(await tx.blockedPublications(authors));
-  return rows.map(row=>({message:agentMessage(row,names),agent:row.agent,captureRef:blocked.has(row.agent)?undefined:row.captureRef}));
 }

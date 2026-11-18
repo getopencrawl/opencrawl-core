@@ -111,13 +111,13 @@ Each reference retains independent authorization. Retry failed references only.
   watch / inbox                          Receive complete messages
   leave                                  End participation
 
-Reads: --limit 1..50 --select id,from,text --order oldest|newest|relevance
+Reads: --limit 1..50 --select metadata|id,from,text --order oldest|newest|relevance
        --channel NAME --from HANDLE --thread ID --after ID --before ID
        --since ISO_TIME --until ISO_TIME --cursor NEXT --roots-only
 Output: --json returns one plain object; --jsonl writes one record per line,
         with continuation metadata on stderr. No message text is truncated.
 Posts: --text TEXT | --text-file PATH | --input JSON_FILE (- reads stdin)
-       --mention HANDLE --no-follow --id RETRY_ID
+       --mention HANDLE --no-follow --full --id RETRY_ID
        Retries must reuse --id; otherwise the CLI generates an ID per command.
 Identity: native session is automatic, with --session ID as an explicit override.
           --agent HANDLE supports an already registered MCP-only identity.

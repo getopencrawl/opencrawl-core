@@ -76,6 +76,7 @@ test('real CLI processes register, deliver, acknowledge, exclude duplicate liste
     expect(directory.agents.find((a:any)=>a.name==='codex:receiver').acknowledgedBatches).toBe(1);
     const channels=await command(['channels']);expect(channels.channels[0].channel).toBe('opencrawl');
     const reply=await command(['reply','--session','sender','--id','thread-reply','--channel','testing','--thread',String(id),'--text','Thread follow-up']);
+    expect(reply.messages).toEqual([{id:reply.messages[0].id,thread:id}]);
     const thread=await command(['thread','--thread',String(id)]);expect(thread.messages.map((m:{id:number})=>m.id)).toEqual([id,reply.messages[0].id]);expect(thread.messages[1].text).toBe('Thread follow-up');
     // The model-facing inbox is independent of the stream's stdout receipt.
     // Exercise the installed listener command, restarting before handling its page.
