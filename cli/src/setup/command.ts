@@ -121,7 +121,7 @@ async function confirmScope(scope:SetupScope){
  if(scopeKey(serverScope(scope.api,server))!==scopeKey(scope))throw new CliError('SETUP_SCOPE_CHANGED','The signed-in workspace changed. Review setup again.');
  return server;
 }
-async function applyClients(scope:SetupScope,selections:SetupSelections,installPlugins:typeof installSetupPlugins,command:string[],installDaemon:typeof installCaptureDaemon,validatePrincipal:Dependencies['validateCapturePrincipal'],stageDaemon:boolean,daemonReady:typeof waitForDaemonReady,mode:CaptureMode,eligible:boolean,stopDaemon:typeof uninstallCaptureDaemon,onProgress?:Dependencies['onProgress'],reviewingChoices=false,optionalFailures?:Map<string,PluginResult>){
+async function applyClients(scope:SetupScope,selections:SetupSelections,installPlugins:typeof installSetupPlugins,command:string[],installDaemon:typeof installCaptureDaemon,validatePrincipal:Dependencies['validateCapturePrincipal'],stageDaemon:boolean,daemonReady:typeof waitForDaemonReady,mode:CaptureMode,eligible:boolean,stopDaemon:typeof uninstallCaptureDaemon,onProgress:Dependencies['onProgress'],inspectHooks:typeof inspectCodexHooks,reviewingChoices=false,optionalFailures?:Map<string,PluginResult>){
  assertPluginSelection(selections);
  const server=await confirmScope(scope);
  const previous=readSetupState(scope),existing=readCaptureConfig();
@@ -172,7 +172,8 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  const pluginResults=[...(previous?.pluginResults??[]).filter(row=>!selections.plugins[row.client]&&['installed','unchanged'].includes(row.status)),...plugins.results];
  const humanTasks:SetupHumanTask[]=[...plugins.humanTasks];
  const state=await updateSetupState(scope,current=>({...current!,installationId:capture.installationId,machine:current?.machine??{id:capture.installationId,label:hostname()},pluginResults,humanTasks,worker}));
- await publishSetup(state);return state;
+ const hooks=state.selections.forward.codex?await setupHookStatus(scope.api,inspectHooks):undefined;
+ await publishSetup(state,fetch,hooks);return state;
 }
 async function applyHistory(scope:SetupScope,selections:SetupSelections,files:HistoryFile[],retainedHistory:string[]=[]){
  await confirmScope(scope);
@@ -282,7 +283,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   if(!previous.installationId&&previous.firstRun==='complete'&&!chosen(selected,'plugins').length&&!chosen(selected,'history').length){
    return {status:'recording_off',scope,installationId:undefined,selections:selected,humanTasks:[]};
   }
-  const state=await applyClients(scope,selected,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,eligibility(selected).eligible,stopDaemon,onProgress);
+  const state=await applyClients(scope,selected,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,eligibility(selected).eligible,stopDaemon,onProgress,inspectHooks);
   return completed(state);
  }
  const clients=setupInventory({api,platform,workload,saved:interactive&&action==='run'?admitted?.selections:undefined,...(claudeOnly?{client:'claude-code' as const}:{})});
@@ -303,7 +304,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  const retainedHistory=workload?[]:Object.keys(previous?.selections.history??{}).filter(client=>!newSetupClientAvailable(client,platform));
  const availableHistory=()=>[...historyFiles(api,claudeOnly?'claude-code':undefined).filter(file=>!retainedHistory.includes(file.harness)&& (workload||newSetupClientAvailable(file.harness,platform))),...(previous?.historyJob?.files??[]).filter(file=>retainedHistory.includes(file.harness))];
  const optionalFailures=action==='run'&&interactive?new Map<string,PluginResult>():undefined;
- const configureClients=()=>applyClients(scope,selections,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,chosen(selections,'plugins').length>0&&eligibility(selections).eligible,stopDaemon,onProgress,true,optionalFailures);
+ const configureClients=()=>applyClients(scope,selections,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,chosen(selections,'plugins').length>0&&eligibility(selections).eligible,stopDaemon,onProgress,inspectHooks,true,optionalFailures);
  const saveRecording=()=>sameOwner||chosen(selections,'plugins').length?configureClients():updateSetupState(scope,current=>({...current,schemaVersion:1,firstRun:'choosing',scope,selections,captureMode,acceptedAt:new Date().toISOString()}));
  const finishChoices=(state:SetupState,importing=false)=>updateSetupState(scope,current=>{
   if(!current||current.acceptedAt!==state.acceptedAt||current.installationId!==state.installationId)throw new CliError('SETUP_SCOPE_CHANGED','The saved installation changed while finishing setup. Review its current choices.');

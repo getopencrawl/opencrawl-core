@@ -2,7 +2,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {CliError,apiOrigin,DEFAULT_API_ORIGIN} from '../oauth.ts';
 import {filesystemError} from '../filesystem.ts';
 import {offerInvitations} from './invites.ts';
-import {nativeSetupPrompt,setupCommand} from './command.ts';
+import {nativeSetupPrompt,setupCommand,setupHookStatus} from './command.ts';
 import {launchClaudeSetup} from './claude-launch.ts';
 import {launchAntigravitySetup} from './antigravity-launch.ts';
 import type {SetupUi} from './tui.tsx';
@@ -11,15 +11,11 @@ import {findSetupConnection,nativeConnectionPrompt,type NativeClient} from './na
 import {nativeLogin} from './native-login.ts';
 import {nativeTerminal} from './native-terminal.ts';
 import {inspectCodexHooks,type CodexHookReview} from '../capture/codex-hooks.ts';
-import {readCaptureConfig} from '../capture/runtime.ts';
+import {publishSetup} from './api.ts';
+import {readSetupState} from './state.ts';
 
 type Options={entry?:()=>ReturnType<typeof import('./entry.ts').terminalSetupEntry>;values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
-type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:()=>Promise<CodexHookReview>;pause?:(signal:AbortSignal)=>Promise<void>};
-
-async function currentCodexReview():Promise<CodexHookReview>{
- const root=readCaptureConfig()?.roots.codex;
- return root?inspectCodexHooks(root):{state:'unknown',total:0,pending:null,disabled:null};
-}
+type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:typeof inspectCodexHooks;pause?:(signal:AbortSignal)=>Promise<void>};
 
 async function nativeCommand(command:string,args:string[],ui:SetupUi,title?:string):Promise<number>{
  if(args[0]!=='mcp')return ui.native(()=>nativeTerminal(command,args));
@@ -38,7 +34,7 @@ function hookApprovalStatus(review:CodexHookReview):string|null{
  return counts.join(' · ');
 }
 
-async function waitForCodexHookTrust(ui:SetupUi,inspect:typeof currentCodexReview,pause:(signal:AbortSignal)=>Promise<void>){
+async function waitForCodexHookTrust(ui:SetupUi,inspect:()=>ReturnType<typeof setupHookStatus>,pause:(signal:AbortSignal)=>Promise<void>){
  const controller=new AbortController();
  const signal=AbortSignal.any([controller.signal,ui.signal]);
  const skipped=Promise.withResolvers<'skipped'>();
@@ -52,9 +48,10 @@ async function waitForCodexHookTrust(ui:SetupUi,inspect:typeof currentCodexRevie
   let previous:string|undefined;
   for(;;){
    signal.throwIfAborted();
-   const status=hookApprovalStatus(await inspect());
+   const observation=await inspect();
+   const status=hookApprovalStatus(observation.review);
    signal.throwIfAborted();
-   if(status===null)return 'trusted' as const;
+   if(status===null)return observation;
    if(status!==previous)show(status);
    previous=status;
    await pause(signal);
@@ -109,7 +106,7 @@ export async function showDeviceCode(ui:Pick<SetupUi,'action'|'progress'>,url:st
  ui.progress(title,canOpenBrowser?'Confirm the code in your browser.':'Open this link in your browser and confirm the code.',details);
 }
 
-export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,which=Bun.which,findConnection=findSetupConnection,native=nativeCommand,inspectCodex=currentCodexReview,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
+export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,which=Bun.which,findConnection=findSetupConnection,native=nativeCommand,inspectCodex=inspectCodexHooks,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
  const ui=createUi?createUi():(await import('./tui.tsx')).createSetupUi();
  let destination:ReturnType<Options['readDestination']>|undefined;
  try{
@@ -206,10 +203,18 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       const client=step?.kind==='native_tool'?step.arguments.client:step&&'client' in step?step.client:undefined;
       const binary=client==='claude-code'?'claude':client==='codex'?'codex':client==='antigravity'?'agy':undefined;
       const executable=binary&&which(binary);
-      const recordsCodex=client==='codex'&&next&&'selections' in next&&next.selections?.forward.codex;
+      const recordingSetup=next&&'installationId' in next&&'selections' in next?next:undefined;
+      const recordsCodex=client==='codex'&&recordingSetup?.selections?.forward.codex;
       if(step?.kind==='native_tool'&&recordsCodex&&executable&&!codexTrust){
-       codexTrust=await waitForCodexHookTrust(ui,inspectCodex,pause);
+       const state=recordingSetup.scope&&readSetupState(recordingSetup.scope);
+       if(!state||state.installationId!==recordingSetup.installationId)throw new CliError('SETUP_SCOPE_CHANGED','The installation changed before hook review.');
+       const observation=await waitForCodexHookTrust(ui,()=>setupHookStatus(api,inspectCodex),pause);
        ui.signal.throwIfAborted();
+       if(observation==='skipped')codexTrust='skipped';
+       else {
+        await publishSetup(state,fetch,observation);
+        codexTrust='trusted';
+       }
        ui.progress('Checking setup','Checking the remaining setup steps.');
        continue;
       }

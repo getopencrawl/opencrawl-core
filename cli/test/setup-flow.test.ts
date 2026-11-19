@@ -250,7 +250,7 @@ test('failed supervision stops before launching Claude native sign-in',async()=>
  expect(code).toBe(2);expect(nativeCalls).toBe(0);expect(screens).toEqual(['Background capture needs attention']);
 }));
 
-test('Codex hook approval refreshes without input and advances to a user-opened chat',()=>fixture(async(api,_dir,_observations,setCodex)=>{
+test('Codex hook approval refreshes without input and advances to a user-opened chat',()=>fixture(async(api,_dir,observations,setCodex)=>{
  const reviews:CodexHookReview[]=[
   {state:'unknown',total:0,pending:null,disabled:null},
   {state:'observed',total:12,pending:2,disabled:1},
@@ -292,6 +292,7 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   '9 of 12 approved · 2 pending · 1 disabled','11 of 12 approved · 1 pending'
  ]);
  expect(handoffs).toBe(1);
+ expect(observations.at(-1)).toMatchObject({clients:expect.arrayContaining([expect.objectContaining({client:'codex',hookTrust:'trusted'})])});
  expect(actions).toEqual(['Setup complete']);
 }));
 
@@ -562,7 +563,7 @@ test('setup observations request native hook trust only for clients with a trust
  const selected=Object.fromEntries(['claude-code','codex','cursor','antigravity'].map(client=>[client,true]));
  await publishSetup({schemaVersion:1,scope:{api,tenantId:'tenant',userId:'user'},installationId:'fixture-installation',machine:{id:'fixture-machine',label:'fixture'},acceptedAt:new Date().toISOString(),selections:{plugins:selected,forward:selected,history:{}}});
  const clients=(observations[0] as {clients:{client:string;hookTrust:string}[]}).clients;
- expect(Object.fromEntries(clients.map(client=>[client.client,client.hookTrust]))).toEqual({'claude-code':'not_required',codex:'pending',cursor:'not_required',antigravity:'not_required'});
+ expect(Object.fromEntries(clients.map(client=>[client.client,client.hookTrust]))).toEqual({'claude-code':'not_required',codex:'unknown',cursor:'not_required',antigravity:'not_required'});
 }));
 
 test('publishing preserves prepared and failed plugin states only when the server supports them',async()=>{
@@ -580,6 +581,35 @@ const nativeUnknown=async():Promise<CodexHookReview>=>({state:'unknown',total:8,
 const nativeDisabled=async():Promise<CodexHookReview>=>({state:'observed',total:8,pending:0,disabled:8});
 const nativeChanged=async():Promise<CodexHookReview>=>({state:'observed',total:8,pending:2,disabled:1});
 const setupCodex:NonNullable<Parameters<typeof setupCommand>[3]>={installPlugins:async()=>({results:[{client:'codex',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'}),inspectHooks:nativeUnknown};
+
+test('saved-choice reconciliation publishes native trust and history progress preserves it',()=>fixture(async(api,_dir,observations)=>{
+ const trust=()=>{
+  const last=observations.at(-1) as {clients:{client:string;hookTrust:string}[]};
+  return last.clients.find(row=>row.client==='codex')?.hookTrust;
+ };
+ await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},setupCodex);
+ expect(trust()).toBe('unknown');
+ const approved=async():Promise<CodexHookReview>=>({state:'observed',total:12,pending:0,disabled:0});
+ for(const [inspectHooks,expected] of [[approved,'trusted'],[nativeChanged,'pending'],[nativeDisabled,'not_required'],[nativeUnknown,'unknown']] as const){
+  await setupCommand('run',api,{yes:true,json:true},{...setupCodex,inspectHooks});
+  expect(trust()).toBe(expected);
+  const saved=readSetupState({api,tenantId:'tenant',userId:'user'})!;
+  await publishSetup(saved);
+  expect(trust()).toBe(expected);
+ }
+}));
+
+test('a hook review from another installation, account or recording choice cannot update setup',()=>fixture(async(api,_dir,observations)=>{
+ const scope={api,tenantId:'tenant',userId:'user'};
+ await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},setupCodex);
+ const saved=readSetupState(scope)!;
+ const observation={scope,installationId:saved.installationId!,recordingSelected:true,review:{state:'observed' as const,total:12,pending:0,disabled:0}};
+ const before=observations.length;
+ for(const change of [{installationId:'other-machine'},{scope:{...scope,userId:'other-user'}},{recordingSelected:false}]){
+  await expect(publishSetup(saved,fetch,{...observation,...change})).rejects.toMatchObject({code:'SETUP_SCOPE_CHANGED'});
+ }
+ expect(observations).toHaveLength(before);
+}));
 
 test('captured or verified Codex setup stays quiet when native inspection is unavailable or hooks are intentionally disabled',async()=>fixture(async(api,_dir,_observations,setCodex)=>{
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},setupCodex);
