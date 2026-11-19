@@ -118,7 +118,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
     if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
     for (const binding of bindings) scoped(principal, binding);
     return request('/_search', {body: JSON.stringify({size: 0, track_total_hits: true,
-      query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: bindings.map(b => b.connectionId)}}, {term: {[f('deleted')]: false}}], must_not: [{terms: {[f('kind')]: ['passage', 'transcript', 'file_chunk']}}, unavailableLinear]}}, aggs})});
+      query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: bindings.map(b => b.connectionId)}}, {term: {[f('deleted')]: false}}], must_not: [{terms: {[f('kind')]: ['passage', 'transcript', 'file_chunk']}}]}}, aggs})});
   }
   return {
     identity:realm.identity,
