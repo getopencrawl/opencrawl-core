@@ -30,8 +30,8 @@ public teams with OpenCrawl workspace members. Private/restricted teams are
 excluded. Projects and related records require every associated team to be
 public; an incomplete team list is denied. Initiatives must be public, and
 relationship records require both parents to be public. Visibility is checked before raw records are released and again before indexing.
-Each indexing run also rechecks previously indexed resources in batches, including
-resources missing from incremental source results. Search and fetch serve the
+After processing new source files, the indexer rechecks existing resources in
+batches. It also runs an hourly sweep for removals that emit no source records. Search and fetch serve the
 workspace’s last indexed visibility without calling Linear.
 Disconnect immediately invalidates the source capability and retrieval.
 

@@ -202,10 +202,31 @@ for(const engine of ['sqlite','opensearch'])test(`${engine}: upstream records th
   assert.equal((await resolver.search(principal,{query:'tailword'})).hits.length,0);
   assert.equal((await resolver.search(principal,{query:'Project rationale',raw:true})).responses.flatMap(r=>r.hits.hits).length,0);
   await assert.rejects(workspace.fetch(principal,{id:found.id}));
-  f.state.rows.issues.team.visibility='public';await reconcile();
+  const callsAfterSweep=f.calls.length;await reconcile();assert.equal(f.calls.length,callsAfterSweep);
+  f.state.rows.issues.team.visibility='public';
+  // Even when there are no new raw objects the next hourly sweep picks up the change.
+  const completionKey=[...objects.keys()].find(key=>key.endsWith('/linear-visibility.json'));
+  const receipt=JSON.parse(objects.get(completionKey));
+  objects.set(completionKey,Buffer.from(JSON.stringify({...receipt,completedAt:0})));
+  await reconcile();
   assert.match((await workspace.fetch(principal,{id:found.id})).text,/tailword/);
   f.state.rows.issues.description='Shorter replacement';f.state.rows.issues.updatedAt=new Date(at+1000).toISOString();await put('issues','edited');
+  const callsAfterEdit=f.calls.length;await reconcile();assert.ok(f.calls.length>callsAfterEdit);
   assert.equal((await resolver.search(principal,{query:'tailword'})).hits.length,0);assert.equal((await resolver.search(principal,{query:'Shorter replacement'})).hits.length,1);
   await assert.rejects(resolver.search({tenantId:'org_other',userId:'user_other'},{query:'replacement'}));
+  // Reconcile across a full page of parents and resume from the immutable index ID.
+  const users=Array.from({length:101},(_,i)=>{
+    const data={id:uuid(500+i),name:'Indexed user '+i};
+    f.state.rows['user'+i]=data;
+    return normalizeLinear(binding,'users',{_airbyte_data:data,_airbyte_extracted_at:at},'fixture',{lines:[]})[0];
+  });
+  await search.putDocuments(principal,binding,users.slice(0,100));
+  await search.putDocuments(principal,binding,users.slice(100));
+  await search.refresh();
+  delete f.state.rows.user100;
+  objects.set(completionKey,Buffer.from(JSON.stringify({...receipt,completedAt:0})));
+  await reconcile();
+  assert.equal((await search.search(principal,[binding],{id:users[100].id})).hits.length,0);
+  assert.equal((await search.search(principal,[binding],{id:users[99].id})).hits.length,1);
   active.status='disconnected';await assert.rejects(workspace.fetch(principal,{id:found.id}));
 });

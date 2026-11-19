@@ -3,7 +3,7 @@ import {errorMetadata} from './types.mjs';
 interface Writer {id: string; operation: 'object-put' | 'search-write'; phase: 'writing' | 'settled'; startedAt: number; settledAt?: number; instance: string; target: string}
 interface BarrierState {version: number; namespace: string; tenantId: string; connectionId: string; closedAt: number | null; writers: Writer[]}
 import {randomUUID} from 'node:crypto';
-import {authorize, digest, pipelineVersion, validateBinding} from './scope.mjs';
+import {authorize, digest, indexingReceiptPrefix, validateBinding} from './scope.mjs';
 
 const PREFIX = 'control/connectors/write-barriers/v1/';
 const MAX_WRITERS = 128;
@@ -125,7 +125,7 @@ export function guardConnectorWrites<S extends ConditionalStore>(options: GuardO
 export function guardConnectorWrites<S extends ConditionalStore>({binding, store, search, namespace = 'selfhost'}: GuardOptions<S> & {search?: ConnectorSearch}) {
   binding = {...validateBinding(binding)};
   const barrier = createConnectorWriteBarrier({tenantId: binding.tenantId, connectionId: binding.connectionId, store, namespace});
-  const receiptPrefix = search?.identity && `derived/indexing/${pipelineVersion(binding)}/${digest([binding.tenantId, binding.connectionId, search.identity])}/`;
+  const receiptPrefix = search?.identity && indexingReceiptPrefix(binding, search.identity);
   function objectScope(key: string) {
     if (typeof key !== 'string' || key.length > 2048 || key.split('/').some(part => part === '.' || part === '..') || !(key.startsWith(binding.rawPrefix) || receiptPrefix && key.startsWith(receiptPrefix))) {
       throw Object.assign(new Error('Connector write outside its connection scope'), {status: 403, permanent: true});
