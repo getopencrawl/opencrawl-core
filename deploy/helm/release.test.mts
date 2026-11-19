@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {stableCandidate,checksPassed,gates,selectRelease,versionedChart,versionParts,artifactNames,checksums,verifyArtifactBytes,publishDraft,verifyPublic,type Run,type Release,type GitHub,type Plan} from './release.mts';
+import {stableCandidate,checksPassed,gates,selectRelease,releaseTitle,versionedChart,versionParts,artifactNames,checksums,verifyArtifactBytes,publishDraft,verifyPublic,type Run,type Release,type GitHub,type Plan} from './release.mts';
 
 const repo='getopencrawl/opencrawl-core',a='a'.repeat(40),b='b'.repeat(40),c='c'.repeat(40),unrelated='d'.repeat(40);
 const ancestor=(x:string,y:string)=>[a,b,c].includes(x)&&[a,b,c].includes(y)&&[a,b,c].indexOf(x)<=[a,b,c].indexOf(y);
@@ -52,6 +52,7 @@ test('an interrupted draft reserves its version and source until that original p
   assert.throws(()=>selectRelease([...baseline,{...draft,prerelease:true}],b,undefined,ancestor),/reserved/);
 });
 test('staged chart version changes preserve the runtime version and reject malformed versions',()=>{
+  assert.equal(releaseTitle('0.6.1-rc.1+build.2','0.3.1'),'OpenCrawl Core 0.6.1-rc.1+build.2 (Helm chart 0.3.1)');
   const chart='apiVersion: v2\nversion: 0.1.0\nappVersion: "0.4.1"\n';
   assert.equal(versionedChart(chart,'0.2.3'),'apiVersion: v2\nversion: 0.2.3\nappVersion: "0.4.1"\n');
   for(const v of ['1.2','1.2.3\n','1.2.3+meta','1.2.3-rc.1','01.2.3'])assert.throws(()=>versionParts(v));

@@ -15,7 +15,7 @@ export function versionedChart(chart:string,version:string):string{
   return chart.replace(/^version: \d+\.\d+\.\d+$/m,'version: '+version);
 }
 export function releaseTitle(appVersion:string,chartVersion:string):string{
-  versionParts(appVersion);
+  if(typeof appVersion!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9.+-]*$/.test(appVersion))throw Error('Expected a Core application version');
   versionParts(chartVersion);
   return `OpenCrawl Core ${appVersion} (Helm chart ${chartVersion})`;
 }
