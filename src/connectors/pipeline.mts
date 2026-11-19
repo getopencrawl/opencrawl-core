@@ -1,5 +1,6 @@
+import {randomUUID} from 'node:crypto';
 import type {PipelineOptions, DocumentItem, AirbyteEnvelope, SlackFileRecord, SlackRecord, GitHubRecord} from './types.mjs';
-import {authorize, objectStream, receiptKey, selectedObject, validateBinding} from './scope.mjs';
+import {authorize, indexingReceiptPrefix, objectStream, receiptKey, selectedObject, validateBinding} from './scope.mjs';
 import {normalizeSlackFile} from './slack-files.mjs';
 import {normalizeSlack} from './slack.mjs';
 import {normalizeGitHub} from './github.mjs';
@@ -9,19 +10,56 @@ import {createWorkspacePipeline} from './workspace-pipeline.mjs';
 import {pipelineVersion} from './scope.mjs';
 
 
+const visibilityCursor = 'linear-visibility:';
+const visibilityIntervalMs = 60 * 60 * 1000;
+
 /** One fixed authorized connection, one scoped bucket adapter, one scoped index. */
 export function createConnectorPipeline({binding, store, search, linear, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
   validateBinding(binding);
   if(binding.provider==='linear'&&!linear)throw new Error('Linear permission adapter required for indexing');
   if (['granola', 'circleback', 'notion'].includes(binding.provider)) return createWorkspacePipeline({binding, store, search, checkActive, heartbeat});
   const principal = {tenantId: binding.tenantId};
+  const receiptPrefix = indexingReceiptPrefix(binding, search.identity);
+  const visibilityInputKey = receiptPrefix + 'linear-visibility-input';
+  const visibilityReceiptKey = receiptPrefix + 'linear-visibility.json';
   async function active() { authorize(principal, binding); await checkActive(binding); }
   return {
     async listPage({cursor}: {cursor?: string | null} = {}) {
       await active();
+      if (binding.provider === 'linear' && cursor?.startsWith(visibilityCursor)) {
+        if (!search.listLinearResources || !search.setLinearAvailability) throw new Error('Linear index reconciliation unavailable');
+        // An idle five-minute index poll only reads the receipts. New source files or an
+        // hour without a successful sweep also cover removals that emit no incremental rows.
+        let [generation, after = ''] = cursor.slice(visibilityCursor.length).split('/');
+        if (!generation) {
+          generation = (await store.get(visibilityInputKey, {maxBytes: 128}))?.toString() || 'initial';
+          const saved = await store.get(visibilityReceiptKey, {maxBytes: 1024});
+          if (saved) {
+            const receipt = JSON.parse(saved.toString()) as {generation: string; completedAt: number};
+            const age = Date.now() - receipt.completedAt;
+            if (receipt.generation === generation && age >= 0 && age < visibilityIntervalMs) return {keys: [], cursor: null, ignored: 0};
+          }
+        }
+        const page = await search.listLinearResources(principal, binding, after);
+        if (page.resources.length) {
+          const visible = await linear!.describeMany(page.resources.map(resource => resource.sourceId));
+          for (const available of [false, true]) {
+            const changed = page.resources.filter(resource => resource.available !== available && visible.has(resource.sourceId) === available);
+            if (changed.length) {
+              await active();
+              await search.setLinearAvailability(principal, binding, changed, available);
+            }
+          }
+        }
+        if (!page.after) {
+          await active();
+          await store.put(visibilityReceiptKey, Buffer.from(JSON.stringify({generation, completedAt: Date.now()})), 'application/json');
+        }
+        return {keys: [], cursor: page.after ? visibilityCursor + generation + '/' + page.after : null, ignored: 0};
+      }
       const page = await store.listPage(binding.rawPrefix, {continuationToken: cursor, maxKeys: 100});
       const keys = page.keys.filter(key => selectedObject(binding, key));
-      return {keys, cursor: page.nextToken || null, ignored: page.keys.length - keys.length};
+      return {keys, cursor: page.nextToken || (binding.provider === 'linear' ? visibilityCursor : null), ignored: page.keys.length - keys.length};
     },
     async processObject({key}: {key: string}) {
       await active();
@@ -80,6 +118,7 @@ export function createConnectorPipeline({binding, store, search, linear, checkAc
       await flush();
       await flushLinear();
       await active();
+      if (binding.provider === 'linear') await store.put(visibilityInputKey, Buffer.from(randomUUID()), 'text/plain');
       // Only acknowledge after every bulk item succeeded. Partial writes replay safely.
       await store.put(receipt, Buffer.from(JSON.stringify({pipeline: pipelineVersion(binding), key, sha256: result.sha256, sourceRecords: result.records, records})), 'application/json');
       return {status: 'indexed', records};

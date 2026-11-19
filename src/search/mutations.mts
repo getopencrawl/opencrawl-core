@@ -36,7 +36,7 @@ export function writeScript(policy:WritePolicy):string {
 }
 export function patchScript(set:Record<string,unknown>) {
   const fields=Object.keys(set);
-  if(!fields.length||fields.some(f=>!['session.private','memory.private','connector.deleted','text','title'].includes(f)))throw new Error('Unsupported index patch');
+  if(!fields.length||fields.some(f=>!['session.private','memory.private','connector.deleted','connector.available','text','title'].includes(f)))throw new Error('Unsupported index patch');
   return {lang:'painless',source:fields.map((f,i)=>'ctx._source.'+f+' = params.v'+i+';').join(' '),params:Object.fromEntries(fields.map((f,i)=>['v'+i,set[f]]))};
 }
 

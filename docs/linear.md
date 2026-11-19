@@ -29,13 +29,15 @@ Connecting shares organization-wide references and resources belonging to
 public teams with OpenCrawl workspace members. Private/restricted teams are
 excluded. Projects and related records require every associated team to be
 public; an incomplete team list is denied. Initiatives must be public, and
-relationship records require both parents to be public. Current permission checks
-run before raw records are released, again before indexing, and on search/fetch.
+relationship records require both parents to be public. Visibility is checked before raw records are released and again before indexing.
+After processing new source files, the indexer rechecks existing resources in
+batches. It also runs an hourly sweep for removals that emit no source records. Search and fetch serve the
+workspace’s last indexed visibility without calling Linear.
 Disconnect immediately invalidates the source capability and retrieval.
 
 Changing a formerly private team's visibility may not update its children's
 `updatedAt`; run a full source refresh to collect those newly shared records.
-Existing indexed records always receive fresh read authorization.
+Changes to existing indexed records take effect as the next indexing run reconciles them.
 
 Validation: `npm test` requires an isolated PostgreSQL test database via
 `OPENCRAWL_TEST_POSTGRES_URL`. `OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test

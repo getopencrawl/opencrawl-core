@@ -48,8 +48,11 @@ export function documentId(binding: ConnectorBinding, kind: string, sourceId: st
   validateBinding(binding);
   return digest([binding.tenantId, binding.connectionId, binding.workspaceId, ...(binding.provider === 'slack' ? [] : [binding.provider]), kind, sourceId]);
 }
+export function indexingReceiptPrefix(binding: ConnectorBinding, indexIdentity: string) {
+  return `derived/indexing/${pipelineVersion(binding)}/${digest([binding.tenantId, binding.connectionId, indexIdentity])}/`;
+}
 export function receiptKey(binding: ConnectorBinding, indexIdentity: string, key: string) {
   objectStream(binding, key);
-  return `derived/indexing/${pipelineVersion(binding)}/${digest([binding.tenantId, binding.connectionId, indexIdentity])}/${digest(key)}.json`;
+  return indexingReceiptPrefix(binding, indexIdentity) + digest(key) + '.json';
 }
 export function invalidRecord(message: string): never { return fail(message); }

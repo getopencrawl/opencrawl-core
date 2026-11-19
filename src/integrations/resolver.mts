@@ -27,7 +27,7 @@ export function createConnectorResolver({environment, generation, registry, stor
   function reference(value: ConnectorReferenceInput): asserts value is HostedConnectorReference {
     if (!value || !/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(typeof value.tenantId === 'string' ? value.tenantId : '') || !/^user_[A-Za-z0-9]+$/.test(typeof value.userId === 'string' ? value.userId : '') || !/^int_[a-f0-9]{26}$/.test(typeof value.connectionId === 'string' ? value.connectionId : '') || (value.generation && value.generation !== generation)) denied();
   }
-  async function resolve(input: ConnectorReferenceInput) {
+  async function resolveConnection(input: ConnectorReferenceInput, includeSourceAccess: boolean) {
     reference(input);
     const record = await registry.get(input.tenantId, input.userId, input.connectionId);
     if (!record || record.tenantId !== input.tenantId || record.userId !== input.userId || record.integrationId !== input.connectionId || record.environment !== environment || record.status !== 'active' || !eligible(record)) denied();
@@ -35,9 +35,11 @@ export function createConnectorResolver({environment, generation, registry, stor
       provider: record.provider, access: record.provider === 'slack' ? 'team-public' : 'workspace-global', rawPrefix: record.s3Prefix + '/'});
     const store = await storage(record);
     const search = searchFor(binding.tenantId);
-    const linear = record.provider === 'linear' ? linearAccess?.(record) : undefined;
+    const linear = includeSourceAccess && record.provider === 'linear' ? linearAccess?.(record) : undefined;
     return {binding, store, search, ...(linear ? {linear, resourceAccess: (sourceId: string) => linear.inspect(sourceId)} : {})};
   }
+  const resolve = (input: ConnectorReferenceInput) => resolveConnection(input, true);
+  const resolveIndexed = (input: ConnectorReferenceInput) => resolveConnection(input, false);
   type CoreSearch = ReturnType<typeof createConnectorSearch>['search'];
   type ConnectorQuery = Parameters<CoreSearch>[2];
   type NormalizedResult = Extract<Awaited<ReturnType<CoreSearch>>, {hits: unknown[]}>;
@@ -49,13 +51,10 @@ export function createConnectorResolver({environment, generation, registry, stor
       if (!principal?.tenantId || !principal?.userId) denied();
       const records = (await registry.listTenant(principal.tenantId)).filter(record => eligible(record) && record.status === 'active' && record.environment === environment);
       if (!records.length) return query.raw ? {responses: [], examined: 0, truncated: false} : {hits: [], examined: 0, truncated: false};
-      const resolved = await Promise.all(records.map(record => resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation})));
-      const result = await resolved[0].search.search(principal, resolved.map(r => r.binding), query, async (binding, sourceId) => {
-        const match = resolved.find(item => item.binding.connectionId === binding.connectionId);
-        return match?.linear?.inspect(sourceId) ?? false;
-      });
+      const resolved = await Promise.all(records.map(record => resolveIndexed({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation})));
+      const result = await resolved[0].search.search(principal, resolved.map(r => r.binding), query);
       // A concurrent disconnect must not return results after we observe it.
-      for (const record of records) await resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
+      for (const record of records) await resolveIndexed({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
       return result;
     }
   return {
@@ -65,7 +64,7 @@ export function createConnectorResolver({environment, generation, registry, stor
       if (!principal?.tenantId || !principal?.userId) denied();
       const records = (await registry.listTenant(principal.tenantId)).filter(record => eligible(record) && record.status === 'active' && record.environment === environment);
       if (!records.length) return {total: 0, kinds: {}, providers: {}, connections: {}};
-      const resolved = await Promise.all(records.map(record => resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation})));
+      const resolved = await Promise.all(records.map(record => resolveIndexed({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation})));
       if (new Set(resolved.map(value => value.binding.connectionId)).size !== resolved.length) denied();
       // Core owns counting and scope checks. Keep connection attribution distinct
       // from provider totals: a card may show one of several same-provider connections.
@@ -75,7 +74,7 @@ export function createConnectorResolver({environment, generation, registry, stor
         Object.assign(counts, await batch[0].search.countByConnection(principal, batch.map(value => value.binding)));
       }
       // Match search's revocation rule when a disconnect races the reporting query.
-      for (const record of records) await resolve({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
+      for (const record of records) await resolveIndexed({tenantId: principal.tenantId, userId: record.userId, connectionId: record.integrationId, generation});
       const result: CountSummary = {total: 0, kinds: {}, providers: {}, connections: {}};
       const add = (target: ConnectionCount, count: ConnectionCount) => {
         target.total += count.total;
