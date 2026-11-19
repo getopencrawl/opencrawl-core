@@ -3,7 +3,7 @@ import {render} from 'ink-testing-library';
 import {pressAndRead,renderReady,waitForFrame} from './setup-ink.ts';
 import {SetupSelection} from '../src/setup/select-view.tsx';
 import {chooseSetupItems,type SelectionItem,type SelectionScreen} from '../src/setup/select.ts';
-const screen:SelectionScreen={phase:1,title:'Record new sessions',description:'Connect and record selected agents.',noneLabel:'Do not record any sessions on this machine',items:[{id:'claude-code',label:'Claude Code',detail:'Detected',selected:true},{id:'codex',label:'Codex',detail:'Detected',needsReinstall:true,selected:true},{id:'antigravity',label:'Antigravity',detail:'Not detected',disabled:true,selected:false},{id:'cursor',label:'Cursor',detail:'Detected',selected:false}]};
+const screen:SelectionScreen={phase:1,title:'Record new sessions',description:'Connect and record selected agents.',noneLabel:'Do not record any sessions on this machine',items:[{id:'claude-code',label:'Claude Code',installState:'installed',selected:true},{id:'codex',label:'Codex',detail:'Detected',installState:'repair',selected:true},{id:'antigravity',label:'Antigravity',detail:'Not detected',disabled:true,selected:false},{id:'cursor',label:'Cursor',installState:'new',selected:false}]};
 const tick=()=>new Promise(resolve=>setTimeout(resolve,25));
 const down='\u001b[B',up='\u001b[A',right='\u001b[C',enter='\r';
 test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the focused button',async()=>{
@@ -23,6 +23,17 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
   await pressAndRead(app,up,'› [x] Do not record');
   await pressAndRead(app,down,'› [ Continue ]');app.stdin.write(enter);await tick();
   expect(answer?.every(item=>!item.selected)).toBe(true);
+ }finally{app.unmount();}
+});
+test('intact Claude Code and Codex installations can continue without a reinstall',async()=>{
+ const items=screen.items.slice(0,2).map(item=>({...item,installState:'installed' as const}));
+ const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={()=>{}}/>);
+ try{
+  const frame=app.lastFrame();
+  expect(frame).toMatch(/Claude Code[^\n]*Installed/);
+  expect(frame).toMatch(/Codex[^\n]*Installed/);
+  expect(frame).toContain('[ Continue ]');
+  expect(frame).not.toMatch(/reinstall/i);
  }finally{app.unmount();}
 });
 test('history starts unchecked and only Enter on its button commits',async()=>{
