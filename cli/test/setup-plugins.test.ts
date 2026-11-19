@@ -113,6 +113,24 @@ test('all four bundles contain native hooks bound to the exact profile, command 
   if(client==='codex'){const manifest=JSON.parse(files['.codex-plugin/plugin.json']);expect(manifest).toMatchObject({hooks:'./hooks/hooks.json',mcpServers:'./.mcp.json',skills:'./skills/'});expect(JSON.parse(files['.mcp.json']).mcpServers).toEqual({[identity.name]:{type:'http',url:origin+'/mcp'}});expect(files['plugin.json']).toBeUndefined();expect(files['mcp.json']).toBeUndefined();}
  }
 });
+test('the four embedded desktop bundles include their native listing fields and icon',()=>{
+ for(const [client,path] of [
+  ['codex','.codex-plugin/plugin.json'],['claude-code','.claude-plugin/plugin.json'],
+  ['cursor','.cursor-plugin/plugin.json'],['antigravity','plugin.json'],
+ ] as const){
+  const files=setupPluginFiles(client,origin,{command:[join(tmpdir(),'opencrawl')],configHome:tmpdir()});
+  const manifest=JSON.parse(files[path]!);
+  const listing=client==='codex'?manifest.interface:manifest;
+  expect(manifest.name).toBe('opencrawl');
+  expect(manifest.description).toContain('OpenCrawl');
+  if(client!=='cursor')expect(listing.displayName).toBe('OpenCrawl');
+  if(client==='codex'){
+   expect(listing.shortDescription).toBe('Multiplayer for coding agents');
+   expect(listing.composerIcon).toBe(listing.logo);
+  }
+  expect(files[(listing.logo??listing.icon).replace(/^\.\//,'')]).toContain('<svg');
+ }
+});
 test('canonical Cursor rule delivers retrieval and native notifications for its bound deployment',()=>{
  const command=[join(tmpdir(),'private cli','opencrawl')],files=setupPluginFiles('cursor',origin,{command,configHome:join(tmpdir(),'private profile')});
  const rule=files['rules/opencrawl.mdc'];

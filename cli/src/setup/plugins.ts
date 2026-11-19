@@ -79,6 +79,7 @@ export function setupPluginFiles(client:PluginClient,api:string,options:BundleOp
     files['.opencrawl-devin.json']=json({schemaVersion:1,api:origin,configHome,command,recording:options.recording===true});
     files['AGENTS.md']=extraAssets.devinGuide;
   }else{
+    files['assets/icon.svg']=extraAssets.desktopIcon;
     const file=client==='codex'||client==='claude-code'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
     files[file]=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:{...(client==='codex'||client==='claude-code'?{type:'http'}:{}),url}}});
   }
@@ -371,7 +372,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
             let commands:string[][]=[];
             if(client==='codex'||client==='claude-code') {
               const file=client==='codex'?'.agents/plugins/marketplace.json':'.claude-plugin/marketplace.json';
-              const entry=client==='codex'?{name:identity.name,source:{source:'local',path:'./'+identity.name},policy:{installation:'AVAILABLE',authentication:'ON_USE'},category:'Productivity'}:{name:identity.name,source:'./'+identity.name};
+              const entry=client==='codex'?{name:identity.name,source:{source:'local',path:'./'+identity.name},policy:{installation:'AVAILABLE',authentication:'ON_USE'},category:'Productivity'}:{name:identity.name,source:'./'+identity.name,description:JSON.parse(String(bundle['.claude-plugin/plugin.json'])).description};
               safeDirectory(dirname(join(marketSource,file)),configHome);atomicJson(join(marketSource,file),{name:identity.marketplace,owner:{name:'OpenCrawl'},plugins:[entry]});
               commands=client==='codex'?[['plugin','marketplace','add',marketSource,'--json'],['plugin','add',pluginId,'--json']]:[['plugin','marketplace','add',marketSource,'--json'],['plugin','install',pluginId,'--scope','user','--json']];
             } else commands=[['plugin','install',directory]];
