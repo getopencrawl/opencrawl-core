@@ -5,6 +5,7 @@ import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../ind
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
 import {SetupPage} from './setup.tsx';
+import {PrivacySettings} from '../pages/privacy-settings.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
 import {BoardNavigation} from '../pages/board.tsx';
 import {SearchPlaygroundPage} from '../pages/diagnostics.tsx';
@@ -93,6 +94,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to="/setup" replace/> : data ? <AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
+    ...(data?.sessionPrivacy ? [{path:'/settings/privacy',label:'Privacy',group:'settings' as const,element:<PrivacySettings key={data.cacheScope} adapter={libraryAdapter}/>}] : []),
     ...(extensions?.routes?.({data, activated}) ?? []),
     {path:'/settings',label:'Settings',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},

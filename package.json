@@ -11,6 +11,7 @@
     "./sessions": "./dist/src/sessions/ingest.mjs",
     "./sessions/s3-store": "./dist/src/sessions/s3-store.mjs",
     "./mcp": "./dist/src/mcp/server.mjs",
+    "./sessions/privacy": "./dist/src/sessions/privacy.mjs",
     "./sessions/search": "./dist/src/sessions/search.mjs",
     "./sessions/recent": "./dist/src/sessions/recent.mjs",
     "./sessions/library": "./dist/src/sessions/library.mjs",

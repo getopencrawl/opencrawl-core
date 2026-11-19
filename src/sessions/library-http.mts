@@ -10,6 +10,7 @@ import type {createMemoryLibrary} from '../memories/library.mjs';
 import {fail} from '../errors.mjs';
 import type {RecordingPolicy} from './recording.mjs';
 
+import type {PrivacyPreferences} from './privacy.mjs';
 const harness = z.enum(SESSION_HARNESSES);
 // Memory files exist only for harnesses that keep them on disk.
 const memoryHarness = z.enum(['claude-code', 'codex']);
@@ -18,6 +19,8 @@ const path = z.string().min(4).max(2048);
 const visibility = z.enum(['team', 'private']);
 const scope = z.enum(['all', 'mine']).default('all');
 export const libraryOperations = {
+  'privacy/status':z.strictObject({}),
+  'privacy/change':z.strictObject({enabled:z.boolean(),rules:z.string().max(1500),revision:z.string().max(40),subject:z.string().max(160)}),
   'recording/status':z.strictObject({}),
   'recording/change':z.strictObject({mode:z.enum(['hour','indefinite','resume']),revision:z.string().max(40),subject:z.string().max(160)}),
   'sessions/list': z.strictObject({scope, participant: z.string().refine(validParticipant).optional(), query: z.string().max(500).default(''), limit: z.number().int().min(1).max(500).default(50)}),
@@ -34,13 +37,18 @@ export const isLibraryOperation = (value: string): value is LibraryOperation => 
 
 /** One validated entry point for every runtime. The runtime authenticates and
  * supplies the principal; owner checks and visibility live in the libraries. */
-export function createLibraryApi({sessions, memories, recording}: {sessions?: ReturnType<typeof createSessionLibrary> | null; memories?: ReturnType<typeof createMemoryLibrary> | null; recording?: RecordingPolicy}) {
+export function createLibraryApi({sessions, memories, recording, privacy}: {privacy?:PrivacyPreferences; sessions?: ReturnType<typeof createSessionLibrary> | null; memories?: ReturnType<typeof createMemoryLibrary> | null; recording?: RecordingPolicy}) {
   return async (principal: Principal, operation: string, input: unknown) => {
     const subject=sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Capture credentials cannot manage sessions or memories');
     if (!isLibraryOperation(operation)) fail(404, 'Unknown operation');
     const parsed = libraryOperations[operation].safeParse(input ?? {});
     if (!parsed.success) fail(400, 'Invalid request');
+    if(operation==='privacy/status'||operation==='privacy/change'){
+      if(!privacy)fail(404,'Session privacy is unavailable');
+      if(operation==='privacy/status')return privacy.read(principal);
+      return privacy.change(principal,libraryOperations['privacy/change'].parse(parsed.data));
+    }
     if(operation==='recording/status'||operation==='recording/change'){
       if(!recording && operation==='recording/status')return {available:false};
       if(!recording)fail(503,'Recording controls are unavailable');
@@ -78,7 +86,7 @@ export function createLibraryHandler({api, authenticate}: {api: ReturnType<typeo
       const principal = await authenticate(req);
       if (!principal) return send(401, {error: {code: 'AUTH_REQUIRED'}});
       const operation = new URL(req.url ?? '', 'http://library').pathname.replace(/^\/api\/library\//, '');
-      if(operation==='recording/change')return send(403,{error:{code:'BROWSER_SESSION_REQUIRED'}});
+      if(operation==='recording/change'||operation.startsWith('privacy/'))return send(403,{error:{code:'BROWSER_SESSION_REQUIRED'}});
       const chunks: Buffer[] = []; let size = 0;
       for await (const chunk of req) {size += chunk.length; if (size > 16384) return send(413, {error: {code: 'REQUEST_TOO_LARGE'}}); chunks.push(Buffer.from(chunk));}
       let input: unknown; try {input = chunks.length ? parseJson<unknown>(Buffer.concat(chunks)) : {};} catch {return send(400, {error: {code: 'INVALID_JSON'}});}

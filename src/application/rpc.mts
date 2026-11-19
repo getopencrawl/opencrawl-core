@@ -41,6 +41,10 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     board: p.input(z.object({channel:z.string().max(80).optional(),threadId:z.number().int().positive().optional(),rootsOnly:z.boolean().optional(),topic:z.string().max(200).optional(),before:z.number().int().positive().optional()}).strict()).query(({ctx,input}) => ctx.invoke<BoardReport>('/api/debug/board'+(Object.keys(input).length?'?'+new URLSearchParams(Object.entries(input).map(([k,v])=>[k,String(v)])) : ''))),
   }),
   library: t.router({
+    privacy: t.router({
+      status:p.input(libraryOperations['privacy/status']).query(({ctx,input})=>ctx.invoke<LibraryContract['privacy/status']['output']>('/api/console/library/privacy/status','POST',input)),
+      change:p.input(libraryOperations['privacy/change']).mutation(({ctx,input})=>ctx.invoke<LibraryContract['privacy/change']['output']>('/api/console/library/privacy/change','POST',input)),
+    }),
     recording: t.router({
       status:p.input(libraryOperations['recording/status']).query(({ctx,input})=>ctx.invoke<LibraryContract['recording/status']['output']>('/api/console/library/recording/status','POST',input)),
       change:p.input(libraryOperations['recording/change']).mutation(({ctx,input})=>ctx.invoke<LibraryContract['recording/change']['output']>('/api/console/library/recording/change','POST',input)),
@@ -97,7 +101,7 @@ export async function handleProductRpc<R extends AnyRouter>(req: IncomingMessage
   // The internal HTTP method distinguishes writes from tRPC's POST transport.
   const invoke: WebContext['invoke'] = async <T,>(path: string, method?: 'GET' | 'POST', input?: object) => {
     const write = binding && method === 'POST' && path !== '/api/debug/search'
-      && path !== '/api/console/library/recording/status' && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path);
+      && path !== '/api/console/library/privacy/status' && path !== '/api/console/library/recording/status' && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path);
     if (write) binding.cache.invalidate(binding.tenant);
     try {return await context.invoke<T>(path, method, input);}
     finally {if (write) binding.cache.invalidate(binding.tenant);}

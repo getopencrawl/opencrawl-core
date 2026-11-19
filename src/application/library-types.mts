@@ -33,7 +33,10 @@ export interface MemoryDocument {memory: Omit<MemorySummary, 'description'>; tex
 export interface Authors {authors?: Record<string, string>}
 
 type PersonalRecordingStatus = import('../sessions/recording.mjs').RecordingStatus & {subject:string};
+export interface PrivacyPreference {enabled:boolean; rules:string; revision:string; subject:string}
 export interface LibraryContract {
+  'privacy/status': {input:Record<string,never>; output:PrivacyPreference};
+  'privacy/change': {input:PrivacyPreference; output:PrivacyPreference};
   'recording/status': {input: Record<string,never>; output: PersonalRecordingStatus | {available:false}};
   'recording/change': {input: {mode:import('../sessions/recording.mjs').PauseMode; revision:string; subject:string}; output: PersonalRecordingStatus};
   'sessions/list': {input: {scope: LibraryScope; query?: string; participant?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
