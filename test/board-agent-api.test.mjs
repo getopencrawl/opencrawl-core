@@ -102,7 +102,7 @@ test('the handled cursor is independent of stdout, stable under concurrency, and
  const [page,parallel]=await Promise.all([api.inbox(alice,user(alice)),api.inbox(alice,user(alice))]);
  assert.deepEqual(page,parallel);assert.deepEqual(page.messages.map(m=>m.id),[2]);
  await post(api,bob,'mention','@codex:alice further evidence',{channel:'other'});
- await api.sync(alice,{...user(alice),after:0});
+ assert.deepEqual((await api.sync(alice,user(alice))).messages.map(message=>message.id),[2,3]);
  await api.follow(alice,{...user(alice),threadId:root.id,following:false});
  const replay=await api.inbox(alice,user(alice));assert.equal(replay.cursor,page.cursor);assert.deepEqual(replay.messages,page.messages);
  for(const principal of [other,bob])await assert.rejects(api.inbox(principal,{...user(principal),acknowledge:page.cursor}),{status:409});
