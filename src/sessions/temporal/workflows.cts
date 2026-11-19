@@ -3,7 +3,7 @@ import type {replicasActivities} from './replicas.mjs';
 import type {SessionDeletionInput, SessionDeletionRecoveryInput, sessionDeletionActivities} from './deletion.mjs';
 import type {SessionTaskInput} from './worker.mjs';
 import type {SourcePage} from '../../connectors/workflow.mjs';
-const {proxyActivities, continueAsNew, ApplicationFailure, startChild, ParentClosePolicy, WorkflowIdReusePolicy} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
+const {proxyActivities, continueAsNew, patched, sleep, ApplicationFailure, startChild, ParentClosePolicy, WorkflowIdReusePolicy} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
 const {WorkflowExecutionAlreadyStartedError} = require('@temporalio/common') as typeof import('@temporalio/common');
 const {runConnectorSegment} = require('../../connectors/workflow.mjs') as typeof import('../../connectors/workflow.mjs');
 const activities = proxyActivities<{listSessionPage(input: SessionTaskInput): Promise<SourcePage>; indexSessionObject(input: SessionTaskInput & {key: string}): Promise<{records: number}>}>({startToCloseTimeout:'5 minutes', heartbeatTimeout:'45 seconds',
@@ -64,10 +64,24 @@ async function recoverSessionDeletionsV1(input: SessionDeletionRecoveryInput) {
 const replicas=proxyActivities<ReturnType<typeof replicasActivities>>({startToCloseTimeout:'5 minutes',
   retry:{initialInterval:'2 seconds',maximumInterval:'2 minutes',maximumAttempts:8}});
 const failureStatus=proxyActivities<Pick<ReturnType<typeof replicasActivities>,'markReplicasImportFailed'>>({startToCloseTimeout:'30 seconds',retry:{maximumInterval:'1 minute'}});
+const recovery=proxyActivities<Pick<ReturnType<typeof replicasActivities>,'runReplicasImportStep'>>({
+  startToCloseTimeout:'5 minutes',retry:{initialInterval:'2 seconds',maximumInterval:'10 minutes'},
+});
 async function importReplicasHistoryV1(job:ReplicasJob):Promise<void>{
   for(let page=0;page<100;page++){
-    try{if(await replicas.importReplicasPage(job))return;}
-    catch(error){await failureStatus.markReplicasImportFailed(job);throw error;}
+    if(patched('replicas-checkpoint-recovery-v2')){
+      const step=await recovery.runReplicasImportStep(job);
+      if(step.requiresReconnect)throw ApplicationFailure.nonRetryable('Replicas organization credential requires attention','ReplicasCredentialRejected');
+      if(step.done)return;
+      if(step.delayMs>0)await sleep(step.delayMs);
+    }else{
+      try{if(await replicas.importReplicasPage(job))return;}
+      catch(error){
+        await failureStatus.markReplicasImportFailed(job);
+        if(patched('replicas-resume-after-legacy-failure'))return continueAsNew<typeof importReplicasHistoryV1>(job);
+        throw error;
+      }
+    }
   }
   await continueAsNew<typeof importReplicasHistoryV1>(job);
 }

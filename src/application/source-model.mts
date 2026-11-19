@@ -30,6 +30,11 @@ export function sourceProgress(source: SourceCard): string {
   const count = Math.max(0, source.synced ?? 0);
   const units = source.units ?? ['item', 'items'];
   const countText = `${count.toLocaleString()} ${count === 1 ? units[0] : units[1]}`;
+  if(source.state==='syncing'&&source.history&&(source.history.blocked||source.history.retryAt)){
+    const {blocked}=source.history;
+    const waiting=blocked?` ${blocked.toLocaleString()} ${blocked===1?'record is':'records are'} waiting to retry.`:'';
+    return `${countText} imported.${waiting} ${source.history.error??'OpenCrawl will retry automatically.'}`;
+  }
   if (source.finishing) return `${countText} imported. Finishing long messages.`;
   if (source.state === 'syncing' && source.total) return `${Math.min(count, source.total).toLocaleString()} of ${source.total.toLocaleString()} ${units[1]} imported${source.eta && source.eta > 0 ? `. ${remaining(source.eta)}` : ''}`;
   if (source.state === 'syncing') return count ? `${countText} imported` : 'Preparing your import…';

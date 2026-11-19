@@ -1,6 +1,6 @@
 # Direct Replicas history import
 
-In **Integrations → Replicas → Connect**, an OpenCrawl admin enters an organization API key from **Replicas Settings → API Keys**. Enable **Team workspace visibility** under **Settings → Preferences** so the key can read team history. OpenCrawl checks the identity, inventory and read access, then confirms the connection once Temporal accepts the job. An empty inventory completes immediately.
+In **Integrations → Replicas → Connect**, an OpenCrawl admin enters an organization API key from **Replicas Settings → API Keys**. OpenCrawl verifies the organization identity and inventory, then confirms the connection once Temporal accepts the job. The worker checks each chat independently. An empty inventory completes immediately.
 
 ## Complete retained session history
 
@@ -48,14 +48,15 @@ preserves those catalog records while counting distinct sessions separately.
 Repeated imports of unchanged history do not duplicate records. Native live
 captures use a separate identity and can overlap with historical imports.
 
-Unknown event/provider formats are preserved. Missing access, absent retained
-history, invalid/repeated cursors, oversized responses and transient failures
-pause the import without skipping the conversation or reporting completion.
-An organization key must be able to read every exported workspace. Replicas may
-require **Team workspace visibility** for that access; the importer does not
-change organization settings. Fix access and resume the same checkpoint.
+When a history request fails for one chat, the worker stores the catalog record, exact cursor and occurrence counters in PostgreSQL and continues the inventory. Deferred records retry after one minute with exponential backoff capped at six hours. The import remains incomplete until every catalog record finishes. Oversized pages retry with smaller page limits. Rate limits honor Retry-After up to one day. Network, catalog and storage outages retry the same checkpoint using durable Temporal timers. A worker restart or a closed browser does not require a key.
 
-The Temporal worker continues independently of the browser. PostgreSQL checkpoints each page. Retryable failures back off automatically. After a terminal failure, an admin can reconnect the same Replicas organization to continue at the saved page. Credentials are encrypted with AES-256-GCM and are erased on completion or terminal failure. Temporal receives the tenant and import IDs. The hosted receiver and worker use a dedicated encryption secret.
+A 401 or 403 triggers a check of the key's organization identity. A 401 from the identity endpoint or a mismatched organization identity requires a new key. A temporary identity outage or a 403 from that check retains the credential for retry. Access to an individual workspace can depend on Team workspace visibility. A 404 alone cannot establish that setting. An admin can stop an active import in Integrations. Completion, a confirmed credential rejection, or an explicit stop clears the encrypted key. Reconnecting the same organization continues the saved import, including records deferred before the stop. An earlier release may already have erased a key after a failure. Those imports need one reconnect.
+
+### Diagnosing a stalled import
+
+Look up the Temporal workflow `replicas-history-<import ID>`. Its activity results and timers show when the next attempt is due. Search worker logs for `replicas.import.issue`, `replicas.import.recovered`, and `replicas.import.activity_retry` with that import ID. The receiver logs `replicas.import.connect_failed` for rejected provider requests during setup.
+
+For a durable record, read `state->'recentIssues'` in `opencrawl_replicas_imports` for the exact namespace and tenant. It contains the most recent 32 decisions. Each outstanding record in `opencrawl_replicas_deferred` also stores its latest issue and retry time. Diagnostics include operation, status when available, validated provider request ID, workspace and chat IDs, cursor hash, page limit, elapsed time, attempt, decision and retry time. Provider bodies, keys, raw cursors and chat contents are excluded from diagnostics and Temporal history.
 
 For human messages, OpenCrawl matches the native or Replicas message ID to sender records in the organization catalog and history page. The transcript and participant filter use the reported display name or email. Ambiguous or missing evidence leaves a message unattributed.
 
