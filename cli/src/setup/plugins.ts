@@ -119,6 +119,7 @@ export function setupPluginFiles(client:PluginClient,api:string,options:BundleOp
     files['.opencrawl-devin.json']=json({schemaVersion:1,api:origin,configHome,command,recording:options.recording===true});
     files['AGENTS.md']=extraAssets.devinGuide;
   }else{
+    files['assets/icon.svg']=extraAssets.desktopIcon;
     const file=client==='codex'||client==='claude-code'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
     files[file]=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:{...(client==='codex'||client==='claude-code'?{type:'http'}:{}),url}}});
   }
@@ -407,13 +408,16 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           loadedRoot=directory;
         } else {
           if(!binary){results.push({client,status:'pending',message:labels[client]+"'s native plugin installer is unavailable.",directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Install '+labels[client]+' plugin support',instruction:'Install or update the native client CLI, then run setup again. Preserve existing plugins and authentication.'});continue;}
-          if(!native||!unchanged||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {
+          // Claude reads local marketplaces in place, but its installed version and fallback cache
+          // are updated only by the native update command.
+          const refreshClaudeCache=client==='claude-code'&&native?.scope==='user'&&typeof native.version==='string'&&published!==undefined&&native.version!==published.source.version;
+          if(refreshClaudeCache||!native||!unchanged||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {
             let commands:string[][]=[];
             if(client==='codex'||client==='claude-code') {
               const file=client==='codex'?'.agents/plugins/marketplace.json':'.claude-plugin/marketplace.json';
-              const entry=client==='codex'?{name:identity.name,source:{source:'local',path:'./'+identity.name},policy:{installation:'AVAILABLE',authentication:'ON_USE'},category:'Productivity'}:{name:identity.name,source:'./'+identity.name};
+              const entry=client==='codex'?{name:identity.name,source:{source:'local',path:'./'+identity.name},policy:{installation:'AVAILABLE',authentication:'ON_USE'},category:'Productivity'}:{name:identity.name,source:'./'+identity.name,description:JSON.parse(String(bundle['.claude-plugin/plugin.json'])).description};
               safeDirectory(dirname(join(marketSource,file)),configHome);atomicJson(join(marketSource,file),{name:identity.marketplace,owner:{name:'OpenCrawl'},plugins:[entry]});
-              commands=client==='codex'?[['plugin','marketplace','add',marketSource,'--json'],['plugin','add',pluginId,'--json']]:[['plugin','marketplace','add',marketSource,'--json'],['plugin','install',pluginId,'--scope','user','--json']];
+              commands=client==='codex'?[['plugin','marketplace','add',marketSource,'--json'],['plugin','add',pluginId,'--json']]:[['plugin','marketplace','add',marketSource,'--json'],['plugin',refreshClaudeCache?'update':'install',pluginId,'--scope','user','--json']];
             } else commands=[['plugin','install',directory]];
             let success=true;
             for(const args of commands){options.validateBinding?.();options.onProgress?.(args[1]==='marketplace'?'Adding the OpenCrawl marketplace in '+labels[client]+'.':'Installing the OpenCrawl plugin in '+labels[client]+'.');const result=await runner(binary,args,nativeEnv);if(result.timedOut)throw new CliError('PLUGIN_INSTALL_TIMEOUT',labels[client]+' took more than 45 seconds to confirm installation. Retry to check its current state.');if(result.code!==0){success=false;break;}if(client==='codex'&&args[1]==='add')try{const installed=JSON.parse(result.stdout??'');if(typeof installed.installedPath==='string')cachePath=installed.installedPath;}catch{}}
@@ -421,7 +425,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
             const confirmed=await inventory(binary);
             native=confirmed.code===0?pluginRows(confirmed.stdout??'')?.find(row=>isManaged(row,client,identity)):undefined;
             loadedRoot=native?nativeRoot(native,client,cachePath):undefined;
-            if(!native||native.enabled===false||native.installed===false||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {results.push({client,status:'pending',message:'The client has not confirmed this enabled plugin at the selected source and endpoint.',directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Confirm '+labels[client]+' plugin source',instruction:'Inspect the native plugin source and endpoint. Preserve unrelated plugins and finish the reported policy or installation step before retrying.'});continue;}
+            if(!native||native.enabled===false||native.installed===false||(refreshClaudeCache&&native.version!==published!.source.version)||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {results.push({client,status:'pending',message:'The client has not confirmed this enabled plugin at the selected source and endpoint.',directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Confirm '+labels[client]+' plugin source',instruction:'Inspect the native plugin source and endpoint. Preserve unrelated plugins and finish the reported policy or installation step before retrying.'});continue;}
           }
         }
         options.validateBinding?.();
