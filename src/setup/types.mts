@@ -17,13 +17,18 @@ export interface SetupProof {
 }
 export interface SetupHumanTask {id:string;kind:'hook_trust'|'mcp_auth'|'native_event';client:SetupClient;title:string;instruction:string}
 export interface SetupClientStatus extends SetupClientObservation {
+  /** Latest server receipt attributable to this installation and agent type. */
+  lastSeenAt?:string;
   forwardSince?:string;
   captureObservedAt?:string;
   mcp:{state:'pending'|'observed'|'authenticated';observedAt?:string};
   proof:SetupProof;humanTasks:SetupHumanTask[];
 }
 export interface SetupInstallation {
-  installationId:string;machine:{id:string;label:string};updatedAt:string;clients:SetupClientStatus[];
+  installationId:string;machine:{id:string;label:string};
+  /** Server receipt time of a setup report or a selected client's live capture upload, at minute resolution. */
+  updatedAt:string;
+  clients:SetupClientStatus[];
 }
 export interface SetupStatus {
   schemaVersion:1;scope:{tenantId:string;userId:string};

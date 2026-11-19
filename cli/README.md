@@ -12,6 +12,8 @@ macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 ```
 
+For agent setup, use `sh -s -- --connect`. Self-hosted users can append `--api URL`.
+
 Windows PowerShell:
 
 ```powershell
