@@ -33,10 +33,9 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    agents receive their native setup handoff. `setup next --json` checks every
    selected agent; one verified agent cannot make the whole installation complete.
 
-Run `opencrawl setup` again to reinstall after a completed or interrupted
-installation. The agent picker remembers this workspace’s recording choices
-and marks previous or partial installations with a yellow **⚠ Needs reinstall**.
-Confirm the agents to reinstall their integrations. Closing the history screen
+Run `opencrawl setup` again to review this workspace’s saved recording choices.
+Intact integrations show **Installed**. Setup reuses them and repairs missing
+files or registrations for the selected agents. Closing the history screen
 keeps the installed integrations. Skipping history preserves any existing
 import and starts no new one.
 

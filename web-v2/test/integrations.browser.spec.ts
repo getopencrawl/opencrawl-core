@@ -82,6 +82,10 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   await expect(connectedCards.locator('.oc-integration-header p')).toHaveCount(0);
   if(width<=600) expect(await connectedCards.locator('footer button').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().height>=44))).toBe(true);
   const first=connectedCards.first();
+  const manage = first.getByRole('button', {name: /Manage/});
+  await expect(manage).toHaveCSS('min-height', width <= 800 ? '44px' : '40px');
+  await expect(manage).toHaveCSS('font-size', '14px');
+  await expect(first.locator('.oc-integration-meta')).toHaveCSS('font-size', '15px');
   await expect(first.locator('.oc-integration-metrics li > span:last-child')).toHaveText(['100','150','0']);
   await expect(first.getByRole('button',{name:/Show/})).toHaveCount(0);
   await expect(first.locator('.oc-integration-breakdown')).not.toHaveAttribute('tabindex','0');

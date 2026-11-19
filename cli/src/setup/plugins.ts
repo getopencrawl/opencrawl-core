@@ -22,7 +22,7 @@ export type PluginClient = 'claude-code' | 'codex' | 'cursor' | 'antigravity' | 
 export type PluginHumanTask = {id:string;kind:'mcp_auth'|'restart'|'plugin_install';client:PluginClient;title:string;instruction:string;url?:string};
 export type PluginResult = {client:PluginClient;status:'installed'|'unchanged'|'prepared'|'pending'|'error';message?:string;pluginId?:string;directory?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PublishedPackage['source']};
 type CommandResult = {code:number;stdout?:string;timedOut?:boolean};
-export type PluginOptions = {reinstall?:boolean;onProgress?:(message:string)=>void;validateBinding?:()=>void;cursorCapture?:{installationId:string;observedAt:string};captureMode?:CaptureMode;bundles?:Partial<Record<LocalPluginClient,PublishedPackage>>;command?:string[];home?:string;env?:NodeJS.ProcessEnv;which?:(name:string)=>string|null;runner?:(command:string,args:string[],env:NodeJS.ProcessEnv)=>Promise<CommandResult>};
+export type PluginOptions = {onProgress?:(message:string)=>void;validateBinding?:()=>void;cursorCapture?:{installationId:string;observedAt:string};captureMode?:CaptureMode;bundles?:Partial<Record<LocalPluginClient,PublishedPackage>>;command?:string[];home?:string;env?:NodeJS.ProcessEnv;which?:(name:string)=>string|null;runner?:(command:string,args:string[],env:NodeJS.ProcessEnv)=>Promise<CommandResult>};
 const clients:PluginClient[] = ['claude-code','codex','cursor','antigravity','devin'];
 export const labels:Record<PluginClient,string> = {'claude-code':'Claude Code',codex:'Codex',cursor:'Cursor',antigravity:'Antigravity',devin:'Devin Cloud'};
 const marker = '.opencrawl-setup-plugin.json';
@@ -55,13 +55,53 @@ export async function canInstallRecordingPlugin(id:string,options:PluginOptions=
   const version=options.runner?await options.runner(binary,['--version'],nativeEnv):await runPluginCommand(binary,['--version'],nativeEnv,5000);
   return version.code===0&&!version.timedOut&&supportsMinimumVersion(release.harness,version.stdout?.trim()??'',release.minimumHarnessVersion);
 }
-/** A partial marketplace or local Cursor bundle also counts as a previous installation. */
-export function hasSetupPluginFiles(api:string,client:string){
+function hasSetupPluginFiles(api:string,client:string){
   const identity=setupPluginIdentity(api);
   if(existsSync(join(configDir(),'setup-plugins',client,identity.key)))return true;
   if(client!=='cursor')return false;
   return [process.env.CURSOR_CONFIG_DIR,join(homedir(),'.cursor')].some(root=>root&&
     [identity.name,scopedPluginIdentity(api).name].some(name=>existsSync(join(root,'plugins','local',name))));
+}
+export type RecordingInstallState = 'new' | 'installed' | 'repair' | 'review';
+
+function inventoryArgs(client:LocalPluginClient,marketplace:string) {
+  return client==='codex'?['plugin','list','--marketplace',marketplace,'--json']:['plugin','list','--json'];
+}
+
+/** Inspect local installation only. Activation, hook trust and recording proof are separate. */
+export async function recordingInstallState(api:string,client:LocalPluginClient,priorStatus?:string,options:PluginOptions={}):Promise<RecordingInstallState> {
+  const identity=setupPluginIdentity(api),configHome=dirname(configDir());
+  const receipt=read(join(configDir(),'setup-plugins',client,identity.key,'installed.json'));
+  if(!receipt) {
+    if(hasSetupPluginFiles(api,client)||['installed','unchanged','prepared'].includes(priorStatus??''))return 'repair';
+    return 'new';
+  }
+  if(receipt.schemaVersion!==2||receipt.api!==identity.api||receipt.client!==client||receipt.configHome!==configHome||
+    receipt.pluginName!==identity.name||typeof receipt.digest!=='string'||typeof receipt.directory!=='string'||typeof receipt.nativeRoot!=='string')return 'review';
+  const {which,env,home}=context(options);
+  if(client!=='cursor'){
+    const binary=which(installerCommands[client]);
+    if(!binary)return 'review';
+    const list=await (options.runner??runPluginCommand)(binary,inventoryArgs(client,identity.marketplace),{...env,HOME:home,USERPROFILE:home},5000);
+    const rows=list.code===0&&!list.timedOut?pluginRows(list.stdout??''):null;
+    if(!rows)return 'review';
+    const matches=rows.filter(row=>matchesName(row,identity.name));
+    if(!matches.length)return 'repair';
+    const [row]=matches;
+    if(matches.length!==1||!row||!isManaged(row,client,identity)||row.enabled===false||row.installed===false)return 'review';
+    if(nativeRoot(row,client,receipt.cachePath)!==receipt.nativeRoot)return 'review';
+    if(client==='codex'){
+      const source=row.source as {source?:unknown;path?:unknown}|undefined;
+      if(source?.source!=='local'||typeof source.path!=='string'||resolve(source.path)!==receipt.directory)return 'review';
+    }
+  }
+  try{
+    for(const nativeRoot of new Set<string>([receipt.directory,receipt.nativeRoot])){
+      const bundle=verifyPluginBundle({api:identity.api,client,pluginName:identity.name,configHome,nativeRoot});
+      if(bundle.digest!==receipt.digest)return 'repair';
+    }
+    return 'installed';
+  }catch{return 'repair';}
 }
 type BundleOptions={command?:string[];configHome?:string;env?:NodeJS.ProcessEnv;recording?:boolean};
 /** Bundled in the executable: native plugins own hooks, MCP and agent guidance. */
@@ -307,7 +347,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
       try {
         const binary=which(installerCommands[client]);
         const nativeEnv={...env,HOME:home,USERPROFILE:home};
-        const listArgs=client==='codex'?['plugin','list','--marketplace',identity.marketplace,'--json']:['plugin','list','--json'];
+        const listArgs=inventoryArgs(client,identity.marketplace);
         const inventory=async(executable:string)=>{
           options.onProgress?.('Reading the '+labels[client]+' plugin inventory.');
           const result=await runner(executable,listArgs,nativeEnv);
@@ -356,7 +396,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           throw new CliError('CURSOR_PLUGIN_LOCATION','A deployment plugin already exists under the custom Cursor configuration path. Resolve its location before installing in the Cursor CLI local plugins folder.');
         if(client==='cursor'&&!published)await retireCursorSetupHooks(origin,pathRoot,true);
         options.validateBinding?.();
-        const install=()=>{if(!unchanged||options.reinstall)writeBundle(directory,bundle,client,origin,identity.name,configHome,pathRoot,published?.executable);};
+        const install=()=>{if(!unchanged)writeBundle(directory,bundle,client,origin,identity.name,configHome,pathRoot,published?.executable);};
         if(cursorArchive)await installCursorArchive(pathRoot,directory,cursorHooksReceipt,unchanged,install,previousPlugin?.directory);
         else install();
         if(client==='cursor') {
@@ -367,7 +407,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           loadedRoot=directory;
         } else {
           if(!binary){results.push({client,status:'pending',message:labels[client]+"'s native plugin installer is unavailable.",directory});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Install '+labels[client]+' plugin support',instruction:'Install or update the native client CLI, then run setup again. Preserve existing plugins and authentication.'});continue;}
-          if(options.reinstall||!native||!unchanged||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {
+          if(!native||!unchanged||!nativeBindingMatches(native,client,directory,origin,identity.name,digest,configHome,loadedRoot)) {
             let commands:string[][]=[];
             if(client==='codex'||client==='claude-code') {
               const file=client==='codex'?'.agents/plugins/marketplace.json':'.claude-plugin/marketplace.json';
