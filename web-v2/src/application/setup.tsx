@@ -1,6 +1,8 @@
 import {useState} from 'react';
 import {Button, CopyField, Dialog, Icon, Notice, Page, Section, StatusBadge} from '../design/components.tsx';
 import {nativeInstallCommand} from '../../../src/sessions/cli-installation.mjs';
+import {ReplicasCaptureSetup} from '../onboarding/replicas-capture.tsx';
+import type {OnboardingAdapter} from '../onboarding/types.ts';
 import type {Bootstrap} from './api.ts';
 
 const clientNames = {'claude-code':'Claude Code', codex:'Codex', cursor:'Cursor', antigravity:'Antigravity', 'grok-bot':'Grok Bot', devin:'Devin', 'claude-desktop':'Claude Desktop', chatgpt:'ChatGPT'};
@@ -76,7 +78,7 @@ function MachineRow({installation}: {installation: Installation}) {
 }
 
 /** Setup is a progress page. Choices and continuation live in the CLI. */
-export function SetupPage({status, error}: {status: NonNullable<Bootstrap['setup']>; error: string}) {
+export function SetupPage({status, error, replicasSetup}: {status: NonNullable<Bootstrap['setup']>; error: string; replicasSetup?: OnboardingAdapter['replicasSetup']}) {
   const [adding, setAdding] = useState(false);
   const installations = status?.installations ?? [];
   return <Page title="Setup" description="Connect a new machine or check setup on an existing one."
@@ -88,6 +90,7 @@ export function SetupPage({status, error}: {status: NonNullable<Bootstrap['setup
             <div className="oc-machine-list">{installations.map(installation => <MachineRow key={installation.installationId} installation={installation}/>)}</div>
           </Section>
         : <Section className="oc-source-section" title="Add your first machine" description="Install OpenCrawl and choose which agents to connect. Your machine will appear here as setup runs."><MachineInstructions/></Section>}
+      {replicasSetup && <ReplicasCaptureSetup issue={replicasSetup}/>}
     </div>
     {(installations.length > 0 || adding) && <Dialog open={adding} onClose={() => setAdding(false)} title="Add a machine" description="Install OpenCrawl and choose which agents to connect."><MachineInstructions/></Dialog>}
   </Page>;

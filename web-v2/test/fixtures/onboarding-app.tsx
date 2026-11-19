@@ -56,6 +56,7 @@ const sourcesAdapter: SourcesAdapter = {
 };
 const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: (email,signal) => request('/api/console/team/invite',signal ?? never,{email}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
 const fullApi: ProductApi = {
+  replicasSetup:signal=>request('/api/console/replicas/setup',signal,{}),
   ...sourcesAdapter,...teamAdapter,...diagnosticsAdapter,library:libraryAdapter,
   bootstrap:signal=>request<Bootstrap>('/api/console/bootstrap',signal??never),
   onboardingStatus:async signal=>({data:await adapter.status(signal??never)}),
