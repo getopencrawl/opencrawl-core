@@ -56,11 +56,56 @@ test('recording and optional session privacy share one Settings tab', async ({pa
   await page.route('**/api/library/recording/status', route => route.fulfill({json:{
     revision:'0',subject:'workspace-member',paused:false,until:null,
   }}));
-  await page.route('**/api/library/privacy/status', route => route.fulfill({json:{
-    revision:'0',subject:'workspace-member',enabled:true,rules:'',
-  }}));
+  let preference = {revision:'0', subject:'workspace-member', enabled:true, rules:''};
+  let writes = 0;
+  await page.route('**/api/library/privacy/status', route => route.fulfill({json:preference}));
+  await page.route('**/api/library/privacy/change', route => {
+    const input = route.request().postDataJSON();
+    expect(input).toEqual({...preference, enabled:false, rules:'Keep personal finances private.'});
+    writes++;
+    if (writes === 1) return route.fulfill({status:503, json:{error:'Could not save privacy settings.'}});
+    preference = {...input, revision:'1'};
+    return route.fulfill({json:preference});
+  });
   await page.goto('/settings/privacy?full-app');
   await expect(page.getByRole('navigation',{name:'Settings'}).getByRole('link',{name:'Privacy',exact:true})).toHaveCount(1);
   await expect(page.getByRole('button',{name:'Pause recording',exact:true})).toBeEnabled();
-  await expect(page.getByRole('checkbox',{name:'Automatically hide sensitive/personal sessions'})).toBeChecked();
+  const panels = page.locator('.oc-management-page > .oc-management-panel');
+  await expect(panels).toHaveCount(2);
+  await expect(panels.getByRole('heading', {level:2})).toHaveText(['Session recording', 'Session privacy']);
+  const checkbox = page.getByRole('checkbox', {name:'Automatically hide sensitive or personal sessions from your team', exact:true});
+  const rules = page.getByRole('textbox', {name:'Custom privacy rules (optional)'});
+  const save = page.getByRole('button', {name:'Save changes'});
+  const discard = page.getByRole('button', {name:'Discard changes'});
+  await expect(page.getByRole('button', {name:'Edit privacy settings'})).toHaveCount(0);
+  await expect(checkbox).toBeChecked();
+  const introduction = page.getByRole('region', {name:'Session privacy'}).locator('.oc-section-heading p');
+  await expect(introduction).toContainText('Use this setting to hide conversations about your personal life or work discussions meant for a limited audience.');
+  await expect(checkbox).toHaveAccessibleDescription(await introduction.innerText());
+  await expect(rules).toBeVisible();
+  await expect(save).toHaveCount(0);
+
+  await checkbox.focus();
+  await page.keyboard.press('Tab');
+  await expect(rules).toBeFocused();
+  await rules.fill('Discard this edit.');
+  await discard.click();
+  await expect(rules).toBeFocused();
+  await expect(rules).toHaveValue('');
+  await expect(discard).toHaveCount(0);
+  expect(writes).toBe(0);
+
+  await checkbox.uncheck();
+  await expect(rules).toHaveAccessibleDescription('Rules apply when automatic hiding is on.');
+  await rules.fill('Keep personal finances private.');
+  await save.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(rules).toHaveValue('Keep personal finances private.');
+  await save.click();
+  await expect(rules).toBeFocused();
+  await expect(save).toHaveCount(0);
+  await page.reload();
+  await expect(checkbox).not.toBeChecked();
+  await expect(rules).toHaveValue('Keep personal finances private.');
+  expect(writes).toBe(2);
 });
