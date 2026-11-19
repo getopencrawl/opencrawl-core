@@ -151,7 +151,7 @@ Airbyte database, and keeps that entry and the declarative connectors already
 registered there on the pinned runtime when the pin changes. Other catalog
 entries stay intact, and this step is never applied to an external Airbyte
 installation. The pin must be recent enough for every connector manifest:
-Notion and Google Drive use `WaitTimeFromResponse`, which runtime 7.28.2
+Notion uses `WaitTimeFromResponse`, which runtime 7.28.2
 rejects. `OPENCRAWL_TEST_CONNECTOR_RUNTIME=1 node --test test/connector-runtime.test.mjs`
 runs every manifest's discovery in the pinned runtime image (needs Docker).
 

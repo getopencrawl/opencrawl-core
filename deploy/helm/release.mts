@@ -14,6 +14,11 @@ export function versionedChart(chart:string,version:string):string{
   if([...chart.matchAll(/^version: \d+\.\d+\.\d+$/gm)].length!==1)throw Error('Expected one chart version');
   return chart.replace(/^version: \d+\.\d+\.\d+$/m,'version: '+version);
 }
+export function releaseTitle(appVersion:string,chartVersion:string):string{
+  if(typeof appVersion!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9.+-]*$/.test(appVersion))throw Error('Expected a Core application version');
+  versionParts(chartVersion);
+  return `OpenCrawl Core ${appVersion} (Helm chart ${chartVersion})`;
+}
 export interface Run {id:number;path:string;event:string;head_branch:string;head_sha:string;head_repository?:{full_name:string};status:string;conclusion:string|null}
 export const gates=['ci.yml','self-host.yml','selfhost-images.yml','security.yml','plugins.yml'];
 export function checksPassed(runs:Run[],revision:string,repository:string):boolean{
@@ -59,8 +64,10 @@ export function selectRelease(releases:Release[],revision:string,requested:strin
     if(isAncestor(revision,latest.target_commitish))return {action:'skip',revision,reason:'A newer source revision is already released'};
   }
   if(!isAncestor(latest.target_commitish,revision))throw Error('Release source must descend from the latest published Helm source');
-  const version=requested||`${major}.${minor}.${patch!+1n}`;
-  if(requested&&requested!==`${major}.${minor!+1n}.0`&&requested!==`${major!+1n}.0.0`)throw Error('Manual releases must be the next minor or major version; patches are automatic');
+  const nextPatch=`${major}.${minor}.${patch!+1n}`;
+  const version=requested||nextPatch;
+  if(requested&&![nextPatch,`${major}.${minor!+1n}.0`,`${major!+1n}.0.0`].includes(requested))throw Error('Manual releases must be the next patch, minor or major version');
+  if(version===nextPatch&&revision===latest.target_commitish)throw Error('The latest Helm release already packages this source');
   const occupied=helm.find(r=>r.tag_name==='helm-v'+version);
   if(occupied&&(!occupied.draft||occupied.prerelease||occupied.target_commitish!==revision||!occupied.body?.includes(marker(version,revision))))throw Error('The next version is reserved by another release; do not overwrite it');
   if(helm.some(r=>r.draft&&r!==occupied))throw Error('An unfinished Helm draft exists; rerun its original workflow before another release');
@@ -80,11 +87,12 @@ export function checksums(text:string,version:string):Map<string,string>{
   if(entries.size!==names.length||names.some(n=>!entries.has(n)))throw Error('Incomplete or unexpected Helm release artifacts');
   return entries;
 }
-export function verifyArtifactBytes(plan:Plan,files:Map<string,Buffer>):void{
+export function verifyArtifactBytes(plan:Plan,files:Map<string,Buffer>):{appVersion?:string}{
   if(!plan.version)throw Error('Missing planned version');
   for(const [name,hash] of checksums(files.get('SHA256SUMS')!.toString(),plan.version))if(digest(files.get(name)!)!==hash)throw Error('Artifact checksum mismatch: '+name);
   const receipt=JSON.parse(files.get('release.json')!.toString());
   if(receipt.revision!==plan.revision||receipt.version!==plan.version)throw Error('Release receipt does not match its planned source/version');
+  return receipt;
 }
 export interface GitHub {
   request<T>(path:string,method?:string,body?:unknown):Promise<T>;
@@ -131,13 +139,15 @@ export async function verifyPublic(plan:Plan,repository:string,download:typeof f
   verifyArtifactBytes(plan,files);
 }
 export async function publishDraft(api:GitHub,plan:Plan,files:Map<string,Buffer>,existing?:Release):Promise<void>{
-  verifyArtifactBytes(plan,files);
+  const {appVersion}=verifyArtifactBytes(plan,files);
+  if(!appVersion)throw Error('New release receipts must include the Core appVersion');
   const version=plan.version!,tag='helm-v'+version;
+  const name=releaseTitle(appVersion,version);
+  const body=`${name}\n\nTested source \`${plan.revision}\`.\n\nDownload the self-host kit and SHA256SUMS, verify the archive checksum, and follow its README. The kit supports bundled, mixed and external configurations. See release.json for the pinned amd64/arm64 images.\n\n${marker(version,plan.revision)}`;
   let draft=existing;
   if(draft&&(!draft.draft||draft.prerelease||draft.tag_name!==tag||draft.target_commitish!==plan.revision||!draft.body?.includes(marker(version,plan.revision))))throw Error('Refusing to mutate an existing release with a different identity');
   if(!draft)draft=await api.request<Release>('releases','POST',{
-    tag_name:tag,target_commitish:plan.revision,name:'OpenCrawl Helm '+version,draft:true,prerelease:false,make_latest:'false',
-    body:`${marker(version,plan.revision)}\n\nOpenCrawl Helm ${version}, from tested source \`${plan.revision}\`.\n\nDownload the self-host kit and SHA256SUMS, verify the archive checksum, and follow its README. Public amd64/arm64 images are recorded in release.json; no application build is required.\n\nThe bundled, mixed and external configurations remain available. Check the bundled README for installation requirements and compatibility. This release does not deploy OpenCrawl Cloud.`,
+    tag_name:tag,target_commitish:plan.revision,name,body,draft:true,prerelease:false,make_latest:'false',
   });
   const names=artifactNames(version);
   if(draft.assets.some(a=>!names.includes(a.name)))throw Error('Unexpected assets in the reserved draft');
@@ -150,7 +160,9 @@ export async function publishDraft(api:GitHub,plan:Plan,files:Map<string,Buffer>
   const uploaded=await api.request<Release>(`releases/${draft.id}`);
   if(!uploaded.draft||uploaded.prerelease||uploaded.tag_name!==tag||uploaded.target_commitish!==plan.revision||!uploaded.body?.includes(marker(version,plan.revision))||uploaded.assets.length!==names.length)throw Error('Draft changed during publication');
   for(const name of names){const a=uploaded.assets.find(a=>a.name===name),bytes=files.get(name)!;if(a?.digest!=='sha256:'+digest(bytes)||a.size!==bytes.length)throw Error('Uploaded artifact mismatch: '+name);}
-  await api.request(`releases/${draft.id}`,'PATCH',{draft:false,make_latest:'false'});
+  const notes=uploaded.body!;
+  const publishedNotes=notes.startsWith(name+'\n')?notes:name+'\n\n'+notes;
+  await api.request(`releases/${draft.id}`,'PATCH',{name,body:publishedNotes,draft:false,make_latest:'false'});
 }
 
 if(import.meta.main){

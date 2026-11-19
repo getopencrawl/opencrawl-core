@@ -36,8 +36,6 @@ Use the [development installation checks](dev-install-acceptance.md) and
 [self-host guide](self-host.md) for clean-machine verification. Verify a fresh
 account's first-use flow and the actual public install artifacts before release.
 A successful catalog listing or completed Airbyte job alone is not retrieval proof.
-Google Drive is currently unavailable because its indexing path is incomplete;
-its presence in the catalog is not a claim of support.
 
 Keep operator addresses, private infrastructure receipts, credentials and
 historical rollout worklogs outside the public distribution. Publication also

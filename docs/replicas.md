@@ -17,7 +17,13 @@ two OpenCrawl organizations. An environment ID still contributes to the stable
 workspace owner ID; migration never rewrites existing owners or captured data.
 
 The prompt configures the supported persistent Replicas environment hooks and
-native MCP identity authentication. One workspace must produce actual CLI,
+native MCP identity authentication. Fresh Linux x86_64 workspaces use the
+[released Replicas plugins](https://github.com/getopencrawl/opencrawl-plugins/releases/tag/replicas-v0.2.2).
+Claude Code loads its packaged callbacks directly. Headless Codex runs its packaged
+callbacks through administrator-managed system hooks. Each package uploads user
+and assistant messages and tool inputs and outputs using signed workspace identity.
+Incognito is unavailable. The setup prompt pins the archives and writes private
+per-workspace bindings after the VM starts. One workspace must produce actual CLI,
 MCP test, and fresh-session receipts before OpenCrawl reports the team setup as
 ready. Imported history and a successful enrollment cannot satisfy that check.
 The receipt writer records the verified shared installation automatically; no
@@ -74,8 +80,8 @@ never falls back to a saved human login if workspace authentication fails.
 
 Configure remote MCP with Replicas' `workspace_identity` authentication and the
 same audience. MCP authentication is separate from local capture hooks; Codex
-still requires its supported hook trust review. This feature does not approve
-hooks or change agent security settings.
+uses its administrator-managed hook policy for a headless installation. On
+existing installations, preserve the active collector and its pending uploads.
 
 Workloads may search team-visible knowledge, participate on the board, and upload
 sessions/memory. They cannot use account/team/billing administration, mint other
@@ -107,9 +113,10 @@ and automation definitions need their own checks; an environment start hook does
 not establish their creation policy.
 
 For intentional permanent deletion, finish all agent turns and prevent new input,
-run `opencrawl collect flush --json`, then inspect `opencrawl collect status --json`.
-Require no queued batches, pending hooks, rejected batches or capture error, and
-verify the final message's stored receipt before deleting. Leave the workspace
+verify each final message has a stored receipt and the plugin has drained its
+pending batches. Later lifecycle invocations retry queued uploads. For older CLI
+collectors, run `opencrawl collect flush --json` and check
+`opencrawl collect status --json` for pending or rejected work before deleting. Leave the workspace
 intact if verification fails. Keep history retention enabled while relying on
 sleep/archive recovery; retained history is not an indefinite backup.
 
@@ -118,8 +125,8 @@ recover bytes destroyed before upload or make provider completion webhooks wait
 for an upload acknowledgement. See the provider's [lifecycle documentation](https://docs.replicas.dev/features/api)
 and [retention controls](https://docs.replicas.dev/admin/data-retention).
 
-Replicas chat names are resolved through an exact native-thread match in the
-platform history API. The CLI caches this metadata for 30 seconds across workers;
+The older CLI collector resolves Replicas chat names through an exact native-thread
+match in the platform history API. It caches this metadata for 30 seconds across workers;
 it does not mistake the SDK's generic `Claude Code` title for the platform name.
 `opencrawl collect titles` refreshes names for already enrolled sessions without
 replaying their conversation. A metadata/provenance API failure keeps local data

@@ -43,12 +43,12 @@ export const integrationId = () => 'int_' + randomBytes(13).toString('hex');
  * raw/v1/source=<provider>/<owner>/connection=<integration>, where <owner> is user=<userId>
  * for per-user sources (Circleback) and workspace=<id> for team sources: the Slack team ID, Notion
  * workspace ID or GitHub account ID, or the OpenCrawl team's organization ID where the provider
- * has no workspace ID (Granola, Google Drive).
+ * has no workspace ID (Granola).
  */
 export function landingPrefix(provider: Provider, record: IntegrationRecord) {
   if (!TENANT.test(record.tenantId) || !USER.test(record.userId) || !INTEGRATION.test(record.integrationId)) throw new Error('Invalid integration scope');
   const owner = provider.owner(record);
-  // Slack team IDs and GitHub account IDs, OpenCrawl organization IDs (Granola, Google Drive), Notion workspace UUIDs.
+  // Slack team IDs and GitHub account IDs, OpenCrawl organization IDs (Granola), Notion workspace UUIDs.
   if (!/^(user=user_[A-Za-z0-9]+|workspace=([A-Z0-9]+|org_[A-Za-z0-9]+|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}))$/.test(owner)) throw new Error('Invalid integration owner');
   return `raw/v1/source=${provider.id}/${owner}/connection=${record.integrationId}`;
 }

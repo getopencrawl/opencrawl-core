@@ -165,7 +165,7 @@ Use an existing Airbyte workspace and API application. Set `AIRBYTE_URL`,
 `AIRBYTE_CLIENT_ID`, `AIRBYTE_CLIENT_SECRET`, and `AIRBYTE_WORKSPACE_ID`. The app
 creates source definitions, sources, destinations, and connections only inside
 that workspace. It does not install or provision Airbyte. The connectors are
-tested on Airbyte's declarative runtime 7.45.1; Notion and Google Drive do not
+tested on Airbyte's declarative runtime 7.45.1; Notion does not
 load on 7.28.2, where Airbyte answers connection setup with an error. The app
 writes the reason for a failed setup to its log (`integration.provision.failed`).
 
@@ -186,9 +186,7 @@ connection options.
 
 ## Connect sources
 
-The UI shows Slack, Notion, Circleback, Granola, Linear, and GitHub. Google Drive is
-visible with an explicit unavailable notice: its source adapter exists, but its
-indexing path is not supported yet, so new connections are disabled. A
+The UI shows Slack, Notion, Circleback, Granola, Linear, and GitHub. A
 connection that is waiting for operator setup says what it needs and cannot
 start authorization until that is in place. Onboarding does not require a
 connected source: the Sources step can be skipped and the workspace opens on

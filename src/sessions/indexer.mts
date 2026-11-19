@@ -3,7 +3,8 @@ import {parseJson} from './types.mjs';
 import type {DocumentItem} from '../search/types.mjs';
 import type {StoredMemorySnapshot} from '../memories/types.mjs';
 import type {createSessionSearch} from './search.mjs';
-export interface SessionPipelineOptions extends SourceOptions {search: ReturnType<typeof createSessionSearch>; jobId?: string; checkActive?: () => Promise<void>}
+import {reviewSessionPrompts, type PrivacyReviewer} from './privacy.mjs';
+export interface SessionPipelineOptions extends SourceOptions {privacy?:PrivacyReviewer; search: ReturnType<typeof createSessionSearch>; jobId?: string; checkActive?: () => Promise<void>}
 import {gunzipSync} from 'node:zlib';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
@@ -120,7 +121,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
  * The runtime supplies fixed self-host identity or resolves server-authenticated
  * stored owners. Workflow arguments never select a bucket, index, or principal.
  */
-export function createSessionPipeline({store,eventIdentities,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
+export function createSessionPipeline({store,privacy,eventIdentities,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
   if(Boolean(principal)===Boolean(resolvePrincipal))throw new Error('Supply one fixed single-tenant principal or a trusted scope resolver');
   if(principal)sessionScope(principal);
   if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid session prefix');
@@ -185,11 +186,35 @@ export function createSessionPipeline({store,eventIdentities,prefix,search,princ
       }
       // Owner controls apply before any write: deleted sessions are never indexed
       // again, and private sessions are written private.
-      const control=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
+      let control=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
       const barrier=sessionWriteBarrier(store,prefix,scope,batch.harness,batch.sessionId);
       if(control?.deletedAt || (await barrier.inspect()).closed) {
         await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:0,deleted:true,indexedAt:new Date().toISOString()})),'application/json');
         return {records:0,skipped:true};
+      }
+      if(batch.privacyReview && await store.get(key+'.privacy-pending',{maxBytes:32})){
+        const identity=sourceBatchIdentity(prefix,key);
+        if(!identity || identity.tenantHash!==digest(scope.tenantId) || identity.userHash!==digest(scope.userId) ||
+           batch.owner.tenantId!==scope.tenantId || batch.owner.userId!==scope.userId ||
+           identity.sessionHash!==digest(batch.sessionId) || identity.installationHash!==digest(batch.installationId) || identity.harness!==batch.harness)throw Error('Invalid privacy review source');
+        const writes=sessionWriteStore(store,prefix,scope,batch.harness,batch.sessionId);
+        if(!control && !await store.get(key+'.privacy-cleared',{maxBytes:32})){
+          if(!privacy)throw Error('Session privacy reviewer unavailable');
+          const flagged=await reviewSessionPrompts(privacy,scope,batch,key,writes);
+          if(flagged)control=await controls.update(scope,'sessions',batch.harness,batch.sessionId,
+            current=>current??{visibility:'private',visibilitySource:'automatic',deletedAt:null});
+        }
+        // Repeat projection after an interrupted write, and let a concurrent owner edit win.
+        control=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
+        if(control?.visibilitySource==='automatic'){
+          await search.ensureIndex(scope);
+          await search.applySessionControl(scope,batch,control);
+          const latest=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
+          if(latest && (latest.visibility!==control.visibility || latest.deletedAt))await search.applySessionControl(scope,batch,latest);
+          control=latest;
+        }
+        if(control?.deletedAt)return {records:0,skipped:true};
+        await writes.put(key+'.privacy-cleared',Buffer.from('1'),'text/plain');
       }
       const docs=batchDocuments({prefix,key,batch,principal:scope,visibility:control?.visibility});
       // Check the whole event before any chunk write. Receipt order, shorter

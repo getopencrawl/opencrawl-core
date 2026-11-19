@@ -1,4 +1,4 @@
-# OpenCrawl Helm v1
+# Install OpenCrawl on Kubernetes
 
 One application replica and one worker. PostgreSQL, OpenSearch, Temporal,
 S3-compatible storage and Airbyte are included by default. This is a durable
@@ -9,7 +9,7 @@ It operates independently of OpenCrawl Cloud.
 self-host version. To move to a newer release, install it fresh into empty
 databases and storage; an installation on an older release keeps that release.
 
-## Breaking change in 0.2.0
+## Breaking change in OpenCrawl Core 0.5.0 (Helm chart 0.2.0)
 
 Core 0.5.0 stores self-hosted Better Auth accounts, sessions and OAuth grants in
 the application PostgreSQL database configured by `OPENCRAWL_DATABASE_URL`.
@@ -21,6 +21,8 @@ PostgreSQL database. Do not point old binaries at the new database.
 
 ## Agent installation
 
+Each self-host release names the application first and the chart to pin second.
+For example, **OpenCrawl Core 0.6.0 (Helm chart 0.3.0)** uses tag `helm-v0.3.0`.
 Use the latest stable `helm-v*` [release](https://github.com/getopencrawl/opencrawl-core/releases)
 and its self-host kit with Node 24+, Helm 3 and kubectl. No image build,
 application checkout or npm install is needed. A Kubernetes cluster, a default
@@ -199,20 +201,23 @@ database provisioning or automatic destructive cleanup is included in this v1.
 
 ## Maintainer releases
 
-Relevant merges to `main` automatically publish the next Helm **patch** release
-after the exact source revision passes core CI, self-host installation checks, security,
-plugin checks and both image builds (plus CLI/chart checks when they run). The image
-workflow supplies amd64/arm64 images with SBOM and provenance attestations. A merge
-without an image-build run does not create a Helm release. Failed checks do not publish;
-rerunning the failed check retries automatic release selection after it passes.
+Lead self-host release notes, announcements and version-specific install instructions
+with `OpenCrawl Core <appVersion> (Helm chart <version>)`. Use the chart’s
+`appVersion` for Core and its `version` for the chart pin. The generated kit
+README and GitHub release take both numbers from the packaged release.
 
-Versions advance from the highest published stable `helm-v*` release, independently
-of the runtime/npm/CLI versions. No version-bump commit is needed: packaging writes
-the selected version into the staged chart and `release.json`. For a minor or major
-release, run **Release self-host kit** on `main` with the full tested main commit SHA
-in `revision` and the next explicit `version`, for example `0.2.0` or `1.0.0`.
-Manual patch bumps and skipped minor/major versions are rejected. The following
-automatic release advances that new line's patch version.
+Every Monday at 10:00 UTC, the release workflow selects the newest eligible
+commit on `main` and cuts the next chart patch if that source is newer than the
+last release. Each candidate must pass core CI, self-host installation checks,
+security, plugin checks and both image builds, plus CLI and chart checks when
+they run. The image workflow supplies amd64/arm64 images with SBOM and provenance.
+
+For an urgent fix, run **Release self-host kit** on `main` as soon as the same
+checks pass. Review the changes since the last kit, enter the full tested commit
+SHA in `revision`, and set `version` to the next chart patch. For example, after
+chart `0.3.0`, an urgent patch is `0.3.1`. Planned manual releases can also
+select the next minor or major. Packaging writes the chosen chart version into
+the staged chart and records it with the Core version in `release.json`.
 
 Release runs serialize version allocation. Duplicate completion events verify the
 existing release; late events cannot publish an older source over a newer release.

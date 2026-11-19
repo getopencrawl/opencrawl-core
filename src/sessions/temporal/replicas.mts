@@ -1,4 +1,5 @@
 import {ApplicationFailure} from '@temporalio/common';
+import {ReplicasProviderError} from '../../integrations/replicas-api.mjs';
 import type {ReplicasImport,ReplicasJob} from '../../integrations/replicas-import.mjs';
 
 export function replicasActivities(imports:Pick<ReplicasImport,'advance'|'fail'>){
@@ -7,8 +8,7 @@ export function replicasActivities(imports:Pick<ReplicasImport,'advance'|'fail'>
       try{return await imports.advance(job);}
       catch(error){
         // Upstream bodies, keys and history must never enter Temporal.
-        const status=Number((error as {status?:number}|null)?.status);
-        if([400,401,403,404,409,413].includes(status)){
+        if(error instanceof ReplicasProviderError&&[400,401,403,404,409,413].includes(error.status)){
           await imports.fail(job,'Replicas could not read all retained history. Check the organization key and Team workspace visibility, then reconnect to resume.');
           throw ApplicationFailure.nonRetryable('Replicas history requires attention','ReplicasAccess');
         }

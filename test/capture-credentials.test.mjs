@@ -48,9 +48,9 @@ test('shared setup prompt covers consent, every environment, startup awareness a
  for(const text of ['ORGANIZATION_REQUIRED',api+'/organizations','same email','never create a duplicate team','saved sign-in','login --organization <verified workspace id>','Browser team selection does not change the CLI session','verified workspace',api+'/onboarding','Sources and Invite teammates','both are optional','verify the workspace opens','does not finish browser onboarding'])assert.ok(prompt.includes(text),text);
  // Replicas uses workload identity; other platforms retain the explicit personal-token path.
  for(const text of ['new machine for every task','opencrawl token create --env-file','OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN','Authorization: Bearer <OPENCRAWL_TOKEN>','--defer-auth --api '+api,'OPENCRAWL_AUTH=replicas-workspace','never print the token','an environment only I use','opencrawl token revoke','report that as pending until a newly created machine confirms it','each new machine needs opencrawl login'])assert.ok(prompt.includes(text),text);
- for(const text of ['Before any login, detect Replicas','connects the Replicas organization once','workspace_identity authentication and audience '+api,'not an equivalent replacement','do not swallow errors','pending data and original ownership',"not a human's private resources",'do not establish message authorship'])assert.ok(prompt.includes(text),text);
+ assert.ok(prompt.includes('Before any login, detect Replicas'));
+ assert.ok(prompt.includes(replicasSetupPrompt(api)));
  assert.ok(!prompt.includes('replicas env mcps add with -H'));
- for(const text of ['the workspace owns the session','an unknown author is a valid state','Preserve author envelopes','does not delegate a participant', 'lifecycle_policy default or sleep_when_done','queued=0, pendingHooks=0, rejected=0',"final message's stored receipt",'retain the workspace for recovery','unuploaded data survives a forced deletion'])assert.ok(prompt.includes(text),text);
  assert.ok(prompt.indexOf('copied sign-ins are revoked')<prompt.indexOf('opencrawl token create')&&prompt.indexOf('opencrawl token create')<prompt.indexOf('For Grok Bot'));
  for(const text of ['at most 60 seconds','Do not publish board test messages','not tested during onboarding','History import is separate from setup readiness','Only if sign-in is required'])assert.ok(prompt.includes(text),text);
  assert.ok(!prompt.includes('a mention and a subscribed-topic message reach context'));
@@ -90,4 +90,16 @@ test('dedicated Replicas prompt keeps shared setup independent from personal log
  for(const expected of ['install.sh','export PATH=', 'opencrawl update','workspace_identity','https://selfhost.example/mcp','https://selfhost.example/onboarding','automatically records the connected organization as ready','warm-hooks save-test','start-hooks test','validate warm preparation and runtime start together','do not reinstall or replace the CLI during every start','existing VMs retain their original start-hook snapshot','without preventing unrelated project startup','stored and searchable','never write user hook trust','unknown authors','one shared installation verification']) assert.ok(prompt.includes(expected),expected);
  assert.ok(!prompt.includes('https://app.getopencrawl.com'));
  assert.ok(!prompt.includes('opencrawl token create'));
+});
+
+test('fresh Replicas setup pins the two standalone plugins and binds them to the signed workspace',()=>{
+ const api='https://selfhost.example',prompt=replicasSetupPrompt(api);
+ const downloads=[...prompt.matchAll(/^([a-f0-9]{64})  https:\/\/github\.com\/getopencrawl\/opencrawl-plugins\/releases\/download\/replicas-v0\.2\.2\/([^\s]+)$/gm)];
+ assert.deepEqual(downloads.map(([,digest,name])=>[name,digest]),[
+   ['opencrawl-local-claude-code-replicas-0.2.2-linux-x64.zip','b8d7892edff36225312551d3965b81be228d74d6507352a1afe8914707d98728'],
+   ['opencrawl-local-codex-replicas-0.2.2-linux-x64.zip','6c8b0e5a08bcd329519e6769708eee714e0270a823fe49965ddb2602d2c61d39'],
+   ['replicas-codex-policy.mjs','f360fdc73d91b506e369a325219719fc33fb3a96951b807f2f2ad7bda272bcc5'],
+ ]);
+ for(const expected of [api+'/api/sessions/identity','data.principal.tenantId','data.principal.userId','captureMode "hook"','/etc/codex/hooks.json','Incognito is unavailable','Integrations → Replicas → Connect'])assert.ok(prompt.includes(expected),expected);
+ assert.doesNotMatch(prompt,/opencrawl (collect install|skills install|login|token create)/);
 });

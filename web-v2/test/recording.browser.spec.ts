@@ -24,6 +24,7 @@ test('members can pause and resume their recording under Settings / Privacy', as
   await expect(pause).toHaveCount(0);
   await page.goto('/settings/privacy?full-app');
   await expect(page.getByRole('navigation',{name:'Settings'}).getByRole('link',{name:'Privacy'})).toHaveAttribute('aria-current','page');
+  await expect(page.getByRole('heading',{name:'Session privacy',exact:true})).toHaveCount(0);
   const dialog = page.getByRole('dialog',{name:'Pause recording',exact:true});
   await pause.focus(); await page.keyboard.press('Enter');
   await expect(dialog).toBeVisible();
@@ -45,4 +46,21 @@ test('members can pause and resume their recording under Settings / Privacy', as
     await expect(pause).toBeEnabled();
   }
   expect(modes).toEqual(['hour','resume','indefinite','resume']);
+});
+
+test('recording and optional session privacy share one Settings tab', async ({page}) => {
+  await page.route('**/api/console/bootstrap', route => route.fulfill({json:{
+    cacheScope:'workspace-member', workspace:{name:'Example workspace',userName:'Alex',role:'member'},
+    onboarding:{completed:true,next:'/'},mcpUrl:'/mcp',setupPrompt:'',canInvite:false,sessionPrivacy:true,
+  }}));
+  await page.route('**/api/library/recording/status', route => route.fulfill({json:{
+    revision:'0',subject:'workspace-member',paused:false,until:null,
+  }}));
+  await page.route('**/api/library/privacy/status', route => route.fulfill({json:{
+    revision:'0',subject:'workspace-member',enabled:true,rules:'',
+  }}));
+  await page.goto('/settings/privacy?full-app');
+  await expect(page.getByRole('navigation',{name:'Settings'}).getByRole('link',{name:'Privacy',exact:true})).toHaveCount(1);
+  await expect(page.getByRole('button',{name:'Pause recording',exact:true})).toBeEnabled();
+  await expect(page.getByRole('checkbox',{name:'Automatically hide sensitive/personal sessions'})).toBeChecked();
 });

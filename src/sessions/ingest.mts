@@ -4,7 +4,8 @@ import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
 import type {IncomingMessage} from 'node:http';
-export interface SessionIngestOptions {store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
+import {privacyPrompt, type PrivacyPreferences} from './privacy.mjs';
+export interface SessionIngestOptions {privacy?:PrivacyPreferences; store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync, gunzip} from 'node:zlib';
@@ -27,7 +28,7 @@ const decompressBatch = promisify(gunzip);
 type WriteGate = <T>(write:()=>Promise<T>)=>Promise<T>;
 const directWrite:WriteGate = write=>write();
 
-export function createSessionIngest({store, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
+export function createSessionIngest({store, privacy, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
@@ -78,7 +79,8 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       }
       // The owner deleted this session. Accept the retry so clients stop sending
       // it, but never store or index it again.
-      if ((await controls.read(principal, 'sessions', batch.harness, batch.sessionId))?.deletedAt) return {batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'};
+      const control=await controls.read(principal,'sessions',batch.harness,batch.sessionId);
+      if (control?.deletedAt) return {batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'};
       const barrier = sessionWriteBarrier(store, prefix, principal, batch.harness, batch.sessionId);
       const discarded = () => ({batchId: digest(serialized), eventCount: batch.events.length, stored: true, discarded: 'session_deleted'});
       if ((await barrier.inspect()).closed) return discarded();
@@ -103,7 +105,13 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
       const key = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/${batchId}.json.gz`;
       // Immutable content-addressed batches: retries and simultaneous delivery do not duplicate or overwrite events.
       if (!await exists(key, MAX_STORED_BATCH_BYTES)) {
-        const record = {...batch, attachments: batch.attachments.map(item => ({...item, objectKey: attachmentKeys.get(item.sha256 ?? '') ?? null})), owner: {tenantId: principal.tenantId, userId: principal.userId,
+        // The receiver alone sets this bit on newly accepted prompt batches.
+        delete batch.privacyReview;
+        const review=privacy && !control && batch.captureMode!=='history' && !principal.owner &&
+          batch.events.some(event=>privacyPrompt(event)!=null) && await privacy.eligible(principal) &&
+          (await privacy.read(principal)).enabled;
+        if(review)await writes.put(key+'.privacy-pending',Buffer.from('1'),'text/plain');
+        const record = {...batch, ...(review?{privacyReview:true}:{}), attachments: batch.attachments.map(item => ({...item, objectKey: attachmentKeys.get(item.sha256 ?? '') ?? null})), owner: {tenantId: principal.tenantId, userId: principal.userId,
           name: principal.name ?? null, email: principal.email ?? null}, receivedAt: new Date().toISOString()};
         await writes.put(key, gzipSync(JSON.stringify(record)), 'application/gzip');
       }
@@ -129,11 +137,15 @@ export function createSessionIngest({store, eventIdentities, prefix = 'capture-v
         return !control?.deletedAt && (control?.visibility !== 'private' || userId === principal.userId);
       };
       if (!await readable()) return null;
-      const data = await store.get(`${scope(owner)}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`, {maxBytes: MAX_STORED_BATCH_BYTES});
+      const key=`${scope(owner)}/${harness}/${digest(installationId)}/${digest(sessionId)}/${batchId}.json.gz`;
+      const data = await store.get(key, {maxBytes: MAX_STORED_BATCH_BYTES});
       if (!data) return null;
       const batch = parseJson<SessionBatch>(gunzipSync(data,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}));
       if (batch.owner?.tenantId!==principal.tenantId || batch.owner?.userId!==userId ||
           batch.harness!==harness || batch.installationId!==installationId || batch.sessionId!==sessionId) throw new Error('Stored batch does not match its authorized scope');
+      if(batch.privacyReview && principal.userId!==userId && await store.get(key+'.privacy-pending',{maxBytes:32}) &&
+        !await store.get(key+'.privacy-cleared',{maxBytes:32}) &&
+        (await controls.read(owner,'sessions',harness!,sessionId))?.visibility!=='team')return null;
       // A receipt locates content; it cannot override a visibility change or
       // tombstone, including one committed while the object was being read.
       if (!await readable()) return null;

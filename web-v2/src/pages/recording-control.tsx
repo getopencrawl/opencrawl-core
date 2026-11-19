@@ -4,7 +4,7 @@ import {Icon} from '../design/icons.js';
 import type {LibraryAdapter, LibraryContract} from './library-types.js';
 import {failureMessage, useResource} from './use-resource.js';
 
-export function PrivacySettings({adapter}: {adapter: LibraryAdapter}) {
+export function RecordingSettings({adapter}: {adapter: LibraryAdapter}) {
   const state = useResource(adapter, 'recording/status', '', 0, signal => adapter('recording/status', {}, signal), 'Recording status unavailable.');
   const status = state.data && 'paused' in state.data ? state.data : null;
   const [selection, setSelection] = useState<typeof status>(null);

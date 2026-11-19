@@ -26,7 +26,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
   await identity.ready();
-  const services=selfhostServices(settings,store,database,env,identity.directory);
+  const services=selfhostServices(settings,store,database,env);
   const temporal=selfhostTemporalSettings(env);
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});

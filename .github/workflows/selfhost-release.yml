@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       version:
-        description: 'Next minor or major version, e.g. 0.2.0 or 1.0.0 (patches are automatic)'
+        description: 'Next Helm chart version. Use the next patch for an urgent fix, or the next minor or major for a planned release.'
         required: true
         type: string
 permissions:

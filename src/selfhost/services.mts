@@ -21,14 +21,12 @@ import {createSlackOAuth,slackOAuthManifest} from '../integrations/slack-oauth.m
 import {createComposioOAuth} from '../integrations/composio.mjs';
 import {connectorSettingsStore} from '../integrations/connector-settings.mjs';
 import {errorInfo} from '../errors.mjs';
-import type {IdentityDirectory} from '../identity/types.mjs';
-import {createDriveAccess,workspaceDriveAudience} from '../integrations/google-drive-access.mjs';
-export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env,directory?:IdentityDirectory){
+export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env){
   const enabled=airbyteEnabled(env);
-  const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','googledrive','notion','circleback','granola','linear'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
+  const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','notion','circleback','granola','linear'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
   definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
   if(!enabled){
-    const providers=createProviderCatalog(definitions,{driveWorkspaceAccess:true,linearPublicAccess:true});
+    const providers=createProviderCatalog(definitions,{linearPublicAccess:true});
     const registry=createSingleOrganizationRegistry({database,organizationId:settings.organizationId});
     const body='External sources are disabled on this instance. Ask your administrator to enable Airbyte. Agent capture, memories, search and the board remain available.';
     const disabled=async():Promise<never>=>{throw Object.assign(new Error(body),{status:503,expose:true});};
@@ -66,8 +64,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   // An entered key is stored encrypted and takes effect without a restart.
   const managedKey=env.COMPOSIO_API_KEY||null;
   const saved=!managedKey&&env.OPENCRAWL_CONNECTOR_KEY?connectorSettingsStore({store,prefix:'connector-settings/v1',organizationId:settings.organizationId,key:connectorKey()}):null;
-  const driveAudience=directory?workspaceDriveAudience(directory,settings.organizationId):undefined;
-  const brokerFor=(apiKey:string)=>createComposioOAuth({apiKey,organizationId:settings.organizationId,proxyUrl,proxyKey:connectorKey(),registry,baseUrl:env.COMPOSIO_BASE_URL||undefined,driveAudience});
+  const brokerFor=(apiKey:string)=>createComposioOAuth({apiKey,organizationId:settings.organizationId,proxyUrl,proxyKey:connectorKey(),registry,baseUrl:env.COMPOSIO_BASE_URL||undefined});
   let remembered:{at:number;apiKey:string|null}|undefined;
   let current:{apiKey:string;adapter:ReturnType<typeof brokerFor>}|undefined=managedKey?{apiKey:managedKey,adapter:brokerFor(managedKey)}:undefined;
   async function broker(){
@@ -90,8 +87,8 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     proxy:async<T=ProviderData,>(input:ProxyRequest&{connectedAccountId:string;userId:string})=>(await byGrant(input.connectedAccountId)).proxy<T>(input),
     sourceConfiguration:async(record,provider)=>(await byGrant(record.connectedAccountId||'')).sourceConfiguration(record,provider),
   };
-  const providers=createProviderCatalog(definitions,{driveWorkspaceAccess:true,linearPublicAccess:true});
-  const brokered=['googledrive','notion','circleback','linear',...(!oauth?['slack']:[])].filter(id=>!providers[id]!.unavailableReason);
+  const providers=createProviderCatalog(definitions,{linearPublicAccess:true});
+  const brokered=['notion','circleback','linear',...(!oauth?['slack']:[])].filter(id=>!providers[id]!.unavailableReason);
   const sentence=(names:string[])=>names.length>1?names.slice(0,-1).join(', ')+' and '+names.at(-1):names[0]||'';
   // Present when an admin can add the key in the product; otherwise the setup text names the server setting.
   const credential:ConnectorCredential|undefined=saved?{id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',
@@ -134,7 +131,6 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   };
   const connectors=createConnectorResolver({environment:'selfhost',generation:'v1',registry,
     linearAccess:record=>createLinearAccess({tenantId:record.tenantId,connectionId:record.integrationId,workspaceId:record.workspace||'',request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})}),
-    ...(driveAudience?{driveAccess:(record:import('../integrations/types.mjs').IntegrationRecord)=>createDriveAccess({audience:driveAudience,request:input=>authorization.proxy({...input,connectedAccountId:record.connectedAccountId||'',userId:`selfhost:${record.tenantId}:${record.userId}`})})}:{}),
     async storage(record){destination.validate(record);return store;},search:tenantId=>{if(tenantId!==settings.organizationId)throw new Error('Workspace scope denied');return createConnectorSearch(settings.search);}});
   async function recover(){
     const failures:unknown[]=[];

@@ -52,7 +52,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_:-]{1,256}$/.test(id))) throw new Error('Invalid passage id');
       if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || (!query.trim() && !id && (!order||order==='relevance')) || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
-      const driveAccess = new Map<string, Promise<boolean>>();
+      const resourceDecisions = new Map<string, Promise<boolean>>();
       const hits: (ConnectorDocument & {id: string; score: number})[] = [], responses: RawResponse[] = []; let after: IndexHit['sort'], examined = 0, more = true, capped = false;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
@@ -96,10 +96,10 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
           const visibleResource = parentVisible && (d.kind!=='file' || d.available===true) &&
             (d.provider!=='slack' || allowed.has(documentId(binding!, 'channel', d.channelId!)));
           let providerVisible = visibleResource;
-          if (providerVisible && ['googledrive', 'linear'].includes(d.provider)) {
+          if (providerVisible && d.provider === 'linear') {
             const sourceId = d.parentId || d.sourceId, key = binding!.connectionId + ':' + sourceId;
-            if (!driveAccess.has(key)) driveAccess.set(key, resourceAccess ? resourceAccess(binding!, sourceId) : Promise.resolve(false));
-            providerVisible = await driveAccess.get(key)!;
+            if (!resourceDecisions.has(key)) resourceDecisions.set(key, resourceAccess ? resourceAccess(binding!, sourceId) : Promise.resolve(false));
+            providerVisible = await resourceDecisions.get(key)!;
           }
           if (providerVisible) {
             visible.push(hit); hits.push({id: hit._id, score: hit._score, ...hit._source});

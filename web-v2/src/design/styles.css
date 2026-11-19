@@ -74,13 +74,20 @@ img { max-width: 100%; }
 .oc-main:focus { outline: none; }
 .oc-content { container-type: inline-size; max-width: calc(var(--console-page-width) + 2 * var(--console-page-inset)); padding: var(--console-page-top) var(--console-page-inset) var(--console-page-bottom); margin: 0 auto; }
 /* A workspace Page owns the space below the mobile navigation or beside the sidebar. */
+@property --workspace-header-inset {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
 .oc-app:has(.oc-content .oc-page) { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
-.oc-main:has(.oc-content .oc-page) { min-height: 0; }
+.oc-main:has(.oc-content .oc-page) { min-height: 0; container-type: inline-size; }
+/* Resolve the inset against the pane before entering the bounded content container. */
+.oc-content:has(.oc-page) { --workspace-header-inset: max(var(--console-page-inset), (100cqi - var(--console-page-width)) / 2); }
 .oc-content:has(> .oc-page) { height: 100%; padding-block: 0; }
 .oc-content > .oc-page { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .oc-content .oc-page > .oc-page-header {
-  margin: 0 calc(-1 * var(--console-page-inset));
-  padding: var(--space-4) var(--console-page-inset);
+  margin: 0 calc(-1 * var(--workspace-header-inset));
+  padding: var(--space-4) var(--workspace-header-inset);
   max-height: 50dvh;
   overflow-y: auto;
   border-bottom: 1px solid var(--line);

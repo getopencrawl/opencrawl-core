@@ -519,7 +519,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
       if (!await owned(principal, key)) fail(404, 'Only the person who captured a session can change it');
       // Realms created before owner visibility gain the field before the first write.
       await resolve(principal).ensureIndex();
-      const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({visibility: input.visibility as 'team' | 'private', deletedAt: current?.deletedAt ?? null}));
+      const control = await controls.update(principal, 'sessions', key.harness, key.sessionId, current => ({visibility: input.visibility as 'team' | 'private', visibilitySource:'manual', deletedAt: current?.deletedAt ?? null}));
       if (control.deletedAt) fail(404, 'Session not found');
       await apply(principal, key, control);
       return {...key, visibility: control.visibility};

@@ -5,6 +5,49 @@ import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
 const owner={tenantId:'repair-team',userId:'workspace-a'};
 const peer={...owner,userId:'workspace-b'};
 
+test('cursorless session sync reads from the inbox checkpoint and leaves pending delivery intact',async t=>{
+  const {make}=await boardStateFixture(t),api=make().agent;
+  await api.presence(owner,{session:'writer',name:'writer',announce:false});
+  const post=(id,channel)=>api.post(owner,{session:'writer',posts:[{id,text:id,channel}]});
+  await post('before-registration','work');
+  const currentSession={sessionId:'reader',harness:'codex'};
+  await api.presence(peer,{currentSession,name:'reader',channels:['work'],announce:false});
+  await post('first-update','work');
+  await post('unsubscribed','elsewhere');
+  await post('second-update','work');
+
+  const pending=await api.inbox(peer,{currentSession});
+  assert.deepEqual(pending.messages.map(message=>message.id),[2,4]);
+  const first=await api.sync(peer,{currentSession,limit:1,select:['id']});
+  assert.deepEqual(first,{messages:[{id:2}],next:2,more:true});
+  const second=await api.sync(peer,{agent:'reader',after:first.next,select:['id']});
+  assert.deepEqual(second,{messages:[{id:4}],next:4,more:false});
+  assert.deepEqual(await api.inbox(peer,{currentSession}),pending);
+  await api.inbox(peer,{currentSession,acknowledge:pending.cursor});
+  await post('third-update','work');
+  assert.deepEqual((await api.sync(peer,{currentSession,select:['id']})).messages,[{id:5}]);
+  assert.deepEqual((await api.sync(peer,{currentSession,after:0,select:['id']})).messages,
+    [{id:1},{id:2},{id:4},{id:5}]);
+  await api.presence(peer,{currentSession,leave:true});
+  assert.deepEqual(await api.sync(peer,{currentSession}),{messages:[],next:5,more:false});
+  await api.presence(peer,{currentSession,announce:false});
+  assert.deepEqual((await api.sync(peer,{currentSession,select:['id']})).messages,[{id:5}]);
+});
+
+test('cursorless sync reconstructs the registration boundary for older participants',async t=>{
+  const {make,database}=await boardStateFixture(t);
+  let time=1000;
+  const api=make({now:()=>time++}).agent;
+  await api.presence(owner,{session:'writer',name:'writer',announce:false});
+  const post=id=>api.post(owner,{session:'writer',posts:[{id,text:id,channel:'work'}]});
+  await post('before-registration');
+  await api.presence(peer,{session:'reader',name:'reader',channels:['work'],announce:false});
+  await post('after-registration');
+  await database.pool.query(`UPDATE opencrawl_board_participants SET record=record-'inboxAfter'
+    WHERE namespace=$1 AND tenant_hash=$2 AND name=$3`,[database.namespace,boardTenant(peer.tenantId),'reader']);
+  assert.deepEqual(await api.sync(peer,{session:'reader',select:['id']}),{messages:[{id:2}],next:2,more:false});
+});
+
 test('bootstrap, named presence and legacy presence admit new sessions above the former limits',async t=>{
   const {database,make}=await boardStateFixture(t),board=make(),scope=boardTenant(owner.tenantId);
   await board.participate(owner,'bootstrap',{session:'seed',harness:'codex'});

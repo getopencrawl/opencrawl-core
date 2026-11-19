@@ -177,7 +177,7 @@ try{
   const sources=await json<{items:Array<{id:string;state:string;setup?:{requirement?:string}}>}>('/api/onboarding/sources');
   // Upgrade rehearsals also run this seed against the published predecessor.
   // Require the exact catalog of the running image, including newly added sources.
-  const definitions=Object.fromEntries(['slack','notion','circleback','granola','github','googledrive','linear'].map(name=>[name,{name}]));
+  const definitions=Object.fromEntries(['slack','notion','circleback','granola','github','linear'].map(name=>[name,{name}]));
   assert.deepEqual(sources.items.map(card=>card.id).sort(),Object.keys(createProviderCatalog(definitions)).sort());
   assert.ok(sources.items.every(card=>card.state==='setup-required'&&card.setup?.requirement==='Airbyte disabled'));
   ingestion={airbyte:{enabled:false},temporal:verifyOnly?{reindex:false}:{workflowId}};expected=sessionText;
