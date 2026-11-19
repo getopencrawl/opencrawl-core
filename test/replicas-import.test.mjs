@@ -123,6 +123,71 @@ test('a blocked first chat keeps its cursor and key, later catalog pages import 
   assert.equal(done.phase,'complete');assert.equal(done.processed,2);assert.equal(done.blocked,0);assert.equal(done.events,3);
   assert.equal(f.calls.at(-1).searchParams.get('before_cursor'),'saved');
 });
+test('due missing pages share retries between foreground pages and preserve every catalog checkpoint',async t=>{
+  let clock=Date.now(),missing=true;
+  const aliases=[chat,{...chat,title:'Second catalog label'}];
+  const long={...chat,chat_id:randomUUID(),workspace_id:randomUUID(),title:'Long foreground chat'};
+  const seen=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[...aliases,long],total:3,next_cursor:null});
+    if(!url.pathname.endsWith('history'))return;
+    const id=url.searchParams.get('chat_id'),before=url.searchParams.get('before_cursor');
+    seen.push([id,before]);
+    if(id===chat.chat_id){
+      if(missing)return new Response(null,{status:404});
+      return Response.json({events:[event('duplicate')],before_cursor:before?null:'alias-older'});
+    }
+    const page=Number(before??0);
+    return Response.json({events:[event('foreground')],before_cursor:page<12?String(page+1):null});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);const both=await advance(f.service,id);
+  assert.equal(both.blocked,2);assert.equal(both.blockedChats,1);
+  assert.deepEqual(seen,[[chat.chat_id,null]],'equivalent catalog entry shares the first backoff');
+  await advance(f.service,id);assert.deepEqual(seen.at(-1),[long.chat_id,null]);
+  // A previously deployed worker left due rows with no scheduling counter or import ID.
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state-'freshSteps' WHERE namespace=$1 AND tenant=$2",scope);
+  await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET issue=issue-'importId' WHERE namespace=$1 AND tenant=$2",scope);
+  clock+=60_000;
+  await advance(f.reopen(),id);assert.deepEqual(seen.at(-1),[chat.chat_id,null]);
+  const group=await f.database.pool.query(`SELECT count(*)::int n,count(DISTINCT retry_at)::int times,min((checkpoint->>'chatAttempts')::int) attempts
+    FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2`,scope);
+  assert.deepEqual(group.rows[0],{n:2,times:1,attempts:2});
+  clock+=120_000;missing=false;
+  for(let i=0;i<4;i++)await advance(f.service,id);
+  assert.deepEqual(seen.slice(-4),[1,2,3,4].map(n=>[long.chat_id,String(n)]));
+  await advance(f.service,id);assert.deepEqual(seen.at(-1),[chat.chat_id,null]);
+  let status=await f.service.status(principal);
+  for(let i=0;i<50&&status.phase!=='complete';i++)status=await advance(f.reopen(),id);
+  assert.equal(status.phase,'complete');assert.equal(status.processed,3);assert.equal(status.imported,2);
+  assert.deepEqual(seen.filter(([cid])=>cid===long.chat_id).map(([,cursor])=>cursor),[null,...Array.from({length:12},(_,i)=>String(i+1))]);
+  assert.equal(seen.filter(([cid,cursor])=>cid===chat.chat_id&&cursor==='alias-older').length,2);
+  const {gunzipSync}=await import('node:zlib');
+  const pages=[...f.store.data].filter(([key])=>key.endsWith('.json.gz')).flatMap(([,bytes])=>JSON.parse(gunzipSync(bytes)).events)
+    .filter(e=>e.kind==='replicas_history_page'&&e.data.replicasPage.conversation.chat_id===chat.chat_id);
+  assert.deepEqual(new Set(pages.map(p=>p.data.replicasPage.conversation.title)),new Set(aliases.map(a=>a.title)));
+});
+
+test('a cached 404 cannot suppress a different workspace, another tenant or a new credential generation',async t=>{
+  const otherWorkspace={...chat,workspace_id:randomUUID()};
+  let missing=true;
+  const f=await fixture(t,{answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[chat,chat,otherWorkspace],total:3,next_cursor:null});
+    if(url.pathname.endsWith('history'))return missing&&url.pathname.includes(chat.workspace_id)?new Response(null,{status:404}):Response.json({events:[],before_cursor:null});
+  }});
+  const first=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,first.id);
+  const secondTenant={tenantId:'isolated',userId:'admin'};
+  missing=false;
+  const other=await f.service.action(secondTenant,{action:'connect',apiKey:'other'});
+  assert.equal((await advance(f.service,other.id,secondTenant)).processed,1);
+  await f.service.action(principal,{action:'stop',id:first.id});
+  const resumed=await f.service.action(principal,{action:'connect',apiKey:'replacement'});
+  assert.equal((await advance(f.service,resumed.id)).processed,1,'new credential must actually read the alias');
+  missing=true;assert.equal((await advance(f.service,resumed.id)).processed,2,'different workspace must actually read');
+  assert.equal((await f.service.status(secondTenant)).blockedChats,undefined);
+});
 test('repeated history cursor defers the exact checkpoint without duplicate handoff',async t=>{
   const f=await fixture(t,{answer:url=>url.pathname.endsWith('/history')?Response.json({events:[event('one')],before_cursor:'same'}):null});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});await advance(f.service,id);

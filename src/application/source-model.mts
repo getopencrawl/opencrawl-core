@@ -31,8 +31,8 @@ export function sourceProgress(source: SourceCard): string {
   const units = source.units ?? ['item', 'items'];
   const countText = `${count.toLocaleString()} ${count === 1 ? units[0] : units[1]}`;
   if(source.state==='syncing'&&source.history&&(source.history.blocked||source.history.retryAt)){
-    const {blocked}=source.history;
-    const waiting=blocked?` ${blocked.toLocaleString()} ${blocked===1?'record is':'records are'} waiting to retry.`:'';
+    const {blocked,blockedChats}=source.history;
+    const waiting=blockedChats&&blockedChats!==blocked?` ${blockedChats.toLocaleString()} ${blockedChats===1?'chat':'chats'} (${blocked?.toLocaleString()} catalog records) ${blockedChats===1?'is':'are'} waiting to retry.`:blocked?` ${blocked.toLocaleString()} ${blocked===1?'record is':'records are'} waiting to retry.`:'';
     return `${countText} imported.${waiting} ${source.history.error??'OpenCrawl will retry automatically.'}`;
   }
   if (source.finishing) return `${countText} imported. Finishing long messages.`;

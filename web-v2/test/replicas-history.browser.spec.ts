@@ -32,8 +32,8 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await expect(progress).toHaveCount(0);await expect(page.getByText('0 of 2 conversation records imported')).toBeVisible();await shot('success');
   Object.assign(history,{processed:1,imported:1,events:8});await page.clock.runFor(30_001);
   await expect(page.getByText('1 of 2 conversation records imported')).toBeVisible();await expect(page.getByLabel('Replicas imported data').locator('.oc-spin')).toHaveCount(2);await shot('progress');
-  Object.assign(history,{blocked:1});await page.clock.runFor(30_001);
-  await expect(page.getByText(/1 record is waiting to retry/)).toBeVisible();
+  Object.assign(history,{blocked:5,blockedChats:2});await page.clock.runFor(30_001);
+  await expect(page.getByText(/2 chats \(5 catalog records\) are waiting to retry/)).toBeVisible();
   await expect(page.getByRole('button',{name:'Stop import'})).toBeVisible();
   Object.assign(history,{blocked:0});
   await page.goto('about:blank');state='synced';Object.assign(history,{phase:'complete',processed:2,imported:2,events:12});
