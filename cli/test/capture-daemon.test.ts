@@ -32,9 +32,10 @@ async function until(check:()=>boolean,ms=5000){const end=Date.now()+ms;while(!c
 async function fixture(run:(f:any)=>Promise<void>){
   const dir=mkdtempSync(join(tmpdir(),'opencrawl-daemon-')),env={...process.env},batches:any[]=[],raws:string[]=[];
   let fail=false,loseAck=false,hold=false,requests=0;const held:Array<()=>void>=[];
+  let recording:(()=>object)|undefined;
   const server=createServer(async(req,res)=>{
     requests++;
-    if(req.url==='/api/sessions/identity'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:{principal:{tenantId:'fixture',userId:'fixture'},capabilities:{harnesses:['cursor','antigravity']}}}));return;}
+    if(req.url==='/api/sessions/identity'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:{principal:{tenantId:'fixture',userId:'fixture'},capabilities:{harnesses:['cursor','antigravity']},recording:recording?.()}}));return;}
     const chunks=[];for await(const chunk of req)chunks.push(chunk);const raw=Buffer.concat(chunks).toString();
     if(req.url==='/api/sessions/batches'){
       raws.push(raw);
@@ -58,7 +59,7 @@ async function fixture(run:(f:any)=>Promise<void>){
     const start=async(options={})=>{controller=new AbortController();let ready=false;worker=runCaptureDaemon({signal:controller.signal,flushMs:20,reconcileMs:100,settleMs:40,retryMs:60,onReady:()=>{ready=true;},...options});await until(()=>ready);};
     const stop=async()=>{controller?.abort();await worker;};
     const event=(name='SessionStart',pid=process.pid)=>recordDaemonHook({session_id:'session',transcript_path:path,hook_event_name:name,cwd:dir},pid);
-    await run({dir,api,path,record,batches,raws,start,stop,event,get requests(){return requests;},set fail(v:boolean){fail=v;},set loseAck(v:boolean){loseAck=v;},set hold(v:boolean){hold=v;if(!v)for(const done of held.splice(0))done();}});
+    await run({dir,api,path,record,batches,raws,start,stop,event,get requests(){return requests;},set recording(v:()=>object){recording=v;},set fail(v:boolean){fail=v;},set loseAck(v:boolean){loseAck=v;},set hold(v:boolean){hold=v;if(!v)for(const done of held.splice(0))done();}});
   }finally{
     hold=false;for(const done of held.splice(0))done();controller?.abort();await worker;
     // Service fixtures write only here; remove fake plists before ordinary teardown
@@ -73,6 +74,37 @@ async function fixture(run:(f:any)=>Promise<void>){
   }
 }
 import {dirname} from 'node:path';
+
+isolatedTest('paused uploader checks only for queued work and wakes at a timed deadline',async()=>fixture(async f=>{
+  const config=readCaptureConfig()!,queue=join(captureDir(),'queue');
+  // The server clock is ahead of this laptop. Use its reported time to schedule expiry.
+  const observed=Date.now()+3_600_000,from=observed-1000,untilTime=observed+400;
+  let paused=true,revision=randomUUID(),checks=0;
+  f.recording=()=>{
+    checks++;
+    return {revision,paused,observedAt:observed,until:paused?untilTime:null,windows:[[from,untilTime]]};
+  };
+  function enqueue(id:string,time:number){
+    const body=JSON.stringify({schemaVersion:1,owner:config.owner,installationId:config.installationId,sessionId:'poll',
+      harness:'claude-code',origin:'cli',events:[{id,kind:'message',timestamp:new Date(time).toISOString(),data:{text:id}}],attachments:[]});
+    atomicJson(join(queue,hash(body)+'.json'),JSON.parse(body));
+  }
+  const initialRequests=f.requests;
+  await f.start();
+  enqueue('private',from);
+  await until(()=>checks===1 && readdirSync(queue).length===0);
+  await sleep(550);
+  expect(f.requests).toBe(initialRequests+1);
+  enqueue('before',from-1);
+  await until(()=>checks===2);
+  enqueue('after',untilTime+1);
+  await sleep(80);
+  expect(f.requests).toBe(initialRequests+2);
+  paused=false;revision=randomUUID();
+  await until(()=>f.batches.length===2,2500);
+  expect(checks).toBe(3);
+  expect(f.raws.join('')).not.toContain('"private"');
+}));
 
 function nativeConfig(f:any,harness:'cursor'|'antigravity'|'codex'|'grok-bot'|'devin'){
   const config=readCaptureConfig()!;

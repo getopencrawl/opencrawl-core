@@ -176,14 +176,11 @@ export function createCaptureHandler({ingest, authenticate, recording, search=un
         return await privateResult(200,{data:{principal,capabilities:{batchEncodings:['gzip'],harnesses:SESSION_HARNESSES},...policy && {recording:policy}}});
       }
       if(req.method==='GET'&&url.pathname==='/api/sessions/recording'&&recording&&revision){
-        const abort=new AbortController();
-        const close=()=>abort.abort();
-        res.once('close',close);
-        try{
-          if(!res.destroyed)await recording.wait(principal,revision,abort.signal);
-          if(!res.destroyed)return await privateResult(200,{data:await recording.read(principal)});
-          return;
-        }finally{res.off('close',close);}
+        // Older uploaders immediately retry a successful response. While paused,
+        // return 423 so they use their existing retry delay.
+        const policy=await recording.read(principal);
+        if(policy.paused)return send(423,{error:{code:'RECORDING_PAUSED'}});
+        return await privateResult(200,{data:policy});
       }
       const admit=async()=>{
         if(!recording)return;

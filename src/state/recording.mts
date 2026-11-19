@@ -1,4 +1,3 @@
-import {recordingChannel,recordingKey,recordingNotifications} from './recording-notifications.mjs';
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {fail} from '../errors.mjs';
@@ -11,7 +10,6 @@ const nowMs = 'floor(extract(epoch from clock_timestamp()) * 1000)::bigint';
 const latest = 'SELECT * FROM opencrawl_recording_pauses WHERE namespace=$1 AND actor=$2 ORDER BY id DESC LIMIT 1';
 
 export function createRecordingPolicy(db: ApplicationDatabase): RecordingPolicy & {ready(): Promise<void>} {
-  const wait=recordingNotifications(db.pool);
   let preparing: Promise<void> | undefined;
   function ready() {
     preparing ??= db.transaction(async c => {
@@ -46,13 +44,6 @@ export function createRecordingPolicy(db: ApplicationDatabase): RecordingPolicy 
   return {
     ready,
     async read(principal, known) {const key=scope(principal); await ready(); return signal(db.pool,key,known);},
-    async wait(principal,revision,abort){
-      const key=scope(principal);await ready();
-      await wait(recordingKey(key),abort,async()=>{
-        const state=await signal(db.pool,key);
-        return state.revision!==revision||!state.paused?0:Math.min(50_000,(state.until??Infinity)-Date.now());
-      });
-    },
     async change(principal, mode, expected) {
       if(principal.captureAccess !== undefined || principal.owner) fail(403,'Account owner required');
       const key=scope(principal); await ready();
@@ -68,7 +59,6 @@ export function createRecordingPolicy(db: ApplicationDatabase): RecordingPolicy 
           await c.query(`INSERT INTO opencrawl_recording_pauses(namespace,actor,revision,start_ms,end_ms)
             VALUES ($1,$2,$3,${nowMs},${end})`,[...key,randomUUID()]);
         }
-        await c.query('SELECT pg_notify($1,$2)',[recordingChannel,recordingKey(key)]);
         const {revision,paused,until}=await signal(c,key);
         return {revision,paused,until};
       });

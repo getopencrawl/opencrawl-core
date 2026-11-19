@@ -39,7 +39,12 @@ test('a paused flush sends zero payload bytes, and an offline mixed queue resume
       event('a',from-1,{text:'keep before'}),event('b',from,{text:'private words',attachment:privateBlob}),event('c',to,{text:'keep after'}),
     ],attachments:[privateBlob]};
     writeFileSync(join(captureDir(),'queue','mixed.json'),JSON.stringify(batch));
-    expect((await flushCaptures({wait:false})).uploaded).toBe(0);
+    const before=Date.now();
+    const result=await flushCaptures({wait:false});
+    expect(result.uploaded).toBe(0);
+    if(!('recordingCheckAt' in result))throw Error('Expected the paused uploader to schedule its next check');
+    expect(result.recordingCheckAt).toBeGreaterThanOrEqual(before+10_000);
+    expect(result.recordingCheckAt).toBeLessThanOrEqual(Date.now()+10_000);
     expect(requests).toEqual([{path:'/api/sessions/identity',bytes:0}]);
     paused=false;revision=randomUUID();
     expect((await flushCaptures()).uploaded).toBe(1);

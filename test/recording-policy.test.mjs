@@ -11,7 +11,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-test('recording is fenced at commit with personal history, CAS, expiry and cross-receiver wakeup',{skip:!postgresUrl},async t=>{
+test('recording is fenced at commit with personal history, CAS and expiry across receivers',{skip:!postgresUrl},async t=>{
   const db=await applicationDatabaseFixture(t),a=createRecordingPolicy(db),b=createRecordingPolicy(db);
   const person={tenantId:'team1',userId:'user1'},other={...person,userId:'user2'},elsewhere={...person,tenantId:'team2'};
   const write=async()=>true, api=createLibraryApi({recording:a});
@@ -39,14 +39,10 @@ test('recording is fenced at commit with personal history, CAS, expiry and cross
   const timestamp=new Date(history.windows[0][0]).toISOString();
   assert.equal(await b.capture(elsewhere,'0',[timestamp],write),true);
   const second=await a.change(elsewhere,'indefinite','0');
-  let otherWoke=false;
-  const otherWait=b.wait(elsewhere,second.revision,AbortSignal.timeout(5000)).then(()=>{otherWoke=true;});
-  const wait=b.wait(person,paused.revision,AbortSignal.timeout(5000));
-  await delay(40);
   const resumed=await a.change(person,'resume',paused.revision);
-  await wait;assert.equal(resumed.paused,false);
-  await delay(15);assert.equal(otherWoke,false);assert.equal((await b.read(elsewhere)).paused,true);
-  await a.change(elsewhere,'resume',second.revision);await otherWait;
+  assert.equal((await b.read(person,paused.revision)).paused,false);
+  assert.equal((await b.read(elsewhere)).paused,true);
+  await a.change(elsewhere,'resume',second.revision);
   await assert.rejects(b.capture(person,'0',[],write),{status:412});
   for(const time of [timestamp,null,'invalid'])await assert.rejects(b.capture(person,resumed.revision,[time],write),{status:422});
   assert.equal(await b.capture(person,resumed.revision,[new Date().toISOString()],write),true);
@@ -69,12 +65,15 @@ test('the receiver rejects a stale or paused body before ingest and scopes permi
   const state=await recording.change(principal,'indefinite','0');
   const identities=await fetch(api+'identity',{headers:{'x-opencrawl-recording':'new'}}).then(r=>r.json());
   assert.equal(identities.data.recording.paused,true);
+  const legacyStatus=()=>fetch(api+'recording',{headers:{'x-opencrawl-recording':state.revision},signal:AbortSignal.timeout(2000)});
+  assert.equal((await legacyStatus()).status,423);
   assert.equal((await fetch(api+'identity')).status,423);
   for(const [route,method] of [['batches','POST'],['memories','POST'],['attachments/'+'a'.repeat(64),'PUT']]){
     assert.equal((await fetch(api+route,{method,body:'invalid'})).status,423);
   }
   const when=new Date().toISOString();await delay(5);
   const green=await recording.change(principal,'resume',state.revision);
+  assert.equal((await (await legacyStatus()).json()).data.revision,green.revision);
   const batch={schemaVersion:1,owner:principal,installationId:'installation',sessionId:'session',harness:'codex',origin:'cli',events:[{id:'event',kind:'message',timestamp:when}],attachments:[]};
   assert.equal((await fetch(api+'batches',{method:'POST',headers:{'x-opencrawl-recording':'0'},body:JSON.stringify(batch)})).status,412);
   assert.equal((await fetch(api+'identity')).status,426);

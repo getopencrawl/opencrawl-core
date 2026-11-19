@@ -4,7 +4,7 @@ import {watch,existsSync,mkdirSync,readFileSync,readdirSync,statSync,lstatSync,r
 import {join,dirname,basename} from 'node:path';
 import {setImmediate as yieldToOwner} from 'node:timers/promises';
 import {atomicJson,syncDirectory,withSessionLock} from '../session.ts';
-import {request,captureDir,readCaptureConfig,captureTranscript,flushCaptures,refreshCaptureIdentity,recordError,captureDaemonEnabled,captureDaemonHarnesses,captureCursorNotice,spoolDaemonEvent,resolveAntigravityTranscript,type CaptureConfig} from './runtime.ts';
+import {captureDir,readCaptureConfig,captureTranscript,flushCaptures,refreshCaptureIdentity,recordError,captureDaemonEnabled,captureDaemonHarnesses,captureCursorNotice,spoolDaemonEvent,resolveAntigravityTranscript,type CaptureConfig} from './runtime.ts';
 import {privacyRoot,sessionPrivate,pendingPrivacy} from '../incognito-state.ts';
 import {captureExcluded} from './policy.ts';
 import {hash,readsTranscript,HARNESSES} from './parse.ts';
@@ -49,8 +49,7 @@ export async function runCaptureDaemon({signal,flushMs=10_000,reconcileMs=30_000
       if(!config||!captureDaemonEnabled(config)||config.disabled&&!config.backgroundStartup||config.api!==initial.api||config.installationId!==initial.installationId||config.owner.userId!==initial.owner.userId||config.owner.tenantId!==initial.owner.tenantId||HARNESSES.some(harness=>config.roots[harness]!==initial.roots[harness])||JSON.stringify(read(generationFile,null))!==JSON.stringify(generation))return null;
       return config;
     };
-    const recordingWait=new AbortController();
-    const stop=()=>{recordingWait.abort();stopped=true;wakeCapture();wakeUpload();wakeStartup();};
+    const stop=()=>{stopped=true;wakeCapture();wakeUpload();wakeStartup();};
     signal?.addEventListener('abort',stop,{once:true});
     if(signal?.aborted)stop();
     const wait=(lane:'capture'|'upload'|'startup',ms:number)=>new Promise<void>(done=>{
@@ -258,12 +257,11 @@ export async function runCaptureDaemon({signal,flushMs=10_000,reconcileMs=30_000
         if(!dueAt){await wait('upload',privacyWait);continue;}
         const readyAt=Math.max(dueAt,retry.dueAt);
         if(Date.now()<readyAt){await wait('upload',Math.min(privacyWait,readyAt-Date.now()));continue;}
+        if(!queued()){dueAt=0;continue;}
         try{
           const result=await flushCaptures({wait:false,concurrency:1,maxBatches:8});counters.uploads+=result.uploaded;
-          if('pausedRevision' in result && result.pausedRevision){
-            // Wait outside the flush lock. A resume notification wakes a busy installation immediately.
-            await request(config.api,'/api/sessions/recording',{headers:{'x-opencrawl-recording':result.pausedRevision},signal:recordingWait.signal});
-            dueAt=Date.now();continue;
+          if('recordingCheckAt' in result){
+            dueAt=result.recordingCheckAt;continue;
           }
           const pending=queued();
           // Excluded/unsupported batches and another flush owner can leave a

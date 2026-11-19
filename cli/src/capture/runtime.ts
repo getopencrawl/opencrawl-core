@@ -94,7 +94,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const retryable=method==='GET'||method==='POST'&&['/api/sessions/batches','/api/sessions/memories'].includes(pathname)||method==='PUT'&&/^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(pathname);
   const permission=new Headers(init.headers).get('x-opencrawl-recording');
   const bytes=typeof init.body==='string'?Buffer.byteLength(init.body):ArrayBuffer.isView(init.body)?init.body.byteLength:0;
-  const deadline=pathname==='/api/sessions/recording'?55_000:20_000;
+  const deadline=20_000;
   const send=async()=>{
     for(let attempt=0;;attempt++){
       let response:Response;
@@ -1197,6 +1197,9 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
     let token=staticToken||(workspaceIdentityEnabled()?await workspaceToken(config.api):await accessToken(config.api));
     const identity=await captureIdentity(config,token),principal=identity.principal;
     if(identity.recording?.paused){
+      const {until,observedAt}=identity.recording;
+      const remaining=until!==null && observedAt!==undefined ? Math.max(1,until-observedAt) : Infinity;
+      const recordingCheckAt=Date.now()+Math.min(10_000,remaining);
       const confirmed=confirmedPermission(identity.recording);
       // Retire confirmed private bytes without reading attachment blobs. Publish a
       // sanitized replacement first so an interrupted cleanup preserves eligible events.
@@ -1209,7 +1212,7 @@ export async function flushCaptures({wait=true,concurrency,batchDelayMs=0,onUplo
         retryWindowsSharing(()=>unlinkSync(path));
       }
       if(wait)throw new CliError('RECORDING_PAUSED','Your recording is paused in this workspace.');
-      return {uploaded:0,pausedRevision:identity.recording.revision};
+      return {uploaded:0,recordingCheckAt};
     }
     const recordingHeaders:Record<string,string>=identity.recording?{'x-opencrawl-recording':identity.recording.revision}:{};
     token=identity.token??token;

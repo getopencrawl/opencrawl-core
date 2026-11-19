@@ -6,7 +6,6 @@ export interface RecordingStatus {revision: string; paused: boolean; until: numb
 export interface RecordingSignal extends RecordingStatus {observedAt?:number; windows?: PauseWindow[]}
 export interface RecordingPolicy {
   read(principal: Principal, knownRevision?: string): Promise<RecordingSignal>;
-  wait(principal: Principal, revision: string, signal: AbortSignal): Promise<void>;
   change(principal: Principal, mode: PauseMode, expected: string): Promise<RecordingStatus>;
   capture<T>(principal: Principal, revision: string | undefined, timestamps: readonly unknown[], write: () => Promise<T>): Promise<T>;
 }

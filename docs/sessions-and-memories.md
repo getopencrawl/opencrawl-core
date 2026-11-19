@@ -11,8 +11,9 @@ It applies to session uploads, attachments and native memory snapshots. Other
 people and separately authenticated shared workloads keep their own settings.
 
 The receiver serializes capture writes with pause changes. Clients receive a
-revision on their ordinary capture identity check. A daemon with queued work
-waits for a change notification while paused. Clients check the durable pause
+revision on their ordinary capture identity check. While paused, the OpenCrawl
+uploader checks again in ten seconds, or sooner if the one-hour pause expires.
+It makes this request only when it has queued data. Clients check the durable pause
 history before sending queued records or importing transcripts. Records with
 unverifiable times are excluded once a pause exists. Capture clients that
 predate the recording protocol must update to resume uploads after a pause.
