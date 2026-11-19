@@ -4,6 +4,7 @@ const paths: Record<IconName, string> = {
   // Lucide Info, licensed in web/assets/lucide-info-LICENSE.txt.
   info: 'M12 16v-4 M12 8h.01',
   'sign-out': 'M9 4H4v16h5 M10 12h11 M17 8l4 4-4 4',
+  cloud: 'M6.5 18a4.5 4.5 0 0 1-.55-8.97A6.5 6.5 0 0 1 18.4 8.1 5 5 0 0 1 17.5 18Z',
   workspace: 'M3 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16 M15 9h4a2 2 0 0 1 2 2v10 M1 21h22 M7 8h2 M7 12h2',
   overview: 'M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z',
   sources: 'M9 3v5 M15 3v5 M7 8h10v4a5 5 0 0 1-10 0V8Z M12 17v4',

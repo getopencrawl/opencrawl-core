@@ -2,6 +2,7 @@ import {cloneElement, isValidElement, useEffect, useId, useRef, useState} from '
 import type {ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes} from 'react';
 import {Link} from '../router.tsx';
 import type {LinkProps} from 'react-router';
+import type {IconName} from '../contracts.ts';
 import {Icon} from './icons.tsx';
 
 type Styled<T> = Omit<T, 'style'>;
@@ -48,6 +49,25 @@ export function ExternalLink({href, children, className = ''}: {href: string; ch
 }
 export function Input({className = '', ...props}: Styled<InputHTMLAttributes<HTMLInputElement>> & {ref?: React.Ref<HTMLInputElement>}) {
   return <input {...props} className={`oc-input ${className}`}/>;
+}
+export function ChoiceTiles<T extends string>({label, hint, name, value, onChange, options}: {
+  label: string; hint?: string; name: string; value: T; onChange: (value: T) => void;
+  options: ReadonlyArray<{value: T; title: string; description: string; icon: IconName}>;
+}) {
+  const id = useId();
+  return <fieldset className="oc-choice-group" aria-describedby={hint ? id : undefined}>
+    <legend>{label}</legend>
+    {hint && <p className="oc-field-hint" id={id}>{hint}</p>}
+    <div className="oc-choice-tiles">{options.map(option => {
+      const optionId = id + '-' + option.value;
+      return <label key={option.value} className="oc-choice-tile">
+        <Icon name={option.icon} size={24}/>
+        <input type="radio" name={name} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)}
+          aria-labelledby={optionId} aria-describedby={optionId + '-description'}/>
+        <span className="oc-choice-copy"><strong id={optionId}>{option.title}</strong><span id={optionId + '-description'}>{option.description}</span></span>
+      </label>;
+    })}</div>
+  </fieldset>;
 }
 export function Select({className = '', ...props}: Styled<SelectHTMLAttributes<HTMLSelectElement>>) {
   return <select {...props} className={`oc-select ${className}`}/>;

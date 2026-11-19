@@ -127,10 +127,34 @@ img { max-width: 100%; }
 .muted { color: var(--muted); }
 .oc-form-measure { width: 100%; max-width: var(--console-form-width); }
 .oc-field-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-4); }
-.oc-detail-list > div { display: grid; grid-template-columns: minmax(5rem, 22%) minmax(0, 1fr); gap: var(--space-4); padding-block: var(--space-3); border-bottom: 1px solid var(--line); }
-.oc-detail-list > div:last-child { border-bottom: 0; }
-.oc-detail-list dt { color: var(--muted); }
-.oc-detail-list dd { margin: 0; overflow-wrap: anywhere; }
+.oc-choice-group, .oc-form-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.oc-choice-group legend, .oc-form-group legend { padding: 0; color: var(--strong); font-weight: 600; font-size: var(--text-title); }
+.oc-choice-group > p { margin-top: var(--space-1); }
+.oc-choice-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+.oc-choice-tile { display: grid; grid-template: 'icon radio' auto 'copy copy' 1fr / 1fr auto; gap: var(--space-3); align-content: start; padding: var(--space-4); border: 1px solid var(--control-line); border-radius: var(--radius-panel); background: var(--surface); cursor: pointer; }
+.oc-choice-tile:hover { border-color: var(--line-strong); background: var(--surface-subtle); }
+.oc-choice-tile:has(:checked) { border-color: var(--brand-face); background: var(--wash); }
+.oc-choice-tile:has(:focus-visible) { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }
+.oc-choice-tile > .oc-icon { grid-area: icon; color: var(--muted); }
+.oc-choice-tile:has(:checked) > .oc-icon { color: var(--accent); }
+.oc-choice-tile > input { grid-area: radio; align-self: start; margin: 0; inline-size: 1rem; block-size: 1rem; accent-color: var(--brand-face); cursor: pointer; }
+.oc-choice-copy { grid-area: copy; display: grid; align-content: start; gap: var(--space-1); min-width: 0; }
+.oc-choice-copy strong { color: var(--strong); font-size: var(--text-title); font-weight: 600; }
+.oc-choice-copy > span { font-size: var(--text-sm); color: var(--muted); }
+.oc-form-group legend { margin-bottom: var(--space-3); }
+.oc-form-group + .oc-form-group { padding-top: var(--space-4); }
+.oc-resource-name { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; color: var(--strong); font-size: var(--console-metric); font-weight: 600; letter-spacing: var(--tracking-heading); line-height: 1.3; overflow-wrap: anywhere; }
+.oc-resource-name > .oc-icon { align-self: center; color: var(--accent); }
+.oc-resource-name > span { min-width: 0; }
+.oc-resource-name small { color: var(--muted); font-size: inherit; font-weight: 400; }
+.oc-resource-facts { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-12); }
+.oc-resource-facts > div { min-width: 0; }
+.oc-resource-facts dt { color: var(--muted); font-size: var(--text-sm); }
+.oc-resource-facts dd { margin: var(--space-1) 0 0; font-family: var(--font-mono); font-size: var(--text-sm); overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .oc-choice-tiles { grid-template-columns: minmax(0, 1fr); }
+  .oc-choice-tile { grid-template: 'icon copy radio' auto / auto minmax(0, 1fr) auto; align-items: start; }
+}
 .code-block { padding: var(--space-4); background: var(--surface-subtle); border-radius: var(--radius-control); }
 .code-block { font-family: var(--font-mono); font-size: var(--text-sm); overflow: auto; overflow-wrap: anywhere; }
 .divider { border: 0; border-top: 1px solid var(--line); margin: var(--space-6) 0; }
