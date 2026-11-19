@@ -39,13 +39,13 @@ time, or press Esc to skip. Self-hosted admins can share the private links from
 Team settings. Open the selected agent when prompted to finish its
 native connection. You can use the web app while setup is in progress.
 
-Agents can run `opencrawl setup --json` to get a plan and use `opencrawl setup apply`
-with the approved choices. Run `opencrawl setup status --local --json` to see saved
-choices. Running `opencrawl setup` again opens the agent picker with your saved
-recording choices. A yellow **⚠ Needs reinstall** marks previous or partial
-installations. Confirm the selected agents to reinstall them. History import
-requires its own confirmation. Agents can use
-`opencrawl setup --yes --json` to continue approved work.
+Run `opencrawl setup` again to review saved recording choices. Choose **Continue**
+to keep installed plugins. **⚠ Needs reinstall** flags a missing or damaged
+installation. History import requires a separate confirmation.
+
+Agents can plan with `opencrawl setup --json`, run `opencrawl setup apply` with
+approved choices, or resume with `opencrawl setup --yes --json`. Read saved
+choices with `opencrawl setup status --local --json`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.
