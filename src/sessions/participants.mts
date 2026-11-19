@@ -1,3 +1,4 @@
+import {isWorkloadUserId} from './types.mjs';
 import {historyActor} from '../integrations/replicas-senders.mjs';
 import type {SessionBatch, SessionEvent} from './types.mjs';
 import {capturedActor} from './actors.mjs';
@@ -12,6 +13,6 @@ export function participantProjection(event: SessionEvent, batch: SessionBatch) 
   const version = {participantVersion: 1};
   if (!(event.kind === 'message' && event.data?.role === 'user' || event.kind === 'user_message' && batch.harness !== 'codex')) return version;
   if (actor?.kind === 'human') return {...version, participantId: 'replicas:' + actor.userId!.toLowerCase(), participantName: actor.name || actor.email || actor.userId};
-  if (actor || event.actor || batch.owner?.userId.startsWith('workload_replicas_')) return {...version, participantUnknown: true};
+  if (actor || event.actor || batch.owner && isWorkloadUserId(batch.owner.userId)) return {...version, participantUnknown: true};
   return {...version, participantId: 'user:' + batch.owner!.userId};
 }

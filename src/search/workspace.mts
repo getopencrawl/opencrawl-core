@@ -76,6 +76,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       // Preserve the original dedupe=false inspection contract for older clients.
       if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;
+      if (!query.currentSession && principal.owner?.provider === 'devin')
+        query.currentSession = currentSessionSchema.parse({harness: 'devin', sessionId: principal.owner.sessionId});
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
       const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];

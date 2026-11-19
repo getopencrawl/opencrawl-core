@@ -1,3 +1,4 @@
+import {isWorkloadUserId} from './types.mjs';
 import {promptText} from './prompt-text.mjs';
 export {promptText} from './prompt-text.mjs';
 import {historyActor} from '../integrations/replicas-senders.mjs';
@@ -378,7 +379,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
       if (participant) {
         const matches: QueryBody[] = [{term: {[f('participantId')]: participant}}];
         const owner = participant.startsWith('user:') ? participant.slice(5) : null;
-        const personalOwner = owner && !owner.startsWith('workload_replicas_') ? owner : null;
+        const personalOwner = owner && !isWorkloadUserId(owner) ? owner : null;
         if (personalOwner) matches.push({term: {[f('userId')]: personalOwner}});
         // Select sessions by sender, then summarize the whole conversation.
         // The search words may have been written by another participant.
@@ -445,7 +446,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
           if (!validParticipant(person.key)) throw new Error('Invalid session participant');
           return {id: person.key, ...(person.name.buckets[0]?.key ? {name: person.name.buckets[0].key} : {})};
         });
-        if (!participants.length && !bucket.unknownParticipants?.doc_count && !userId!.startsWith('workload_replicas_')) participants.push({id: 'user:' + userId!});
+        if (!participants.length && !bucket.unknownParticipants?.doc_count && !isWorkloadUserId(userId!)) participants.push({id: 'user:' + userId!});
         return {userId: userId!, harness: harness!, sessionId: sessionId!, participants, participantsTruncated: (bucket.participants?.sum_other_doc_count ?? 0) > 0, title: `Session ${sessionId}`,
           private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
           firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};

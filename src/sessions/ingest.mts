@@ -28,6 +28,12 @@ const decompressBatch = promisify(gunzip);
 type WriteGate = <T>(write:()=>Promise<T>)=>Promise<T>;
 const directWrite:WriteGate = write=>write();
 
+function checkNativeSession(principal:Principal,session:{harness:string;sessionId:string}) {
+  const owner=principal.owner;
+  if(owner?.provider==='devin' && (session.harness!=='devin' || session.sessionId!==owner.sessionId))
+    fail(403,'Capture must belong to the authenticated Devin session');
+}
+
 export function createSessionIngest({store, privacy, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
@@ -36,6 +42,7 @@ export function createSessionIngest({store, privacy, eventIdentities, prefix = '
   const controls = createControls({store, prefix});
   return {
     async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot, gate:WriteGate=directWrite) {
+      if(principal.owner?.provider==='devin')fail(403,'Devin Cloud does not supply memory snapshots');
       const receipt=await gate(()=>createMemoryIngest({store,prefix,scheduleIndexing}).putSnapshot(principal,snapshot));
       if(onMemoryStored)await onMemoryStored(principal,{harness:snapshot.harness,files:receipt.files,snapshotId:receipt.snapshotId});
       return receipt;
@@ -46,6 +53,7 @@ export function createSessionIngest({store, privacy, eventIdentities, prefix = '
       if (bytes.length > MAX_ATTACHMENT_BYTES) fail(413, 'Attachment exceeds limit');
       if (!/^[a-f0-9]{64}$/.test(hash) || digest(bytes) !== hash) fail(400, 'Attachment digest mismatch');
       if (!session || !isSessionHarness(session.harness) || !id(session.sessionId) || !id(session.installationId)) fail(409, 'Upgrade the capture client: attachments require a session identity');
+      checkNativeSession(principal,session);
       const barrier = sessionWriteBarrier(store, prefix, principal, session.harness, session.sessionId);
       if ((await controls.read(principal, 'sessions', session.harness, session.sessionId))?.deletedAt || (await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'};
       try {
@@ -67,6 +75,7 @@ export function createSessionIngest({store, privacy, eventIdentities, prefix = '
           !['cli', 'desktop', 'cloud', 'subagent', 'unknown'].includes(batch.origin)) fail(400, 'Invalid capture batch');
       if (batch.captureMode !== undefined && !['live','history'].includes(batch.captureMode)) fail(400, 'Invalid capture mode');
       if (batch.owner?.userId !== principal.userId || batch.owner?.tenantId !== principal.tenantId) fail(403, 'Capture owner does not match signed-in account');
+      checkNativeSession(principal,batch);
       if (batch.events.length > 1000 || !batch.events.every(e => e && id(e.id) && typeof e.kind === 'string')) fail(400, 'Invalid events');
       if (!Array.isArray(batch.attachments) || batch.attachments.length > 1000) fail(400, 'Invalid attachments');
       const attachments = new Set<string>();

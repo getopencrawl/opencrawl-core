@@ -1,4 +1,4 @@
-> Historical integration: the reconciled server runtime does not include the unfinished Devin account-binding endpoints. Existing CLI plugin tooling remains available, but this server feature is deferred.
+The self-host server supports administrator approval and signed Devin Cloud enrollment. The acceptance results below are dated and identify the deployment that was tested.
 
 # Devin Cloud adapter status
 
@@ -145,12 +145,9 @@ records by provider. A live admin approval is short-lived, hashed at rest and
 claimable by one verified workload; subsequent sessions use the approved
 organization binding. Revocation is checked again at resource access.
 
-The connection registry uses the current `ApplicationState` PostgreSQL port.
-Devin and Replicas share the enrollment implementation but have separate
-provider tables, approval codes and owner namespaces. Existing Replicas table
-names, records and migration behavior stay intact. No Devin approval data has
-been released on the earlier object-store implementation, so it has no legacy
-data migration or object-store fallback.
+Devin connections and single-use approval claims use scoped PostgreSQL tables.
+The signed organization selects its approved workspace, and the signed session
+selects its capture owner. The Devin and Replicas owner namespaces are separate.
 
 The self-host adapter exposes the admin setup and signed-workload claim routes
 and routes admitted identities through the common CLI, capture, MCP and board
@@ -170,6 +167,12 @@ provider-specific setup page:
 opencrawl workload approve --provider devin --api https://opencrawl.example \
   --code-file /private/path/devin-approval
 ```
+
+To disconnect, a currently signed-in workspace administrator can send an authenticated
+`POST /api/cli/workloads/devin/disconnect` with `{"organizationId":"<Devin org_id>"}`.
+The operation revokes the binding for future requests from that Devin organization.
+Resuming enrollment requires a fresh administrator approval. Stored captures follow
+the workspace's ordinary retention and deletion settings.
 
 The command requires an explicit deployment and a new private file. It uses
 the saved human sign-in, rechecks current admin membership and prints no code.
