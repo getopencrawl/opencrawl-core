@@ -1,11 +1,39 @@
 import {InviteScreen} from '../src/setup/invite-view.tsx';
 import {test,expect} from 'bun:test';
+import {fileURLToPath} from 'node:url';
 import {render} from 'ink-testing-library';
 import {pressAndRead,renderReady,waitForFrame} from './setup-ink.ts';
 import {WelcomeScreen,HostingScreen,WorkspaceScreen,NoticeScreen,type Hosting,type WorkspaceAnswer} from '../src/setup/tui-view.tsx';
 
 const tick=()=>new Promise(resolve=>setTimeout(resolve,25));
 const down='\u001b[B',up='\u001b[A',right='\u001b[C',enter='\r';
+test.skipIf(process.platform==='win32')('the install bar keeps moving through rapid task updates',async()=>{
+ const module=fileURLToPath(new URL('../src/setup/tui.tsx',import.meta.url));
+ const script=`
+  import {createSetupUi} from ${JSON.stringify(module)};
+  const ui=createSetupUi();
+  try {
+   for(let task=0;task<20;task++){
+    ui.progress('Installing','Task '+task,undefined,true);
+    await Bun.sleep(40);
+   }
+  } finally { ui.close(); }
+ `;
+ const decoder=new TextDecoder();
+ let output='';
+ const child=Bun.spawn([process.execPath,'-e',script],{
+  env:{...process.env,FORCE_COLOR:'3',TERM:'xterm-256color'},
+  terminal:{cols:80,rows:24,data(_terminal,data){output+=decoder.decode(data,{stream:true});}}
+ });
+ try{
+  expect(await child.exited).toBe(0);
+  expect(output).toContain('Task 19');
+  const barFrames=output.split(/\r?\n/).filter(line=>line.includes('━'));
+  // The bar uses color to move its highlight. A remount on each task
+  // repeats the first colored line even while the task text changes.
+  expect(new Set(barFrames).size).toBeGreaterThan(3);
+ }finally{child.terminal?.close();}
+});
 test('welcome explains recording, sharing and privacy controls before Continue or Exit',async()=>{
  for(const key of ['continue','exit','escape','interrupt']){
   let proceed:boolean|undefined;
