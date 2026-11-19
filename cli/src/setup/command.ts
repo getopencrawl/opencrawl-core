@@ -285,7 +285,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const state=await applyClients(scope,selected,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,eligibility(selected).eligible,stopDaemon,onProgress);
   return completed(state);
  }
- const clients=setupInventory({api,platform,workload,...(claudeOnly?{client:'claude-code' as const}:{})});
+ const clients=setupInventory({api,platform,workload,saved:interactive&&action==='run'?admitted?.selections:undefined,...(claudeOnly?{client:'claude-code' as const}:{})});
  const legacyForward:string[]|undefined=sameOwner?(boundConfig.disabled?[]:boundConfig.harnesses??['claude-code','codex']):undefined;
  const selections=preserveRecordingOff(defaultSelections(clients,previous?.selections,legacyForward),scope);
  if(claudeOnly){
@@ -330,6 +330,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const options=await Promise.all(candidates.map(async client=>{
    const selected=selections.forward[client.id]===true;
    const needsReinstall=Boolean(previous?.pluginResults?.some(row=>row.client===client.id)||previous?.selections.plugins[client.id]||legacyForward?.includes(client.id)||hasSetupPluginFiles(api,client.id));
+   if(!newSetupClientAvailable(client.id,platform)&&!selected)return {id:client.id,label:client.label,selected:false,disabled:true,needsReinstall};
    if(await canInstall(client.id))return {id:client.id,label:client.label,selected,needsReinstall};
    if(!selected||!previous?.selections.forward[client.id])return needsReinstall?{id:client.id,label:client.label,selected:false,disabled:true,needsReinstall}:null;
    // A missing CLI cannot silently revoke an existing recording choice.
@@ -339,7 +340,11 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const selected=await choose({phase:1,title:'Record new sessions',description:'Choose local coding agents to record sessions from',noneLabel:'Do not record any sessions on this machine',items:options.filter(item=>item!==null)});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
   const selectedIds=new Set(selected.filter(row=>row.selected).map(row=>row.id));
-  for(const group of ['plugins','forward'] as const)selections[group]=Object.fromEntries([...new Set([...Object.keys(selections[group]),...clients.map(client=>client.id)])].map(id=>[id,selectedIds.has(id)]));
+  for(const {id} of candidates){
+   if(!newSetupClientAvailable(id,platform)&&!admitted?.selections.forward[id])continue;
+   selections.plugins[id]=selectedIds.has(id);
+   selections.forward[id]=selectedIds.has(id);
+  }
   selections.history=Object.fromEntries(Object.keys(selections.history).map(id=>[id,previous?.selections.history[id]===true]));
   assertCaptureSelections(selections,previous?.selections);
   if([...selectedIds].some(id=>!optionalFailures?.has(id))&&eligibility(selections).eligible){
@@ -348,13 +353,13 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    if(service===null)return {status:'cancelled',humanTasks:[]};
    captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';
   }
-  const capture=selectedIds.size>0;
+  const capture=chosen(selections,'plugins').length>0;
   if(capture){
    checkMode(selections);
    onProgress?.('Installing session capture tooling','Connecting the selected agents and enabling session recording.','installing');
   }else onProgress?.('Saving your choices','Turning off new-session recording for this workspace on this machine.');
   const state=await saveRecording();
-  const available=availableHistory(),historyClients=clients.filter(client=>client.history&&available.some(file=>file.harness===client.id));
+  const available=availableHistory(),historyClients=clients.filter(client=>newSetupClientAvailable(client.id,platform)&&client.history&&available.some(file=>file.harness===client.id));
   const selectedHistory=await choose({phase:2,title:'Import past sessions',description:historyBenefit+'\nChoose a one-time import from any listed agent, even if new-session recording is off.',noneLabel:'Skip history import',emptyMessage:'No supported local session history was found. Continuing without an import.',items:historyClients.map(client=>{const count=available.filter(file=>file.harness===client.id).length;return {id:client.id,label:client.label,detail:`${count} ${count===1?'file':'files'}`,selected:prospectiveHistory[client.id]===true};})});
   if(selectedHistory===null)return {status:'cancelled',historyDecision:'unchanged',humanTasks:[]};
   const selectedClients=selectedHistory.filter(row=>row.selected).map(row=>row.id);
