@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import {Button, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Section, Navigate} from '../index.ts';
+import {Button, LinkButton, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Section, Navigate} from '../index.ts';
 import {ConsoleApiError, externalTarget, failureMessage} from './errors.ts';
 import type {SourceCard, SourcesAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -8,15 +8,16 @@ import {ConnectorSetupDialog} from './connector-setup.tsx';
 import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connector-card.tsx';
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
+import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
 import {ReplicasHistoryDialog} from './replicas-history-dialog.tsx';
 
 // Pick up the first background snapshot promptly, then return to normal polling.
 const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
 
-export function SourcesPage({adapter, canConfigure = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean}) {
-  return canConfigure ? <AdminSourcesPage adapter={adapter}/> : <Navigate to="/" replace/>;
+export function SourcesPage({adapter, canConfigure = false, canSetUpReplicas = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean; canSetUpReplicas?: boolean}) {
+  return canConfigure ? <AdminSourcesPage adapter={adapter} canSetUpReplicas={canSetUpReplicas}/> : <Navigate to="/" replace/>;
 }
-function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
+function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;canSetUpReplicas:boolean}) {
   const canConfigure = true;
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<string | null>(null);
@@ -146,7 +147,7 @@ function AdminSourcesPage({adapter}:{adapter:SourcesAdapter}) {
       {showSearch && <div className="oc-source-toolbar"><div className="oc-source-search"><Icon name="search" size={16}/><Input type="search" aria-label="Search integrations" placeholder="Search integrations" value={query} onChange={event=>setQuery(event.target.value)}/></div></div>}
       {groups.filter(group=>group.items.length>0).map(group=><Section key={group.title} title={group.title} className="oc-source-section">
         <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
-          {group.items.map(source => source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+          {group.items.map(source => source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={canSetUpReplicas && ['syncing','synced','connected'].includes(source.state) ? <LinkButton to={replicasCapturePath}>Set up capture</LinkButton> : undefined} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}

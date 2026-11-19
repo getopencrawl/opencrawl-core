@@ -1,3 +1,4 @@
+import type {ReactNode} from 'react';
 import {Button, IntegrationCard, IntegrationLogo} from '../design/components.tsx';
 import {Icon} from '../design/icons.tsx';
 import {ago as relativeTime} from '../pages/usage-model.ts';
@@ -8,6 +9,7 @@ import {sourceConnected} from './connector-card-model.ts';
 export interface ConnectorCardProps {
   source: SourceCard;
   action?: string;
+  actionLink?: ReactNode;
   pending?: boolean;
   busy?: boolean;
   onAction: () => void;
@@ -33,7 +35,7 @@ export function SourceProgress({source}: {source: SourceCard}) {
 }
 
 /** Adapt imported measurements to the same card used by Usage's indexed content. */
-export function ConnectorCard({source, action, pending = false, busy = false, onAction}: ConnectorCardProps) {
+export function ConnectorCard({source, action, actionLink, pending = false, busy = false, onAction}: ConnectorCardProps) {
   const compact = !sourceConnected(source);
   const status = sourceStatus(source);
   if (!source.statusUnavailable && source.state === 'synced') status.label = 'Synced';
@@ -47,5 +49,5 @@ export function ConnectorCard({source, action, pending = false, busy = false, on
     note={showProgress ? <SourceProgress source={source}/> : undefined}
     emptyMessage={showProgress || source.state === 'syncing' ? undefined : source.synced === undefined ? 'Updating imported counts…' : 'No imported data yet.'}
     metadata={<span title={source.statusUnavailable && source.statusUpdatedAt ? `Last measured ${relativeTime(source.statusUpdatedAt)}` : undefined}>{!source.statusUnavailable && source.state === 'synced' && lastSynced ? `Synced ${relativeTime(lastSynced)}` : status.label}</span>}
-    action={action && <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}{!compact && source.state !== 'error' && <Icon name="chevron-right" size={14}/>}</Button>}/>;
+    action={actionLink ?? (action && <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}{!compact && source.state !== 'error' && <Icon name="chevron-right" size={14}/>}</Button>)}/>;
 }

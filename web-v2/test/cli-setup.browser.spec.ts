@@ -113,3 +113,22 @@ test('Setup and Integrations keep their sidebar positions before bootstrap and t
     expect(await integrations.boundingBox()).toEqual(position);
   } finally {release();}
 });
+
+test('a completed Replicas import leads to workspace capture setup',async({page})=>{
+  let issued=0;
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',state:'synced',auth:'api-key',scope:'team',total:1,synced:1}]}}));
+  await page.route('**/api/console/replicas/setup',route=>{
+    expect(route.request().method()).toBe('POST');issued++;
+    return route.fulfill({json:{prompt:'One-time fixture prompt for Replicas',expiresAt:new Date(Date.now()+1800000).toISOString()}});
+  });
+  await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Clipboard denied');}}}));
+  await page.goto('/sources?full-app');
+  await page.getByRole('article',{name:'Replicas'}).getByRole('link',{name:'Set up capture'}).click();
+  await expect(page).toHaveURL(/\/setup#replicas-capture$/);
+  await expect(page.getByRole('link',{name:'Replicas capture guide'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
+  expect(issued).toBe(0);
+  await page.getByRole('button',{name:'Install on Replicas'}).click();
+  await expect(page.getByRole('textbox',{name:'Prompt to copy'})).toHaveValue('One-time fixture prompt for Replicas');
+  expect(issued).toBe(1);
+});
