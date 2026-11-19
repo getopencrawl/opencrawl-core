@@ -262,6 +262,17 @@ test('reconnecting a pre-upgrade failed checkpoint succeeds even when its first 
   assert.equal(f.calls.filter(call=>call.pathname.endsWith('history')).length,0);
   assert.equal((await advance(f.service,resumed.id)).blocked,1);assert.equal(await f.service.advance(job(id)),true);
 });
+test('temporary failure of the initial catalog schedules the import with its verified key',async t=>{
+  let clock=Date.now(),unavailable=true;const jobs=[];
+  const f=await fixture(t,{now:()=>clock,schedule:async job=>jobs.push(job),answer:url=>{
+    if(url.pathname.endsWith('conversations')&&unavailable)return new Response(null,{status:503});
+  }});
+  const pending=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  assert.equal(pending.phase,'importing');assert.deepEqual(jobs,[job(pending.id)]);assert.match(pending.error,/catalog.*HTTP 503/);
+  clock=Date.parse(pending.retryAt);unavailable=false;
+  assert.equal((await advance(f.reopen(),pending.id)).total,1);
+  await advance(f.service,pending.id);assert.equal((await advance(f.service,pending.id)).phase,'complete');
+});
 test('rate limit respects Retry-After; oversized pages shrink in place without losing the key',async t=>{
   let clock=Date.now(),count=0;
   const f=await fixture(t,{now:()=>clock,answer:url=>{

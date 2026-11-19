@@ -19,7 +19,7 @@ export interface ReplicasJob {tenantId:string;id:string}
 interface Checkpoint {before:string|null;historyCursors:string[];occurrences:Record<string,number>;pageLimit?:number;chatAttempts?:number}
 interface State extends ReplicasImportStatus,Checkpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
-  retryAttempts?:number;recentIssues?:ImportIssue[];
+  initialCatalog?:boolean;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 const emptyCheckpoint=():Checkpoint=>({before:null,historyCursors:[],occurrences:{},pageLimit:100,chatAttempts:0});
 export type ReplicasImport=ReturnType<typeof createReplicasImport>;
@@ -89,11 +89,14 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         const history=await api.history(chat,state.before,state.pageLimit??100);
         operation='ingest';
         await savePage(principal,state,chat,history);
-      }else if(state.next){
-        const hash=replicasDigest(state.next);
-        if(state.listCursors.includes(hash))throw new ReplicasPageError('cursor','Replicas repeated a catalog cursor.');
+      }else if(state.initialCatalog||state.next){
+        const hash=state.next?replicasDigest(state.next):undefined;
+        if(hash&&state.listCursors.includes(hash))throw new ReplicasPageError('cursor','Replicas repeated a catalog cursor.');
         const page=await api.conversations(state.next);
-        state.queue=page.conversations;state.next=page.next_cursor;state.listCursors.push(hash);
+        if(state.initialCatalog)state.total=page.total;
+        delete state.initialCatalog;
+        state.queue=page.conversations;state.next=page.next_cursor;
+        if(hash)state.listCursors.push(hash);
       }
       if(state.retryAttempts||recoveredAttempt){
         console.info(JSON.stringify({event:'replicas.import.recovered',tenantId:principal.tenantId,importId:state.id,
@@ -104,26 +107,29 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       return;
     }catch(cause){
       let error=cause, credentialRejected=false;
+      let identityCheck:ImportIssue['identityCheck'];
       if(authDenied(error)){
         try{
           const identity=await api.identity();
           credentialRejected=identity.caller!=='organization_api_key'||identity.organization.id!==state.organization.id;
+          identityCheck=credentialRejected?'identity_mismatch':'verified';
         }catch(check){
           credentialRejected=check instanceof ReplicasProviderError&&check.status===401;
+          identityCheck=credentialRejected?'rejected':'unavailable';
           // Verification itself may be unavailable. Retain the key and retry the same page.
           error=check;operation='identity';
         }
       }
       const fields=issueFor(error,operation);
-      const tooLarge=error instanceof ReplicasPageError&&error.reason==='page_size'||(fields.httpStatus===413||fields.internalStatus===413);
+      const tooLarge=fields.operation!=='identity'&&(error instanceof ReplicasPageError&&error.reason==='page_size'||(fields.httpStatus===413||fields.internalStatus===413));
       const limit=state.pageLimit??100;
-      const localToChat=!!chat&&(error instanceof ReplicasPageError||tooLarge||fields.reason==='record_rejected'||
+      const localToChat=!!chat&&fields.operation!=='identity'&&(error instanceof ReplicasPageError||tooLarge||fields.reason==='record_rejected'||
         fields.operation==='history'&&error instanceof ReplicasProviderError&&![408,425,429].includes(error.status));
       const decision=credentialRejected?'reconnect':chat&&tooLarge&&limit>1?'resize':localToChat?'defer':'retry';
       const attempt=(decision==='defer'?state.chatAttempts??0:state.retryAttempts??0)+1;
       const wait=retryDelay(attempt,decision==='defer'?60_000:2_000,error instanceof ReplicasProviderError?error.retryAfterMs:0);
       const retryAt=new Date(now()+wait).toISOString();
-      const issue:ImportIssue={...fields,decision,attempt,elapsedMs:Math.max(0,now()-started),
+      const issue:ImportIssue={...fields,decision,attempt,identityCheck,elapsedMs:Math.max(0,now()-started),
         ...(error!==cause&&cause instanceof ReplicasProviderError?{originalHttpStatus:cause.status,originalOperation:cause.operation,originalRequestId:cause.requestId}:{}),at:new Date(now()).toISOString(),
         ...(decision==='defer'||decision==='retry'?{retryAt}:{}),
         ...(chat?{workspaceId:chat.workspace_id,chatId:chat.chat_id,pageLimit:limit}:{}),
@@ -168,13 +174,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         }
         const resume=state&&['failed','importing','disconnected'].includes(state.phase)?state:undefined;
         if(resume&&resume.organization.id!==identity.organization.id)throw replicasError('Use the Replicas organization that owns the saved import.',409);
-        if(resume)state=resume;
-        else{
-          const page=await api.conversations();
-          state={id:'',organization:identity.organization,phase:'importing',total:page.total,processed:0,imported:0,events:0,turns:0,pages:0,updatedAt:'',queue:page.conversations,next:page.next_cursor,listCursors:[],completedSessions:[],...emptyCheckpoint()};
-        }
+        state=resume??{id:'',organization:identity.organization,phase:'importing',total:0,processed:0,imported:0,events:0,turns:0,pages:0,
+          updatedAt:'',queue:[],initialCatalog:true,next:null,listCursors:[],completedSessions:[],...emptyCheckpoint()};
         state.id=randomUUID();state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
-        state.phase=state.queue.length||state.next||state.blocked?'importing':'complete';
+        state.phase=state.queue.length||state.initialCatalog||state.next||state.blocked?'importing':'complete';
+        if(!resume)await step(client,principal,state,api);
         credential=state.phase==='importing'?envelope.seal(path,Buffer.from(apiKey)):null;
       }else{
         if(!state||state.id!==input.id||state.phase!=='importing')return null;
@@ -218,6 +222,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         }
         throw error;
       }
+      if(input.action==='connect'&&result?.phase==='failed')throw replicasError(result.error??'Replicas rejected this credential.');
       if(!result)throw replicasError('This import has already stopped or changed.',409);
       return result;
     },

@@ -4,6 +4,7 @@ import {ReplicasPageError,ReplicasProviderError,type ReplicasOperation} from './
 export type ImportOperation=ReplicasOperation|'ingest';
 export type ImportIssue={
   at:string;operation:ImportOperation;reason:string;decision:'retry'|'defer'|'resize'|'reconnect';
+  identityCheck?:'verified'|'identity_mismatch'|'rejected'|'unavailable';
   attempt:number;elapsedMs:number;originalHttpStatus?:number;originalOperation?:ReplicasOperation;originalRequestId?:string;httpStatus?:number;internalStatus?:number;requestId?:string;retryAt?:string;
   workspaceId?:string;chatId?:string;cursorHash?:string;pageLimit?:number;
 };

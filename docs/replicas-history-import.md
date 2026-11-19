@@ -1,6 +1,6 @@
 # Direct Replicas history import
 
-In **Integrations → Replicas → Connect**, an OpenCrawl admin enters an organization API key from **Replicas Settings → API Keys**. OpenCrawl verifies the organization identity and inventory, then confirms the connection once Temporal accepts the job. The worker checks each chat independently. An empty inventory completes immediately.
+In **Integrations → Replicas → Connect**, an OpenCrawl admin enters an organization API key from **Replicas Settings → API Keys**. OpenCrawl verifies the organization identity and inventory, then confirms the connection once Temporal accepts the job. The worker checks each chat independently. A temporary inventory failure schedules a background retry with the verified key. An empty inventory completes immediately.
 
 ## Complete retained session history
 
