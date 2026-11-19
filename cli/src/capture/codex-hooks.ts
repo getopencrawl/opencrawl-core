@@ -10,8 +10,9 @@ const owned=new Set(['OpenCrawl session capture','OpenCrawl session startup']);
 export type CodexHookReview={state:'not_applicable'|'unknown'|'observed';total:number;pending:number|null;disabled:number|null};
 type Snapshot={review:CodexHookReview;file:string;bytes:string;config:string;keys:Map<string,string>;binding?:string;pluginId?:string};
 function globalSnapshot(root:string):Snapshot {
- const file=join(root,'hooks.json'),keys=new Map<string,string>();let bytes='',config='';
+ const keys=new Map<string,string>();let file=join(root,'hooks.json'),bytes='',config='';
  try {
+  file=realpathSync(file);
   bytes=readFileSync(file,'utf8');
   const value=JSON.parse(bytes) as {hooks?:Record<string,unknown>};
   for(const [event,groups] of Object.entries(value.hooks??{}))if(Array.isArray(groups))groups.forEach((group:unknown,g:number)=>{
@@ -105,8 +106,13 @@ export async function inspectCodexHooks(root:string,query=nativeCodexHooks):Prom
   const hooks:Record<string,unknown>[]=[];
   for(const entry of value.data){if(!entry||typeof entry!=='object'||!Array.isArray(entry.hooks)||!Array.isArray(entry.errors)||entry.errors.length)return before.review;
    for(const hook of entry.hooks)if(hook&&typeof hook==='object'&&typeof hook.sourcePath==='string'&&(before.pluginId||owned.has(hook.statusMessage))){
-    const matches=before.pluginId?hook.source==='plugin'&&hook.pluginId===before.pluginId&&realpathSync(hook.sourcePath)===realpathSync(before.file):resolve(hook.sourcePath)===resolve(before.file);
-    if(matches)hooks.push(hook);
+    if(before.pluginId){
+     if(hook.source==='plugin'&&hook.pluginId===before.pluginId&&realpathSync(hook.sourcePath)===realpathSync(before.file))hooks.push(hook);
+    }else if(hook.sourcePath===before.file||resolve(hook.sourcePath)===resolve(root,'hooks.json')){
+     // Codex can report the physical path even when CODEX_HOME uses a symlink.
+     if(typeof hook.key!=='string'||!hook.key.startsWith(hook.sourcePath+':'))return before.review;
+     hooks.push({...hook,key:before.file+hook.key.slice(hook.sourcePath.length)});
+    }
    }
   }
   if(!before.keys.size||hooks.length!==before.keys.size||new Set(hooks.map(h=>h.key)).size!==before.keys.size||hooks.some(h=>typeof h.statusMessage!=='string'||before.keys.get(String(h.key))!==h.statusMessage||typeof h.enabled!=='boolean'||!['managed','trusted','untrusted','modified'].includes(String(h.trustStatus))))return before.review;

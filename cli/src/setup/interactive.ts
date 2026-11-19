@@ -4,7 +4,6 @@ import {filesystemError} from '../filesystem.ts';
 import {offerInvitations} from './invites.ts';
 import {nativeSetupPrompt,setupCommand} from './command.ts';
 import {launchClaudeSetup} from './claude-launch.ts';
-import {launchCodexSetup} from './codex-launch.ts';
 import {launchAntigravitySetup} from './antigravity-launch.ts';
 import type {SetupUi} from './tui.tsx';
 import {labels,type PluginClient} from './plugins.ts';
@@ -27,30 +26,20 @@ async function nativeCommand(command:string,args:string[],ui:SetupUi,title?:stri
  return nativeLogin(command,args,ui,title);
 }
 
-async function reviewCodexHooks(executable:string,ui:SetupUi,native:typeof nativeCommand,inspect:typeof currentCodexReview){
- let surface:'cli'|'desktop'|undefined;
- for(;;){
-  const review=await inspect();
-  ui.signal.throwIfAborted();
-  if(review.state==='observed'&&review.total>0&&review.pending===0&&review.disabled===0)return surface??'cli';
-  const choice=await ui.action({
-   title:'Review Codex hooks',
-   description:surface?'Waiting for Codex to confirm the OpenCrawl hooks are enabled.':'Review the OpenCrawl hooks for session recording.',
-   details:[
-    'In Codex Desktop, open Settings → Hooks and review the OpenCrawl entries. Then return here and choose Continue in Desktop.',
-    'In Codex CLI, review the entries with /hooks, then type /quit to return here.'
-   ],
-   actions:[{id:'desktop',label:'Continue in Desktop'},{id:'review',label:'Open Codex CLI'},{id:'later',label:'Finish later'}]
-  });
-  if(choice!=='desktop'&&choice!=='review')return choice==='later'?0:2;
-  surface=choice==='desktop'?'desktop':'cli';
-  if(surface==='cli'&&await native(executable,[],ui,'Review Codex hooks')!==0)return 2;
-  ui.signal.throwIfAborted();
- }
+function hookApprovalStatus(review:CodexHookReview):string|null{
+ if(review.state==='not_applicable')return 'No OpenCrawl hooks found. Checking again automatically.';
+ if(review.state!=='observed'||!review.total||review.pending===null||review.disabled===null)
+  return 'Couldn’t read hook approval from Codex. Retrying automatically.';
+ const {total,pending,disabled}=review;
+ if(pending===0&&disabled===0)return null;
+ const counts=[`${total-pending-disabled} of ${total} approved`];
+ if(pending)counts.push(pending+' pending');
+ if(disabled)counts.push(disabled+' disabled');
+ return counts.join(' · ')+'\nChecking again automatically.';
 }
 
 async function connectNativeClient(
- client:NativeClient, executable:string, api:string, ui:SetupUi,
+ client:Exclude<NativeClient,'codex'>, executable:string, api:string, ui:SetupUi,
  needsLogin:boolean, retryAntigravity:boolean, native:typeof nativeCommand, findConnection:typeof findSetupConnection
 ):Promise<number|undefined>{
  const label=labels[client];
@@ -69,25 +58,15 @@ async function connectNativeClient(
   const code=await launchAntigravitySetup(executable,connection.name,prompt,needsLogin,ui,execute);
   if(code!==0||ui.signal.aborted)return code||130;
  }else{
-  const codex=client==='codex';
-  const handoff=codex?{
-   description:needsLogin?'Press Enter to open the sign-in page in your browser.':'Press Enter to open Codex and check the connection.',
-   details:[...(needsLogin?['Approve access, then return to this terminal.','Codex will open and check the connection for you.','']:[]),'When Codex says it’s connected, type /quit to return to setup.'],
-   button:needsLogin?'Open browser':'Open Codex',
-  }:{
+  const choice=await ui.action({
+   title:'Connect '+label+' to OpenCrawl',
    description:needsLogin?'Approve access in your browser. A Claude Code session will then open in this terminal.':'A Claude Code session will open in this terminal.',
    details:['OpenCrawl will pause while Claude checks the connection.','When Claude says it’s connected, press Ctrl+C to close the session and continue setup.'],
-   button:needsLogin?'Sign in and open Claude Code':'Open Claude Code',
-  };
-  const choice=await ui.action({
-   title:'Connect '+label+' to OpenCrawl',description:handoff.description,details:handoff.details,
-   actions:[{id:'connect',label:handoff.button},{id:'later',label:'Finish later'}]
+   actions:[{id:'connect',label:needsLogin?'Sign in and open Claude Code':'Open Claude Code'},{id:'later',label:'Finish later'}]
   });
   if(choice!=='connect')return choice==='later'?0:2;
-  const options={server:connection.name,prompt,needsLogin};
   const notify=(message:string)=>ui.progress('Continue in '+label,message);
-  const code=codex?await launchCodexSetup(executable,options,execute,notify)
-   :await launchClaudeSetup(executable,{...options,returnToSetup:true},execute,notify);
+  const code=await launchClaudeSetup(executable,{server:connection.name,prompt,needsLogin,returnToSetup:true},execute,notify);
   if(ui.signal.aborted)return 130;
   if(code!==0)throw new CliError('NATIVE_SETUP_PENDING',label+' did not finish connecting. Retry to use your saved choices.',code);
  }
@@ -159,9 +138,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
      let displayedInstruction:string|undefined;
      const reconciled=new Set<string>();
      let lastLaunched:string|undefined;
-     let useCodexDesktop=false;
+     let codexHooksApproved=false;
      ui.progress('Checking setup','Waiting for native connection and session verification.');
      for(;;){
+      ui.signal.throwIfAborted();
       let next=await setup('wait',api,{json:true},{interactive:false,finishOnboarding:true});
       if(ui.signal.aborted)return 130;
       if(next&&'nextAction' in next&&next.nextAction?.kind==='repair_worker'){
@@ -199,14 +179,26 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       const binary=client==='claude-code'?'claude':client==='codex'?'codex':client==='antigravity'?'agy':undefined;
       const executable=binary&&which(binary);
       const recordsCodex=client==='codex'&&next&&'selections' in next&&next.selections?.forward.codex;
-      if(step?.kind==='native_tool'&&recordsCodex&&executable&&!useCodexDesktop){
-       const surface=await reviewCodexHooks(executable,ui,native,inspectCodex);
-       if(typeof surface==='number')return surface;
-       useCodexDesktop=surface==='desktop';
+      if(step?.kind==='native_tool'&&recordsCodex&&executable&&!codexHooksApproved){
+       const showReview=(status:string)=>{
+        if(status!==displayedInstruction)ui.progress('Review Codex hooks','Approve the OpenCrawl session recording hooks in either client.',[
+         'Codex Desktop    Settings → Hooks',
+         'Codex CLI        /hooks',
+        ],false,status);
+        displayedInstruction=status;
+       };
+       if(displayedInstruction===undefined)showReview('Checking hook approval…');
+       const status=hookApprovalStatus(await inspectCodex());
+       ui.signal.throwIfAborted();
+       if(status){
+        showReview(status);
+        await pause(ui.signal);
+        continue;
+       }
+       codexHooksApproved=true;
       }
-      const desktop=client==='codex'&&useCodexDesktop;
-      const label=desktop?'Codex Desktop':labels[client as PluginClient]??client;
-      if(step?.kind==='native_tool'&&executable&&!desktop&&(client==='claude-code'||client==='codex'||client==='antigravity')){
+      const label=labels[client as PluginClient]??client;
+      if(step?.kind==='native_tool'&&executable&&(client==='claude-code'||client==='antigravity')){
        displayedInstruction=undefined;
        const code=await connectNativeClient(client,executable,api,ui,step.requiresSignIn,lastLaunched===client,native,findConnection);
        if(code!==undefined)return code;
@@ -219,8 +211,12 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        title='Open '+label;
        description='Start a new chat in '+label+' and send this message.';
        details=['Finish OpenCrawl setup for '+api+' using my saved choices.','','Keep this terminal open. Setup will continue when '+label+' connects.'];
-       if(recordsCodex&&!desktop)
-        details.push('Review OpenCrawl hooks in Codex Desktop under Settings → Hooks, or in Codex CLI with /hooks.');
+       if(client==='codex'){
+        title='Verify the Codex connection';
+        if(codexHooksApproved)description='Hooks approved. Start a new chat in Codex and send this message.';
+        if(step.kind==='native_tool'&&step.requiresSignIn)details.push('If Codex asks you to sign in to OpenCrawl, approve the connection.');
+        if(recordsCodex&&!executable)details.push('Local hook status is unavailable without the Codex CLI. Review the hooks in Desktop under Settings → Hooks.');
+       }
       }else if(label&&step?.kind==='wait_capture'){
        title='Checking '+label;
        description='OpenCrawl is checking that it can find the new session. You can leave this terminal open.';

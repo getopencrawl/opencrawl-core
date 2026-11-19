@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {mkdtempSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,readFileSync,rmSync,existsSync,realpathSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {inspectCodexHooks,localCodexHookReview,nativeCodexHooks,codexHookReviewMessage} from '../src/capture/codex-hooks.ts';
@@ -17,6 +17,14 @@ test('native review counts changed startup and capture hooks; stale hashes never
   const before=f.unchanged();expect(localCodexHookReview(f.root)).toMatchObject({state:'unknown',total:2,pending:null});
   const review=await inspectCodexHooks(f.root,async()=>({data:[{errors:[],hooks:[{...f.hooks[0],trustStatus:'modified'},f.hooks[1]]}]}));
   expect(review).toEqual({state:'observed',total:2,pending:2,disabled:0});expect(codexHookReviewMessage(review)).toContain('2 OpenCrawl hooks');expect(f.unchanged()).toEqual(before);
+ }finally{f.close();}
+});
+test('a linked Codex home recognizes the native physical hook path and key',async()=>{
+ const f=fixture(),alias=join(f.root,'linked-home');
+ try{
+  symlinkSync(f.root,alias,process.platform==='win32'?'junction':'dir');
+  const file=realpathSync(f.file),hooks=f.hooks.map(h=>({...h,sourcePath:file,key:file+h.key.slice(f.file.length)}));
+  expect(await inspectCodexHooks(alias,async()=>({data:[{errors:[],hooks}]}))).toEqual({state:'observed',total:2,pending:2,disabled:0});
  }finally{f.close();}
 });
 test('trusted current definitions and disabled opt-outs remain distinct',async()=>{

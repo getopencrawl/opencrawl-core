@@ -62,23 +62,24 @@ export function WorkspaceScreen({onComplete}:{onComplete:(answer:WorkspaceAnswer
 }
 
 export type SetupAction={id:string;label:string};
-export type Notice={title:string;description:string;details?:string[];actions?:SetupAction[];error?:boolean;animate?:boolean;onAction?:(id:string|null)=>void;onCancel?:()=>void};
+export type Notice={title:string;description:string;details?:string[];status?:string;actions?:SetupAction[];error?:boolean;animate?:boolean;onAction?:(id:string|null)=>void;onCancel?:()=>void};
 function InstallAnimation(){
  const [frame,setFrame]=useState(0);
  useEffect(()=>{const timer=setInterval(()=>setFrame(current=>(current+1)%28),100);return()=>clearInterval(timer);},[]);
  const trail=[color.accent,color.face,color.quiet];
  return <Box marginTop={1}><Text>{Array.from({length:24},(_,index)=>{const distance=frame-index;return <Text key={index} color={distance===0?'#f7f5f6':distance>0&&distance<=3?trail[distance-1]:'#2d2835'}>━</Text>;})}</Text></Box>;
 }
-export function NoticeScreen({title,description,details=[],actions=[],error=false,animate=false,onAction,onCancel}:Notice){
+export function NoticeScreen({title,description,details=[],status,actions=[],error=false,animate=false,onAction,onCancel}:Notice){
  const {focusNext,focusPrevious}=useFocusManager();
  useInput((input,key)=>{
   if(key.escape||(key.ctrl&&input==='c')){if(onAction)onAction(null);else onCancel?.();return;}
   if(key.rightArrow||key.downArrow)focusNext();
   if(key.leftArrow||key.upArrow)focusPrevious();
  });
- return <SetupFrame title={title} description={description} footer={actions.length>1?['← → Move','Enter Select','Esc Close']:actions.length===1?[`Enter ${actions[0].label}`]:onCancel?['Esc Cancel']:[]}>
+ return <SetupFrame title={title} description={description} footer={actions.length>1?['← → Move','Enter Select','Esc Close']:actions.length===1?[`Enter ${actions[0].label}`]:onCancel?[status?'Esc Exit setup · Choices saved':'Esc Cancel']:[]}>
   {animate&&<InstallAnimation/>}
   {details.length>0&&<Box flexDirection="column" marginTop={1}>{details.map((line,index)=><Text key={index} color={error?color.error:undefined} wrap="wrap">{line}</Text>)}</Box>}
+  {status&&<Box marginTop={1}><Text color={color.accent} wrap="wrap">{status}</Text></Box>}
   {actions.length>0&&<Box marginTop={1} gap={2} flexWrap="wrap">{actions.map((action,index)=><SetupButton key={action.id} {...action} autoFocus={index===0} onPress={()=>onAction?.(action.id)}/>)}</Box>}
  </SetupFrame>;
 }
