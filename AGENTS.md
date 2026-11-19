@@ -67,14 +67,8 @@ Do not introduce per-feature index routing.
 
 ## React web console
 
-`web-v2/` owns the current TypeScript React console, shared design primitives,
-router, and preserved onboarding. Read `web-v2/AGENTS.md` before frontend changes.
-New pages use AppShell and the shared route registry; do not fork workspace
-navigation, form controls, icons, tokens, or CSS. Browser UI belongs in web-v2;
-do not retain parallel HTML renderers or superseded browser scripts.
-Run its strict typecheck, architecture tests, build, and browser regression suite
-alongside core checks. The hosted shell consumes the published source exports;
-its commercial and hosted tenancy extensions must reuse the same design system.
+For console UI changes, start with [web-v2/AGENTS.md](web-v2/AGENTS.md).
+Core owns the React console and shared components used by both deployments.
 
 ## Backend TypeScript
 

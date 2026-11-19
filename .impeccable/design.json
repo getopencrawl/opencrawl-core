@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-15T23:25:57.478066+00:00",
+  "generatedAt": "2026-11-19T07:40:20.021608+00:00",
   "title": "Design System: OpenCrawl Night",
   "extensions": {
     "typographyMeta": {
@@ -77,59 +77,7 @@
         "name": "focused-and-stacked-content",
         "value": "600px"
       }
-    ],
-    "pageLayout": {
-      "component": "Page",
-      "heading": {
-        "desktop": "32px",
-        "compact": "28px",
-        "weight": 600,
-        "lineHeight": 1.25
-      },
-      "description": {
-        "size": "15px",
-        "gap": "8px",
-        "measure": "75ch"
-      },
-      "headerGap": "32px",
-      "accountAvatar": "Shared 32px circular Avatar uses the personal identity image, with initials during loading or failure and no-referrer requests. Account name remains the accessible identity.",
-      "widths": {
-        "page": "1200px",
-        "form": "640px"
-      },
-      "alignment": "All workspace destinations share one full-width page grid. Team and hosted Billing embed inside AppShell's shared Settings Page, below its text-only route navigation, without another page heading. The admin Organization name panel sits above the existing Members card with the same management-panel padding. Prose and individual form rows carry their own readable measure.",
-      "insets": {
-        "desktop": "48px 32px 64px",
-        "compact": "32px 16px 40px"
-      },
-      "destinations": [
-        "Usage",
-        "Sessions",
-        "Memories",
-        "Integrations",
-        "Message board",
-        "Search playground",
-        "Agent setup",
-        "Settings / Team",
-        "Settings / Billing (hosted)"
-      ],
-      "teamAlignment": {
-        "memberColumns": [
-          "40px avatar",
-          "flexible identity",
-          "{components.member-role.width}",
-          "{components.member-action.width}"
-        ],
-        "reservedActionColumn": "Every row, including read-only and Pending rows, reserves the action column.",
-        "roleAlignment": "Read-only role text aligns with native select text; the Pending badge starts in the same role column.",
-        "compactRows": "At management-container widths of 600px and below, every role and action moves beneath its identity, with 12px row padding, a 4px identity-to-role gap and 44px interactive targets.",
-        "contentMeasure": "Roster and row separators fill the card; organization and invitation form rows use the existing 640px form measure.",
-        "identityAndLabels": "Show plain You text beside the current member name; invitations use the shared Field with a visible Email address label.",
-        "forms": "Organization-name and invitation forms share oc-management-form and the existing form measure so input and button boundaries align.",
-        "formActionWidth": "{components.management-form-action.width}",
-        "compactForms": "At container widths of 400px and below, both forms stack identically."
-      }
-    }
+    ]
   },
   "components": [
     {
@@ -181,22 +129,6 @@
       "css": ".ds-field{display:grid;gap:var(--space-2);font-family:var(--font-sans);color:var(--text);}.ds-field>label{font-size:var(--text-sm);font-weight:500;}.ds-field>span{font-size:var(--text-sm);color:var(--muted);}.ds-input{width:100%;min-width:0;min-height:var(--control-height);padding:var(--space-2) var(--space-3);border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:var(--text-ui);line-height:var(--leading-ui);caret-color:var(--accent);}.ds-input::placeholder{color:var(--quiet);opacity:1;}.ds-input:focus-visible { outline: var(--console-focus-ring); outline-offset: var(--console-focus-offset); }.ds-input[aria-invalid=\"true\"]{border-color:var(--danger);}.ds-input:disabled{background:var(--surface-subtle);color:var(--quiet);cursor:not-allowed;}@media(max-width:800px){.ds-input{min-height:44px;font-size:16px;}}@media(pointer:coarse){.ds-input{min-height:44px;}}"
     },
     {
-      "name": "Settings Navigation",
-      "kind": "nav",
-      "refersTo": "settings-navigation-link",
-      "description": "Text-only Team and hosted Billing route links; Team is the default section.",
-      "html": "<nav class=\"ds-settings-nav\" aria-label=\"Settings\"><a class=\"ds-settings-link\" href=\"/settings/team\" aria-current=\"page\">Team</a><a class=\"ds-settings-link\" href=\"/settings/billing\">Billing</a></nav>",
-      "css": ".ds-settings-nav{display:flex;gap:var(--space-6);border-bottom:1px solid var(--line);margin-bottom:var(--space-8);overflow-x:auto;font-family:var(--font-sans);}.ds-settings-link{display:inline-flex;flex-shrink:0;align-items:center;min-height:var(--control-height);padding:var(--space-3) var(--space-1);border-bottom:2px solid transparent;color:var(--muted);text-decoration:none;font-size:var(--text-ui);font-weight:500;}.ds-settings-link:hover{color:var(--text);}.ds-settings-link[aria-current=\"page\"]{color:var(--accent);border-bottom-color:var(--accent);}.ds-settings-link:focus-visible{outline:var(--console-focus-ring);outline-offset:calc(-1 * var(--console-focus-offset));}"
-    },
-    {
-      "name": "Board Sidebar Navigation",
-      "kind": "nav",
-      "refersTo": "board-navigation-item",
-      "description": "AppShell keeps Brand, account footer and mobile drawer while its navigation slot shows a quiet Back control, All topics, and topic links. Back restores workspace navigation.",
-      "html": "<nav class=\"ds-board-nav\" aria-label=\"Message board topics\"><a class=\"ds-board-back\" href=\"/diagnostics?nav=workspace\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M19 12H5m7 7-7-7 7-7\"/></svg><span>Back</span></a><a class=\"ds-board-link\" href=\"/diagnostics?view=board\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z\"/></svg><span>All topics</span></a><a class=\"ds-board-link\" href=\"/diagnostics?view=board&amp;topic=engineering\"><span class=\"ds-board-mark\" aria-hidden=\"true\">#</span><span>engineering</span></a></nav>",
-      "css": ".ds-board-nav{display:grid;gap:var(--space-1);font-family:var(--font-sans);font-size:var(--text-ui);line-height:var(--leading-ui);}.ds-board-back{width: 100%; justify-content: flex-start; padding-inline: 0;color: var(--muted);justify-self:start;margin-bottom:var(--space-4);}.ds-board-back:hover{background:var(--surface-subtle);color:var(--text);}.ds-board-link{display: grid; grid-template-columns: var(--console-nav-leading) minmax(0, 1fr); align-items: center; gap: var(--space-3); min-height: 44px; padding: var(--space-2); border-radius: var(--radius-control); color: var(--muted); text-decoration: none; transition: background var(--motion-fast), color var(--motion-fast);}.ds-board-link:hover{color: var(--text); background: var(--surface-subtle);}.ds-board-link[aria-current=\"page\"]{color: var(--accent); background: var(--wash);}.ds-board-link>svg{justify-self:center;}.ds-board-link>span{min-width:0;overflow-wrap:anywhere;}.ds-board-mark{justify-self:center;font-size:var(--text-heading);line-height:1;color:var(--quiet);}.ds-board-back:focus-visible,.ds-board-link:focus-visible{outline:var(--console-focus-ring);outline-offset:var(--console-focus-offset);}"
-    },
-    {
       "name": "Status Badge",
       "kind": "chip",
       "refersTo": "badge",
@@ -219,59 +151,17 @@
       "description": "Static preview of the native modal surface; the React Dialog supplies modal behavior.",
       "html": "<section class=\"ds-dialog\" role=\"region\" aria-labelledby=\"ds-dialog-title\"><h2 id=\"ds-dialog-title\">Remove source</h2><p>Review the source and its imported content before removing it.</p></section>",
       "css": ".ds-dialog{width:min(var(--console-dialog-width),calc(100vw - var(--space-8)));max-height:calc(100dvh - var(--space-8));padding:var(--space-6);border:0;border-radius:var(--radius-panel);background:var(--surface-raised);color:var(--text);box-shadow:var(--shadow-dialog);font-family:var(--font-sans);font-size:var(--text-ui);line-height:var(--leading-ui);}.ds-dialog h2{margin:0 0 var(--space-3);font-size:var(--text-heading);font-weight:600;letter-spacing:var(--tracking-heading);color:var(--strong);}.ds-dialog p{margin:0;color:var(--muted);}"
-    },
-    {
-      "name": "Board Message Group",
-      "kind": "custom",
-      "refersTo": "board-message",
-      "description": "One channel line above the shared identity-colored author/time header in All topics. Individual full-text articles have accessible labels; permalink IDs remain in text flow. Topic views omit the channel line.",
-      "html": "<div class=\"ds-board-group\"><header class=\"ds-board-header\"><a class=\"ds-board-topic\" href=\"/diagnostics?view=board&amp;topic=engineering\"># engineering</a><div class=\"ds-board-author\"><h3 class=\"ds-board-identity\">agent:example</h3><time>1:16 PM</time></div></header><article class=\"ds-board-post\" tabindex=\"-1\" aria-label=\"agent:example, 1:16 PM\"><a class=\"ds-board-id\" href=\"/diagnostics?view=board&amp;topic=engineering&amp;message=42\" aria-label=\"Permalink to message #42\">#42</a><p class=\"ds-board-body\">Agent-authored message text remains complete and wraps naturally.</p></article></div>",
-      "css": ".ds-board-group{font-family:var(--font-sans);position:relative;margin-top:var(--space-3);}.ds-board-header{display:grid;gap:var(--space-1);padding:var(--space-2) var(--space-4);}.ds-board-author{display:flex;align-items:baseline;gap:var(--space-2);flex-wrap:wrap;}.ds-board-header h3{margin:0;font-size:var(--text-ui);font-weight:700;overflow-wrap:anywhere;}.ds-board-identity{color:var(--agent-identity-29);}.ds-board-header time{font-size:var(--text-xs);color:var(--quiet);white-space:nowrap;font-variant-numeric:tabular-nums;}.ds-board-topic{justify-self:start;font-size:var(--text-xs);color:var(--muted);text-decoration:none;overflow-wrap:anywhere;}.ds-board-topic:hover{color:var(--accent);text-decoration:underline;}.ds-board-post{position:relative;padding:0 var(--space-4) var(--space-2);scroll-margin:calc(var(--space-12) * 2);border-radius:var(--radius-control);}.ds-board-post:hover{background:var(--surface);}.ds-board-id{float:right;margin-left:var(--space-2);font-size:var(--text-xs);font-family:var(--font-mono);color:var(--quiet);text-decoration:none;opacity:0;}.ds-board-post:hover .ds-board-id,.ds-board-post:focus-within .ds-board-id{opacity:1;}.ds-board-id:hover{color:var(--accent);}.ds-board-body{margin:0;font-size:var(--text-body);line-height:var(--leading-ui);max-width:75ch;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);}.ds-board-post:focus-visible,.ds-board-topic:focus-visible,.ds-board-id:focus-visible{outline:var(--console-focus-ring);outline-offset:var(--console-focus-offset);}@media(max-width:800px){.ds-board-post,.ds-board-header{padding-inline:var(--space-2)}.ds-board-id{opacity:1}}@media(pointer:coarse){.ds-board-id{opacity:1}}"
     }
   ],
   "narrative": {
     "northStar": "Night",
-    "overview": "Night is the getopencrawl.com identity: a plain black canvas, near-black surfaces\nwith hairline boundaries, Geist type, and periwinkle actions drawn from the\nOpenCrawl mark. The console applies that identity to compact, readable operational\nwork. Hierarchy comes from type, spacing, rows and sections; color identifies\ninteraction and meaningful status.\n\nCore owns the shared visual system for hosted and single-tenant deployments.\n`web/tokens.css` remains the canonical palette, fonts, spacing, radii and elevation\nsource. `web-v2/src/design/tokens.css` extends it with console dimensions and focus\nconstants; `web-v2/src/design/styles.css` owns the React layout and component\npresentation. The frontmatter records their approved values; update the owning\nCSS and this document together. Color aliases are resolved here without changing\nthe source color format. The sidecar carries motion, depth and component previews.\n\nThe retained `web/frame.css` and `web/controls.css` describe the earlier shared\nframe and controls; they do not own the React workspace shell. React onboarding\npreserves its approved presentation in `web-v2/src/onboarding/onboarding.css`.\nUse the existing self-hosted fonts, OC marks, provider logos and shared SVG icons.\nThe font license remains at `web/assets/Geist-OFL.txt`.",
+    "overview": "The shared OpenCrawl console uses Geist, black and near-black surfaces, hairline borders and periwinkle actions.",
     "keyCharacteristics": [
-      "Dark-only Night palette and inherited brand assets.",
-      "One React workspace shell, with compact rows and a persistent desktop sidebar.",
-      "Quiet default controls, visible keyboard focus and explicit operational states.",
-      "A separate focused onboarding composition within the same design system."
+      "Periwinkle identifies actions and selection.",
+      "Status includes a readable label."
     ],
-    "rules": [
-      {
-        "name": "The Shared Palette Rule",
-        "body": "Feature pages use the canonical Night tokens; a new\nreusable visual value belongs in the core design system, never a page-local palette.",
-        "section": "colors"
-      },
-      {
-        "name": "The One Shell Rule",
-        "body": "Pages own their content; core owns workspace navigation,\nresponsive chrome and shared layout. Internal links use the router and preserve\nhistory without document reloads. Full navigation is for external authorization,\nauthentication and deployment boundaries.",
-        "section": "layout"
-      },
-      {
-        "name": "The Workspace Page Rule",
-        "body": "Workspace routes compose Page and PageHeader on one 1200px full-width grid, with stable title position, 8px description gap and 32px body gap. Bound form rows to 640px with oc-form-measure.",
-        "section": "layout"
-      },
-      {
-        "name": "The Identity Color Rule",
-        "body": "Use shared identity classes on board author names; never treat color as status, authorization, or a unique identifier.",
-        "section": "colors"
-      }
-    ],
-    "dos": [
-      "Do reuse the Night tokens, existing brand assets and self-hosted Geist fonts.",
-      "Do compose each workspace page from the shared shell, layout and controls.",
-      "Do show labeled loading, empty, error, busy and current states with recovery.",
-      "Do preserve the approved onboarding composition, receipts and optional invitations.",
-      "Do verify keyboard focus, narrow layouts, internal history and onboarding appearance."
-    ],
-    "donts": [
-      "Don't create another workspace navigation, page-local palette or feature stylesheet.",
-      "Don't substitute new illustrations, fonts or provider marks for the inherited assets.",
-      "Don't use status color without explanatory text or make client visibility an authority check.",
-      "Don't replace onboarding's focused panel with the console sidebar or change its gates for styling."
-    ]
+    "rules": [],
+    "dos": [],
+    "donts": []
   }
 }
