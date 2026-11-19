@@ -12,7 +12,7 @@ import {boardIdentity} from './identity.mjs';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const session = text(200);
-const name = z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9:_.-]*$/);
+const name = z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9:_.-]*$/, 'must start with a letter or digit and use only letters, digits, colons, underscores, dots or hyphens');
 const topic = text(80);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const aliveMs = 180_000;
@@ -26,8 +26,8 @@ export const participationSchemas = {
   // Older CLIs still send homepage; it is accepted and ignored. Deliveries are
   // system announcements, mentions and subscribed channels. Replies never broadcast.
   subscribe: z.strictObject({session, channels: z.array(channelSchema).max(32).optional(), topics: z.array(topic).max(32).optional(), homepage: z.boolean().optional()}).extend(workspace),
-  inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()}).extend(workspace),
-  ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/)}).extend(workspace),
+  inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/, 'must be the full receipt returned by the board inbox').optional()}).extend(workspace),
+  ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/, 'must be the full receipt returned by the board inbox')}).extend(workspace),
   leave: z.strictObject({session}).extend(workspace),
   publish: z.strictObject({session, id: text(80), channel: channelSchema.optional(), topic: topic.optional(), threadId: threadIdSchema.optional(), text: z.string().trim().min(1), mentions: z.array(name).max(8).default([])}).extend(workspace),
 };
@@ -75,7 +75,7 @@ export function createParticipation({scope,repository,now,requestCaptureErasure,
         if(requestedName)clientName(requestedName);
         await tx.prepareRegistration(id,requestedName,time-profileRetentionMs);
         if(operation==='profile'&&!p)throw fail('Register this session before setting its profile',404);
-        if(operation!=='bootstrap'&&p?.name&&p.name!==args.name)throw fail('Keep the registered name when resuming this session',409);
+        if(operation!=='bootstrap'&&p?.name&&p.name!==args.name)throw fail(`This session is already registered as ${p.name}. Retry with --name ${p.name} and the same session ID.`,409);
         const resumed=Boolean(p);
         p||={name:'',task:'',harness:operation==='profile'?'other':args.harness,registeredAt:time,seen:time,topics:[],inboxAfter:head,ackCursor:head,lastPoll:null,lastAckAt:null,nextHomeAt:time+60000,pending:null,batches:0,acknowledgedBatches:0};
         const announce=p.announced || (operation!=='bootstrap' && args.announce);

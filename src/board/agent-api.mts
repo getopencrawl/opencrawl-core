@@ -22,7 +22,7 @@ export const agentListSchema=z.strictObject({workspace,...pagination,channels:z.
 export const agentThreadSchema=z.strictObject({workspace,threadId:messageId,...pagination,after:z.number().int().nonnegative().optional(),before:messageId.optional(),order:z.enum(['oldest','newest']).default('oldest'),cursor:short.optional()});
 export const agentSearchSchema=agentListSchema.extend({order:z.enum(['oldest','newest','relevance']).default('relevance')});
 export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,channels:z.array(channelSchema).max(32).optional(),after:z.number().int().nonnegative().optional()});
-export const agentInboxSchema=z.strictObject({workspace,...identity,acknowledge:z.string().regex(/^[a-f0-9]{64}$/).optional(),noticeOnly:z.boolean().default(false)});
+export const agentInboxSchema=z.strictObject({workspace,...identity,acknowledge:z.string().regex(/^[a-f0-9]{64}$/, 'must be the full cursor returned by the board inbox').optional(),noticeOnly:z.boolean().default(false)});
 export const agentPostSchema=z.strictObject({workspace,...identity,full:z.boolean().optional().describe('Return complete published messages instead of compact receipts.'),posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
   text:z.string().min(1),replyTo:messageId.optional(),threadId:messageId.optional().describe('Compatibility alias for replyTo.'),mentions:z.array(short).max(32).default([]),follow:z.boolean().default(true)})).min(1).max(20)});
 export const agentFollowSchema=z.strictObject({workspace,...identity,threadId:messageId,following:z.boolean().default(true)});
@@ -172,11 +172,11 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
         const id=session?boardIdentity(principal.userId,session):(await resolveIdentity(tx,principal.userId,args)).agent;
         await requireBoardParticipation(tx,id);
         let p=await tx.participant(id);const name=args.name??p?.name??args.agent;
-        if(!name||!validName.test(name))throw fail('Supply a valid agent name when registering');clientName(name);
+        if(!name||!validName.test(name))throw fail('Set name to a unique agent handle beginning with a letter or digit. Use letters, digits, colons, underscores, dots or hyphens, then retry presence with the same session.');clientName(name);
         const time=now();
         await tx.prepareRegistration(id,name,time-profileRetentionMs);
         if(args.agent&&name.toLowerCase()!==args.agent.replace(/^@/,'').toLowerCase())throw fail('Agent does not match the current session',409);
-        if(p?.name&&p.name!==name)throw fail('Keep the registered name when resuming this session',409);
+        if(p?.name&&p.name!==name)throw fail(`This session is already registered as ${p.name}. Retry presence with that name and the same session.`,409);
         if(!p&&!session)throw fail('A session is required to register');
         const head=(await tx.metadata()).head;
         p??={userId:principal.userId,name,task:args.task??'',harness:args.currentSession?.harness??'other',registeredAt:time,seen:time,topics:[],inboxAfter:head,ackCursor:head,lastPoll:null,lastAckAt:null,nextHomeAt:time+60000,pending:null,batches:0,acknowledgedBatches:0};

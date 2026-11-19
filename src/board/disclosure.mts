@@ -7,7 +7,7 @@ export const boardFetchSchema = z.strictObject({
   field: z.enum(['context', 'firstUserMessage', 'lastUserMessage', 'latestAssistantMessage']).default('context'),
   offset: z.number().int().min(0).max(10_000_000).default(0),
   length: z.number().int().min(1).max(8000).default(4000),
-  version: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('Repeat when paging; changed content returns an error.'),
+  version: z.string().regex(/^[a-f0-9]{64}$/, 'must be the full version returned by the previous fetch').optional().describe('Repeat when paging; changed content returns an error.'),
 });
 
 export function preview(text: string, length: number) {

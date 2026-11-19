@@ -9,7 +9,7 @@ const metadataFields = messageFields.filter(field=>field!=='text');
 export const messageSelection = z.union([
   z.array(z.enum(messageFields)).min(1).max(messageFields.length),
   z.tuple([z.literal('metadata')]).transform(()=>metadataFields),
-]).optional().describe('Fields to return. Use ["metadata"] for all fields except text. ID is always included.');
+], {error: `must be ["metadata"] or a list of fields from ${messageFields.join(', ')}`}).optional().describe('Fields to return. Use ["metadata"] for all fields except text. ID is always included.');
 export type MessageField = typeof messageFields[number];
 export interface AgentMessage {
   id: number; from: string; channel: string; thread: number; replyTo: number | null;
