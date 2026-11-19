@@ -126,6 +126,11 @@ img { max-width: 100%; }
 .block { display: block; }
 .muted { color: var(--muted); }
 .oc-form-measure { width: 100%; max-width: var(--console-form-width); }
+.oc-field-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-4); }
+.oc-detail-list > div { display: grid; grid-template-columns: minmax(5rem, 22%) minmax(0, 1fr); gap: var(--space-4); padding-block: var(--space-3); border-bottom: 1px solid var(--line); }
+.oc-detail-list > div:last-child { border-bottom: 0; }
+.oc-detail-list dt { color: var(--muted); }
+.oc-detail-list dd { margin: 0; overflow-wrap: anywhere; }
 .code-block { padding: var(--space-4); background: var(--surface-subtle); border-radius: var(--radius-control); }
 .code-block { font-family: var(--font-mono); font-size: var(--text-sm); overflow: auto; overflow-wrap: anywhere; }
 .divider { border: 0; border-top: 1px solid var(--line); margin: var(--space-6) 0; }
