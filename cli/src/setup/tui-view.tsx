@@ -62,7 +62,7 @@ export function WorkspaceScreen({onComplete}:{onComplete:(answer:WorkspaceAnswer
 }
 
 export type SetupAction={id:string;label:string};
-export type Notice={title:string;description:string;details?:string[];spinner?:string;status?:string;actions?:SetupAction[];error?:boolean;animate?:boolean;onAction?:(id:string|null)=>void;onCancel?:()=>void};
+export type Notice={title:string;description:string;details?:string[];prompt?:string;spinner?:string;actions?:SetupAction[];error?:boolean;animate?:boolean;onAction?:(id:string|null)=>void;onCancel?:()=>void};
 function StatusSpinner({label}:{label:string}){
  const {frame}=useAnimation({interval:100});
  const frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
@@ -74,18 +74,21 @@ function InstallAnimation(){
  const trail=[color.accent,color.face,color.quiet];
  return <Box marginTop={1}><Text>{Array.from({length:24},(_,index)=>{const distance=frame-index;return <Text key={index} color={distance===0?'#f7f5f6':distance>0&&distance<=3?trail[distance-1]:'#2d2835'}>━</Text>;})}</Text></Box>;
 }
-export function NoticeScreen({title,description,details=[],spinner,status,actions=[],error=false,animate=false,onAction,onCancel}:Notice){
+export function NoticeScreen({title,description,details=[],prompt,spinner,actions=[],error=false,animate=false,onAction,onCancel}:Notice){
  const {focusNext,focusPrevious}=useFocusManager();
  useInput((input,key)=>{
   if(key.escape||(key.ctrl&&input==='c')){if(onCancel)onCancel();else onAction?.(null);return;}
   if(key.rightArrow||key.downArrow)focusNext();
   if(key.leftArrow||key.upArrow)focusPrevious();
  });
- return <SetupFrame title={title} description={description} footer={actions.length>1?['← → Move','Enter Select','Esc Close']:actions.length===1?[`Enter ${actions[0].label}`]:onCancel?[status?'Esc Exit setup · Choices saved':'Esc Cancel']:[]}>
+ const detailColor=error?color.error:prompt||spinner?color.muted:undefined;
+ return <SetupFrame title={title} description={description} footer={actions.length>1?['← → Move','Enter Select','Esc Close']:actions.length===1?[`Enter ${actions[0].label}`]:onCancel?['Esc Cancel']:[]}>
   {animate&&<InstallAnimation/>}
-  {details.length>0&&<Box flexDirection="column" marginTop={1}>{details.map((line,index)=><Text key={index} color={error?color.error:undefined} wrap="wrap">{line}</Text>)}</Box>}
+  {prompt&&<Box marginTop={1} paddingX={2} paddingY={1} backgroundColor={color.surface}>
+   <Text color={color.accent} wrap="wrap">{prompt}</Text>
+  </Box>}
+  {details.length>0&&<Box flexDirection="column" marginTop={1}>{details.map((line,index)=><Text key={index} color={detailColor} wrap="wrap">{line}</Text>)}</Box>}
   {spinner&&<StatusSpinner label={spinner}/>}
-  {status&&<Box marginTop={spinner?0:1}><Text color={color.accent} wrap="wrap">{status}</Text></Box>}
   {actions.length>0&&<Box marginTop={1} gap={2} flexWrap="wrap">{actions.map((action,index)=><SetupButton key={action.id} {...action} autoFocus={index===0} onPress={()=>onAction?.(action.id)}/>)}</Box>}
  </SetupFrame>;
 }

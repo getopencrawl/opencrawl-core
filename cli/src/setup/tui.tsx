@@ -7,6 +7,12 @@ import type {InviteOptions} from './invites.ts';
 import {SetupSelection} from './select-view.tsx';
 import type {SelectionScreen,SelectionItem} from './select.ts';
 
+type ProgressOptions={
+ animate?:boolean;
+ prompt?:string;
+ waiting?:{spinner:string;onSkip:()=>void};
+};
+
 const clean=(text:string)=>stripVTControlCharacters(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,'');
 function NativeHandoff<T,>({run,resolve,reject}:{run:()=>Promise<T>;resolve:(result:T)=>void;reject:(error:unknown)=>void}){
  const {suspendTerminal}=useApp();
@@ -22,11 +28,11 @@ export function createSetupUi(){
   if(app)app.rerender(element);
   else app=render(element,{stdout:process.stderr,stdin:process.stdin,stderr:process.stderr,patchConsole:false,exitOnCtrlC:false,alternateScreen:true,interactive:Boolean(process.stdin.isTTY&&process.stderr.isTTY)});
  };
- const notice=(props:Notice,key:number|'progress'=++serial)=>show(<NoticeScreen key={key} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)}/>);
- const progress=(title:string,description:string,details?:string[],animate=false,waiting?:{spinner:string;status?:string;onSkip:()=>void})=>{
+ const notice=(props:Notice,key:number|'progress'=++serial)=>show(<NoticeScreen key={key} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)} prompt={props.prompt&&clean(props.prompt)}/>);
+ const progress=(title:string,description:string,details?:string[],{animate,prompt,waiting}:ProgressOptions={})=>{
   controller.signal.throwIfAborted();
-  notice({title,description,details,animate,
-   ...(waiting&&{spinner:clean(waiting.spinner),status:waiting.status&&clean(waiting.status),actions:[{id:'skip',label:'Skip for now'}],onAction:waiting.onSkip}),
+  notice({title,description,details,animate,prompt,
+   ...(waiting&&{spinner:clean(waiting.spinner),actions:[{id:'skip',label:'Skip for now'}],onAction:waiting.onSkip}),
    onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}},'progress');
  };
  const close=()=>{app?.unmount();app?.cleanup();app=undefined;};

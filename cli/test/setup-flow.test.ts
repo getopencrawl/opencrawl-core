@@ -253,29 +253,33 @@ test('failed supervision stops before launching Claude native sign-in',async()=>
 test('Codex hook approval refreshes without input and advances to a user-opened chat',()=>fixture(async(api,_dir,_observations,setCodex)=>{
  const reviews:CodexHookReview[]=[
   {state:'unknown',total:0,pending:null,disabled:null},
+  {state:'not_applicable',total:0,pending:0,disabled:0},
   {state:'observed',total:12,pending:2,disabled:1},
+  {state:'observed',total:12,pending:0,disabled:1},
   {state:'observed',total:12,pending:1,disabled:0},
   {state:'observed',total:12,pending:0,disabled:0},
  ];
- const statuses:string[]=[],actions:string[]=[];
+ const actions:string[]=[];
+ let waitingScreens=0;
  let handoffs=0;
  const unexpected=async():Promise<never>=>{throw Error('Unexpected launch or prompt');};
  const ui:SetupUi={
   signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,native:unexpected,close:()=>{},
   choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'})),
   action:async screen=>{actions.push(screen.title);return 'done';},
-  progress:(title,description,details,_animate,waiting)=>{
-   if(waiting){
+  progress:(title,description,details,options)=>{
+   if(options?.waiting){
+    waitingScreens++;
     expect(title).toBe('Trust all OpenCrawl hooks in Codex Desktop or CLI');
-    expect(description).toContain('Under From Plugins, select OpenCrawl and click Trust all.');
-    expect(details?.[0]).toContain('select “Trust all and continue” to trust every pending hook.');
-    expect(waiting.spinner).toBe('Checking whether OpenCrawl hooks are trusted…');
-    if(waiting.status)statuses.push(waiting.status);
+    expect(description).toBe('Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
+    expect(details).toEqual(['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.']);
+    expect(options.waiting.spinner).toBe('Checking whether OpenCrawl hooks are trusted…');
    }
    if(title==='Verify the Codex connection'){
     expect(reviews).toHaveLength(0);
     expect(description).toContain('Hooks approved');
-    expect(details?.[0]).toContain(api);
+    expect(options?.prompt).toBe('Finish OpenCrawl setup for '+api+' using my saved choices.');
+    expect(details?.[0]).toBe('Keep this terminal open. Setup will continue when Codex connects.');
     handoffs++;
    }
   }
@@ -287,10 +291,7 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
  });
  expect(code).toBe(0);
- expect(statuses).toEqual([
-  'Couldn’t read hook approval from Codex. Retrying automatically.',
-  '9 of 12 approved · 2 pending · 1 disabled','11 of 12 approved · 1 pending'
- ]);
+ expect(waitingScreens).toBe(1);
  expect(handoffs).toBe(1);
  expect(actions).toEqual(['Setup complete']);
 }));
@@ -303,11 +304,11 @@ test('skipping hook trust during inspection saves Codex as pending and continues
  const ui:SetupUi={
   signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,native:unexpected,close:()=>{},
   choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&['codex','cursor'].includes(item.id)})),
-  progress:(title,_description,details,_animate,waiting)=>{
-   if(waiting){visited.push('trust');skip=waiting.onSkip;}
+  progress:(title,_description,_details,options)=>{
+   if(options?.waiting){visited.push('trust');skip=options.waiting.onSkip;}
    if(title==='Open Cursor'){
     visited.push('cursor');
-    expect(details?.[0]).toContain('verify_installation tools for cursor');
+    expect(options?.prompt).toContain('verify_installation tools for cursor');
     setCursor({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});
    }
   },
