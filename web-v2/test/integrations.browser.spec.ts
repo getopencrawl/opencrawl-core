@@ -100,6 +100,36 @@ for(const width of [1440,600,390,320]) test(`available tiles precede connected c
   await expect(connectedCards.locator('footer .oc-button.secondary')).toHaveCount(18);
 });
 
+test('recurring syncs show stream spinners and one footer status, and each logo has one frame', async ({page}) => {
+  const providers = ['slack', 'notion', 'github', 'granola', 'circleback', 'linear', 'replicas'];
+  const items: SourceCard[] = providers.map((provider, i) => ({
+    ...source(i), provider, name: provider, state: 'syncing', initial: provider === 'replicas',
+    total: 2100, synced: 2066, rows: [{label: 'Messages', count: 2066}, {label: 'Files', count: 0, done: true}],
+  }));
+  await page.route('**/api/console/sources', route => route.fulfill({json: {items}}));
+  await page.goto('/integrations-fixture');
+  const cards = page.getByRole('article');
+  await expect(cards).toHaveCount(providers.length);
+  for (const provider of providers) {
+    const card = page.getByRole('article', {name: provider, exact: true});
+    const logo = card.locator('.oc-integration-logo');
+    await expect.poll(() => logo.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    await expect(logo).toHaveCSS('width', '36px');
+    await expect(logo).toHaveCSS('border-top-width', ['linear', 'replicas'].includes(provider) ? '1px' : '0px');
+    await expect(card.locator('footer p')).toHaveText(provider === 'replicas' ? 'Importing' : 'Syncing');
+    await expect(card.locator('.oc-spin')).toHaveCount(1);
+  }
+  const slack = page.getByRole('article', {name: 'slack', exact: true});
+  await expect(slack.locator('.oc-source-message')).toHaveCount(0);
+  await expect(slack.getByRole('listitem').first()).toContainText('Messages: Syncing');
+  await expect(page.getByRole('progressbar')).toHaveCount(0);
+  await slack.getByRole('button', {name: 'Manage slack'}).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Syncing changes…');
+  await expect(dialog).toContainText('Messages: Syncing');
+  await expect(dialog.getByRole('progressbar')).toHaveCount(0);
+});
+
 test('small catalogs use only sections and hidden search cannot keep filtering',async({page})=>{
   await page.clock.install();
   let items=sources.slice(0,14);

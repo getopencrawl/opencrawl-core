@@ -416,6 +416,10 @@ img { max-width: 100%; }
 .oc-integration-header h3 { flex:1; min-width:0; margin:0; color:var(--strong); font-size:var(--text-title); font-weight:600; letter-spacing:normal; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .oc-integration-logo { display:grid; place-items:center; flex:0 0 36px; width:36px; height:36px; padding:6px; color:var(--quiet); border:1px solid var(--line-strong); border-radius:var(--radius-control); background:var(--surface-raised); }
 .oc-integration-logo img { display:block; width:100%; height:100%; object-fit:contain; }
+/* These provider assets already include a rounded tile around the mark. */
+.oc-integration-logo:has(> img:is([src$="/slack.svg"], [src$="/notion.svg"], [src$="/github.svg"], [src$="/granola.svg"], [src$="/circleback.svg"])) {
+  padding:0; border:0; background:transparent;
+}
 .oc-integration-breakdown { flex:1; min-height:0; overflow-y:auto; overscroll-behavior-y:contain; scrollbar-gutter:stable; scrollbar-width:thin; scrollbar-color:var(--line-strong) transparent; }
 .oc-integration-breakdown:focus-visible { outline:var(--console-focus-ring); outline-offset:var(--console-focus-offset); border-radius:var(--radius-control); }
 .oc-integration-metrics { display:grid; gap:var(--space-2); margin:0; padding:0; list-style:none; font-size:var(--text-sm); }
@@ -460,14 +464,6 @@ img { max-width: 100%; }
 .oc-source-counts dd { margin:0; font-size:var(--text-sm); color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
 .oc-source-message { margin-top:var(--space-4); font-size:var(--text-sm); color:var(--pending); }
 .oc-source-message[data-state=error] { color:var(--danger); }
-.oc-source-message progress { display:block; width:100%; height:4px; margin-top:var(--space-3); accent-color:var(--brand-face); }
-/* Native Chrome progress clips the fill at the card's four-pixel height. */
-@media (forced-colors:none) {
-  .oc-source-message progress[value] { appearance:none; border:0; border-radius:2px; overflow:hidden; background:var(--line); }
-  .oc-source-message progress[value]::-webkit-progress-bar { background:var(--line); }
-  .oc-source-message progress[value]::-webkit-progress-value { background:var(--brand-face); }
-  .oc-source-message progress[value]::-moz-progress-bar { background:var(--brand-face); }
-}
 .oc-source-detail-account { display:flex; align-items:center; gap:var(--space-3); margin-bottom:var(--space-5); }
 .oc-source-detail-account > div { flex:1; min-width:0; }
 .oc-source-detail-account p { font-size:var(--text-sm); color:var(--muted); }

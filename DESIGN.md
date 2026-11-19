@@ -739,13 +739,17 @@ Integrations separates Available and Connected sections, with Available first.
 Each section uses an alphabetical, responsive grid. Available tiles show the
 connector logo, name and Connect button; unavailable providers retain their Details action.
 Connect starts OAuth immediately, or opens the required API-key/setup form.
-Connected cards use the shared IntegrationCard from Usage: a framed logo, connector
+Use one logo tile per provider. Artwork with its own tile fills the slot;
+transparent marks such as Linear and Replicas use the shared frame.
+Connected cards use the shared IntegrationCard from Usage: a logo, connector
 name, a fixed-height scrollable metrics breakdown, and an anchored footer for the
 only sync status. Show the timestamp or current state in body text beside its
 status dot. Manage uses the standard secondary button size. Connected-by attribution
 appears only in Manage. There is no subtitle under the connector name
 or collapsed N more state. Keep real zero counts, per-stream completion, stale
-measurement labels, and measured progress. Account/scope details remain inside Manage.
+measurement labels, and measured first-import counts. Use “Importing” on the first
+run and “Syncing” on subsequent runs. Active streams use small spinners. Omit
+progress bars from cards and Manage. Account/scope details remain inside Manage.
 Unconnected sources use the compact variant of the same component with a primary
 Connect action, including sources that need configuration before sign-in.
 Sections are the only grouping; there are no duplicate state tabs or toolbar divider.
