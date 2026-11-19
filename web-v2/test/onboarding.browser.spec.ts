@@ -65,13 +65,13 @@ for (const viewport of [{name: 'desktop', width: 1280, height: 813}, {name: 'mob
 
 test('unconfigured OSS connectors remain visible and explain setup without starting OAuth',async({page,request})=>{
   await request.post('/__test/state',{data:{status:complete,sources:[
-    {id:'googledrive',name:'Google Drive',state:'setup-required',setup:{title:'Set up Google Drive',body:'Ask your administrator to configure COMPOSIO_API_KEY.'}},
+    {id:'linear',name:'Linear',state:'setup-required',setup:{title:'Set up Linear',body:'Ask your administrator to configure COMPOSIO_API_KEY.'}},
     {id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},
   ]}});
   let connections=0;page.on('request',r=>{if(r.url().includes('/api/integrations/'))connections++;});
   await page.goto('/onboarding/sources');
-  await page.getByRole('button',{name:'Set up Google Drive',exact:true}).click();
-  await expect(page.getByRole('dialog',{name:'Set up Google Drive'})).toBeVisible();
+  await page.getByRole('button',{name:'Set up Linear',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Set up Linear'})).toBeVisible();
   await expect(page.getByText('Ask your administrator to configure COMPOSIO_API_KEY.')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button',{name:'Connect Granola',exact:true})).toBeVisible();
@@ -81,7 +81,7 @@ test('unconfigured OSS connectors remain visible and explain setup without start
 for(const viewport of [{name:'desktop',width:1280,height:813},{name:'mobile',width:390,height:844}]){
   test(`setup-required notes stay attached to compact connector tiles at ${viewport.name} width`,async({page,request})=>{
     const setup=(id:string,name:string)=>({id,name,state:'setup-required',setup:{title:`Set up ${name}`,body:'Ask your administrator to configure this connection.'}});
-    await request.post('/__test/state',{data:{status:complete,sources:[setup('googledrive','Google Drive'),setup('slack','Slack'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},setup('circleback','Circleback'),setup('notion','Notion'),setup('github','GitHub')]}});
+    await request.post('/__test/state',{data:{status:complete,sources:[setup('linear','Linear'),setup('slack','Slack'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},setup('circleback','Circleback'),setup('notion','Notion'),setup('github','GitHub')]}});
     await page.setViewportSize({width:viewport.width,height:viewport.height});
     await page.goto('/onboarding/sources');
     await expect(page.getByText('Setup required',{exact:true})).toHaveCount(5);
@@ -105,9 +105,9 @@ for(const viewport of [{name:'desktop',width:1280,height:813},{name:'mobile',wid
   });
 }
 
-const composio={id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',help:'The key is stored encrypted on this instance.',unlocks:['Google Drive','Notion']};
+const composio={id:'composio',name:'Composio',label:'Composio API key',url:'https://dashboard.composio.dev/~/project/settings/api-keys',help:'The key is stored encrypted on this instance.',unlocks:['Linear','Notion']};
 const waiting=(id:string,name:string)=>({id,name,state:'setup-required',auth:'oauth',setup:{title:`Set up ${name}`,body:`${name} signs in through Composio.`,requirement:'Needs a Composio key',credential:composio}});
-const locked=[waiting('googledrive','Google Drive'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},waiting('notion','Notion'),{id:'github',name:'GitHub',state:'setup-required',setup:{title:'Set up GitHub',body:'Configure a GitHub App on the server.',requirement:'Needs a GitHub App'}}];
+const locked=[waiting('linear','Linear'),{id:'granola',name:'Granola',state:'disconnected',auth:'api-key'},waiting('notion','Notion'),{id:'github',name:'GitHub',state:'setup-required',setup:{title:'Set up GitHub',body:'Configure a GitHub App on the server.',requirement:'Needs a GitHub App'}}];
 
 test('an admin adds the operator key from the Sources step and continues into sign-in',async({page,request})=>{
   await request.post('/__test/state',{data:{status:complete,sources:locked}});
@@ -115,8 +115,8 @@ test('an admin adds the operator key from the Sources step and continues into si
   await page.goto('/onboarding/sources');
   // Connectors that can start come first; the rest say what they are waiting for.
   await expect(page.getByRole('list',{name:'Ready to connect'}).getByRole('button')).toHaveText(['Granola']);
-  await expect(page.getByRole('list',{name:'Needs one-time setup'}).getByRole('button')).toHaveText(['Google Drive','Notion','GitHub']);
-  await expect(page.getByText('One Composio key unlocks Google Drive and Notion.')).toBeVisible();
+  await expect(page.getByRole('list',{name:'Needs one-time setup'}).getByRole('button')).toHaveText(['Linear','Notion','GitHub']);
+  await expect(page.getByText('One Composio key unlocks Linear and Notion.')).toBeVisible();
   await expect(page.getByText('Needs a Composio key',{exact:true})).toHaveCount(2);
   await expect(page.getByText('Needs a GitHub App',{exact:true})).toHaveCount(1);
   await page.getByRole('button',{name:'Set up GitHub',exact:true}).click();
@@ -124,14 +124,14 @@ test('an admin adds the operator key from the Sources step and continues into si
   await expect(page.getByRole('dialog').getByRole('textbox')).toHaveCount(0);
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button',{name:'Set up Google Drive',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Set up Google Drive'});
+  await page.getByRole('button',{name:'Set up Linear',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Set up Linear'});
   await expect(dialog.getByLabel('Composio API key')).toBeFocused();
   await expect(dialog.getByLabel('Composio API key')).toHaveAttribute('type','password');
   await expect(dialog.getByRole('link',{name:'Get a key from Composio'})).toHaveAttribute('href',composio.url);
-  await expect(dialog.getByRole('button',{name:'Save key and connect Google Drive'})).toBeDisabled();
+  await expect(dialog.getByRole('button',{name:'Save key and connect Linear'})).toBeDisabled();
   await dialog.getByLabel('Composio API key').fill('wrong-key');
-  await dialog.getByRole('button',{name:'Save key and connect Google Drive'}).click();
+  await dialog.getByRole('button',{name:'Save key and connect Linear'}).click();
   await expect(dialog.getByRole('alert')).toContainText('Composio did not accept that key.');
   await expect(dialog.getByLabel('Composio API key')).toHaveValue('wrong-key');
   await dialog.getByLabel('Composio API key').fill('accepted-key');
@@ -156,7 +156,7 @@ test('the Integrations page takes the operator key and opens sign-in in the rese
   await request.post('/__test/state',{data:{status:complete,sources:locked}});
   await context.route('https://provider.example/authorize',route=>route.fulfill({contentType:'text/html',body:'<h1>Provider authorization fixture</h1>'}));
   await page.goto('/integrations-fixture');
-  await expect(page.getByRole('status').filter({hasText:'One Composio key unlocks Google Drive and Notion.'})).toBeVisible();
+  await expect(page.getByRole('status').filter({hasText:'One Composio key unlocks Linear and Notion.'})).toBeVisible();
   const notion=page.getByRole('article',{name:'Notion'});
   await expect(notion).toHaveText('NotionConnect');
   await notion.getByRole('button',{name:'Connect Notion'}).click();
@@ -167,7 +167,7 @@ test('the Integrations page takes the operator key and opens sign-in in the rese
   await expect((await popup).getByRole('heading',{name:'Provider authorization fixture'})).toBeVisible();
   await expect(dialog).not.toBeVisible();
   // The other connector that was waiting for the same key is now ready as well.
-  await expect(page.getByRole('article',{name:'Google Drive'}).getByRole('button',{name:'Connect Google Drive'})).toBeVisible();
+  await expect(page.getByRole('article',{name:'Linear'}).getByRole('button',{name:'Connect Linear'})).toBeVisible();
   await expect(page.getByText('One Composio key unlocks')).toHaveCount(0);
 });
 

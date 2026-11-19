@@ -30,7 +30,7 @@ test('Airbyte opt-out needs no connector credentials and exposes setup guidance 
     OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:undefined,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:undefined,OPENCRAWL_CONNECTOR_KEY:undefined,
     GITHUB_APP:'invalid unused configuration',SLACK_CLIENT_ID:'incomplete-unused-configuration'});
   const cards=await service.integrations.list(principal);
-  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','linear','notion','slack']);
+  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','granola','linear','notion','slack']);
   assert.ok(cards.every(card=>card.state==='setup-required'&&card.setup.requirement==='Airbyte disabled'&&!card.setup.credential));
   assert.equal(service.connectors,undefined);assert.equal(service.sourceCredentials,undefined);assert.equal(service.oauth,undefined);assert.equal(service.connectorSettings,undefined);
   await assert.rejects(service.integrations.list({...principal,tenantId:'org_other'}),error=>error.status===403);
@@ -48,7 +48,7 @@ test('Airbyte is enabled by default and invalid opt-out values fail closed',()=>
 test('fresh OSS exposes every supported connector and explains missing setup without starting a connection',async t=>{
   const service=await fixture(t);
   const cards=await service.integrations.list(principal);
-  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','googledrive','granola','linear','notion','slack']);
+  assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','granola','linear','notion','slack']);
   assert.equal(cards.find(c=>c.provider==='granola').state,'disconnected');
   for(const card of cards.filter(c=>c.provider!=='granola')){assert.equal(card.state,'setup-required');assert.ok(card.setup.body);}
   await assert.rejects(service.integrations.connect(principal,'notion'),error=>error.status===503);
@@ -61,9 +61,6 @@ test('operator broker enables OAuth connectors without exposing its key in the c
   for(const id of ['notion','circleback','slack'])assert.equal(cards.find(c=>c.provider===id).state,'disconnected');
   assert.equal(cards.find(c=>c.provider==='github').state,'setup-required');
   assert.ok(!JSON.stringify(cards).includes('operator-private-key'));
-  const drive=cards.find(card=>card.provider==='googledrive');
-  assert.equal(drive.state,'disconnected');
-  assert.equal(drive.setup,undefined);
   assert.equal((await service.registry.listTenant(principal.tenantId)).length,0);
 });
 
@@ -90,14 +87,14 @@ test('operator OAuth binds requests and source configuration to its single organ
 });
 
 const OPERATOR_KEY='operator-private-key',APP_FOR_AIRBYTE='http://app.internal:8092';
-const brokered=['googledrive','notion','circleback','slack','linear'];
+const brokered=['notion','circleback','slack','linear'];
 /** The operator broker with a real registry and a recorded stand-in for the Composio API. */
 async function broker(t,respond=()=>({status:200,data:{ok:true},headers:{}})){
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-broker-'));
   const registry=createSingleOrganizationRegistry({database:await applicationDatabaseFixture(t),organizationId:'org_team'});
   t.after(async()=>{registry.close();await rm(dir,{recursive:true,force:true});});
   const calls=[];
-  const oauth=createComposioOAuth({apiKey:OPERATOR_KEY,organizationId:'org_team',proxyUrl:APP_FOR_AIRBYTE,proxyKey:Buffer.alloc(32,7),registry,driveAudience:async()=>['a@example.com'],fetch:async(url,options)=>{
+  const oauth=createComposioOAuth({apiKey:OPERATOR_KEY,organizationId:'org_team',proxyUrl:APP_FOR_AIRBYTE,proxyKey:Buffer.alloc(32,7),registry,fetch:async(url,options)=>{
     const body=options.body?JSON.parse(options.body):undefined;calls.push({url,options,body});
     if(url.endsWith('/tools/execute/proxy'))return Response.json(respond(body));
     throw new Error('Unexpected request');
@@ -131,9 +128,9 @@ test('every brokered connector receives the configuration its manifest requires,
     assert.ok(!JSON.stringify(config).includes(OPERATOR_KEY));
   }
   // A capability is specific to one connection and one owner.
-  const drive=await f.oauth.sourceConfiguration((await f.registry.list('org_team','user_a'))[0],f.providers.googledrive);
-  const other=await f.oauth.sourceConfiguration(await f.connect('googledrive','ca_second','user_b'),f.providers.googledrive);
-  assert.notEqual(drive.credential_proxy_api_key,other.credential_proxy_api_key);
+  const first=await f.oauth.sourceConfiguration((await f.registry.list('org_team','user_a'))[0],f.providers.notion);
+  const other=await f.oauth.sourceConfiguration(await f.connect('notion','ca_second','user_b'),f.providers.notion);
+  assert.notEqual(first.credential_proxy_api_key,other.credential_proxy_api_key);
   assert.equal(f.calls.length,0);
 });
 
@@ -161,16 +158,11 @@ test('the operator’s own Slack app receives the configuration its registered c
 });
 
 test('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{
-  const f=await broker(t,body=>({status:200,data:body.endpoint.endsWith('/drives')?{drives:[]}:body.endpoint.endsWith('/about')?{user:{emailAddress:'a@gmail.com'}}:{files:[]}}));
-  const drive=await f.connect('googledrive','ca_drive'),config=await f.oauth.sourceConfiguration(drive,f.providers.googledrive);
-  const call=(input,{secret=config.credential_proxy_api_key,id='ca_drive',user=config.user_id}={})=>f.oauth.proxyCredential(id,secret,user,input);
-  const files={endpoint:'opencrawl://googledrive/workspace-documents'};
+  const f=await broker(t,()=>({status:200,data:{results:[]}}));
+  const record=await f.connect('notion','ca_first'),config=await f.oauth.sourceConfiguration(record,f.providers.notion);
+  const call=(input,{secret=config.credential_proxy_api_key,id='ca_first',user=config.user_id}={})=>f.oauth.proxyCredential(id,secret,user,input);
+  const files={endpoint:'https://api.notion.com/v1/users'};
   assert.equal((await call(files)).status,200);
-  for(const sent of f.calls){
-    assert.equal(sent.url,'https://backend.composio.dev/api/v3.1/tools/execute/proxy');
-    assert.equal(sent.options.headers['x-api-key'],OPERATOR_KEY);
-    assert.equal(sent.body.connected_account_id,'ca_drive');assert.equal(sent.body.user_id,'selfhost:org_team:user_a');
-  }
   const upstream=f.calls.length;
   await assert.rejects(call(files,{secret:'wrong'}),{status:403});
   await assert.rejects(call(files,{secret:''}),{status:403});
@@ -178,15 +170,8 @@ test('a brokered source capability reads only its own provider’s listed endpoi
   await assert.rejects(call(files,{user:'selfhost:org_foreign:user_a'}),{status:403});
   await assert.rejects(call(files,{id:'ca_other'}),{status:403});
   for(const denied of [
-    {endpoint:'https://www.googleapis.com/upload/drive/v3/files',method:'POST',body:{}},
-    {endpoint:'https://www.googleapis.com/drive/v3/files',method:'POST',body:{name:'new'}},
-    {endpoint:'https://www.googleapis.com/drive/v3/files/file_1',method:'DELETE'},
-    {endpoint:'https://www.googleapis.com/drive/v3/files/file_1/permissions'},
-    {endpoint:'https://www.googleapis.com/drive/v3/files?corpora=user'},
-    {endpoint:'https://www.googleapis.com/drive/v3/files#x'},
-    {endpoint:'https://user:pass@www.googleapis.com/drive/v3/files'},
-    {endpoint:'https://www.googleapis.com.evil.example/drive/v3/files'},
-    {endpoint:'https://api.notion.com/v1/users'},
+    {endpoint:'https://api.notion.com/v1/users',method:'DELETE'},
+    {endpoint:'https://example.test/v1/users'},
     {endpoint:'not a url'},
     {...files,body:{}},
     {...files,headers:{Authorization:'Bearer stolen'}},
@@ -198,11 +183,10 @@ test('a brokered source capability reads only its own provider’s listed endpoi
   await read({endpoint:'https://api.notion.com/v1/search',method:'POST',headers:{'Notion-Version':'2026-03-11'},body:{page_size:100}});
   assert.deepEqual(f.calls.at(-1).body,{connected_account_id:'ca_notion',user_id:'selfhost:org_team:user_a',endpoint:'https://api.notion.com/v1/search',method:'POST',body:{page_size:100},parameters:[{name:'Notion-Version',value:'2026-03-11',type:'header'}]});
   await assert.rejects(read({endpoint:'https://api.notion.com/v1/pages',method:'POST',body:{}}),{status:403});
-  await assert.rejects(read(files),{status:403});
-  // The drive capability does not open another connection's account.
+  // The first capability does not open another connection's account.
   await assert.rejects(call({endpoint:'https://api.notion.com/v1/users'},{id:'ca_notion'}),{status:403});
 
-  await f.registry.update(drive,{status:'disconnecting'});
+  await f.registry.update(record,{status:'disconnecting'});
   const before=f.calls.length;await assert.rejects(call(files),{status:403});assert.equal(f.calls.length,before);
 });
 
@@ -266,7 +250,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
   const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
   assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
-  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Google Drive','Notion','Circleback','Linear','Slack']});
+  assert.deepEqual({id:notion.setup.credential.id,unlocks:notion.setup.credential.unlocks},{id:'composio',unlocks:['Notion','Circleback','Linear','Slack']});
   assert.match(notion.setup.credential.url,/^https:\/\/dashboard\.composio\.dev\//);
   const github=before.find(card=>card.provider==='github');
   assert.equal(github.setup.requirement,'Needs a GitHub App');assert.equal(github.setup.credential,undefined);
@@ -281,7 +265,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 
   await service.connectorSettings.save('composio','  good-project-key\n',by);
   assert.deepEqual(composio.seen.at(-1),{method:'GET',url:'/api/v3.1/auth_configs?limit=1',key:'good-project-key'});
-  assert.deepEqual(await states(service),{googledrive:'disconnected',slack:'disconnected',granola:'disconnected',circleback:'disconnected',linear:'disconnected',notion:'disconnected',github:'setup-required'});
+  assert.deepEqual(await states(service),{slack:'disconnected',granola:'disconnected',circleback:'disconnected',linear:'disconnected',notion:'disconnected',github:'setup-required'});
   const sealed=await f.store.get('connector-settings/v1/org_team/settings.enc');
   assert.ok(sealed.length>40);assert.ok(!sealed.includes(Buffer.from('good-project-key')));
   assert.ok(!JSON.stringify(await service.integrations.list(principal)).includes('good-project-key'));
@@ -292,7 +276,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
 test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
   const composio=await brokerService(t);
   const managed=(await installation(t,{COMPOSIO_BASE_URL:composio.url,COMPOSIO_API_KEY:'good-project-key'})).open();
-  assert.equal((await states(managed)).googledrive,'disconnected');
+  assert.equal((await states(managed)).notion,'disconnected');
   await assert.rejects(managed.connectorSettings.save('composio','another-project-key',{userId:'user_a'}),{status:409,expose:true});
   const bare=(await installation(t,{COMPOSIO_BASE_URL:composio.url,OPENCRAWL_CONNECTOR_KEY:''})).open();
   const card=(await bare.integrations.list(principal)).find(c=>c.provider==='notion');

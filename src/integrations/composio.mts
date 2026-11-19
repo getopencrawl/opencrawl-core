@@ -3,15 +3,12 @@ import type {ConnectorOAuth,IntegrationRegistry} from './ports.mjs';
 import type {ProxyRequest,ProxyResponse,ProviderData} from './types.mjs';
 import {fail,slackPublicRead} from './slack-proxy-policy.mjs';
 import {createLinearAccess} from './linear-access.mjs';
-import {createGoogleDriveSource} from './google-drive-source.mjs';
-import type {DriveAudience} from './google-drive-access.mjs';
 
 interface Options {
   apiKey:string;organizationId:string;
   /** App address that source jobs can reach, and the secret that derives each source's capability. */
   proxyUrl:string;proxyKey:Uint8Array;registry:Pick<IntegrationRegistry,'list'>;
   baseUrl?:string;fetch?:typeof globalThis.fetch;
-  driveAudience?:DriveAudience;
 }
 interface AuthConfig {id:string;name:string;toolkit?:{slug:string};status:string;is_composio_managed:boolean;auth_scheme?:string}
 interface Account {id:string;user_id?:string;status:string;is_disabled?:boolean;toolkit?:{slug:string}}
@@ -27,7 +24,7 @@ const READS:Record<string,{headers:string[];routes:Array<[method:string,endpoint
  * The project key stays in this process: a source job receives only a capability for its own
  * connection and reads through the app's credential proxy.
  */
-export function createComposioOAuth({apiKey,organizationId,proxyUrl,proxyKey,registry,baseUrl='https://backend.composio.dev',fetch:send=globalThis.fetch,driveAudience}:Options){
+export function createComposioOAuth({apiKey,organizationId,proxyUrl,proxyKey,registry,baseUrl='https://backend.composio.dev',fetch:send=globalThis.fetch}:Options){
   if(!apiKey||!/^org_[A-Za-z0-9]+$/.test(organizationId))throw new Error('Configure an operator-owned Composio project and organization');
   if(proxyKey.length!==32||!['https:','http:'].includes(new URL(proxyUrl).protocol))throw new Error('Configure the connector key and the Airbyte-accessible app URL');
   const service=new URL(baseUrl);
@@ -81,10 +78,6 @@ export function createComposioOAuth({apiKey,organizationId,proxyUrl,proxyKey,reg
       let result:ProxyResponse<unknown>;
       if(record.provider==='linear'){
         result=await createLinearAccess({tenantId:organizationId,connectionId:record.integrationId,workspaceId:record.workspace||'',
-          request:input=>proxy({...input,connectedAccountId:id,userId})}).read({endpoint,method,query,headers,body});
-      }else if(record.provider==='googledrive'){
-        if(!driveAudience)fail(503,'Drive workspace membership is unavailable');
-        result=await createGoogleDriveSource({tenantId:organizationId,connectionId:record.integrationId,audience:driveAudience!,fetch:send,
           request:input=>proxy({...input,connectedAccountId:id,userId})}).read({endpoint,method,query,headers,body});
       }else if(record.provider==='slack'){
         result=await slackPublicRead({endpoint,method,query,headers,body},async target=>{

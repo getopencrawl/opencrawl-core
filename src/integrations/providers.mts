@@ -1,7 +1,6 @@
 import {linearId, linearQuery} from './linear-access.mjs';
 import {LINEAR_STREAMS, linearStreamSettings} from './linear-upstream.mjs';
 import type {Proxy, ProviderCatalog, ConnectorDefinition} from './types.mjs';
-const DRIVE = 'https://www.googleapis.com/drive/v3';
 const SLACK = 'https://slack.com/api';
 export const GRANOLA = 'https://public-api.granola.ai';
 const NOTION = 'https://api.notion.com/v1';
@@ -14,32 +13,8 @@ export function nextCursor(headers: Record<string, string> = {}) {
 // Data sources and page markdown require this Notion API version.
 export const NOTION_VERSION = '2026-03-11';
 
-export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>, {driveWorkspaceAccess = false, linearPublicAccess = false}: {driveWorkspaceAccess?: boolean; linearPublicAccess?: boolean} = {}): ProviderCatalog {
+export function createProviderCatalog(connectors: Record<string,ConnectorDefinition>, {linearPublicAccess = false}: {linearPublicAccess?: boolean} = {}): ProviderCatalog {
 const providers:ProviderCatalog = {
-  googledrive: {
-    id: 'googledrive', primaryMetric: 'Files', name: 'Google Drive',
-    // Older runtime adapters must not enable the source before installing its
-    // permission-enforcing proxy and live retrieval policy.
-    ...(!driveWorkspaceAccess ? {unavailableReason: 'Google Drive requires the workspace permission adapter. Upgrade the application runtime to enable this source.'} : {}),
-    description: 'Documents everyone in your workspace can access.',
-    toolkit: 'googledrive', scope: 'team', teamOnly: true,
-    help: 'Imports Google Docs, every Sheets tab, Slides text, PDFs and text files only when every current workspace member has access. Private files and unverified group-only permissions are excluded. Permissions are checked again for search.',
-    owner: record => `workspace=${record.workspace}`,
-    authConfig: {name: 'OpenCrawl Google Drive shared read', credentials: {scopes: 'https://www.googleapis.com/auth/drive.readonly'}},
-    connector: connectors.googledrive,
-    streams: [{name: 'workspace_documents', syncMode: 'full_refresh_append'}],
-    progressStream: ['workspace_documents'],
-    progress: [{stream: 'workspace_documents', label: 'Files read'}],
-    keys: {workspace_documents: ['id']}, units: ['file', 'files'],
-    sourceConfiguration: () => ({}),
-    async account(proxy, {tenantId}) {
-      const result = await proxy<{user?: {emailAddress?: string}}>({endpoint: `${DRIVE}/about`, query: {fields: 'user(emailAddress)'}});
-      if (result.status !== 200 || !result.data?.user?.emailAddress) throw new Error('Google Drive account is unavailable');
-      return {label: result.data.user.emailAddress, workspace: tenantId};
-    },
-    // The signer-visible file count is not the workspace-visible denominator.
-    total: async () => null,
-  },
   slack: {
     id: 'slack',
     primaryMetric: 'Messages',
