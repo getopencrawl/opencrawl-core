@@ -22,10 +22,10 @@ export function createSetupUi(){
   if(app)app.rerender(element);
   else app=render(element,{stdout:process.stderr,stdin:process.stdin,stderr:process.stderr,patchConsole:false,exitOnCtrlC:false,alternateScreen:true,interactive:Boolean(process.stdin.isTTY&&process.stderr.isTTY)});
  };
- const notice=(props:Notice)=>show(<NoticeScreen key={++serial} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)}/>);
+ const notice=(props:Notice,key:number|'progress'=++serial)=>show(<NoticeScreen key={key} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)}/>);
  const progress=(title:string,description:string,details?:string[],animate=false)=>{
   controller.signal.throwIfAborted();
-  notice({title,description,details,animate,onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}});
+  notice({title,description,details,animate,onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}},'progress');
  };
  const close=()=>{app?.unmount();app?.cleanup();app=undefined;};
  return {
