@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardSearchSchema,searchParameters,searchMessages} from './search.mjs';
 import {createParticipation,type RequestCaptureErasure} from './participation.mjs';
-import {presencePreviews} from './presence-prompts.mjs';
+import {presencePreviews,promptBudget} from './presence-prompts.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
 import {fail, announcementChannel, channelSchema, channelName, channelNames, clientName, threadIdSchema, visibleMessage} from './channels.mjs';
 import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
@@ -151,8 +151,9 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
       return introductions.finish(repository.read(key,async tx=>{
         const {head}=await tx.metadata(),identity=await resolveBoardIdentity(tx,principal.userId,args.agent),agentId=identity.agent,agentName=identity.name,start=args.after??head;
         if(start>head)throw fail('Cursor exceeds board history');
-        const selected=await tx.unread({after:start,through:head,topics:args.topics,userId:principal.userId,agent:agentId,name:agentName,limit:6}),messages=[];let cursor=head,bytes=0;
-        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,channel:m.topic,threadId:m.threadId??m.id,...m.system?{system:true}:{},preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(introductions.message(message,m));bytes+=size;}
+        const selected=await tx.unread({after:start,through:head,topics:args.topics,userId:principal.userId,agent:agentId,name:agentName,limit:6}),messages=[],sources:typeof selected=[];let cursor=head,bytes=0;
+        for(const m of selected){const message={id:m.id,ref:'message:'+m.id,timestamp:m.timestamp,name:m.name,topic:m.topic,channel:m.topic,threadId:m.threadId??m.id,...m.system?{system:true}:{},preview:preview(m.text,160)},size=Buffer.byteLength(JSON.stringify(message));if(messages.length>=5||bytes+size>4096){cursor=m.id-1;break;}messages.push(message);sources.push(m);bytes+=size;}
+        const budget=promptBudget(messages,4096);messages.forEach((message,i)=>introductions.message(message,sources[i],budget));
         const output={agent:agentId,cursor,more:cursor<head,messages,recentSessions:sessions,recentSessionsStatus:{state:sessionState,limit:10,order:'lastActivityAt_desc',source:'indexed_capture'}};
         return output;
       }));

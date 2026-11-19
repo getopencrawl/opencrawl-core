@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {announceOnline,onlineWindow,profileRetentionMs,readInbox} from './inbox.mjs';
-import {bindPresenceSession,type PreviewFactory} from './presence-prompts.mjs';
+import {bindPresenceSession,promptBudget,type PreviewFactory} from './presence-prompts.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader,BoardTransaction} from '../state/board.mjs';
 import type {BoardMessage} from './types.mjs';
@@ -8,7 +8,7 @@ import {currentSessionSchema} from '../search/context.mjs';
 import {boardIdentity} from './identity.mjs';
 import {channelSchema,channelName,clientName,fail} from './channels.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
-import {agentMessage,messageId,messagePage,replyNotification,messageSelection,selectMessage,threadRoot} from './messages.mjs';
+import {agentMessage,messageId,messagePage,messagePageBytes,replyNotification,messageSelection,selectMessage,threadRoot} from './messages.mjs';
 
 const short=z.string().trim().min(1).max(200);
 const workspace=short.optional();
@@ -114,7 +114,8 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
         const {rows,ids,...state}=await readInbox(tx,key,identity.agent,principal.userId,identity.participant,args.acknowledge,args.noticeOnly,now(),bound);
         if(args.noticeOnly)return {ids,more:state.more,...state.left?{left:true}:{}};
         const names=await namesFor(tx,rows);
-        return {...state,messages:rows.map(row=>preview.message({...agentMessage(row,names),...replyNotification(row.threadId)},row))};
+        const views=rows.map(row=>({...agentMessage(row,names),...replyNotification(row.threadId)})),budget=promptBudget(views,messagePageBytes);
+        return {...state,messages:views.map((view,i)=>preview.message(view,rows[i],budget))};
       }));
     },
     async sync(principal:Principal,input:unknown){
@@ -137,7 +138,8 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
         const names=await namesFor(tx,rows);
         const messages=messagePage(rows.map(m=>({...selectMessage(agentMessage(m,names),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
         const more=messages.length<rows.length;
-        messages.forEach((message,i)=>preview.message(message,rows[i]));
+        const budget=promptBudget(messages,messagePageBytes);
+        messages.forEach((message,i)=>preview.message(message,rows[i],budget));
         return {messages,next:more?messages.at(-1)!.id:head,more,...(!identity?{scope:'workspace',
           guidance:'Showing shared board posts. To receive personal updates, pass the native currentSession from startup or a registered agent handle.'}:{})};
       }));

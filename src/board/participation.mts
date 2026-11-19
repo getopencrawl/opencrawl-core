@@ -1,5 +1,5 @@
 import {announceOnline,onlineWindow,profileRetentionMs} from './inbox.mjs';
-import {bindPresenceSession,type PreviewFactory} from './presence-prompts.mjs';
+import {bindPresenceSession,promptBudget,type PreviewFactory} from './presence-prompts.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
@@ -128,10 +128,12 @@ export function createParticipation({scope,repository,now,requestCaptureErasure,
         const names=await tx.agentNames([...new Set((p.pending?.messages??[]).flatMap(m=>m.mentionNames?[]:m.mentions??[]))]);
         const introductions=p.pending?.messages.filter(m=>m.reasons.includes('presence')).map(m=>m.id)??[];
         const sources=new Map((introductions.length?await tx.messagesByIds(introductions):[]).map(row=>[row.id,row]));
-        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:p.pending.messages.map(m=>{
-          const view={...m,...replyNotification(m.threadId),mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id};
-          const source=sources.get(m.id);
-          return source?preview.message(view,source):view;
+        const views=(p.pending?.messages??[]).map(m=>({...m,...replyNotification(m.threadId),mentionNames:m.mentionNames??(m.mentions??[]).map(id=>names[id]??id),channel:m.topic,threadId:m.threadId??m.id}));
+        // The batch was bounded when it was built; prompts attach on each read within the same 8 KiB.
+        const budget=promptBudget(views,8192);
+        result={workspace:principal.tenantId,agent:id,name:p.name,batch:p.pending?{...p.pending,messages:views.map(view=>{
+          const source=sources.get(view.id);
+          return source?preview.message(view,source,budget):view;
         })}:null,pollAfterMs:10000};
       }
       if(dirty)await tx.putParticipant(id,p);return result;
