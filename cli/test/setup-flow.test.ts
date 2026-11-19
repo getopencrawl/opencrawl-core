@@ -3,13 +3,13 @@ import {sessionStart} from '../src/session-start.ts';
 import {test,expect,spyOn} from 'bun:test';
 import * as publishedPlugins from '../src/setup/published-plugins.ts';
 import {createServer} from 'node:http';
-import {mkdtempSync,mkdirSync,writeFileSync,appendFileSync,readFileSync,readdirSync,realpathSync,statSync,rmSync,existsSync,copyFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,appendFileSync,readFileSync,readdirSync,realpathSync,statSync,rmSync,existsSync,copyFileSync,cpSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {publishSetup,type SetupServerStatus} from '../src/setup/api.ts';
 import {type CodexHookReview} from '../src/capture/codex-hooks.ts';
 import {setupCommand as realSetupCommand,formatSetupOutput,formatSetupCommand} from '../src/setup/command.ts';
-import {readSetupState,updateSetupState,historyBenefit,type SetupState} from '../src/setup/state.ts';
+import {readSetupState,updateSetupState,statePath,scopeKey,historyBenefit,type SetupState} from '../src/setup/state.ts';
 import {readCaptureConfig,captureDir,captureTranscript} from '../src/capture/runtime.ts';
 import {uninstallCapture} from '../src/capture/install.ts';
 import {atomicJson,withSessionLock} from '../src/session.ts';
@@ -38,72 +38,74 @@ test('first run stays open after interruption and remembers an explicit opt-out 
  expect(readCaptureConfig()).toBeNull();
 }));
 
-test('plain setup resumes each confirmed step and reopens choices after verification',()=>fixture(async(api,_dir,_observations,setClient)=>{
- const scope={api,tenantId:'tenant',userId:'user'};
- const phases:number[]=[];
- let failInstall=true,installs=0;
- const deps={
-  interactive:true,modeEligibility:()=>({eligible:true,reason:'Fixture'}),
-  installPlugins:async()=>{
-   installs++;
-   if(failInstall)throw Error('interrupted plugin install');
-   return {results:[{client:'codex' as const,status:'installed' as const}],humanTasks:[]};
+test('interrupted setup repairs a deleted Codex hook with the saved choices and no history import',()=>fixture(async(api,dir)=>{
+ const scope={api,tenantId:'tenant',userId:'user'},identity=setupPluginIdentity(api);
+ const cache=join(dir,'native-cache',identity.name);
+ const directory=join(dir,'config','opencrawl','setup-plugins','codex',identity.key,identity.name);
+ const hook=join(cache,'hooks','hooks.json');
+ let nativeInstalled=false,installs=0;
+ const installPlugins:typeof installSetupPlugins=(origin,ids,options)=>installSetupPlugins(origin,ids,{
+  ...options,home:dir,which:()=>'/fixture/codex',runner:async(_command,args)=>{
+   if(args[1]==='add'){cpSync(directory,cache,{recursive:true});nativeInstalled=true;installs++;}
+   const rows=nativeInstalled?[{pluginId:identity.name+'@'+identity.marketplace,enabled:true,source:{source:'local',path:directory},installedPath:cache}]:[];
+   return {code:0,stdout:JSON.stringify(args[1]==='list'?rows:{installedPath:cache})};
   },
-  launchHistory:()=>{throw Error('History was never approved');},
- };
- const run=(choose:(screen:SelectionScreen)=>ReturnType<typeof pick>|null)=>setupCommand('run',api,{},{
-  ...deps,choose:async screen=>{phases.push(screen.phase);return choose(screen);},
  });
- const pick=(screen:SelectionScreen,id?:string)=>screen.items.map(item=>({...item,selected:item.id===id}));
- await run(screen=>screen.phase===1?pick(screen,'codex'):null);
- expect(phases.splice(0)).toEqual([1,3]);expect(readCaptureConfig()).toBeNull();
- expect(await setupCommand('run',api,{json:true})).toMatchObject({status:'confirmation_required'});
- for(const flags of [{},{yes:true,json:true}]){
-  expect(await setupCommand('run',api,flags,{...deps,interactive:false})).toMatchObject({question:'background_capture'});
- }
- await expect(run(screen=>pick(screen))).rejects.toThrow('interrupted plugin install');
- expect(phases.splice(0)).toEqual([3]);expect(readSetupState(scope)?.checkpoint?.step).toBe('install');
- failInstall=false;
- await run(()=>null);
- expect(phases.splice(0)).toEqual([2]);expect(installs).toBe(2);
- expect(readSetupState(scope)?.checkpoint?.step).toBe('history');
- await run(screen=>pick(screen));
- expect(phases.splice(0)).toEqual([2]);expect(installs).toBe(2);
- expect(readSetupState(scope)?.firstRun).toBe('ready');
- setClient({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});
- expect(await run(()=>{throw Error('Repeated choice');})).toMatchObject({nextAction:{kind:'complete'}});
- expect(installs).toBe(2);expect(readSetupState(scope)?.firstRun).toBe('complete');
- await run(()=>null);expect(phases).toEqual([1]);
+ const phases:number[]=[];
+ const run=(again:boolean)=>setupCommand('run',api,{}, {interactive:true,installPlugins,
+  launchHistory:()=>{throw Error('History was never approved');},
+  choose:async screen=>{
+   phases.push(screen.phase);
+   if(screen.phase===2){
+    expect(screen.items.every(item=>!item.selected)).toBe(true);
+    return again?screen.items:null;
+   }
+   const codex=screen.items.find(item=>item.id==='codex')!;
+   expect(codex.needsReinstall).toBe(again);
+   expect(screen.items.find(item=>item.id==='cursor')?.needsReinstall).toBe(false);
+   if(again){expect(codex.selected).toBe(true);return screen.items;}
+   return screen.items.map(item=>({...item,selected:item.id==='codex'}));
+  },
+ });
+ expect(await run(false)).toMatchObject({status:'cancelled'});
+ const saved=readSetupState(scope)!,contents=readFileSync(hook);
+ expect(saved.historyJob).toBeUndefined();
+ // Reproduce the history checkpoint written by a pre-upgrade TUI as well.
+ atomicJson(statePath(scopeKey(scope)),{...saved,checkpoint:{step:'history'}});
+ rmSync(hook);
+ await run(true);
+ expect(phases).toEqual([1,2,1,2]);expect(installs).toBe(2);
+ expect(readFileSync(hook)).toEqual(contents);
+ expect(readSetupState(scope)).toMatchObject({selections:saved.selections,installationId:saved.installationId});
+ expect(readSetupState(scope)?.historyJob).toBeUndefined();
+ expect(JSON.parse(readFileSync(statePath(scopeKey(scope)),'utf8'))).not.toHaveProperty('checkpoint');
 }));
 
-test('plain setup uses the approved history snapshot after an interrupted history-only install',()=>fixture(async(api,dir)=>{
+test('a legacy import checkpoint cannot start or expand an import on reinstall',()=>fixture(async(api,dir)=>{
  const scope={api,tenantId:'tenant',userId:'user'};
- const choose=async(screen:SelectionScreen)=>screen.items.map(item=>({...item,selected:screen.phase===2&&item.id==='codex'}));
- const fail=async()=>{throw Error('interrupted history binding');};
- await expect(setupCommand('run',api,{}, {interactive:true,choose,installPlugins:fail})).rejects.toThrow('interrupted history binding');
- const snapshot=readSetupState(scope)?.checkpoint?.approvedHistory?.files;
- expect(snapshot?.length).toBe(1);
- writeFileSync(join(dir,'codex','sessions','unapproved.jsonl'),'{}');
- const resumed=await setupCommand('run',api,{}, {interactive:true,choose:fail,
-  installPlugins:async()=>({results:[],humanTasks:[]}),launchHistory:state=>{
-   expect(state.historyJob?.files).toEqual(snapshot);return {state:'queued'};
-  }});
- expect(resumed).toMatchObject({history:{state:'queued'},nextAction:{kind:'complete'}});
- expect(readSetupState(scope)?.checkpoint).toBeUndefined();
+ await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},setupCodex);
+ const old=readSetupState(scope)!;
+ atomicJson(statePath(scopeKey(scope)),{...old,firstRun:'choosing',checkpoint:{step:'import',approvedHistory:{files:[],retained:[]}}});
+ writeFileSync(join(dir,'codex','sessions','later.jsonl'),'{}');
+ const phases:number[]=[];
+ await setupCommand('run',api,{}, {...setupCodex,interactive:true,choose:async screen=>{
+  phases.push(screen.phase);return screen.items;
+ },launchHistory:()=>{throw Error('A stale navigation step cannot authorize a new import');}});
+ expect(phases).toEqual([1,2]);expect(readSetupState(scope)?.historyJob).toBeUndefined();
 }));
 
 test('a saved self-hosted address survives interrupted sign-in without authorizing an environment token',()=>fixture(async api=>{
  const first=terminalSetupEntry();await first.save(api);
- const resumed=terminalSetupEntry();expect(resumed).toMatchObject({api,continuing:true});
- const different=terminalSetupEntry('https://another.example');expect(different.continuing).toBe(false);
+ const resumed=terminalSetupEntry();expect(resumed.api).toBe(api);
+ const different=terminalSetupEntry('https://another.example');expect(different.api).toBe('https://another.example');
  const unexpected=async():Promise<never>=>{throw Error('Repeated navigation');};
  let connected=false;
- const ui:SetupUi={signal:new AbortController().signal,welcome:unexpected,hosting:unexpected,workspace:unexpected,invite:unexpected,choose:unexpected,native:unexpected,
+ const ui:SetupUi={signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,choose:unexpected,native:unexpected,
   close:()=>{},progress:()=>{},action:async()=>'done'};
  await runInteractiveSetup({values:{},entry:()=>resumed,readDestination:()=>({}),withOrigin:(origin,run)=>{
   expect(origin).toBeUndefined();return run();
  },login:unexpected},{createUi:()=>ui,setup:async(_action,destination)=>{connected=true;expect(destination).toBe(api);return {status:'recording_off',scope:{api,tenantId:'tenant',userId:'user'},installationId:undefined,selections:{plugins:{},forward:{},history:{}},humanTasks:[]};}});
- expect(connected).toBe(true);expect(terminalSetupEntry().continuing).toBe(false);
+ expect(connected).toBe(true);expect(terminalSetupEntry().api).toBeUndefined();
 }));
 
 test('first run checks legacy installation proof once and keeps completed help offline',()=>fixture(async(api,_dir,_observations,setClient)=>{
@@ -160,7 +162,7 @@ test('an unavailable saved agent can be kept without reinstalling or losing its 
  const result=await setupCommand('run',api,{},{
   interactive:true,canInstall:async()=>false,
   choose:async screen=>{
-   if(screen.phase===1)expect(screen.items).toEqual([{id:'cursor',label:'Keep Cursor selected for later',selected:true}]);
+   if(screen.phase===1)expect(screen.items).toEqual([{id:'cursor',label:'Keep Cursor selected for later',selected:true,needsReinstall:true}]);
    return screen.items;
   },
   installPlugins:async(_api,clients)=>{expect(clients).toEqual([]);return {results:[],humanTasks:[]};}
@@ -203,18 +205,18 @@ test('a failed plugin leaves history and healthy agents usable and can be retrie
  expect(await needsFirstRunSetup(api)).toBe(false);
  expect(await setupCommand('next',api,{})).toMatchObject({nextAction:{kind:'repair_plugin',client:'cursor'}});
  expect(await setupCommand('status',api,{local:true})).toMatchObject({pluginResults:expect.arrayContaining([failure])});
- const resumed=await setupCommand('run',api,{}, {interactive:true,choose:async()=>{throw Error('Repeated confirmed choice');},installPlugins:async(_api,clients)=>{
+ const resumed=await setupCommand('run',api,{}, {interactive:true,choose:async screen=>screen.items,installPlugins:async(_api,clients)=>{
   expect(clients).toEqual(['codex','cursor']);return {results:[{client:'codex',status:'unchanged'},{client:'cursor',status:'prepared'}],humanTasks:[]};
  },launchHistory:()=>({state:'queued'})});
  expect(resumed).toMatchObject({nextAction:{kind:'native_tool',arguments:{client:'cursor'}}});
 }));
 
-test('an interactive resume with only a failed plugin finishes without a repair prompt',()=>fixture(async api=>{
+test('reinstalling a pending plugin leaves its next action visible',()=>fixture(async api=>{
  const failure={results:[{client:'cursor' as const,status:'pending' as const}],humanTasks:[]};
  await setupCommand('apply',api,{yes:true,plugins:'cursor',forward:'cursor',history:'none'},{installPlugins:async()=>failure});
  const unexpected=async():Promise<never>=>{throw Error('Unexpected setup question');};
  const actions:string[]=[];
- const ui:SetupUi={signal:new AbortController().signal,welcome:unexpected,hosting:unexpected,workspace:unexpected,invite:unexpected,choose:unexpected,native:unexpected,close:()=>{},progress:()=>{},
+ const ui:SetupUi={signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,choose:async screen=>screen.items,native:unexpected,close:()=>{},progress:()=>{},
   action:async screen=>{actions.push(screen.title);expect(screen.actions?.map(action=>action.label)).toEqual(['Done']);return 'done';}
  };
  const code=await runInteractiveSetup({entry:()=>terminalSetupEntry(api),values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
@@ -231,9 +233,9 @@ test('TUI service retry preserves selections and does not ask for native verific
   return 'done';
  },close:()=>{},native:async run=>run()};
  const result=await runInteractiveSetup({values:{},readDestination:()=>({api,explicit:api}),withOrigin:async(_origin,run)=>run(),login:async()=>{throw Error('Unexpected login');}},{createUi:()=>ui,which:()=>null,pause:async()=>{throw Error('Must repair service before native verification');},setup:(action,origin,values,dependencies)=>{
-  operations.push(action);return setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>ready,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})});
+  operations.push(values.yes?'repair':action);return setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>ready,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})});
  }});
- expect(result).toBe(0);expect(installs).toBe(2);expect(operations.filter(x=>x==='run')).toHaveLength(1);expect(operations.filter(x=>x==='resume')).toHaveLength(1);expect(choices).toBe(3);expect(screens).not.toContain('Finish connecting your agents');expect(screens.at(-1)).toBe('Setup complete');
+ expect(result).toBe(0);expect(installs).toBe(2);expect(operations.filter(x=>x==='run')).toHaveLength(1);expect(operations.filter(x=>x==='repair')).toHaveLength(1);expect(choices).toBe(3);expect(screens).not.toContain('Finish connecting your agents');expect(screens.at(-1)).toBe('Setup complete');
 }));
 
 test('failed supervision stops before launching Claude native sign-in',async()=>fixture(async api=>{
@@ -365,7 +367,7 @@ test('multi-agent setup resumes the approved browser action and advances to the 
    return 'later';
   }
  };
- const run=(action:'run'|'resume')=>runInteractiveSetup({action,values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
+ const run=()=>runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
   createUi:()=>ui,which:name=>'/native/'+name,findConnection:async client=>({name:client==='claude-code'?'opencrawl':setupPluginIdentity(api).name,skipLogin:false}),
   inspectCodex:async()=>({state:'observed',total:1,pending:0,disabled:0}),
   native:async(command,args)=>{
@@ -378,14 +380,14 @@ test('multi-agent setup resumes the approved browser action and advances to the 
   setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,installPlugins:async(_api,clients)=>{expect(clients.sort()).toEqual(['claude-code','codex']);return {results:[{client:'claude-code',status:'installed'},{client:'codex',status:'installed'}],humanTasks:[]};}}),
   pause:unexpected
  });
- expect(await run('run')).toBe(0);
+ expect(await run()).toBe(0);
  expect(calls).toEqual([]);
  const scope={api,tenantId:'tenant',userId:'user'};
  const saved=readSetupState(scope)!;
  expect(saved.firstRun).toBe('ready');
  expect(saved.selections.forward).toMatchObject({'claude-code':true,codex:true});
- later=false;ui.choose=unexpected;
- expect(await run('resume')).toBe(0);
+ later=false;ui.choose=async screen=>screen.items;
+ expect(await run()).toBe(0);
  expect(screens).toEqual(['Connect Claude Code to OpenCrawl','Connect Claude Code to OpenCrawl','Connect Claude Code to OpenCrawl','Connect Codex to OpenCrawl']);
  expect(calls).toHaveLength(3);
  expect(calls[0]).toEqual(['/native/claude','mcp','login','opencrawl']);
@@ -496,13 +498,13 @@ test('resume retries pending selected plugins without another selection screen o
  let chooseCount=0,installs=0;
  const pending=await setupCommand('run',api,{}, {interactive:true,choose:async screen=>{chooseCount++;return screen.items.map(item=>({...item,selected:chooseCount===1&&item.id==='codex'}));},installPlugins:async()=>({results:[{client:'codex',status:'pending'}],humanTasks:[{id:'codex-install',kind:'plugin_install',client:'codex',title:'Install Codex',instruction:'Install Codex, then run setup.'}]}),launchHistory:()=>({state:'not_started'})});
  expect(pending).toMatchObject({status:'needs_attention'});const before=readSetupState({api,tenantId:'tenant',userId:'user'});
- const resumed=await setupCommand('resume',api,{json:true},{choose:async()=>{throw new Error('Unexpected questionnaire');},installPlugins:async(_api,selected)=>{installs++;expect(selected).toEqual(['codex']);return {results:[{client:'codex',status:'installed'}],humanTasks:[]};},launchHistory:()=>({state:'not_started'})});
+ const resumed=await setupCommand('run',api,{yes:true,json:true},{choose:async()=>{throw new Error('Unexpected questionnaire');},installPlugins:async(_api,selected)=>{installs++;expect(selected).toEqual(['codex']);return {results:[{client:'codex',status:'installed'}],humanTasks:[]};},launchHistory:()=>({state:'not_started'})});
  expect(installs).toBe(1);expect(resumed).toMatchObject({status:'configured'});expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.selections.history).toEqual(before?.selections.history);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.historyJob).toBeUndefined();
 }));
 test('an existing client retains native reload tasks on resume',async()=>fixture(async api=>{
  await legacySetupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},{installPlugins:async()=>({results:[{client:'codex',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})});
  await updateSetupState({api,tenantId:'tenant',userId:'user'},state=>({...state!,selections:{plugins:{cursor:true},forward:{cursor:false},history:{cursor:false}}}));
- const result=await setupCommand('resume',api,{json:true},{installPlugins:async()=>({results:[{client:'cursor',status:'installed'}],humanTasks:[{id:'cursor-reload',kind:'restart',client:'cursor',title:'Reload Cursor',instruction:'Reload Cursor to load the installed local plugin.'}]}),launchHistory:()=>({state:'not_started'})});
+ const result=await setupCommand('run',api,{yes:true,json:true},{installPlugins:async()=>({results:[{client:'cursor',status:'installed'}],humanTasks:[{id:'cursor-reload',kind:'restart',client:'cursor',title:'Reload Cursor',instruction:'Reload Cursor to load the installed local plugin.'}]}),launchHistory:()=>({state:'not_started'})});
  expect(result).toMatchObject({humanTasks:[{id:'cursor-reload',kind:'restart'}]});
  const status=await setupCommand('status',api,{json:true});expect(status).toMatchObject({humanTasks:[{id:'cursor-reload'}]});
 }));
@@ -535,8 +537,8 @@ test('captured or verified Codex setup stays quiet when native inspection is una
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},setupCodex);
  for(const evidence of [{captureObservedAt:new Date().toISOString()}, {proof:{state:'verified'}}]){
   setCodex({...evidence,humanTasks:[]});
-  for(const inspectHooks of [nativeUnknown,nativeDisabled])for(const action of ['status','resume']){
-   const result=await setupCommand(action,api,{json:true},{...setupCodex,inspectHooks});
+  for(const inspectHooks of [nativeUnknown,nativeDisabled])for(const action of ['status','run']){
+   const result=await setupCommand(action,api,{json:true,yes:action==='run'},{...setupCodex,inspectHooks});
    expect(result).toMatchObject({humanTasks:[]});
   }
  }
@@ -547,8 +549,8 @@ test('a search-only Codex plugin never adds capture trust, including stale serve
  let inspections=0;const inspectHooks=async():Promise<CodexHookReview>=>{inspections++;return {state:'observed',total:1,pending:1,disabled:0};};
  await legacySetupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},{...setupCodex,inspectHooks});
  setCodex({humanTasks:[{id:'stale-capture-trust',kind:'hook_trust',client:'codex',title:'Old recording choice',instruction:'Stale task'}, {id:'mcp-auth',kind:'mcp_auth',client:'codex',title:'Connect MCP',instruction:'Complete native sign-in'}]});
- for(const action of ['status','resume']){
-  const result=await setupCommand(action,api,{json:true},{...setupCodex,inspectHooks});
+ for(const action of ['status','run']){
+  const result=await setupCommand(action,api,{json:true,yes:action==='run'},{...setupCodex,inspectHooks});
   expect(result).toMatchObject({humanTasks:[{id:'mcp-auth'}],selections:{forward:{codex:false}}});
  }
  expect(inspections).toBe(0);
@@ -560,14 +562,14 @@ test('a local recording opt-out suppresses capture trust before saved setup choi
  setCodex({humanTasks:[{id:'stale-capture-trust',kind:'hook_trust',client:'codex',title:'Old recording choice',instruction:'Stale task'}]});
  const inspectHooks=async():Promise<CodexHookReview>=>{throw new Error('Recording opt-out must not inspect native hooks');};
  expect(await setupCommand('status',api,{json:true},{...setupCodex,inspectHooks})).toMatchObject({humanTasks:[]});
- expect(await setupCommand('resume',api,{json:true},{...setupCodex,inspectHooks})).toMatchObject({humanTasks:[],selections:{forward:{codex:false}}});
+ expect(await setupCommand('run',api,{yes:true,json:true},{...setupCodex,inspectHooks})).toMatchObject({humanTasks:[],selections:{forward:{codex:false}}});
 }));
 
 test('positively observed changed hooks still require review after a previous capture proof',async()=>fixture(async(api,_dir,_observations,setCodex)=>{
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none'},setupCodex);
  setCodex({captureObservedAt:new Date().toISOString(),proof:{state:'verified'},humanTasks:[]});
- for(const action of ['status','resume']){
-  const result=await setupCommand(action,api,{json:true},{...setupCodex,inspectHooks:nativeChanged});
+ for(const action of ['status','run']){
+  const result=await setupCommand(action,api,{json:true,yes:action==='run'},{...setupCodex,inspectHooks:nativeChanged});
   expect(result).toMatchObject({humanTasks:[{id:'codex-hook-review',kind:'hook_trust',client:'codex'}]});
   const instruction=(result as {humanTasks:{instruction:string}[]}).humanTasks[0].instruction;
   expect(instruction).toContain('Codex will not run 2 OpenCrawl hooks');
@@ -590,7 +592,7 @@ test('setup plans, handoffs and sign-in keep the selected launcher and saved sea
  const plan=await legacySetupCommand('plan',api,{plugins:'codex',forward:'none',history:'none'},dependencies) as {applyCommand:string;planId:string};
  expect(plan.applyCommand).toBe(formatSetupCommand(['setup','apply','--api',api,'--plugins','codex','--forward','none','--history','none','--capture-mode','daemon','--plan-id',plan.planId,'--yes','--json'],command));
  const applied=await legacySetupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},dependencies);
- for(const result of [applied,await setupCommand('resume',api,{json:true},dependencies)]){
+ for(const result of [applied,await setupCommand('run',api,{yes:true,json:true},dependencies)]){
   if(!result||!('agentPrompt' in result)||!('nextStep' in result))throw Error('Expected an agent handoff');
   const handoff=result;
   expect(handoff.agentPrompt).toContain('in this conversation');
@@ -629,7 +631,7 @@ test('prepared plugin handoff reconciles only selected activations with ready su
    expect(before.clients.find(row=>row.client==='codex')).toMatchObject({installed:false,pluginState:'prepared'});
    // A handoff is not activation: only the normal explicit resume publishes the new observation.
    status='unchanged';
-   const resumed=await setupCommand('resume',api,{json:true},{...dependencies,choose:async()=>{throw Error('Unexpected questionnaire');}});
+   const resumed=await setupCommand('run',api,{yes:true,json:true},{...dependencies,choose:async()=>{throw Error('Unexpected questionnaire');}});
    if(!resumed||!('agentPrompt' in resumed))throw Error('Expected an agent handoff');
    expect(resumed.agentPrompt).not.toContain('`'+resumeCommand+'` once');
    expect(installs).toBe(2);
@@ -651,14 +653,14 @@ test('prepared native load guidance survives independent MCP or capture proof',(
  const dependencies={...setupCodex,installPlugins:async()=>({results:[{client:'codex' as const,status:'prepared' as const}],humanTasks:[{id:'codex-load',kind:'restart' as const,client:'codex' as const,title:'Load native plugin',instruction:'Review native plugin trust and reload.'}]})};
  await legacySetupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'none'},dependencies);
  setCodex({mcp:{state:'authenticated'},proof:{state:'verified'},captureObservedAt:new Date().toISOString()});
- for(const action of ['status','resume'])expect(await setupCommand(action,api,{json:true},dependencies)).toMatchObject({humanTasks:[{id:'codex-load',kind:'restart'}],selections:{forward:{codex:false}}});
+ for(const action of ['status','run'])expect(await setupCommand(action,api,{json:true,yes:action==='run'},dependencies)).toMatchObject({humanTasks:[{id:'codex-load',kind:'restart'}],selections:{forward:{codex:false}}});
 }));
 
 test('resume rechecks previously installed native plugins and a new launcher without expanding saved choices or history',()=>fixture(async(api,dir)=>{
  const first=[join(dir,'first-cli')],next=[join(dir,'new-cli')];
  await legacySetupCommand('apply',api,{yes:true,plugins:'codex',forward:'none',history:'codex'},{...setupCodex,command:first});const before=readSetupState({api,tenantId:'tenant',userId:'user'})!;
  let calls=0;
- const result=await setupCommand('resume',api,{json:true},{...setupCodex,command:next,choose:async()=>{throw new Error('No new questionnaire');},installPlugins:async(_api,selected,options)=>{calls++;expect(selected).toEqual(['codex']);expect(options?.command).toEqual(next);return {results:[{client:'codex',status:'prepared'}],humanTasks:[{id:'new-bundle-load',kind:'restart',client:'codex',title:'Load the current plugin',instruction:'Reload the native client.'}]};}});
+ const result=await setupCommand('run',api,{yes:true,json:true},{...setupCodex,command:next,choose:async()=>{throw new Error('No new questionnaire');},installPlugins:async(_api,selected,options)=>{calls++;expect(selected).toEqual(['codex']);expect(options?.command).toEqual(next);return {results:[{client:'codex',status:'prepared'}],humanTasks:[{id:'new-bundle-load',kind:'restart',client:'codex',title:'Load the current plugin',instruction:'Reload the native client.'}]};}});
  expect(calls).toBe(1);expect(result).toMatchObject({status:'needs_attention',humanTasks:[{id:'new-bundle-load'}]});
  const after=readSetupState({api,tenantId:'tenant',userId:'user'})!;expect(after.selections).toEqual(before.selections);expect(after.historyJob).toEqual(before.historyJob);expect(readCaptureConfig()?.command).toEqual(next);
 }));
@@ -738,7 +740,7 @@ test('explicit uninstall stops both lanes and resume restores only selected star
  const queue=join(captureDir(),'queue','retained.json'),task=join(captureDir(),'daemon','inbox','startup-retained.json');mkdirSync(join(task,'..'),{recursive:true});writeFileSync(queue,'retained queue');writeFileSync(task,'retained task');
  const stopped=await uninstallCapture(dir);expect(stopped).toMatchObject({backgroundStartupStopped:true,queuedDataPreserved:true});
  expect(readCaptureConfig()).toMatchObject({disabled:true,backgroundStartup:false});expect(readSetupState(scope)?.selections).toEqual(before.selections);
- let launches=0;const result=await setupCommand('resume',api,{json:true},{...dependencies,installDaemon:async config=>{launches++;expect(config).toMatchObject({disabled:true,backgroundStartup:true,harnesses:[]});return {kind:'process',status:'requested',supervised:false,command:[]};}});
+ let launches=0;const result=await setupCommand('run',api,{yes:true,json:true},{...dependencies,installDaemon:async config=>{launches++;expect(config).toMatchObject({disabled:true,backgroundStartup:true,harnesses:[]});return {kind:'process',status:'requested',supervised:false,command:[]};}});
  expect(launches).toBe(1);expect(result).toMatchObject({worker:{startup:true,harnesses:[]}});
  expect(readSetupState(scope)?.selections.plugins).toEqual(before.selections.plugins);expect(readSetupState(scope)?.selections.history).toEqual(before.selections.history);
  expect(readFileSync(queue,'utf8')).toBe('retained queue');expect(readFileSync(task,'utf8')).toBe('retained task');
@@ -752,7 +754,7 @@ test('fresh service failure retains legacy capture and explicit registration rec
  const startup=await sessionStart(api,'claude-code',{session_id:'fallback-session',hook_event_name:'SessionStart',source:'startup'},async()=>{throw Error('Fallback hook must not make network calls');});
  expect(JSON.stringify(startup)).toContain('register this session');expect(JSON.stringify(startup)).not.toContain('background registration is pending');
  const saved=readSetupState({api,tenantId:'tenant',userId:'user'})!;
- const resumed=await setupCommand('resume',api,{json:true},options);
+ const resumed=await setupCommand('run',api,{yes:true,json:true},options);
  expect(resumed).toMatchObject({worker:{supervised:true,startup:true}});
  expect(readCaptureConfig()).toMatchObject({installationId:before.installationId,owner:before.owner,harnesses:before.harnesses,historyHarnesses:[],captureWorker:'daemon-v1',backgroundStartup:true});
  expect(readCaptureConfig()?.daemonRequested).toBeUndefined();expect(readSetupState(saved.scope)?.selections).toEqual(saved.selections);
@@ -764,7 +766,7 @@ test('missing Linux user supervision retains fallback and retries saved choices 
  expect(applied).toMatchObject({status:'needs_attention',worker:{kind:'fallback',readiness:'pending',supervised:false},humanTasks:[]});
  const saved=readSetupState({api,tenantId:'tenant',userId:'user'})!;
  expect(readCaptureConfig()?.captureWorker).toBeUndefined();
- const resumed=await setupCommand('resume',api,{json:true},dependencies);
+ const resumed=await setupCommand('run',api,{yes:true,json:true},dependencies);
  expect(resumed).toMatchObject({status:'needs_attention',selections:saved.selections,worker:{kind:'fallback'}});
  expect(readSetupState(saved.scope)?.historyJob).toEqual(saved.historyJob);expect(formatSetupOutput(resumed)).toContain('legacy collector');
 }));
@@ -806,7 +808,7 @@ test('manual Cursor MCP can enroll through normal setup without replacing connec
  expect(JSON.parse(readFileSync(join(plugin,'mcp.json'),'utf8'))).toEqual({mcpServers:{opencrawl:{url:api+'/mcp'}}});
  expect(existsSync(join(plugin,'hooks','hooks.json'))).toBe(true);expect(existsSync(join(cursorRoot,'hooks.json'))).toBe(false);
  expect(result).toMatchObject({status:'needs_attention'});expect(state.pluginResults).toEqual([expect.objectContaining({client:'cursor',status:'prepared'})]);expect(readFileSync(mcpFile,'utf8')).toBe(manual);
- await setupCommand('resume',api,{json:true},dependencies);
+ await setupCommand('run',api,{yes:true,json:true},dependencies);
  expect(readSetupState(state.scope)?.installationId).toBe(state.installationId);expect(readSetupState(state.scope)?.selections).toEqual(state.selections);expect(readFileSync(mcpFile,'utf8')).toBe(manual);
 }));
 
@@ -819,7 +821,7 @@ test('existing deferred choices and bounded completed history survive new Mac of
  await expect(setupCommand('apply',api,{yes:true,plugins:'devin',forward:'none',history:'none'},setupCodex)).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
  expect(calls).toEqual([]);expect(readSetupState(scope)).toEqual(before);
  // Resuming old search-only choices never turns recording on as a migration side effect.
- await setupCommand('resume',api,{json:true},{...setupCodex,platform:'linux',installPlugins:async(_api,ids)=>({results:[{client:'codex',status:'installed' as const},{client:'antigravity',status:'installed' as const}],humanTasks:[]})});
+ await setupCommand('run',api,{yes:true,json:true},{...setupCodex,platform:'linux',installPlugins:async(_api,ids)=>({results:[{client:'codex',status:'installed' as const},{client:'antigravity',status:'installed' as const}],humanTasks:[]})});
  expect(readSetupState(scope)?.historyJob).toEqual(before.historyJob);
  await updateSetupState(scope,state=>({...state!,historyJob:{...state!.historyJob!,state:'paused'}}));
  const paused=readSetupState(scope)!.historyJob;
@@ -829,8 +831,8 @@ test('existing deferred choices and bounded completed history survive new Mac of
  expect(Object.values(off.selections.plugins).every(v=>!v)).toBe(true);expect(Object.values(off.selections.history).every(v=>!v)).toBe(true);
 }));
 
-test('resume cannot create a first-time history approval on any platform',async()=>fixture(async(api,dir,observations)=>{
- for(const platform of ['darwin','linux','win32'] as const)await expect(setupCommand('resume',api,{yes:true,plugins:'none',forward:'none',history:'codex'},{platform,launchHistory:()=>{throw new Error('Unapproved history worker');},installPlugins:async()=>{throw new Error('Unapproved plugin install');}})).rejects.toMatchObject({code:'SETUP_NOT_STARTED'});
+test('the removed resume command cannot create an installation',async()=>fixture(async(api,dir,observations)=>{
+ for(const platform of ['darwin','linux','win32'] as const)await expect(setupCommand('resume',api,{yes:true,plugins:'none',forward:'none',history:'codex'},{platform,launchHistory:()=>{throw new Error('Unapproved history worker');},installPlugins:async()=>{throw new Error('Unapproved plugin install');}})).rejects.toMatchObject({code:'INVALID_USAGE'});
  expect(readCaptureConfig()).toBeNull();expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();expect(observations).toEqual([]);expect(existsSync(join(dir,'config','opencrawl','capture'))).toBe(false);
 }));
 
@@ -870,7 +872,7 @@ test('unbound saved deferred choices cannot enter run, plan, or apply implicitly
  expect(installs).toBe(0);expect(launches).toBe(0);expect(choices).toBe(0);expect(observations).toEqual([]);expect(calls).toHaveLength(9);expect(calls.every(path=>path==='/api/setup')).toBe(true);expect(existsSync(join(dir,'config','opencrawl','capture'))).toBe(false);
  // An interrupted approval containing only available Mac clients still recovers.
  await updateSetupState(scope,()=>({schemaVersion:1,scope,acceptedAt,selections:{plugins:{codex:true},forward:{codex:false},history:{codex:false}}}));
- await setupCommand('resume',api,{json:true},setupCodex);
+ await setupCommand('run',api,{yes:true,json:true},setupCodex);
  expect(readCaptureConfig()).toMatchObject({harnesses:[],historyHarnesses:[],owner:{tenantId:'tenant',userId:'user'}});
  expect(readSetupState(scope)?.selections).toEqual({plugins:{codex:true},forward:{codex:false},history:{codex:false}});expect(readSetupState(scope)?.historyJob).toBeUndefined();
 }));
@@ -884,7 +886,7 @@ test('ordinary resume repairs only unverified future boundaries and never waits 
  const statePath=stateFile(file),exactPath=stateFile(exactFile),exactBefore=readFileSync(exactPath,'utf8');
  const line=(text:string)=>JSON.stringify({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}})+'\n';
  const capture=()=>captureTranscript(config,'codex',file,{session_id:'one'});
- const resume=()=>setupCommand('resume',api,{json:true},{...setupCodex,choose:async()=>{throw Error('Unexpected questionnaire');}});
+ const resume=()=>setupCommand('run',api,{yes:true,json:true},{...setupCodex,choose:async()=>{throw Error('Unexpected questionnaire');}});
  // An unchanged exact profile does not acquire the busy spool lock at all.
  await withSessionLock('capture:spool',async()=>{expect(await resume()).toMatchObject({status:'configured'});});
  appendFileSync(file,line('ALREADY APPROVED'));await capture();
@@ -1006,7 +1008,7 @@ test('eligible setup offers the utility by default and preserves a declined inst
  expect(phases).toEqual([1,3,2]);expect(installs).toBe(0);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('hook');
  expect(readCaptureConfig()?.backgroundStartup).toBe(false);expect(readCaptureConfig()?.captureWorker).toBeUndefined();
  await setupCommand('run',api,{}, {...dependencies,interactive:true,choose:declineService(false)});
- await setupCommand('resume',api,{}, {...dependencies,choose:async()=>{throw Error('Resume must not ask again');}});expect(installs).toBe(0);
+ await setupCommand('run',api,{yes:true,json:true}, {...dependencies,choose:async()=>{throw Error('Resume must not ask again');}});expect(installs).toBe(0);
 }));
 
 test('accepting the default installs the utility after its plugin, and opt-out preserves the queue',()=>fixture(async(api,dir)=>{
@@ -1014,7 +1016,7 @@ test('accepting the default installs the utility after its plugin, and opt-out p
  const dependencies={modeEligibility:()=>({eligible:true,reason:'Fixture supervisor'}),stopDaemon:()=>{stops++;},installPlugins:async(_api:string,_clients:string[],options?:Parameters<typeof installSetupPlugins>[2])=>{modes.push(options?.captureMode??'missing');return {results:[{client:'codex' as const,status:'installed' as const,captureAvailable:true,daemonHandoff:true}],humanTasks:[]};},installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},launchHistory:()=>({state:'not_started'})};
  await setupCommand('run',api,{}, {...dependencies,interactive:true,choose:async screen=>screen.phase===3?screen.items:screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}))});
  expect(installs).toBe(1);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('daemon');
- await setupCommand('resume',api,{},dependencies);expect(installs).toBe(2);
+ await setupCommand('run',api,{yes:true,json:true},dependencies);expect(installs).toBe(2);
  const queue=join(dir,'config/opencrawl/capture/queue/keep.json');writeFileSync(queue,'pending bytes');
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'hook'},dependencies);
  expect(stops).toBe(1);expect(installs).toBe(2);expect(modes).toEqual(['daemon','daemon','hook']);expect(readFileSync(queue,'utf8')).toBe('pending bytes');
@@ -1026,7 +1028,7 @@ test('unavailable daemon and cancelled daemon question make no enrollment change
  expect(readCaptureConfig()).toBeNull();
  const answer=await setupCommand('run',api,{}, {interactive:true,modeEligibility:()=>({eligible:true,reason:'Fixture'}),choose:async screen=>screen.phase===3?null:screen.items.map(row=>({...row,selected:row.id==='codex'}))});
  expect(answer).toMatchObject({status:'cancelled'});expect(readCaptureConfig()).toBeNull();
- expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toMatchObject({checkpoint:{step:'service'},selections:{forward:{codex:true}}});
+ expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();
 }));
 
 // Enable on the Mac proof host with the verified public release directory.
@@ -1051,16 +1053,16 @@ test.skipIf(!process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR||process.platform!=='
  const initial=await run(['apply','--plugins','cursor','--forward','cursor','--history','none','--capture-mode','hook','--yes']);
  expect(initial).toMatchObject({status:'needs_attention',plugins:[{client:'cursor',status:'prepared'}],nextAction:{kind:'native_tool'}});
  expect(observations.at(-1)).toMatchObject({clients:expect.arrayContaining([expect.objectContaining({client:'cursor',installed:false,pluginState:'prepared'})])});
- const preReceipt=await run(['resume']);expect(preReceipt.plugins[0].preparedAt).toBe(initial.plugins[0].preparedAt);
+ const preReceipt=await run(['--yes']);expect(preReceipt.plugins[0].preparedAt).toBe(initial.plugins[0].preparedAt);
  setClient({captureObservedAt:new Date().toISOString(),mcp:{state:'authenticated'},proof:{state:'verified'}});
- expect(await run(['resume'])).toMatchObject({installationId:initial.installationId,plugins:[{client:'cursor',status:'unchanged'}],nextAction:{kind:'complete'}});
+ expect(await run(['--yes'])).toMatchObject({installationId:initial.installationId,plugins:[{client:'cursor',status:'unchanged'}],nextAction:{kind:'complete'}});
  expect(observations.at(-1)).toMatchObject({clients:expect.arrayContaining([expect.objectContaining({client:'cursor',installed:true,pluginState:'installed'})])});
 },true,'cursor'),60000);
 
 async function expectUnavailableCursorPin(api:string){
  const entry=publishedPlugins.packageRelease('cursor')!;
  const pin=spyOn(publishedPlugins,'packageRelease').mockReturnValue({...entry,captureAvailable:false});
- try{await expect(realSetupCommand('resume',api,{json:true})).rejects.toMatchObject({code:'PLUGIN_CAPTURE_UNAVAILABLE'});}
+ try{await expect(realSetupCommand('run',api,{yes:true,json:true})).rejects.toMatchObject({code:'PLUGIN_CAPTURE_UNAVAILABLE'});}
  finally{pin.mockRestore();}
 }
 
@@ -1083,7 +1085,7 @@ test('development pin cannot downgrade an earlier capture-capable public package
 test('a saved daemon choice on an ineligible host remains selected but cannot claim supervision',()=>fixture(async api=>{
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'daemon'},setupCodex);
  let installs=0;
- const resumed=await setupCommand('resume',api,{}, {...setupCodex,modeEligibility:()=>({eligible:false,reason:'Unsupported host'}),installDaemon:async()=>{installs++;throw Error('Must not install on this host');}});
+ const resumed=await setupCommand('run',api,{yes:true,json:true}, {...setupCodex,modeEligibility:()=>({eligible:false,reason:'Unsupported host'}),installDaemon:async()=>{installs++;throw Error('Must not install on this host');}});
  expect(installs).toBe(0);expect(resumed).toMatchObject({captureMode:'daemon',status:'needs_attention',worker:{kind:'unavailable',readiness:'pending',supervised:false},nextAction:{kind:'repair_worker'}});
  expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('daemon');
 }));

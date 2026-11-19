@@ -30,7 +30,7 @@ export function nextSetupAction(state:SetupState,server:SetupServerStatus){
  const deferredClients=deferred.map(row=>row.client);
  const unavailable=deferred.find(row=>row.captureAvailable===false);
  const pending=deferred[0];
- if(unavailable)return {actor:'agent',kind:'plugin_unavailable',client:unavailable.client,deferredClients,instruction:'This pinned plugin package does not implement capture yet. Setup remains incomplete. Preserve the saved choices; resume after a capture-capable package is available.'} as const;
+ if(unavailable)return {actor:'agent',kind:'plugin_unavailable',client:unavailable.client,deferredClients,instruction:'This pinned plugin package does not implement capture yet. Setup remains incomplete. Preserve the saved choices; run setup again when a capture-capable package is available.'} as const;
  if(pending){
   const task=state.humanTasks?.find(task=>task.client===pending.client&&task.kind==='plugin_install');
   return {actor:'agent',kind:'repair_plugin',client:pending.client,deferredClients,reason:pending.message,title:task?.title,instruction:task?.instruction??'Read setup status --local --json and resolve the reported native plugin issue before running setup. Preserve native trust, disabled plugins and saved choices.'} as const;

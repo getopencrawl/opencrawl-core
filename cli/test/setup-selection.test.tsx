@@ -3,13 +3,15 @@ import {render} from 'ink-testing-library';
 import {pressAndRead,renderReady,waitForFrame} from './setup-ink.ts';
 import {SetupSelection} from '../src/setup/select-view.tsx';
 import {chooseSetupItems,type SelectionItem,type SelectionScreen} from '../src/setup/select.ts';
-const screen:SelectionScreen={phase:1,title:'Record new sessions',description:'Connect and record selected agents.',noneLabel:'Do not record any sessions on this machine',items:[{id:'claude-code',label:'Claude Code',detail:'Detected',selected:true},{id:'codex',label:'Codex',detail:'Detected',selected:true},{id:'antigravity',label:'Antigravity',detail:'Not detected',disabled:true,selected:false},{id:'cursor',label:'Cursor',detail:'Detected',selected:false}]};
+const screen:SelectionScreen={phase:1,title:'Record new sessions',description:'Connect and record selected agents.',noneLabel:'Do not record any sessions on this machine',items:[{id:'claude-code',label:'Claude Code',detail:'Detected',selected:true},{id:'codex',label:'Codex',detail:'Detected',needsReinstall:true,selected:true},{id:'antigravity',label:'Antigravity',detail:'Not detected',disabled:true,selected:false},{id:'cursor',label:'Cursor',detail:'Detected',selected:false}]};
 const tick=()=>new Promise(resolve=>setTimeout(resolve,25));
 const down='\u001b[B',up='\u001b[A',right='\u001b[C',enter='\r';
 test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the focused button',async()=>{
  let answer:SelectionItem[]|null|undefined;const app=await renderReady(<SetupSelection screen={screen} onComplete={value=>{answer=value;}}/>);
  try{
   await waitForFrame(app,'› [x] Claude Code');
+  expect(app.lastFrame()).toMatch(/Codex[^\n]*⚠ Needs reinstall/);
+  expect(app.lastFrame()).toContain('Reinstall & record');
   await pressAndRead(app,' ','› [ ] Claude Code');expect(answer).toBeUndefined();
   await pressAndRead(app,down,'› [x] Codex');
   await pressAndRead(app,down,'› [ ] Cursor');

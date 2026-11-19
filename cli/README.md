@@ -41,9 +41,10 @@ native connection. You can use the web app while setup is in progress.
 
 Agents can run `opencrawl setup --json` to get a plan and use `opencrawl setup apply`
 with the approved choices. Run `opencrawl setup status --local --json` to see saved
-choices. If setup is interrupted, run `opencrawl setup` again. It remembers the
-last confirmed step, including which sessions you approved for import. After
-setup finishes, the same command lets you review your choices. Agents can use
+choices. Running `opencrawl setup` again opens the agent picker with your saved
+recording choices. A yellow **⚠ Needs reinstall** marks previous or partial
+installations. Confirm the selected agents to reinstall them. History import
+requires its own confirmation. Agents can use
 `opencrawl setup --yes --json` to continue approved work.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)

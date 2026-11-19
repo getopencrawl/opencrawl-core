@@ -14,7 +14,7 @@ import {nativeTerminal} from './native-terminal.ts';
 import {inspectCodexHooks,type CodexHookReview} from '../capture/codex-hooks.ts';
 import {readCaptureConfig} from '../capture/runtime.ts';
 
-type Options={entry?:()=>ReturnType<typeof import('./entry.ts').terminalSetupEntry>;action?:'run'|'resume';values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
+type Options={entry?:()=>ReturnType<typeof import('./entry.ts').terminalSetupEntry>;values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
 type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:()=>Promise<CodexHookReview>;pause?:(signal:AbortSignal)=>Promise<void>};
 
 async function currentCodexReview():Promise<CodexHookReview>{
@@ -62,7 +62,7 @@ async function connectNativeClient(
  const prompt=nativeConnectionPrompt(nativeSetupPrompt(api,client),connection.name,api);
  if(client==='antigravity'){
   if(retryAntigravity){
-   const retry=await ui.action({title:'Antigravity verification is pending',description:'Reopen Antigravity to check the connection or sign in again.',actions:[{id:'verify',label:'Resume task'},{id:'connect',label:'Review connection'},{id:'later',label:'Finish later'}]});
+   const retry=await ui.action({title:'Antigravity verification is pending',description:'Reopen Antigravity to check the connection or sign in again.',actions:[{id:'verify',label:'Retry verification'},{id:'connect',label:'Review connection'},{id:'later',label:'Finish later'}]});
    if(retry!=='verify'&&retry!=='connect')return retry==='later'?0:2;
    needsLogin=retry==='connect';
   }
@@ -103,14 +103,12 @@ export async function showDeviceCode(ui:Pick<SetupUi,'action'|'progress'>,url:st
  ui.progress(title,canOpenBrowser?'Confirm the code in your browser.':'Open this link in your browser and confirm the code.',details);
 }
 
-/** Human setup and resume share a terminal. Machine commands keep their contracts. */
 export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,which=Bun.which,findConnection=findSetupConnection,native=nativeCommand,inspectCodex=currentCodexReview,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
  const ui=createUi?createUi():(await import('./tui.tsx')).createSetupUi();
- const action=options.action??'run';
  let destination:ReturnType<Options['readDestination']>|undefined;
  try{
   const entry=options.entry?.();
-  if(action==='run'&&!entry?.continuing&&!await ui.welcome())return 0;
+  if(!await ui.welcome())return 0;
   if(entry)await entry.save(entry.api);
   for(;;){
    try{
@@ -118,7 +116,6 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
      destination=options.readDestination();
      if(!destination.explicit&&entry?.api)destination={api:entry.api};
     }
-    if(action==='resume'&&!destination.api)destination={api:DEFAULT_API_ORIGIN};
     while(!destination.api){
      const hosting=await ui.hosting();
      if(hosting===null)return 0;
@@ -131,8 +128,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
     const api=apiOrigin(destination.api??''),explicit=destination.explicit;
     destination={api,explicit};
     await entry?.save(api);
-    if(action==='resume'||entry?.continuing)ui.progress('Resuming setup','Checking your saved installation and workspace sign-in.',[api]);
-    else ui.progress('Connecting to your workspace','Checking your sign-in and available agents.',[api]);
+    ui.progress('Connecting to your workspace','Checking your sign-in and available agents.',[api]);
     return await options.withOrigin(explicit,async()=>{
      const onProgress=(title:string,description:string,phase?:'installing')=>ui.progress(title,description,undefined,phase==='installing');
      let finishedHistoryChoice=false;
@@ -141,10 +137,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       if(screen.phase===2&&selection!==null)finishedHistoryChoice=true;
       return selection;
      };
-     const result=await setup(action,api,options.values,{interactive:true,choose,onProgress,login:()=>options.login(api,ui)});
+     const result=await setup('run',api,options.values,{interactive:true,choose,onProgress,login:()=>options.login(api,ui)});
      if(ui.signal.aborted)return 130;
      if(!result||'status' in result&&result.status==='cancelled')return 0;
-     if(action==='run' && finishedHistoryChoice && 'scope' in result && result.scope){
+     if(finishedHistoryChoice && 'scope' in result && result.scope){
       await offerInvitations(result.scope,ui);
       if(ui.signal.aborted)return 130;
      }
@@ -175,15 +171,15 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        const action=await ui.action({title:'Background capture needs attention',description:worker?.reason??next.nextAction.instruction,error:true,actions:[{id:'direct',label:'Record without a background service'},{id:'retry',label:'Retry service'},{id:'close',label:'Close'}]});
        if(action!=='retry'&&action!=='direct')return 2;
        ui.progress(action==='direct'?'Keeping session recording':'Starting background capture',action==='direct'?'Removing the background service. Your recording choices and queued uploads are kept.':'Retrying the service with your saved choices.',undefined,true);
-       const resumed=await setup('resume',api,{json:true,...(action==='direct'?{'capture-mode':'hook'}:{})},{interactive:true,onProgress,...(action==='direct'?{confirmedCaptureMode:'hook' as const}:{})});
-       if(!resumed)return 2;
+       const repaired=await setup('run',api,{yes:true,json:true},{interactive:false,onProgress,...(action==='direct'?{confirmedCaptureMode:'hook' as const}:{})});
+       if(!repaired)return 2;
        continue;
       }
       if(next&&'nextAction' in next&&next.nextAction?.kind==='reconcile_activation'&&!reconciled.has(next.nextAction.client)){
        reconciled.add(next.nextAction.client);
        displayedInstruction=undefined;
        ui.progress('Finishing setup','Saving the verified native installation.');
-       await setup('resume',api,{json:true},{interactive:true});
+       await setup('run',api,{yes:true,json:true},{interactive:false});
        next=await setup('wait',api,{json:true},{interactive:false,finishOnboarding:true});
       }
       if(ui.signal.aborted)return 130;
@@ -229,7 +225,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        title='Checking '+label;
        description='OpenCrawl is checking that it can find the new session. You can leave this terminal open.';
       }else{
-       const retry=await ui.action({title:'Resume OpenCrawl setup',description:'Your choices are saved. Retry to check the installation again.',actions:[{id:'retry',label:'Retry'},{id:'later',label:'Finish later'}]});
+       const retry=await ui.action({title:'Check the installation',description:'Your choices are saved. Retry to check the installation again.',actions:[{id:'retry',label:'Retry'},{id:'later',label:'Finish later'}]});
        if(retry!=='retry')return retry==='later'?0:2;
        if(client)reconciled.delete(client);
        continue;

@@ -4,7 +4,7 @@ import {isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {apiOrigin, CliError} from '../oauth.ts';
 import {atomicJson, configDir} from '../session.ts';
 import {readCaptureConfig, type CaptureConfig} from '../capture/runtime.ts';
-import {binaryPath,binaryBundleDigest,MAX_PLUGIN_BINARY,MAX_PLUGIN_TEXT} from './plugin-bundle.ts';
+import {binaryPath,binaryBundleDigest,MAX_PLUGIN_BINARY,MAX_PLUGIN_TEXT,type BundleFiles} from './plugin-bundle.ts';
 
 export type PluginHookClient = 'claude-code'|'codex'|'cursor'|'antigravity'|'devin';
 export type PluginBinding = {api:string;client:PluginHookClient;pluginName:string;configHome:string;nativeRoot:string};
@@ -37,6 +37,16 @@ function bundleFile(root:string,name:string,limit=MAX_PLUGIN_TEXT):string {
 
 /** Validate only public plugin assets. No native credential or trust file is read. */
 export function verifyPluginBundle(binding:PluginBinding):VerifiedPluginBundle {
+  return inspectPluginBundle(binding);
+}
+
+// Only installation may reconstruct missing managed assets. Runtime activation
+// always reads every byte from disk. The profile marker and binding must exist.
+export function checkRepairablePluginBundle(binding:PluginBinding,replacements:BundleFiles):void {
+  inspectPluginBundle(binding,replacements);
+}
+
+function inspectPluginBundle(binding:PluginBinding,replacements?:BundleFiles):VerifiedPluginBundle {
   try {
     if(!isClient(binding.client)||!isAbsolute(binding.nativeRoot)||!isAbsolute(binding.configHome))throw invalid();
     const api=apiOrigin(binding.api),root=realpathSync(binding.nativeRoot);
@@ -50,8 +60,18 @@ export function verifyPluginBundle(binding:PluginBinding):VerifiedPluginBundle {
     const files:Record<string,string>={},contents:Record<string,string>={};let bytes=0;
     for(const [name,digest] of entries){
       if(name==='.opencrawl-setup-plugin.json'||typeof digest!=='string'||!/^[a-f0-9]{64}$/.test(digest))throw invalid();
-      const binary=name===executable,file=bundleFile(root,name,binary?MAX_PLUGIN_BINARY:MAX_PLUGIN_TEXT),data=readFileSync(file);if(!binary)bytes+=data.length;
-      if(bytes>MAX_PLUGIN_TEXT||hash(data)!==digest||binary&&process.platform!=='win32'&&(lstatSync(file).mode&0o777)!==0o755)throw invalid();
+      const binary=name===executable;
+      let data:Buffer;
+      try{
+        const file=bundleFile(root,name,binary?MAX_PLUGIN_BINARY:MAX_PLUGIN_TEXT);
+        data=readFileSync(file);
+        if(binary&&process.platform!=='win32'&&(lstatSync(file).mode&0o777)!==0o755)throw invalid();
+      }catch(error){
+        if((error as NodeJS.ErrnoException).code!=='ENOENT'||!replacements||name==='.opencrawl-binding.json'||!Object.hasOwn(replacements,name))throw error;
+        data=Buffer.from(replacements[name]!);
+      }
+      if(!binary)bytes+=data.length;
+      if(bytes>MAX_PLUGIN_TEXT||hash(data)!==digest)throw invalid();
       files[name]=digest;if(!executable)contents[name]=data.toString('utf8');
     }
     if((typeof executable==='string'?binaryBundleDigest(files,executable):hash(JSON.stringify(contents,null,2)+'\n'))!==marker.digest)throw invalid();
