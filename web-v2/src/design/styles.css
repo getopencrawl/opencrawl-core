@@ -127,8 +127,12 @@ img { max-width: 100%; }
 .muted { color: var(--muted); }
 .oc-form-measure { width: 100%; max-width: var(--console-form-width); }
 .oc-field-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-4); }
-.oc-choice-group, .oc-form-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.oc-radio-group, .oc-choice-group, .oc-form-group { min-width: 0; margin: 0; padding: 0; border: 0; }
 .oc-choice-group legend, .oc-form-group legend { padding: 0; color: var(--strong); font-weight: 600; font-size: var(--text-title); }
+.oc-radio-group > legend { padding: 0; font-size: var(--text-sm); font-weight: 500; margin-bottom: var(--space-2); }
+.oc-radio-group > .row { gap: var(--space-2) var(--space-6); }
+.oc-radio-group .oc-choice-label { gap: var(--space-2); }
+.oc-radio-group input[type="radio"] { margin: 0; }
 .oc-choice-group > p { margin-top: var(--space-1); }
 .oc-choice-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
 .oc-choice-tile { display: grid; grid-template: 'icon radio' auto 'copy copy' 1fr / 1fr auto; gap: var(--space-3); align-content: start; padding: var(--space-4); border: 1px solid var(--control-line); border-radius: var(--radius-panel); background: var(--surface); cursor: pointer; }

@@ -1,4 +1,6 @@
 import type {AwsCredentials, CredentialProvider, ListOptions, ReadOptions, ServiceError, StoreVersion, ObjectStore} from './types.mjs';
+import {normalizeS3Prefix, relativeS3Metadata, unescapeXml, xmlText} from './s3-key-prefix.mjs';
+export {normalizeS3Prefix} from './s3-key-prefix.mjs';
 import {serviceError} from './types.mjs';
 /**
  * Minimal S3 client: enough for the receiver to land session segments in the user's S3 bucket
@@ -16,7 +18,17 @@ import { readFile } from 'node:fs/promises';
  * which S3-compatible stores expect. credentials is {accessKeyId, secretAccessKey, sessionToken?}
  * or an async function returning that (see awsCredentials).
  */
-export function createObjectStore({endpoint, region = 'us-east-1', bucket, credentials, fetch: fetchImpl = globalThis.fetch}: {endpoint?: string; region?: string; bucket: string; credentials: AwsCredentials | CredentialProvider; fetch?: typeof globalThis.fetch}) {
+type S3Config = {endpoint?: string; region?: string; bucket: string; prefix?: string; credentials: AwsCredentials | CredentialProvider; fetch?: typeof globalThis.fetch};
+type S3Request = {query?: Record<string, string | null | undefined>; body?: Uint8Array; headers?: Record<string,string>; deleteObjects?: ReadonlyArray<{key:string;version?:string}>; quiet?:boolean};
+
+/** A signed, path-scoped transport shared by the object store and the multipart landing endpoint. */
+export function createS3Request({endpoint, region = 'us-east-1', bucket, prefix, credentials, fetch: fetchImpl = globalThis.fetch}: S3Config) {
+  const directory = normalizeS3Prefix(prefix);
+  function physical(key:string) {
+    if (directory && (key.split('/').some(part => part === '.' || part === '..') || Buffer.byteLength(directory + key) > 1024))
+      throw new Error('Invalid key for the configured S3 prefix');
+    return directory + key;
+  }
   if (!bucket) throw new Error('S3 bucket is required');
   if (!credentials) throw new Error('S3 credentials are required');
   const resolve = typeof credentials === 'function' ? credentials : async () => credentials;
@@ -24,11 +36,26 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     ? `${endpoint.replace(/\/+$/, '')}/${bucket}`
     : bucket.includes('.') ? `https://s3.${region}.amazonaws.com/${bucket}` : `https://${bucket}.s3.${region}.amazonaws.com`;
 
-  async function request(method: string, key?: string, {query = {}, body, headers = {}}: {query?: Record<string, string | null | undefined>; body?: Uint8Array; headers?: Record<string, string>} = {}) {
+  return async (method:string, key?:string, {query = {}, body, headers = {}, deleteObjects, quiet}: S3Request = {}) => {
+    const listing = !key && method === 'GET' && ('list-type' in query || 'versions' in query || 'prefix' in query);
+    const bulk = !key && method === 'POST' && 'delete' in query;
+    if (directory && !key && !listing && !bulk) throw new Error('Bucket-wide operation on prefixed S3 storage');
+    if (bulk && directory && !deleteObjects) throw new Error('Scoped delete requires explicit object keys');
+    if (deleteObjects) {
+      if (!bulk || !deleteObjects.length || deleteObjects.length > 1000) throw new Error('Invalid S3 delete request');
+      const objects = deleteObjects.map(item => '<Object><Key>'+xmlText(physical(item.key))+'</Key>'+
+        (item.version === undefined ? '' : '<VersionId>'+xmlText(item.version)+'</VersionId>')+'</Object>');
+      body = Buffer.from('<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'+objects.join('')+(quiet ? '<Quiet>true</Quiet>' : '')+'</Delete>');
+      headers = {...headers,'content-type':'application/xml','content-md5':createHash('md5').update(body).digest('base64')};
+    }
     let url, signed;
     try {
-      url = new URL(`${root}/${key === undefined ? '' : key.split('/').map(encode).join('/')}`);
-      for (const [name, value] of Object.entries(query)) if (value !== undefined && value !== null) url.searchParams.set(name, value);
+      url = new URL(root + '/' + (key ? physical(key).split('/').map(encode).join('/') : ''));
+      for (const [name,value] of Object.entries(query)) if (value != null) url.searchParams.set(name,value);
+      if (directory && listing) {
+        url.searchParams.set('prefix',physical(query.prefix ?? ''));
+        for (const marker of ['marker','key-marker','start-after']) if (query[marker]) url.searchParams.set(marker,physical(query[marker]));
+      }
       const {accessKeyId, secretAccessKey, sessionToken} = await resolve();
       signed = signRequest({
         method, url, body, region, accessKeyId, secretAccessKey,
@@ -38,6 +65,18 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
     // A signed request is bound to this origin. In particular, fetch retains the
     // security-token header on cross-origin redirects even when it strips Authorization.
     const res = await fetchImpl(url, {method, headers: signed, body: body as BodyInit | undefined, redirect: 'error'});
+    const multipartMetadata = key && method === 'POST' && ('uploads' in query || 'uploadId' in query);
+    if (directory && res.ok && res.body && (listing || bulk || multipartMetadata))
+      return relativeS3Metadata(res,directory,listing && query['encoding-type'] === 'url');
+    return res;
+  };
+}
+
+export function createObjectStore(config:S3Config) {
+  const {bucket,endpoint,region = 'us-east-1'} = config;
+  const send = createS3Request(config);
+  async function request(method:string, key?:string, options?:S3Request) {
+    const res = await send(method,key,options);
     if (!res.ok && !(res.status === 404 && method !== 'PUT')) {
       const error = await storeError(res, `${method} ${key ?? bucket}`);
       // One atomic PutObject was positively refused. Do not generalize to
@@ -74,6 +113,7 @@ export function createObjectStore({endpoint, region = 'us-east-1', bucket, crede
 
     /** Confirms the bucket exists and these credentials can reach it. Never creates a bucket. */
     async checkAccess() {
+      if (config.prefix) {await listPage('',{maxKeys:1});return;}
       const res = await request('HEAD');
       if (res.status === 404) throw new Error(`S3 bucket ${bucket} does not exist. Create it, or fix OPENCRAWL_LANDING_S3_BUCKET.`);
     },
@@ -337,7 +377,6 @@ const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).
 const hmac = (key: string | Buffer, data: string) => createHmac('sha256', key).update(data).digest();
 // RFC 3986 encoding, as SigV4 requires.
 const encode = (text: string) => encodeURIComponent(text).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-const unescapeXml = (text: string) => text.replace(/&(lt|gt|quot|apos|amp);/g, (_, e: string) => ({lt: '<', gt: '>', quot: '"', apos: "'", amp: '&'} as Record<string, string>)[e]);
 
 async function storeError(res: Response, operation: string) {
   const body = await res.text().catch(() => '');
