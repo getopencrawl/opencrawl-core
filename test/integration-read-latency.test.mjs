@@ -26,6 +26,21 @@ test('cold and concurrent reads return immediately while one status refresh rema
   await integrations.list(principal);assert.deepEqual(calls,['jobs','streams']);
 });
 
+test('the latest job determines activity and prior success distinguishes recurring syncs', async () => {
+  async function card(statuses) {
+    const jobs = statuses.map((status, i) => ({jobId: statuses.length - i, status}));
+    const integrations = service({jobs: async () => jobs, streamCounts: async () => ({messages: 12})});
+    await integrations.list(principal);
+    await tick();
+    return (await integrations.list(principal))[0];
+  }
+  assert.equal((await card([])).state, 'connected');
+  assert.equal((await card(['succeeded', 'incomplete'])).state, 'synced');
+  assert.equal((await card(['failed', 'incomplete'])).state, 'error');
+  assert.equal(sourceStatus(await card(['running'])).label, 'Importing');
+  assert.equal(sourceStatus(await card(['running', 'succeeded'])).label, 'Syncing');
+});
+
 test('status caching cannot reuse colliding connection IDs across organizations and failures can retry',async()=>{
   let calls=0,fail=true,time=0;
   const integrations=service({jobs:async()=>{calls++;if(fail)throw Error('unavailable');return [{jobId:1,status:'succeeded'}];},streamCounts:async()=>({messages:calls})},[record,{...record,tenantId:'org_b'}],{now:()=>time});

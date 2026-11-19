@@ -345,7 +345,10 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const measured = {...shown, statusUpdatedAt, statusRefreshing: Boolean(status.pending), statusUnavailable: status.failed || (status.updatedAt !== undefined && !snapshot)};
     if (!snapshot) return {...measured, state: 'connected'};
     const {jobs, live} = snapshot;
-    const running = jobs.find(j => ['pending', 'running', 'incomplete'].includes(j.status));
+    // Jobs are newest first. An older incomplete attempt cannot describe the current run.
+    const latest = jobs[0];
+    if (!latest) return {...measured, state: 'connected'};
+    const running = ['pending', 'running', 'incomplete'].includes(latest.status);
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
@@ -356,15 +359,14 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // The headline counts only the provider's main streams (messages, not channel or user lists).
     const synced = counts ? provider.progressStream.reduce((sum, stream) => sum + (counts[stream] || 0), 0) : distinct && succeededSyncs.size ? undefined : jobs.reduce((sum, j) => sum + (j.rowsSynced || 0), 0);
     // Once every message is in, only trailing work (restoring long messages) is still running.
-    const bulkDone = !!record.total && synced !== undefined && synced >= record.total;
+    const bulkDone = !succeededSyncs.size && !!record.total && synced !== undefined && synced >= record.total;
     const rows = (counts ? provider.progress || [] : []).map(({stream, label, trailing}) => ({label, count: counts?.[stream] || 0, trailing: !!trailing, done: !running || (bulkDone && !trailing)}));
     const succeeded = jobs.find(j => j.status === 'succeeded');
-    const latest = jobs[0];
     const lastSyncedAt = succeeded ? (succeeded.lastUpdatedAt || succeeded.startTime) : null;
-    if (running || !latest) {
+    if (running) {
       // ETA from the current import pace, only once it has a total and some progress.
       let eta = null;
-      const started = Date.parse(running?.startTime || '');
+      const started = Date.parse(latest.startTime || '');
       if (!succeeded && record.total && synced !== undefined && synced > 0 && synced < record.total && started) {
         const rate = synced / Math.max(1, now() - started);
         eta = Math.round((record.total - synced) / rate / 1000);
