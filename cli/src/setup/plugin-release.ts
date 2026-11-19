@@ -59,44 +59,44 @@ export const pluginRelease:PluginRelease = {
       "harness": "codex",
       "name": "opencrawl-local-codex",
       "path": "local/codex",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "capabilities": "capabilities.json",
       "captureAvailable": true,
       "daemonHandoff": true,
       "minimumHarnessVersion": "0.166.0",
       "archives": {
         "darwin-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-darwin-arm64.zip",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-darwin-arm64.json",
-          "sha256": "f39b8ef3acf606105e4e841ff87048ffd2a17b79e7cb143037bfc71ca12da56b",
-          "metadataSha256": "5b7d7cc970a58a069cb53a89518ac1f6d1ab969b342a97621e7bf4bf0bf30506"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-darwin-arm64.zip",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-darwin-arm64.json",
+          "sha256": "2f2610fe967f3a8cc3f081625dc93364bd2e18669cea628b7d4b7ea85031bda7",
+          "metadataSha256": "50df0063953200e2469e50f68dbdf95a035f49705adbde633a923938f44d556a"
         },
         "darwin-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-darwin-x64.zip",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-darwin-x64.json",
-          "sha256": "f87ed309a6e2a48431f43b332064666783edd327ba75cabfda12f111d6de6c1c",
-          "metadataSha256": "c9a1aa0843bab4fe9748818ddf70f50d879661957cd92f9da6e42c536c2026e9"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-darwin-x64.zip",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-darwin-x64.json",
+          "sha256": "4903aa1217be7f7ea1f7e2bab8da5b324112c9c89c134e80b215c249ffff5108",
+          "metadataSha256": "8b4a663bde2ef845e787e57dd1200d50fcee44bd191e06ce0066afe5e7c02e9d"
         },
         "linux-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-linux-arm64.zip",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-linux-arm64.json",
-          "sha256": "122d70f81f9ce8cd200e61db772b7675b16d632c203c65448f32a9705068cf46",
-          "metadataSha256": "6b63ad9ee84008d232ff1515a9cc17bfe880256e5af1218813249ca1946a5c81"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-linux-arm64.zip",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-linux-arm64.json",
+          "sha256": "3e7edc4fbd53fcff47699b6f96f66e9ae791974c5ce9429b20ad277f9dfdebbe",
+          "metadataSha256": "0ff958c0df3f295ba9ff963183e4a5eceada67cb9e14d931ee0eef2bdc402de4"
         },
         "linux-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-linux-x64.zip",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-linux-x64.json",
-          "sha256": "0f06ea6e7fb4aab4b478f30e05e8648f5bef180819365d3c6b1dac7fa1c0c94e",
-          "metadataSha256": "0546c6de14e78d388c3fac10c2a6d2167122bddc391e3d00699bf100661ff29b"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-linux-x64.zip",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-linux-x64.json",
+          "sha256": "97de43711f7d7582c13122f7b49f059df949714adf6aa4a4e000d82b57d45592",
+          "metadataSha256": "6c7cbb28c3aa8212e49e2da58c9ade8ae9c444e4c2001d49d1d316e082908566"
         },
         "win32-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-win32-x64.zip",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.2/opencrawl-local-codex-0.2.2-win32-x64.json",
-          "sha256": "a9a1c68908799a6e989975f5977f0ba87ec39a2ce919b5eb166d6c1dc50d0539",
-          "metadataSha256": "0ad40e8d6ce555b8574ae057d486b5c95c5a9ed7e07cd7b58099a3ae54072288"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-win32-x64.zip",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.3/opencrawl-local-codex-0.2.3-win32-x64.json",
+          "sha256": "74b89365985d53d08a0ae35820b6ac534424d0253dc7949d5579e2aa1e01662d",
+          "metadataSha256": "081146fa4329d8de325f692604797f34944f6dd5447965644ba84a9db229909e"
         }
       },
-      "ref": "51004a8e68644af00ecf4cf56ec8bbea9fd15ee3",
+      "ref": "9b01292edb9297e5ab81df6e47a3bc8a133f4a7d",
       "memoryImportSkill": true,
       "listingIcon": true
     },
