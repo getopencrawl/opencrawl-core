@@ -10,7 +10,7 @@ import {labels,type PluginClient} from './plugins.ts';
 import {findSetupConnection,nativeConnectionPrompt,type NativeClient} from './native-mcp.ts';
 import {nativeLogin} from './native-login.ts';
 import {nativeTerminal} from './native-terminal.ts';
-import {inspectCodexHooks,type CodexHookReview} from '../capture/codex-hooks.ts';
+import {inspectCodexHooks} from '../capture/codex-hooks.ts';
 import {publishSetup} from './api.ts';
 import {readSetupState} from './state.ts';
 
@@ -22,42 +22,26 @@ async function nativeCommand(command:string,args:string[],ui:SetupUi,title?:stri
  return nativeLogin(command,args,ui,title);
 }
 
-function hookApprovalStatus(review:CodexHookReview):string|null{
- if(review.state==='not_applicable')return 'No OpenCrawl hooks found. Checking again automatically.';
- if(review.state!=='observed'||!review.total||review.pending===null||review.disabled===null)
-  return 'Couldn’t read hook approval from Codex. Retrying automatically.';
- const {total,pending,disabled}=review;
- if(pending===0&&disabled===0)return null;
- const counts=[`${total-pending-disabled} of ${total} approved`];
- if(pending)counts.push(pending+' pending');
- if(disabled)counts.push(disabled+' disabled');
- return counts.join(' · ');
-}
-
 async function waitForCodexHookTrust(ui:SetupUi,inspect:()=>ReturnType<typeof setupHookStatus>,pause:(signal:AbortSignal)=>Promise<void>){
  const controller=new AbortController();
  const signal=AbortSignal.any([controller.signal,ui.signal]);
  const skipped=Promise.withResolvers<'skipped'>();
- const show=(status?:string)=>ui.progress(
+ ui.progress(
   'Trust all OpenCrawl hooks in Codex Desktop or CLI',
   'Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.',
   ['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.'],
-  false,{spinner:'Checking whether OpenCrawl hooks are trusted…',status,onSkip:()=>skipped.resolve('skipped')}
+  {waiting:{spinner:'Checking whether OpenCrawl hooks are trusted…',onSkip:()=>skipped.resolve('skipped')}}
  );
  const poll=async()=>{
-  let previous:string|undefined;
   for(;;){
    signal.throwIfAborted();
    const observation=await inspect();
-   const status=hookApprovalStatus(observation.review);
    signal.throwIfAborted();
-   if(status===null)return observation;
-   if(status!==previous)show(status);
-   previous=status;
+   const {review}=observation;
+   if(review.state==='observed'&&review.total>0&&review.pending===0&&review.disabled===0)return observation;
    await pause(signal);
   }
  };
- show();
  try{return await Promise.race([skipped.promise,poll()]);}
  finally{controller.abort();}
 }
@@ -133,7 +117,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
     await entry?.save(api);
     ui.progress('Connecting to your workspace','Checking your sign-in and available agents.',[api]);
     return await options.withOrigin(explicit,async()=>{
-     const onProgress=(title:string,description:string,phase?:'installing')=>ui.progress(title,description,undefined,phase==='installing');
+     const onProgress=(title:string,description:string,phase?:'installing')=>ui.progress(title,description,undefined,{animate:phase==='installing'});
      let finishedHistoryChoice=false;
      const choose:SetupUi['choose']=async screen=>{
       const selection=await ui.choose(screen);
@@ -175,7 +159,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        const worker=status&&'worker' in status?status.worker:undefined;
        const action=await ui.action({title:'Background capture needs attention',description:worker?.reason??next.nextAction.instruction,error:true,actions:[{id:'direct',label:'Record without a background service'},{id:'retry',label:'Retry service'},{id:'close',label:'Close'}]});
        if(action!=='retry'&&action!=='direct')return 2;
-       ui.progress(action==='direct'?'Keeping session recording':'Starting background capture',action==='direct'?'Removing the background service. Your recording choices and queued uploads are kept.':'Retrying the service with your saved choices.',undefined,true);
+       ui.progress(action==='direct'?'Keeping session recording':'Starting background capture',action==='direct'?'Removing the background service. Your recording choices and queued uploads are kept.':'Retrying the service with your saved choices.',undefined,{animate:true});
        const repaired=await setup('run',api,{yes:true,json:true},{interactive:false,onProgress,...(action==='direct'?{confirmedCaptureMode:'hook' as const}:{})});
        if(!repaired)return 2;
        continue;
@@ -230,11 +214,12 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        ui.progress('Checking setup','Checking the connection to '+label+'.');
        continue;
       }
-      let title:string,description:string,details:string[]=[];
+      let title:string,description:string,prompt:string|undefined,details:string[]=[];
       if(label&&(step?.kind==='native_tool'||step?.kind==='review_setup')){
        title='Open '+label;
        description='Start a new chat in '+label+' and send this message.';
-       details=[remainingClientPrompt??'Finish OpenCrawl setup for '+api+' using my saved choices.','','Keep this terminal open. Setup will continue when '+label+' connects.'];
+       prompt=remainingClientPrompt??'Finish OpenCrawl setup for '+api+' using my saved choices.';
+       details=['Keep this terminal open. Setup will continue when '+label+' connects.'];
        if(client==='codex'){
         title='Verify the Codex connection';
         if(codexTrust==='trusted')description='Hooks approved. Start a new chat in Codex and send this message.';
@@ -250,9 +235,9 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        if(client)reconciled.delete(client);
        continue;
       }
-      const instruction=JSON.stringify([title,description,details]);
+      const instruction=JSON.stringify([title,description,prompt,details]);
       if(displayedInstruction!==instruction){
-       ui.progress(title,description,details);
+       ui.progress(title,description,details,{prompt});
        displayedInstruction=instruction;
       }
       await pause(ui.signal);
