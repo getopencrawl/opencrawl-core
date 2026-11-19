@@ -53,9 +53,11 @@ images and bundled or existing services. For a single Docker host, see
 Prefer a managed workspace? Try [OpenCrawl Cloud](https://getopencrawl.com).
 
 `main` is the unstable development channel. Versioned `helm-v*` self-host kits
-are the stable release channel, scheduled weekly from fully validated commits on
-`main`. Choose a tagged kit from [Releases](https://github.com/getopencrawl/opencrawl-core/releases)
-for its fixed source version and image digests. Cloud consumes exact development
+are the stable release channel, with weekly releases and on-demand patches for
+urgent fixes. For example, **OpenCrawl Core 0.6.0 (Helm chart 0.3.0)** identifies
+the application version and the chart to pin (`helm-v0.3.0`). Choose a tagged
+kit from [Releases](https://github.com/getopencrawl/opencrawl-core/releases)
+for its tested source revision and image digests. Cloud consumes exact development
 build versions independently of those stable distribution checks. See
 [release channels and validation](docs/continuous-delivery.md).
 

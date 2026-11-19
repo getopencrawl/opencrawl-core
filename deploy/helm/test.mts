@@ -24,7 +24,13 @@ test('release packaging versions both archives without changing source or buildi
     assert.equal(chart.status,0,chart.stderr);assert.match(chart.stdout,/^version: 7\.2\.3$/m);
     const kit=spawnSync('tar',['-xOf',join(out,'opencrawl-selfhost-7.2.3.tgz'),'./opencrawl/Chart.yaml'],{encoding:'utf8'});
     assert.equal(kit.status,0,kit.stderr);assert.match(kit.stdout,/^version: 7\.2\.3$/m);
-    assert.equal(JSON.parse(readFileSync(join(out,'release.json'),'utf8')).version,'7.2.3');
+    const receipt=JSON.parse(readFileSync(join(out,'release.json'),'utf8'));
+    assert.equal(receipt.version,'7.2.3');
+    const coreVersion=JSON.parse(readFileSync(join(root,'../../package.json'),'utf8')).version;
+    assert.equal(receipt.appVersion,coreVersion);
+    const guide=spawnSync('tar',['-xOf',join(out,'opencrawl-selfhost-7.2.3.tgz'),'./README.md'],{encoding:'utf8'});
+    assert.equal(guide.status,0,guide.stderr);
+    assert.equal(guide.stdout.split('\n')[0],`# OpenCrawl Core ${coreVersion} (Helm chart 7.2.3)`);
     assert.equal(readFileSync(join(root,'opencrawl/Chart.yaml'),'utf8'),original);
   }finally{rmSync(dir,{recursive:true,force:true});}
 });

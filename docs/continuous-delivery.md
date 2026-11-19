@@ -25,7 +25,12 @@ metadata. Rerunning delivery reuses the same immutable package and verifies its
 identity. The `continuous` dist-tag advances only after rechecking current main
 and its gates. This is the unstable development channel. Consumers keep immutable versions,
 never a floating source checkout. Stable self-host kits are tagged `helm-v*`
-from tested commits on main every Monday, or earlier by explicit release dispatch.
+from tested commits on main every Monday. For an urgent fix, dispatch the next
+chart patch as soon as the exact source passes the same gates. Review all changes
+since the previous kit when selecting that revision. In self-host release notes,
+announcements and install instructions, lead with
+`OpenCrawl Core <appVersion> (Helm chart <version>)`. The kit's `release.json`
+records both versions and the exact source revision.
 The weekly cut selects the newest mainline candidate that has passed every
 distribution gate, even when newer main commits are still being checked. That
 source stays fixed during packaging and its gates are rechecked before publish. Full

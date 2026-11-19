@@ -44,6 +44,10 @@ APIs, CLI, UI, dependencies, or deployment. These rules apply throughout core.
   `docs/PLUGIN-RELEASE.md`. Package and CLI releases are distinct artifacts.
 - Describe placement and validation in each PR. Core runtime releases must be
   tested/published before the shell updates its package, lockfile and Git pin.
+- Lead self-host release notes, announcements and version-specific installation
+  instructions with `OpenCrawl Core <appVersion> (Helm chart <version>)`.
+  Use the versions in the published kit. Ship urgent fixes as the next chart
+  patch after the usual release checks. See [maintainer releases](deploy/helm/README.md#maintainer-releases).
 
 For a boundary change, update this contract and the hosted repository's agent
 instructions together. Core contributors must not need the private shell merely
