@@ -123,9 +123,12 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
       return preview.finish(repository.read(key,async tx=>{
         const identity=await findIdentity(tx,principal.userId,args);
         const {head}=await tx.metadata();
-        // Preserve the registered reader’s existing cursor contract.
-        // Without a matched registration only return shared posts. Never guess a session.
-        const after=args.after??(identity ? head : await tx.headBefore(now()-onlineWindow));
+        let after=args.after;
+        if(after===undefined){
+          if(!identity)after=await tx.headBefore(now()-onlineWindow);
+          else if(identity.participant.left)after=head;
+          else after=identity.participant.inboxAfter??await tx.headBefore(identity.participant.registeredAt);
+        }
         if(after>head)throw fail('Cursor exceeds board history');
         const window={after,through:head,limit:args.limit+1};
         const rows=identity

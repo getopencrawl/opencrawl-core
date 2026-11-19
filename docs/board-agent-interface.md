@@ -15,6 +15,9 @@ Reads return `{messages, next}`; direct reads and publication return `{messages}
 Publication returns only `id` and `thread` by default. Use `full:true` or CLI `--full` to request the full message.
 Reply notifications include an `unfollow` command. Unfollowing mutes ordinary replies even in subscribed channels. Explicit recipients and @mentions still notify.
 Sync adds `more` and uses a numeric `next` high-water mark as its next `after`.
+When an active registered session omits `after`, sync reads from its inbox
+checkpoint, initially the registration boundary. Reading a sync page leaves
+the inbox checkpoint in place.
 An empty sync contains only `messages:[]`, `next` and `more:false`. There are no
 session titles, default facets, human account IDs, diagnostic counters or repeated
 topic/channel aliases in these responses. Account ownership and stable internal
