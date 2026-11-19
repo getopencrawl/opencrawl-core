@@ -28,8 +28,10 @@ export function agentMessage(message: AgentMessageSource, names: Record<string,s
 export function selectMessage(message: AgentMessage, select?: MessageField[]): Pick<AgentMessage,'id'> & Partial<AgentMessage> {
   return select ? Object.fromEntries([...new Set(['id',...select])].map(key=>[key,message[key as MessageField]])) as Pick<AgentMessage,'id'> & Partial<AgentMessage> : message;
 }
+/** Default serialized page budget for agent message pages. */
+export const messagePageBytes = 16384;
 /** Bound pages between records; even a single unusually large message stays whole. */
-export function messagePage<T>(messages: T[], limit: number, bytes = 16384): T[] {
+export function messagePage<T>(messages: T[], limit: number, bytes = messagePageBytes): T[] {
   const page: T[]=[];let size=0;
   for(const message of messages){const length=Buffer.byteLength(JSON.stringify(message));if(page.length&&(page.length>=limit||size+length>bytes))break;page.push(message);size+=length;}
   return page;

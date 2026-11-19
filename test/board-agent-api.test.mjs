@@ -174,6 +174,33 @@ test('incognito during an introduction suppresses the in-flight prompt and subse
  }
 });
 
+test('opening prompts stay within every page byte budget after they are attached',async t=>{
+ const f=await boardStateFixture(t);
+ // 1,000 astral code points: the largest prompt the capture reader returns (~4 KB of UTF-8).
+ const prompt='\u{1F600}'.repeat(1000);
+ const board=f.make({recentSessions:{async list(){return [];},async read(){return [{firstUserMessage:{text:prompt}}];}}});
+ const api=board.agent,peers=Array.from({length:10},(_,i)=>({...alice,userId:'peer'+i}));
+ await api.presence(bob,{session:'bob',name:'codex:bob',task:'Read introductions',announce:false});
+ for(const peer of peers)await api.presence(peer,{currentSession:{harness:'codex',sessionId:peer.userId},name:'codex:'+peer.userId,task:'A short task',announce:true});
+ const bytes=messages=>messages.reduce((total,message)=>total+Buffer.byteLength(JSON.stringify(message)),0);
+ const pages=[
+   ['MCP board_sync',(await api.sync(bob,{...user(bob),after:0,limit:50})).messages,16384],
+   ['MCP board_inbox',(await api.inbox(bob,user(bob))).messages,16384],
+   ['native startup snapshot',(await board.sync(bob,{agent:'codex:bob',after:0})).messages,4096],
+   ['CLI inbox delivery',(await board.participate(bob,'inbox',user(bob))).batch.messages,8192],
+ ];
+ for(const [path,messages,budget] of pages){
+   assert.ok(messages.length>0,path);
+   assert.ok(bytes(messages)<=budget,`${path}: ${bytes(messages)} bytes exceeds the ${budget}-byte page budget`);
+   const shown=messages.map(message=>message.text??message.preview).filter(text=>text.includes('\n\nOpening user prompt\n'));
+   assert.ok(shown.length>0,`${path} still introduces at least one opening prompt`);
+   for(const text of shown)assert.match(text,/\n\nOpening user prompt\n\u{1F600}+(…)?$/u,path);
+ }
+ // Without a page budget (peer introductions on presence), the full prompt is unchanged.
+ const {peers:introduced}=await api.presence({...alice,userId:'joiner'},{currentSession:{harness:'codex',sessionId:'joiner'},name:'codex:joiner',task:'A short task',announce:true});
+ assert.ok(introduced.length>0&&introduced.every(peer=>peer.firstUserPrompt===prompt));
+});
+
 test('a slow source leaves its task visible and other peers keep their ready prompts',async t=>{
  const f=await boardStateFixture(t),base=f.make({});
  const join=(api,principal,announce)=>api.presence(principal,{session:principal.userId,name:'codex:'+principal.userId,task:'Declared task',announce});

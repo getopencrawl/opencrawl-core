@@ -21,18 +21,55 @@ export function bindPresenceSession(p: Participant, principal: Principal, sessio
   return true;
 }
 
+/** Bytes still available to opening prompts on one page, shared by its messages in page order. */
+export interface PromptBudget { remaining: number }
+const promptHeading = '\n\nOpening user prompt\n';
+const truncated = '…';
+/** Growth of a serialized JSON string field when `value` is appended to it. */
+const encodedBytes = (value: string) => Buffer.byteLength(JSON.stringify(value)) - 2;
+
+/** Pages are admitted before capture work runs, so prompts may only spend the
+ * bytes the admitted views left under that page's budget. */
+export function promptBudget(views: readonly unknown[], bytes: number): PromptBudget {
+  let used = 0;
+  for (const view of views) used += Buffer.byteLength(JSON.stringify(view));
+  return {remaining: Math.max(0, bytes - used)};
+}
+
+/** The suffix that fits the budget, shortened on a code point boundary and
+ * marked when cut. Without a budget the prompt is returned whole. */
+export function fitOpeningPrompt(prompt: string, budget?: PromptBudget) {
+  if (!budget) return promptHeading + prompt;
+  const fixed = encodedBytes(promptHeading), whole = encodedBytes(prompt);
+  if (fixed + whole <= budget.remaining) {
+    budget.remaining -= fixed + whole;
+    return promptHeading + prompt;
+  }
+  const room = budget.remaining - fixed - encodedBytes(truncated);
+  let kept = '', used = 0;
+  for (const point of prompt) {
+    const size = encodedBytes(point);
+    if (used + size > room) break;
+    kept += point; used += size;
+  }
+  if (!kept) return undefined;
+  budget.remaining -= fixed + used + encodedBytes(truncated);
+  return promptHeading + kept + truncated;
+}
+
 export function presencePreviews(repository: BoardRepository, recent: ReturnType<typeof createRecentSessions> | undefined, timeoutMs: number) {
   return (principal: Principal, key: string) => {
-    const pending = new Map<string, {agent: string; apply: Array<(prompt: string) => void>}>();
+    const pending = new Map<string, {agent: string}>();
+    // Registration order is page order, so a shared budget is spent deterministically.
+    const applies: Array<{ref: string; apply: (prompt: string) => void}> = [];
     function add(agent: string, ref: string | undefined, apply: (prompt: string) => void) {
       if (!ref || !recent) return;
       try {
         const [tenant, owner, , , session] = parseSessionReference(ref, true);
         if (tenant !== principal.tenantId || boardIdentity(owner, session) !== agent) return;
       } catch { return; }
-      const item = pending.get(ref);
-      if (item) item.apply.push(apply);
-      else pending.set(ref, {agent, apply: [apply]});
+      if (!pending.has(ref)) pending.set(ref, {agent});
+      applies.push({ref, apply});
     }
     return {
       peer(source: {agent: string; name: string; task: string; captureRef?: string}) {
@@ -40,11 +77,12 @@ export function presencePreviews(repository: BoardRepository, recent: ReturnType
         add(source.agent, source.captureRef, prompt => { peer.firstUserPrompt = prompt; });
         return peer;
       },
-      message<T extends {text?: string; preview?: string}>(view: T, source: Pick<BoardMessage, 'agent' | 'captureRef' | 'onlineAudience'>) {
+      /** Pass the page's budget for any paged response; the appended prompt never exceeds it. */
+      message<T extends {text?: string; preview?: string}>(view: T, source: Pick<BoardMessage, 'agent' | 'captureRef' | 'onlineAudience'>, budget?: PromptBudget) {
         if (source.onlineAudience && typeof view.text === 'string') {
-          add(source.agent, source.captureRef, prompt => { view.text += '\n\nOpening user prompt\n' + prompt; });
+          add(source.agent, source.captureRef, prompt => { const suffix = fitOpeningPrompt(prompt, budget); if (suffix !== undefined) view.text += suffix; });
         } else if (source.onlineAudience && typeof view.preview === 'string') {
-          add(source.agent, source.captureRef, prompt => { view.preview += '\n\nOpening user prompt\n' + prompt; });
+          add(source.agent, source.captureRef, prompt => { const suffix = fitOpeningPrompt(prompt, budget); if (suffix !== undefined) view.preview += suffix; });
         }
         return view;
       },
@@ -79,9 +117,9 @@ export function presencePreviews(repository: BoardRepository, recent: ReturnType
           })]);
           if (found.size) {
             const hidden = await blockedAgents();
-            for (const [ref, prompt] of found) {
-              const item = pending.get(ref)!;
-              if (!hidden.has(item.agent)) for (const apply of item.apply) apply(prompt);
+            for (const {ref, apply} of applies) {
+              const prompt = found.get(ref);
+              if (prompt !== undefined && !hidden.has(pending.get(ref)!.agent)) apply(prompt);
             }
           }
         } catch { /* If privacy checks are unavailable, return only the task. */ }
