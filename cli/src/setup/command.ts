@@ -365,7 +365,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   }else onProgress?.('Saving your choices','Turning off new-session recording for this workspace on this machine.');
   const state=await saveRecording();
   const available=availableHistory(),historyClients=clients.filter(client=>newSetupClientAvailable(client.id,platform)&&client.history&&available.some(file=>file.harness===client.id));
-  const selectedHistory=await choose({phase:2,title:'Import past sessions',description:historyBenefit+'\nChoose a one-time import from any listed agent, even if new-session recording is off.',noneLabel:'Skip history import',emptyMessage:'No supported local session history was found. Continuing without an import.',items:historyClients.map(client=>{const count=available.filter(file=>file.harness===client.id).length;return {id:client.id,label:client.label,detail:`${count} ${count===1?'file':'files'}`,selected:prospectiveHistory[client.id]===true};})});
+  const selectedHistory=await choose({phase:2,title:'Import past sessions',description:historyBenefit,noneLabel:'Skip history import',emptyMessage:'No supported local session history was found. Continuing without an import.',items:historyClients.map(client=>{const count=available.filter(file=>file.harness===client.id).length;return {id:client.id,label:client.label,detail:`${count} ${count===1?'file':'files'}`,selected:prospectiveHistory[client.id]===true};})});
   if(selectedHistory===null)return {status:'cancelled',historyDecision:'unchanged',humanTasks:[]};
   const selectedClients=selectedHistory.filter(row=>row.selected).map(row=>row.id);
   if(!selectedClients.length){
