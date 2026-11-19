@@ -213,6 +213,20 @@ test('backfill resolves each authored message from the catalog or history, inclu
   assert.equal(participantProjection(events[1],batch).participantName,'Person One');assert.equal(participantProjection(events[2],batch).participantName,'two@example.test');
 });
 
+test('an OpenCrawl storage denial retries without attributing it to the Replicas key',async()=>{
+  const {replicasActivities}=await import('../dist/src/sessions/temporal/replicas.mjs');
+  const {replicasApi}=await import('../dist/src/integrations/replicas-api.mjs');
+  const job={tenantId:'team',id:'import'},messages=[];
+  const fail=async(_,message)=>{messages.push(message);};
+  const internal=replicasActivities({advance:async()=>{throw Object.assign(new Error('private detail'),{status:403});},fail});
+  await assert.rejects(internal.importReplicasPage(job),{type:'ReplicasUnavailable',nonRetryable:false});
+  assert.deepEqual(messages,[]);
+  const denied=replicasApi('fixture',async()=>new Response(null,{status:403}));
+  const upstream=replicasActivities({advance:()=>denied.conversations(),fail});
+  await assert.rejects(upstream.importReplicasPage(job),{type:'ReplicasAccess',nonRetryable:true});
+  assert.equal(messages.length,1);assert.match(messages[0],/Team workspace visibility/);
+});
+
 test('a real Temporal worker completes a paginated import after the request ends',async t=>{
   const {TestWorkflowEnvironment}=await import('@temporalio/testing'),{Worker}=await import('@temporalio/worker');
   const {replicasActivities}=await import('../dist/src/sessions/temporal/replicas.mjs');

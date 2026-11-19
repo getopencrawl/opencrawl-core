@@ -11,11 +11,17 @@ const historySchema=z.looseObject({events:z.array(z.unknown()).max(1000),before_
 export type ReplicasHistory=z.infer<typeof historySchema>;
 export function replicasError(message:string,status=400){return Object.assign(new Error(message),{status,expose:true});}
 
+/** Only errors returned by a Replicas HTTP request may prompt a key/visibility check. */
+export class ReplicasProviderError extends Error {
+  readonly expose=true;
+  constructor(message:string,readonly status:number){super(message);}
+}
+
 /** Fixed-origin, read-only client. Never follow redirects with an organization key. */
 export function replicasApi(apiKey:string,request:typeof fetch=fetch){
   async function get<T>(path:string,schema:z.ZodType<T>):Promise<T>{
     const response=await request('https://api.replicas.dev/v1/'+path,{method:'GET',redirect:'error',signal:AbortSignal.timeout(20000),headers:{Authorization:'Bearer '+apiKey,'X-Replicas-Api-Version':'2026-10-07',Accept:'application/json'}});
-    if(!response.ok){await response.body?.cancel();throw replicasError(response.status===401||response.status===403?'Replicas denied access. Use an organization API key with access to retained conversations.':response.status===409?'This conversation has no retained history.':response.status===429?'Replicas is rate limiting this import. Try again shortly.':'Replicas could not read the retained history.',response.status);}
+    if(!response.ok){await response.body?.cancel();throw new ReplicasProviderError(response.status===401||response.status===403?'Replicas denied access. Use an organization API key with access to retained conversations.':response.status===409?'This conversation has no retained history.':response.status===429?'Replicas is rate limiting this import. Try again shortly.':'Replicas could not read the retained history.',response.status);}
     // Bound streamed responses too; Content-Length is not authoritative.
     const reader=response.body?.getReader();if(!reader)throw replicasError('Replicas returned an empty response.',502);
     const chunks:Uint8Array[]=[];let bytes=0;

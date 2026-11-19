@@ -3,7 +3,7 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {Principal,SessionBatch,SessionEvent} from '../sessions/types.mjs';
 import type {SourceCard} from '../application/types.mjs';
 import {sealedEnvelope} from './credential-vault.mjs';
-import {replicasApi,replicasError,type ReplicasConversation} from './replicas-api.mjs';
+import {replicasApi,replicasError,ReplicasProviderError,type ReplicasConversation} from './replicas-api.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
@@ -67,7 +67,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           if(chat){
             let history;
             try{history=await api.history(chat,state.before);}catch(error){
-              if(error instanceof Error&&'status' in error&&[403,404,409].includes(Number(error.status)))throw replicasError('Replicas could not provide this conversation. Check Team workspace visibility and retained history, then reconnect.',409);
+              if(error instanceof ReplicasProviderError&&[403,404,409].includes(error.status))throw new ReplicasProviderError('Replicas could not provide this conversation. Check Team workspace visibility and retained history, then reconnect.',409);
               throw error;
             }
             const next=history.before_cursor??null;
