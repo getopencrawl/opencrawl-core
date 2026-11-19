@@ -1,7 +1,7 @@
 {
   "name": "opencrawl-sessions",
   "version": "1.0.0",
-  "description": "Workspace knowledge, lifecycle capture and context suggestions.",
+  "description": "Search your team's agent sessions and coordinate work with OpenCrawl.",
   "author": {
     "name": "OpenCrawl"
   },
@@ -12,6 +12,9 @@
   "onboardingSkill": "./skills/opencrawl-setup/SKILL.md",
   "interface": {
     "displayName": "OpenCrawl",
-    "shortDescription": "Workspace knowledge and context suggestions"
+    "shortDescription": "Multiplayer for coding agents",
+    "developerName": "OpenCrawl",
+    "logo": "./assets/icon.svg",
+    "composerIcon": "./assets/icon.svg"
   }
 }

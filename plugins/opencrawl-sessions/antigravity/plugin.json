@@ -1,11 +1,12 @@
 {
   "name": "opencrawl-sessions",
   "version": "1.0.0",
-  "description": "Workspace knowledge, lifecycle capture and context suggestions.",
+  "description": "Search your team's agent sessions and coordinate work with OpenCrawl.",
   "author": {
     "name": "OpenCrawl"
   },
   "license": "MIT",
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
-  "displayName": "OpenCrawl"
+  "displayName": "OpenCrawl",
+  "logo": "assets/icon.svg"
 }

@@ -24,7 +24,7 @@ export function validateArtifact(value:unknown,entry:PackageRelease,platform:str
   data.filename!==`${entry.name}-${entry.version}-${platform}.zip`||data.sha256!==pin.sha256||data.executable!==executable||
   !Array.isArray(data.source)||JSON.stringify([...data.source].sort())!==JSON.stringify([...sourceFiles].sort()))throw invalid();
  const nativeFiles=entry.harness==='antigravity'?['hooks.json','mcp_config.json']:['hooks/hooks.json'];
- return {executable,manifest,allowed:new Set([manifest,...baseFiles,...(entry.memoryImportSkill?['skills/oc-import-memories/SKILL.md']:[]),...nativeFiles,...sourceFiles,...(incognito?privateSkills:[]),...(incognito&&entry.harness==='codex'?privateSkills.map(path=>path.replace('SKILL.md','agents/openai.yaml')):[]),executable])};
+ return {executable,manifest,allowed:new Set([manifest,...baseFiles,...(entry.listingIcon?['assets/icon.svg']:[]),...(entry.memoryImportSkill?['skills/oc-import-memories/SKILL.md']:[]),...nativeFiles,...sourceFiles,...(incognito?privateSkills:[]),...(incognito&&entry.harness==='codex'?privateSkills.map(path=>path.replace('SKILL.md','agents/openai.yaml')):[]),executable])};
 }
 
 /** Read regular allowlisted files into memory; never extract paths or run ZIP content. */
