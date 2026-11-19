@@ -1,3 +1,6 @@
+import type {DevinState} from '../state/devin.mjs';
+import {devinRuntime} from '../identity/devin-runtime.mjs';
+import {isDevinToken} from '../identity/devin.mjs';
 import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
 import type {ReplicasImport} from '../integrations/replicas-import.mjs';
 import {createReplicasConnections} from '../identity/replicas-connections.mjs';
@@ -19,7 +22,7 @@ import {Readable} from 'node:stream';
 import {readFile} from 'node:fs/promises';
 import {currentVerifiedUser} from '../identity/auth.mjs';
 import {singleOrganizationIdentity} from '../identity/single-organization.mjs';
-import {singleOrganizationPrincipal} from '../identity/principal.mjs';
+import {activeMemberships,singleOrganizationPrincipal} from '../identity/principal.mjs';
 import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
 import {roleWriteGuard} from '../identity/role-write.mjs';
@@ -74,28 +77,30 @@ export interface SelfhostApplicationOptions {
   connectorSettings?:{save(id:string,value:unknown,by:Principal):Promise<void>};
   scheduleSessionIndexing?:(key:string)=>Promise<unknown>;
   scheduleSessionDeletion?:(key:string)=>Promise<unknown>;
+  devinState?:DevinState;
+  devinIdentityKey?:ReplicasIdentityKey;
   workloadIdentity?:ReturnType<typeof createReplicasWorkloads>;
   workloadIdentityKey?:ReplicasIdentityKey;
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
 export function selfhostApplication({settings,store,boardState,setupState,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
-  contextSuggestions={},
+  devinState,devinIdentityKey,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
   const reloadCache = createConsoleReloadCache();
   const directory=identity.directory;
-  const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
-    verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),
-    isAdmin:async principal=>{
+  const canManageWorkloads=async (principal:Principal)=>{
       if(principal.tenantId!==settings.organizationId)return false;
       const current=await currentVerifiedUser(directory,principal.userId);
+      if(current.status===503)throw Object.assign(new Error('Administrator verification unavailable'),{status:503});
       if(current.status!==200)return false;
-      const result=await directory.userManagement.listOrganizationMemberships({userId:principal.userId,organizationId:principal.tenantId,statuses:['active'],limit:100});
-      const rows=result.autoPagination?await result.autoPagination():result.data;
-      return rows.some(row=>row.userId===principal.userId&&row.organizationId===principal.tenantId&&row.status==='active'&&isAdmin(row));
-    }});
+      const members=await activeMemberships(directory,principal.userId,principal.tenantId);
+      return members.length===1 && members[0]!.userId===principal.userId && isAdmin(members[0]!);
+  };
+  const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
+    verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),isAdmin:canManageWorkloads});
   const replicasConnect=replicasConnectionHandler(replicas);
   const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,key:workloadIdentityKey,bindings:()=>settings.replicasBindings??[],resolveOrganization:async org=>{
     const record=await replicas.lookupOrganization(org);
@@ -106,11 +111,29 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const credentials=createCaptureCredentials({store,prefix});
   const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
-  const onboarding=createOnboardingStatus({store,prefix,onSharedReady:principal=>replicas.confirmInstallation(principal),sharedInstallations:principal=>replicas.sharedInstallations(principal,settings.replicasBindings??[])}),observe=createOnboardingObserver(onboarding);
+  const devin=devinState && devinRuntime({repository:devinState,audience:settings.url,key:devinIdentityKey,tenantId:settings.organizationId,isAdmin:canManageWorkloads,
+    authenticateAdmin:async req=>{
+      const token=/^Bearer (.+)$/i.exec(req.headers.authorization??'')?.[1];
+      if(isDevinToken(token)||isReplicasToken(token)||isCaptureCredential(token))throw Object.assign(new Error('Human admin sign-in required'),{status:403});
+      const result=await identifyCli(req.headers.authorization,{cliOnly:true});
+      if(result.status!==200)throw Object.assign(new Error('Admin sign-in required'),{status:result.status});
+      const members=await activeMemberships(directory,result.principal.userId,result.principal.tenantId);
+      if(members.length!==1)throw Object.assign(new Error('Workspace membership required'),{status:403});
+      return {principal:result.principal,member:members[0]!};
+    }});
+  function identifyWorkload(token:string|undefined){
+    if(devin && isDevinToken(token))return devin.workloads.identify(token);
+    if(isReplicasToken(token))return workloads.identify(token);
+    return null;
+  }
+  const onboarding=createOnboardingStatus({store,prefix,
+    onSharedReady:async p=>{if(p.owner?.provider==='devin')await devin?.connections.confirmInstallation(p);else await replicas.confirmInstallation(p);},
+    sharedInstallations:async p=>(await Promise.all([replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
   const values=valueReports({store,prefix});
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
+    if(principal.owner?.provider==='devin' && devin)return devin.workloads.revalidate(principal,requested);
     if(isWorkloadPrincipal(principal))return workloads.revalidate(principal,requested);
     const current=await currentVerifiedUser(directory,principal.userId);
     if(current.status!==200)throw Object.assign(new Error('Account unavailable'),{status:current.status});
@@ -125,7 +148,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   };
   const sessions=createSessionLibrary({store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
   const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
-  const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return isReplicasToken(token)?workloads.identify(token):identifyCli(req.headers.authorization,{capture:true});};
+  const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return identifyWorkload(token)??identifyCli(req.headers.authorization,{capture:true});};
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
   const contextCheck=createContextCheckHandler({authenticate,check:createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize})});
   const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:contextSuggestions.observe})});
@@ -140,13 +163,15 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   const boardHandler=createBoardHandler({board,authenticate});
   const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
     const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];
-    if(!isReplicasToken(token))return accounts.mcpIdentity(req,res);
-    const result=await workloads.identify(token);if(result.status===200)return result.principal;
+    const workload=identifyWorkload(token);
+    if(!workload)return accounts.mcpIdentity(req,res);
+    const result=await workload;if(result.status===200)return result.principal;
     res.writeHead(result.status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'invalid_workload'}));return null;
   },onConnectionTest:async p=>{await onboarding.mcpTest(p);},onAuthenticated:async(p,info)=>{await onboarding.mcp(p,info);}});
   const capture=createCaptureHandler({recording,credentials,search,ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:scheduleSessionIndexing,onStored:async(principal,batch)=>{await Promise.all([observe.session(principal,batch),setupObserver.session(principal,batch)]);}}),authenticate:async req=>{
     const token=/^Bearer (.+)$/.exec(req.headers.authorization||'')?.[1];
-    if(isReplicasToken(token)){const result=await workloads.identify(token);if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
+    const workload=identifyWorkload(token);
+    if(workload){const result=await workload;if(result.status!==200)throw Object.assign(new Error('Workload authentication required'),{status:result.status});return {...result.principal,captureAccess:'write'};}
     if(isCaptureCredential(token)) {
       const delegated=await credentials.authenticate(token);
       if(!delegated)throw Object.assign(new Error('Capture credential expired or revoked'),{status:401});
@@ -184,6 +209,9 @@ export function selfhostApplication({settings,store,boardState,setupState,record
       if(url.pathname==='/.well-known/opencrawl-cli')return req.method==='GET'?json(200,accounts.cliConfiguration()):respond(405,'Method not allowed');
       if(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)){res.setHeader('Access-Control-Allow-Origin','*');return req.method==='GET'?json(200,mcpMetadata(settings)):respond(405,'Method not allowed');}
       if(url.pathname==='/api/connector-proxy')return credentialProxy?await credentialProxy(req,res):respond(503,'Connector proxy unavailable');
+      if(devin && url.pathname==='/api/devin/connect')return await devin.connect(req,res);
+      if(devin && url.pathname==='/api/cli/workloads/devin/approval')return await devin.approve(req,res);
+      if(devin && url.pathname==='/api/cli/workloads/devin/disconnect')return await devin.disconnect(req,res);
       if(url.pathname==='/api/replicas/connect')return await replicasConnect(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);

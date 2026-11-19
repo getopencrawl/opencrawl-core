@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {pathToFileURL} from 'node:url';
+import {generateKeyPair,SignJWT} from 'jose';
+import {createDevinWorkloads,DEVIN_ISSUER} from '../dist/src/identity/devin.mjs';
+import {createRealm} from '../dist/src/search/realm.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
+
+test('verified Devin identity excludes its native current session across search callers while preserving peer scope and explicit inclusion',async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'devin-search-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const org='org-11111111111141118111111111111111',session='devin-22222222222242228222222222222222',audience='https://operator.example';
+  const {publicKey,privateKey}=await generateKeyPair('RS256');
+  const auth=createDevinWorkloads({audience,key:async()=>publicKey,resolveOrganization:async id=>id===org?'org_local':null});
+  const token=await new SignJWT({org_id:org,devin_id:session}).setProtectedHeader({alg:'RS256'}).setIssuer(DEVIN_ISSUER).setAudience(audience).setSubject(`org_id:${org}`).setIssuedAt().setExpirationTime('60s').sign(privateKey);
+  const identity=await auth.identify(token);assert.equal(identity.status,200);const principal=identity.principal;
+  const options={endpoint:pathToFileURL(join(directory,'realm.sqlite')).href.replace('file:','sqlite:'),environment:'test'};
+  const realm=createRealm({...options,tenantId:principal.tenantId});await realm.ensureIndex();
+  const doc=(id,extra={})=>({id,document:{tenantId:principal.tenantId,userId:principal.userId,harness:'devin',sessionId:session,installationId:'fixture',eventId:id,chunk:0,kind:'message',role:'assistant',private:false,containsToolOutput:false,text:'evidence '+id,timestamp:'2026-11-15T00:00:00Z',...extra}});
+  await realm.collection('session').bulk(principal,[doc('current'),doc('past',{sessionId:'past'}),doc('peer',{userId:'peer'}),doc('different-harness',{harness:'claude-code'}),doc('private-peer',{userId:'peer',private:true})]);await realm.refresh(principal);
+  const search=createWorkspaceSearch({sessions:createSessionSearch({...options,store:memorySessionStore(),prefix:'fixture'})});
+  const query={query:'evidence',source:'sessions',dedupe:false,groupBy:'none'};
+  const result=await search.search(principal,query);
+  assert.deepEqual(result.searchContext.currentSession,{harness:'devin',sessionId:session});assert.equal(result.searchContext.currentSessionStatus,'excluded');
+  assert.deepEqual(result.results.map(row=>row.id).sort(),['sessions:different-harness','sessions:past','sessions:peer']);
+  const included=await search.search(principal,{...query,includeCurrentSession:true});assert.equal(included.searchContext.currentSessionStatus,'included');assert.ok(included.results.some(row=>row.id==='sessions:current'));assert.ok(included.results.every(row=>row.id!=='sessions:private-peer'));
+  const human=await search.search({tenantId:principal.tenantId,userId:'human'},query);assert.equal(human.searchContext.currentSessionStatus,'unavailable');
+  await assert.rejects(search.search(principal,{...query,currentSession:{harness:'devin',sessionId:session,userId:'peer'}}),{status:400});
+  const page=await search.search(principal,{...query,limit:1});assert.ok(page.next);
+  await assert.rejects(search.search({...principal,owner:{...principal.owner,sessionId:'another'}},{...query,limit:1,cursor:page.next}),/cursor/);
+});
