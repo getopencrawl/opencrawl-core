@@ -1,5 +1,5 @@
 import {cloneElement, isValidElement, useEffect, useId, useRef, useState} from 'react';
-import type {ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes} from 'react';
+import type {ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes} from 'react';
 import {Link} from '../router.tsx';
 import type {LinkProps} from 'react-router';
 import type {IconName} from '../contracts.ts';
@@ -39,9 +39,10 @@ export function Avatar({name, src}: {name: string; src?: string | null}) {
     {image && failed !== image && <img key={image} src={image} alt="" width={32} height={32} decoding="async" draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(image)} onError={() => setFailed(image)}/>}
   </span>;
 }
-/** One static mark and wordmark for workspace and focused headers. */
-export function Brand({className = '', reloadDocument = false}: {className?: string; reloadDocument?:boolean}) {
-  return <Link className={`oc-brand ${className}`} to="/" reloadDocument={reloadDocument} aria-label="OpenCrawl home"><img src="/assets/opencrawl-mark.svg" width="38" height="20" alt=""/><span>opencrawl</span></Link>;
+export function Brand({className = '', reloadDocument = false, markOnly = false}: {className?: string; reloadDocument?:boolean; markOnly?: boolean}) {
+  const mark = <img src="/assets/opencrawl-mark.svg" width="38" height="20" alt=""/>;
+  if (markOnly) return mark;
+  return <Link className={`oc-brand ${className}`} to="/" reloadDocument={reloadDocument} aria-label="OpenCrawl home">{mark}<span>opencrawl</span></Link>;
 }
 /** A link that leaves the product; internal paths use Link or LinkButton. */
 export function ExternalLink({href, children, className = ''}: {href: string; children: ReactNode; className?: string}) {
@@ -52,7 +53,7 @@ export function Input({className = '', ...props}: Styled<InputHTMLAttributes<HTM
 }
 export function ChoiceTiles<T extends string>({label, hint, name, value, onChange, options}: {
   label: string; hint?: string; name: string; value: T; onChange: (value: T) => void;
-  options: ReadonlyArray<{value: T; title: string; description: string; icon: IconName}>;
+  options: ReadonlyArray<{value: T; title: string; description: string; icon: IconName | ReactElement}>;
 }) {
   const id = useId();
   return <fieldset className="oc-choice-group" aria-describedby={hint ? id : undefined}>
@@ -61,7 +62,7 @@ export function ChoiceTiles<T extends string>({label, hint, name, value, onChang
     <div className="oc-choice-tiles">{options.map(option => {
       const optionId = id + '-' + option.value;
       return <label key={option.value} className="oc-choice-tile">
-        <Icon name={option.icon} size={24}/>
+        <span className="oc-choice-symbol" aria-hidden="true">{typeof option.icon === 'string' ? <Icon name={option.icon} size={24}/> : option.icon}</span>
         <input type="radio" name={name} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)}
           aria-labelledby={optionId} aria-describedby={optionId + '-description'}/>
         <span className="oc-choice-copy"><strong id={optionId}>{option.title}</strong><span id={optionId + '-description'}>{option.description}</span></span>
