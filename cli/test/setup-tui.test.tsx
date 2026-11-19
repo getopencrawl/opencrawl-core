@@ -14,7 +14,7 @@ test.skipIf(process.platform==='win32')('the install bar keeps moving through ra
   const ui=createSetupUi();
   try {
    for(let task=0;task<20;task++){
-    ui.progress('Installing','Task '+task,undefined,true);
+    ui.progress('Installing','Task '+task,undefined,{animate:true});
     await Bun.sleep(40);
    }
   } finally { ui.close(); }
@@ -119,6 +119,18 @@ test('waiting screen cancels and error actions use the same arrow and Enter beha
  try{await tick();waiting.stdin.write('\u001b');await tick();expect(cancelled).toBe(true);}finally{waiting.unmount();}
  const error=render(<NoticeScreen title="Setup needs attention" description="Try again." actions={[{id:'retry',label:'Retry'},{id:'close',label:'Close'}]} onAction={value=>{answer=value;}}/>);
  try{await tick();error.stdin.write(right);await tick();error.stdin.write(enter);await tick();expect(answer).toBe('close');}finally{error.unmount();}
+});
+
+test('the message to send is inset and separated from the terminal instructions',async()=>{
+ const app=await renderReady(<NoticeScreen title="Verify the Codex connection" description="Send this message." prompt="Finish setup using my saved choices." details={['Keep this terminal open.']}/>);
+ try{
+  await waitForFrame(app,'Keep this terminal open.');
+  const rows=app.lastFrame()!.split('\n').map(row=>row.trimEnd());
+  const promptRow=rows.indexOf('    Finish setup using my saved choices.');
+  const instructionRow=rows.indexOf('  Keep this terminal open.');
+  expect(promptRow).toBeGreaterThan(rows.indexOf('  Send this message.'));
+  expect(instructionRow).toBeGreaterThan(promptRow+1);
+ }finally{app.unmount();}
 });
 
 test('the hook trust spinner animates with Skip for now as its only button',async()=>{
