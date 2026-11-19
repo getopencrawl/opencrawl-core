@@ -1,7 +1,7 @@
 import {lexicalQuery} from '../search/lexical.mjs';
 import type {RealmOptions, OpenSearchResponse, IndexHit, QueryBody, SearchInput, Aggregation} from '../search/types.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
-import type {ConnectorBinding, ConnectorPrincipal, ConnectorDocument, DocumentItem, SuppressionIdentity} from './types.mjs';
+import type {ConnectorBinding, ConnectorPrincipal, ConnectorDocument, DocumentItem, IndexedLinearResource, SuppressionIdentity} from './types.mjs';
 import {createRealm} from '../search/realm.mjs';
 import {authorize, digest, documentId, validateBinding} from './scope.mjs';
 import {LINEAR_KINDS} from '../integrations/linear-upstream.mjs';
@@ -19,6 +19,13 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
   const realm=createRealm(options), collection=realm.collection('connector'), f=collection.field;
   const principal={tenantId};
   function scoped(principal: ConnectorPrincipal, binding: ConnectorBinding) {authorize(principal,binding);realm.scope(principal);}
+  function linearFilters(principal: ConnectorPrincipal, binding: ConnectorBinding) {
+    scoped(principal, binding);
+    if (binding.provider !== 'linear') throw new Error('Expected a Linear connection');
+    return [{term: {[f('provider')]: 'linear'}}, {term: {[f('connectionId')]: binding.connectionId}},
+      {term: {[f('workspaceId')]: binding.workspaceId}}, {term: {[f('deleted')]: false}}];
+  }
+  const unavailableLinear = {bool: {filter: [{term: {[f('provider')]: 'linear'}}, {term: {[f('available')]: false}}]}};
   type SearchResponse = OpenSearchResponse<ConnectorDocument> & {took?: number};
   type MultiGetResponse = {docs: IndexHit<ConnectorDocument>[]};
   type ConnectionCount = {total: number; kinds: Record<string, number>};
@@ -39,25 +46,23 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
     }
   }
   type ConnectorSearchInput = SearchInput;
-  type ResourceAccess = (binding: ConnectorBinding, sourceId: string) => Promise<boolean>;
   type NormalizedResult = {hits: (ConnectorDocument & {id: string; score: number})[]; examined: number; truncated: boolean};
   type RawResponse = Pick<SearchResponse, 'took' | 'timed_out' | '_shards'> & {hits: {hits: IndexHit<ConnectorDocument>[]}};
   type RawResult = {responses: RawResponse[]; examined: number; truncated: boolean};
-  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}, resourceAccess?: ResourceAccess): Promise<RawResult>;
-  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}, resourceAccess?: ResourceAccess): Promise<NormalizedResult>;
-  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput, resourceAccess?: ResourceAccess): Promise<NormalizedResult | RawResult>;
-  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query='', limit = 20, raw = false, match = 'all', id, filters, order}: ConnectorSearchInput = {}, resourceAccess?: ResourceAccess) {
+  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput & {raw: true}): Promise<RawResult>;
+  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input?: ConnectorSearchInput & {raw?: false}): Promise<NormalizedResult>;
+  function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], input: ConnectorSearchInput): Promise<NormalizedResult | RawResult>;
+  async function search(principal: ConnectorPrincipal, bindings: ConnectorBinding[], {query='', limit = 20, raw = false, match = 'all', id, filters, order}: ConnectorSearchInput = {}) {
       if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
       for (const binding of bindings) scoped(principal, binding);
       if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_:-]{1,256}$/.test(id))) throw new Error('Invalid passage id');
       if (!['all','any','phrase'].includes(match) || typeof query !== 'string' || (!query.trim() && !id && (!order||order==='relevance')) || query.length > 4000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid connector query');
       const byConnection = new Map(bindings.map(b => [b.connectionId, b]));
-      const resourceDecisions = new Map<string, Promise<boolean>>();
       const hits: (ConnectorDocument & {id: string; score: number})[] = [], responses: RawResponse[] = []; let after: IndexHit['sort'], examined = 0, more = true, capped = false;
       // Bound work even when channel visibility filters most candidates.
       while (hits.length < limit && examined < 1000 && more) {
         const result = await request('/_search', {body: JSON.stringify({size: 100, track_total_hits: false,
-          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {bool: {should: [{terms: {[f('kind')]: SEARCHABLE_KINDS}}, {bool: {filter: [{term: {[f('provider')]: 'linear'}}, {terms: {[f('kind')]: linearKinds}}]}}], minimum_should_match: 1}}, {term: {[f('deleted')]: false}}, ...searchFilters('connector',filters), ...(id ? [{term:{id}}] : [])], must: [lexicalQuery(query,match)]}},
+          query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: [...byConnection.keys()]}}, {bool: {should: [{terms: {[f('kind')]: SEARCHABLE_KINDS}}, {bool: {filter: [{term: {[f('provider')]: 'linear'}}, {terms: {[f('kind')]: linearKinds}}]}}], minimum_should_match: 1}}, {term: {[f('deleted')]: false}}, ...searchFilters('connector',filters), ...(id ? [{term:{id}}] : [])], must_not: [unavailableLinear], must: [lexicalQuery(query,match)]}},
           // Native source IDs can collide across kinds (for example a GitHub
           // issue and review). The envelope ID makes search_after a total order.
           sort: [...searchSort('connector',order),{_score: 'desc'}, {[f('connectionId')]: 'asc'}, {[f('sourceId')]: 'asc'}, {id: 'asc'}], ...(after ? {search_after: after} : {})})});
@@ -86,22 +91,16 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
           if (!item.found) continue;
           const d = item._source, binding = byConnection.get(d?.connectionId);
           if (!binding || d.tenantId !== tenantId || d.workspaceId !== binding.workspaceId || d.provider !== binding.provider || !parentIds.includes(item._id) || item._id !== documentId(binding, d.kind, d.sourceId)) throw new Error('Parent metadata scope mismatch');
-          if (!d.deleted && (d.kind!=='file' || d.available===true)) current.set(item._id, d.resourceVersion);
+          if (!d.deleted && (d.provider!=='linear' || d.available!==false) && (d.kind!=='file' || d.available===true)) current.set(item._id, d.resourceVersion);
         }
         const visible = [];
         for (const hit of candidates) {
           if (hits.length >= limit) {capped = true; break;}
           const d = hit._source, binding = byConnection.get(d.connectionId);
           const parentVisible = !d.parentId || (typeof d.resourceVersion==='string' && current.get(documentId(binding!, d.parentKind!, d.parentId)) === d.resourceVersion);
-          const visibleResource = parentVisible && (d.kind!=='file' || d.available===true) &&
+          const visibleResource = parentVisible && (d.provider!=='linear' || d.available!==false) && (d.kind!=='file' || d.available===true) &&
             (d.provider!=='slack' || allowed.has(documentId(binding!, 'channel', d.channelId!)));
-          let providerVisible = visibleResource;
-          if (providerVisible && d.provider === 'linear') {
-            const sourceId = d.parentId || d.sourceId, key = binding!.connectionId + ':' + sourceId;
-            if (!resourceDecisions.has(key)) resourceDecisions.set(key, resourceAccess ? resourceAccess(binding!, sourceId) : Promise.resolve(false));
-            providerVisible = await resourceDecisions.get(key)!;
-          }
-          if (providerVisible) {
+          if (visibleResource) {
             visible.push(hit); hits.push({id: hit._id, score: hit._score, ...hit._source});
           }
         }
@@ -119,7 +118,7 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
     if (!Array.isArray(bindings) || !bindings.length || bindings.length > 100) throw new Error('Authorized connections required');
     for (const binding of bindings) scoped(principal, binding);
     return request('/_search', {body: JSON.stringify({size: 0, track_total_hits: true,
-      query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: bindings.map(b => b.connectionId)}}, {term: {[f('deleted')]: false}}], must_not: [{terms: {[f('kind')]: ['passage', 'transcript', 'file_chunk']}}]}}, aggs})});
+      query: {bool: {filter: [{term: {tenantId}}, {terms: {[f('connectionId')]: bindings.map(b => b.connectionId)}}, {term: {[f('deleted')]: false}}], must_not: [{terms: {[f('kind')]: ['passage', 'transcript', 'file_chunk']}}, unavailableLinear]}}, aggs})});
   }
   return {
     identity:realm.identity,
@@ -132,6 +131,37 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
       } catch (error) {throw Object.assign(error as object, {writeOutcome: 'not-applied'});}
       if (!documents.length) return;
       await collection.bulk(principal,documents.map(item=>({...item,policy:'connector'})));
+    },
+    async listLinearResources(principal: ConnectorPrincipal, binding: ConnectorBinding, after: string) {
+      const filter = linearFilters(principal, binding);
+      if (after && !/^[a-f0-9]{64}$/.test(after)) throw new Error('Invalid Linear inventory cursor');
+      const result = await collection.search(principal, {
+        size: 100, track_total_hits: false, sort: [{id: 'asc'}], ...(after && {search_after: [after]}),
+        _source: ['provider', 'connectionId', 'workspaceId', 'kind', 'sourceId', 'resourceVersion', 'available'],
+        query: {bool: {filter: [...filter, {terms: {[f('kind')]: linearKinds}}]}},
+      });
+      const hits = result.hits.hits;
+      const resources = hits.map(({_source: d, _id}) => {
+        if (d.provider !== binding.provider || d.workspaceId !== binding.workspaceId || d.connectionId !== binding.connectionId ||
+            typeof d.kind !== 'string' || !linearKinds.includes(d.kind) || typeof d.sourceId !== 'string' ||
+            _id !== documentId(binding, d.kind, d.sourceId) || typeof d.resourceVersion !== 'string' || !/^[a-f0-9]{64}$/.test(d.resourceVersion)) {
+          throw new Error('Invalid indexed Linear resource');
+        }
+        return {sourceId: d.sourceId, available: d.available !== false, resourceVersion: d.resourceVersion};
+      });
+      return {resources, after: hits.length === 100 ? hits[hits.length - 1]._id : null};
+    },
+    async setLinearAvailability(principal: ConnectorPrincipal, binding: ConnectorBinding, resources: IndexedLinearResource[], available: boolean) {
+      const filter = linearFilters(principal, binding);
+      if (!resources.length || resources.length > 100 || typeof available !== 'boolean' ||
+          resources.some(r => !/^[a-f0-9]{64}$/.test(r.resourceVersion))) throw new Error('Invalid Linear availability batch');
+      // A revision hashes the kind, source ID and content and is shared by its parent and passages.
+      // Restrict writes to the snapshot we checked if indexing publishes a new revision concurrently.
+      const ids = resources.map(r => r.sourceId);
+      await collection.byQuery(principal, 'update', {bool: {filter: [...filter,
+        {terms: {[f('resourceVersion')]: resources.map(r => r.resourceVersion)}},
+        {bool: {should: [{terms: {[f('sourceId')]: ids}}, {terms: {[f('parentId')]: ids}}], minimum_should_match: 1}},
+      ]}}, {set: {'connector.available': available}});
     },
     async suppress(principal: ConnectorPrincipal, binding: ConnectorBinding, {kind, sourceId}: SuppressionIdentity) {
       try {

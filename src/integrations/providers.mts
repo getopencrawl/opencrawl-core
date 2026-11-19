@@ -203,7 +203,7 @@ const providers:ProviderCatalog = {
     description: 'Issues, projects, planning and customer context from Linear.',
     ...(!linearPublicAccess ? {unavailableReason: 'Linear requires the public-team permission adapter. Upgrade the application runtime to enable this source.'} : {}),
     toolkit: 'linear', scope: 'team', teamOnly: true,
-    help: 'An administrator shares Linear workspace records and public-team content. Uses the full Airbyte Linear connector, including projects, updates, cycles, relationships, history and customer requests. Customer and customer-request streams are included when the Customers feature is enabled in Linear. Private teams and private initiatives remain unavailable in search. Current access is checked again when indexing and retrieving.',
+    help: 'An administrator shares Linear workspace records and public-team content. Uses the full Airbyte Linear connector, including projects, updates, cycles, relationships, history and customer requests. Customer and customer-request streams are included when the Customers feature is enabled in Linear. Indexing excludes private teams and private initiatives. Workspace members can search shared records locally. Visibility changes propagate on the next successful sync.',
     owner: record => `workspace=${record.workspace}`,
     // Composio authorizes as the consenting user. Linear's customer/initiative scopes
     // are app-actor-only; user-mode read inherits that user's resource permissions.

@@ -34,10 +34,13 @@ export interface ConditionalStore extends ConnectorStore {
   compareAndSet(key: string, version: string | number | null, bytes: Uint8Array): Promise<boolean>;
 }
 export interface SuppressionIdentity { kind: string; sourceId: string; }
+export interface IndexedLinearResource { sourceId: string; available: boolean; resourceVersion: string; }
 export interface ConnectorSearch {
   identity: string;
   putDocuments(principal: ConnectorPrincipal, binding: ConnectorBinding, documents: DocumentItem[]): Promise<unknown>;
   suppress?(principal: ConnectorPrincipal, binding: ConnectorBinding, identity: SuppressionIdentity): Promise<unknown>;
+  listLinearResources?(principal: ConnectorPrincipal, binding: ConnectorBinding, after: string): Promise<{resources: IndexedLinearResource[]; after: string | null}>;
+  setLinearAvailability?(principal: ConnectorPrincipal, binding: ConnectorBinding, resources: IndexedLinearResource[], available: boolean): Promise<unknown>;
 }
 export interface PipelineOptions {
   binding: ConnectorBinding; store: ConnectorStore; search: ConnectorSearch;

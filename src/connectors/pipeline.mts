@@ -9,6 +9,8 @@ import {createWorkspacePipeline} from './workspace-pipeline.mjs';
 import {pipelineVersion} from './scope.mjs';
 
 
+const visibilityCursor = 'linear-visibility:';
+
 /** One fixed authorized connection, one scoped bucket adapter, one scoped index. */
 export function createConnectorPipeline({binding, store, search, linear, checkActive = async () => {}, heartbeat = () => {}}: PipelineOptions) {
   validateBinding(binding);
@@ -19,9 +21,24 @@ export function createConnectorPipeline({binding, store, search, linear, checkAc
   return {
     async listPage({cursor}: {cursor?: string | null} = {}) {
       await active();
+      if (binding.provider === 'linear' && cursor?.startsWith(visibilityCursor)) {
+        if (!search.listLinearResources || !search.setLinearAvailability) throw new Error('Linear index reconciliation unavailable');
+        const page = await search.listLinearResources(principal, binding, cursor.slice(visibilityCursor.length));
+        if (page.resources.length) {
+          const visible = await linear!.describeMany(page.resources.map(resource => resource.sourceId));
+          for (const available of [false, true]) {
+            const changed = page.resources.filter(resource => resource.available !== available && visible.has(resource.sourceId) === available);
+            if (changed.length) {
+              await active();
+              await search.setLinearAvailability(principal, binding, changed, available);
+            }
+          }
+        }
+        return {keys: [], cursor: page.after ? visibilityCursor + page.after : null, ignored: 0};
+      }
       const page = await store.listPage(binding.rawPrefix, {continuationToken: cursor, maxKeys: 100});
       const keys = page.keys.filter(key => selectedObject(binding, key));
-      return {keys, cursor: page.nextToken || null, ignored: page.keys.length - keys.length};
+      return {keys, cursor: page.nextToken || (binding.provider === 'linear' ? visibilityCursor : null), ignored: page.keys.length - keys.length};
     },
     async processObject({key}: {key: string}) {
       await active();

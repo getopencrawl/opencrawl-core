@@ -165,5 +165,13 @@ export function guardConnectorWrites<S extends ConditionalStore>({binding, store
       return barrier.run('search-write', () => search.suppress!(scopedPrincipal, scopedBinding, identity), {target});
     };
   }
+  if (search?.setLinearAvailability && guardedSearch) {
+    guardedSearch.setLinearAvailability = (principal, candidate, resources, available) => {
+      searchScope(principal, candidate);
+      const scopedPrincipal = {...principal}, scopedBinding = {...candidate};
+      const target = JSON.stringify({operation: 'setLinearAvailability', resourcesSha256: digest(resources), available});
+      return barrier.run('search-write', () => search.setLinearAvailability!(scopedPrincipal, scopedBinding, resources, available), {target});
+    };
+  }
   return {store: guardedStore, ...(search ? {search: guardedSearch} : {}), writeBarrier: barrier};
 }

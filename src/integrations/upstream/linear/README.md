@@ -10,8 +10,8 @@ credential setup, selects our tested declarative runtime, and shortens the
 definition description for Airbyte's storage. Airbyte retains extraction, all 20 streams, GraphQL queries,
 schemas, transformations, pagination, rate handling and incremental cursors.
 `../../linear-access.mts` is OpenCrawl's resource permission adapter, not another
-source implementation. Both collection and authenticated retrieval check current
-visibility against the connected Linear organization.
+source implementation. Collection and indexing check visibility against the connected Linear organization.
+Indexing also reconciles existing records. Authenticated retrieval uses the workspace index.
 
 To update, fetch the manifest and license from an immutable upstream revision,
 convert YAML to JSON without changing values, update provenance and version,
