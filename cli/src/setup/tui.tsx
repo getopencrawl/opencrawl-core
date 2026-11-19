@@ -23,9 +23,11 @@ export function createSetupUi(){
   else app=render(element,{stdout:process.stderr,stdin:process.stdin,stderr:process.stderr,patchConsole:false,exitOnCtrlC:false,alternateScreen:true,interactive:Boolean(process.stdin.isTTY&&process.stderr.isTTY)});
  };
  const notice=(props:Notice,key:number|'progress'=++serial)=>show(<NoticeScreen key={key} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)}/>);
- const progress=(title:string,description:string,details?:string[],animate=false,status?:string)=>{
+ const progress=(title:string,description:string,details?:string[],animate=false,waiting?:{spinner:string;status?:string;onSkip:()=>void})=>{
   controller.signal.throwIfAborted();
-  notice({title,description,details,animate,status:status&&clean(status),onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}},'progress');
+  notice({title,description,details,animate,
+   ...(waiting&&{spinner:clean(waiting.spinner),status:waiting.status&&clean(waiting.status),actions:[{id:'skip',label:'Skip for now'}],onAction:waiting.onSkip}),
+   onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}},'progress');
  };
  const close=()=>{app?.unmount();app?.cleanup();app=undefined;};
  return {

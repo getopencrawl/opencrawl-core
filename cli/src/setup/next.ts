@@ -6,7 +6,7 @@ export function deferredPlugins(state:SetupState){
 }
 
 /** Never let one ready harness hide another selected harness's pending proof. */
-export function nextSetupAction(state:SetupState,server:SetupServerStatus){
+export function nextSetupAction(state:SetupState,server:SetupServerStatus,skipCodexHooks=false){
  const selected=Object.keys(state.selections.plugins).filter(id=>state.selections.plugins[id]);
  if(!selected.length)return {actor:'agent',kind:'complete',instruction:'No harness is selected for recording. Continue the conversation.'} as const;
  if(!state.installationId)return {actor:'agent',kind:'review_setup',instruction:'Read setup --json. Ask only for choices that have not been saved.'} as const;
@@ -14,7 +14,9 @@ export function nextSetupAction(state:SetupState,server:SetupServerStatus){
  const available=selected.filter(id=>!deferred.some(row=>row.client===id));
  if((available.length||state.worker?.kind==='configuring')&&state.worker?.supervised===false&&state.worker.kind!=='not-required')return {actor:'agent',kind:'repair_worker',instruction:'The capture worker is not supervised. Inspect setup status --local --json and repair its reported service. Keep the saved choices.'} as const;
  const installation=server.installations.find(row=>row.installationId===state.installationId);
+ const deferCodex=skipCodexHooks&&available.includes('codex')&&state.selections.forward.codex;
  for(const id of available){
+  if(id==='codex'&&deferCodex)continue;
   const client=installation?.clients.find(row=>row.client===id),forward=state.selections.forward[id];
   const connected=client?.mcp?.state==='authenticated'||!forward&&client?.mcp?.state==='observed';
   if(connected&&(!forward||client?.proof?.state==='verified')){
@@ -28,6 +30,7 @@ export function nextSetupAction(state:SetupState,server:SetupServerStatus){
   return {actor:'agent',kind:'native_tool',requiresSignIn:!['observed','authenticated'].includes(client?.mcp?.state??''),tool:'installation_status',arguments:{installationId:state.installationId,client:id},instruction:`Use the installed OpenCrawl MCP connection in ${id}. Follow its proof instructions in that harness. Ask the person only for a required sign-in or trust click; do not repeat saved choices or request a verification message.`,retryAfterMs:3000} as const;
  }
  const deferredClients=deferred.map(row=>row.client);
+ if(deferCodex)deferredClients.push('codex');
  const unavailable=deferred.find(row=>row.captureAvailable===false);
  const pending=deferred[0];
  if(unavailable)return {actor:'agent',kind:'plugin_unavailable',client:unavailable.client,deferredClients,instruction:'This pinned plugin package does not implement capture yet. Setup remains incomplete. Preserve the saved choices; run setup again when a capture-capable package is available.'} as const;
@@ -35,5 +38,6 @@ export function nextSetupAction(state:SetupState,server:SetupServerStatus){
   const task=state.humanTasks?.find(task=>task.client===pending.client&&task.kind==='plugin_install');
   return {actor:'agent',kind:'repair_plugin',client:pending.client,deferredClients,reason:pending.message,title:task?.title,instruction:task?.instruction??'Read setup status --local --json and resolve the reported native plugin issue before running setup. Preserve native trust, disabled plugins and saved choices.'} as const;
  }
+ if(deferCodex)return {actor:'user',kind:'hook_trust_skipped',client:'codex',deferredClients,instruction:'Run opencrawl setup again to finish Codex recording setup.'} as const;
  return {actor:'agent',kind:'complete',instruction:'All selected harnesses are verified. Continue the conversation.'} as const;
 }

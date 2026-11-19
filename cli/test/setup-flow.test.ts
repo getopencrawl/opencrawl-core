@@ -260,10 +260,13 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,native:unexpected,close:()=>{},
   choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'})),
   action:async screen=>{actions.push(screen.title);return 'done';},
-  progress:(title,description,details,_animate,status)=>{
-   if(title==='Review Codex hooks'){
-    expect(details?.join(' ')).toMatch(/Desktop.*Settings → Hooks.*CLI.*\/hooks/);
-    statuses.push(status!);
+  progress:(title,description,details,_animate,waiting)=>{
+   if(waiting){
+    expect(title).toBe('Trust all OpenCrawl hooks in Codex Desktop or CLI');
+    expect(description).toContain('Under From Plugins, select OpenCrawl and click Trust all.');
+    expect(details?.[0]).toContain('select “Trust all and continue” to trust every pending hook.');
+    expect(waiting.spinner).toBe('Checking whether OpenCrawl hooks are trusted…');
+    if(waiting.status)statuses.push(waiting.status);
    }
    if(title==='Verify the Codex connection'){
     expect(reviews).toHaveLength(0);
@@ -280,13 +283,48 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
  });
  expect(code).toBe(0);
- expect(statuses.map(status=>status.split('\n')[0])).toEqual([
-  'Checking hook approval…','Couldn’t read hook approval from Codex. Retrying automatically.',
+ expect(statuses).toEqual([
+  'Couldn’t read hook approval from Codex. Retrying automatically.',
   '9 of 12 approved · 2 pending · 1 disabled','11 of 12 approved · 1 pending'
  ]);
  expect(handoffs).toBe(1);
  expect(actions).toEqual(['Setup complete']);
 }));
+
+test('skipping hook trust during inspection saves Codex as pending and continues with Cursor',()=>fixture(async(api,_dir,_observations,setCursor)=>{
+ const inspection=Promise.withResolvers<CodexHookReview>();
+ const unexpected=async():Promise<never>=>{throw Error('Unexpected native launch');};
+ const visited:string[]=[];
+ let skip:undefined|(()=>void);
+ const ui:SetupUi={
+  signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,native:unexpected,close:()=>{},
+  choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&['codex','cursor'].includes(item.id)})),
+  progress:(title,_description,details,_animate,waiting)=>{
+   if(waiting){visited.push('trust');skip=waiting.onSkip;}
+   if(title==='Open Cursor'){
+    visited.push('cursor');
+    expect(details?.[0]).toContain('verify_installation tools for cursor');
+    setCursor({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});
+   }
+  },
+  action:async screen=>{
+   visited.push(screen.title);
+   expect(screen.description).toBe('Recording setup is pending for Codex.');
+   return 'done';
+  }
+ };
+ const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
+  createUi:()=>ui,which:()=>'/native/codex',native:unexpected,pause:async()=>{},
+  inspectCodex:()=>{skip!();return inspection.promise;},
+  setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'cursor',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
+ });
+ inspection.resolve({state:'observed',total:12,pending:0,disabled:0});
+ await Promise.resolve();
+ expect(code).toBe(0);
+ expect(visited).toEqual(['trust','cursor','Setup saved']);
+ expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.selections.forward.codex).toBe(true);
+ expect((await setupCommand('next',api,{json:true}))).toMatchObject({nextAction:{kind:'native_tool',arguments:{client:'codex'}}});
+},false,'cursor'));
 
 test('exiting hook review stops polling and keeps the saved recording choice',()=>fixture(async api=>{
  const controller=new AbortController();

@@ -35,12 +35,39 @@ function hookApprovalStatus(review:CodexHookReview):string|null{
  const counts=[`${total-pending-disabled} of ${total} approved`];
  if(pending)counts.push(pending+' pending');
  if(disabled)counts.push(disabled+' disabled');
- return counts.join(' · ')+'\nChecking again automatically.';
+ return counts.join(' · ');
+}
+
+async function waitForCodexHookTrust(ui:SetupUi,inspect:typeof currentCodexReview,pause:(signal:AbortSignal)=>Promise<void>){
+ const controller=new AbortController();
+ const signal=AbortSignal.any([controller.signal,ui.signal]);
+ const skipped=Promise.withResolvers<'skipped'>();
+ const show=(status?:string)=>ui.progress(
+  'Trust all OpenCrawl hooks in Codex Desktop or CLI',
+  'Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.',
+  ['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.'],
+  false,{spinner:'Checking whether OpenCrawl hooks are trusted…',status,onSkip:()=>skipped.resolve('skipped')}
+ );
+ const poll=async()=>{
+  let previous:string|undefined;
+  for(;;){
+   signal.throwIfAborted();
+   const status=hookApprovalStatus(await inspect());
+   signal.throwIfAborted();
+   if(status===null)return 'trusted' as const;
+   if(status!==previous)show(status);
+   previous=status;
+   await pause(signal);
+  }
+ };
+ show();
+ try{return await Promise.race([skipped.promise,poll()]);}
+ finally{controller.abort();}
 }
 
 async function connectNativeClient(
  client:Exclude<NativeClient,'codex'>, executable:string, api:string, ui:SetupUi,
- needsLogin:boolean, retryAntigravity:boolean, native:typeof nativeCommand, findConnection:typeof findSetupConnection
+ needsLogin:boolean, retryAntigravity:boolean, native:typeof nativeCommand, findConnection:typeof findSetupConnection, setupPrompt=nativeSetupPrompt(api,client)
 ):Promise<number|undefined>{
  const label=labels[client];
  const execute=(command:string,args:string[])=>native(command,args,ui,'Connect '+label);
@@ -48,7 +75,7 @@ async function connectNativeClient(
  const connection=await findConnection(client,executable,api);
  ui.signal.throwIfAborted();
  needsLogin=needsLogin&&!connection.skipLogin;
- const prompt=nativeConnectionPrompt(nativeSetupPrompt(api,client),connection.name,api);
+ const prompt=nativeConnectionPrompt(setupPrompt,connection.name,api);
  if(client==='antigravity'){
   if(retryAntigravity){
    const retry=await ui.action({title:'Antigravity verification is pending',description:'Reopen Antigravity to check the connection or sign in again.',actions:[{id:'verify',label:'Retry verification'},{id:'connect',label:'Review connection'},{id:'later',label:'Finish later'}]});
@@ -138,11 +165,12 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
      let displayedInstruction:string|undefined;
      const reconciled=new Set<string>();
      let lastLaunched:string|undefined;
-     let codexHooksApproved=false;
+     let codexTrust:'trusted'|'skipped'|undefined;
+     const nextStep=()=>setup('wait',api,{json:true},{interactive:false,finishOnboarding:true,skipCodexHooks:codexTrust==='skipped'});
      ui.progress('Checking setup','Waiting for native connection and session verification.');
      for(;;){
       ui.signal.throwIfAborted();
-      let next=await setup('wait',api,{json:true},{interactive:false,finishOnboarding:true});
+      let next=await nextStep();
       if(ui.signal.aborted)return 130;
       if(next&&'nextAction' in next&&next.nextAction?.kind==='repair_worker'){
        displayedInstruction=undefined;
@@ -160,10 +188,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        displayedInstruction=undefined;
        ui.progress('Finishing setup','Saving the verified native installation.');
        await setup('run',api,{yes:true,json:true},{interactive:false});
-       next=await setup('wait',api,{json:true},{interactive:false,finishOnboarding:true});
+       next=await nextStep();
       }
       if(ui.signal.aborted)return 130;
-      if(next&&'nextAction' in next&&(next.nextAction?.kind==='repair_plugin'||next.nextAction?.kind==='plugin_unavailable')){
+      if(next&&'nextAction' in next&&(next.nextAction?.kind==='repair_plugin'||next.nextAction?.kind==='plugin_unavailable'||next.nextAction?.kind==='hook_trust_skipped')){
        const names=next.nextAction.deferredClients.map(id=>labels[id as PluginClient]??id);
        const importing=history&&typeof history==='object'&&'state' in history&&['queued','running'].includes(history.state);
        await entry?.finish();
@@ -179,28 +207,19 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       const binary=client==='claude-code'?'claude':client==='codex'?'codex':client==='antigravity'?'agy':undefined;
       const executable=binary&&which(binary);
       const recordsCodex=client==='codex'&&next&&'selections' in next&&next.selections?.forward.codex;
-      if(step?.kind==='native_tool'&&recordsCodex&&executable&&!codexHooksApproved){
-       const showReview=(status:string)=>{
-        if(status!==displayedInstruction)ui.progress('Review Codex hooks','Approve the OpenCrawl session recording hooks in either client.',[
-         'Codex Desktop    Settings → Hooks',
-         'Codex CLI        /hooks',
-        ],false,status);
-        displayedInstruction=status;
-       };
-       if(displayedInstruction===undefined)showReview('Checking hook approval…');
-       const status=hookApprovalStatus(await inspectCodex());
+      if(step?.kind==='native_tool'&&recordsCodex&&executable&&!codexTrust){
+       codexTrust=await waitForCodexHookTrust(ui,inspectCodex,pause);
        ui.signal.throwIfAborted();
-       if(status){
-        showReview(status);
-        await pause(ui.signal);
-        continue;
-       }
-       codexHooksApproved=true;
+       ui.progress('Checking setup','Checking the remaining setup steps.');
+       continue;
       }
       const label=labels[client as PluginClient]??client;
+      const remainingClientPrompt=codexTrust==='skipped'&&label
+       ?`Finish OpenCrawl setup for ${api} in ${label}. Use the OpenCrawl plugin’s installation_status and verify_installation tools for ${client} with my saved choices. I skipped Codex setup for now.`
+       :undefined;
       if(step?.kind==='native_tool'&&executable&&(client==='claude-code'||client==='antigravity')){
        displayedInstruction=undefined;
-       const code=await connectNativeClient(client,executable,api,ui,step.requiresSignIn,lastLaunched===client,native,findConnection);
+       const code=await connectNativeClient(client,executable,api,ui,step.requiresSignIn,lastLaunched===client,native,findConnection,remainingClientPrompt);
        if(code!==undefined)return code;
        lastLaunched=client;
        ui.progress('Checking setup','Checking the connection to '+label+'.');
@@ -210,12 +229,12 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       if(label&&(step?.kind==='native_tool'||step?.kind==='review_setup')){
        title='Open '+label;
        description='Start a new chat in '+label+' and send this message.';
-       details=['Finish OpenCrawl setup for '+api+' using my saved choices.','','Keep this terminal open. Setup will continue when '+label+' connects.'];
+       details=[remainingClientPrompt??'Finish OpenCrawl setup for '+api+' using my saved choices.','','Keep this terminal open. Setup will continue when '+label+' connects.'];
        if(client==='codex'){
         title='Verify the Codex connection';
-        if(codexHooksApproved)description='Hooks approved. Start a new chat in Codex and send this message.';
+        if(codexTrust==='trusted')description='Hooks approved. Start a new chat in Codex and send this message.';
         if(step.kind==='native_tool'&&step.requiresSignIn)details.push('If Codex asks you to sign in to OpenCrawl, approve the connection.');
-        if(recordsCodex&&!executable)details.push('Local hook status is unavailable without the Codex CLI. Review the hooks in Desktop under Settings → Hooks.');
+        if(recordsCodex&&!executable)details.push('Local hook status is unavailable without the Codex CLI. In Desktop, open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
        }
       }else if(label&&step?.kind==='wait_capture'){
        title='Checking '+label;
