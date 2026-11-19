@@ -119,7 +119,7 @@ export function setupPluginFiles(client:PluginClient,api:string,options:BundleOp
     files['.opencrawl-devin.json']=json({schemaVersion:1,api:origin,configHome,command,recording:options.recording===true});
     files['AGENTS.md']=extraAssets.devinGuide;
   }else{
-    files['assets/icon.svg']=extraAssets.desktopIcon;
+    files['assets/icon.svg']=client==='codex'?extraAssets.codexIcon:extraAssets.desktopIcon;
     const file=client==='codex'||client==='claude-code'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
     files[file]=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:{...(client==='codex'||client==='claude-code'?{type:'http'}:{}),url}}});
   }

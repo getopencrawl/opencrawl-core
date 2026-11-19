@@ -46,8 +46,8 @@ export function RecordingSettings({adapter}: {adapter: LibraryAdapter}) {
     }
   }
 
-  return <div className="oc-management-page">
-    <Section className="oc-management-panel" title="Session recording" description="Pause recording for agents signed in as you in this workspace. Activity during a pause stays out of OpenCrawl.">
+  return <Section className="oc-management-panel" title="Session recording" description="Pausing excludes new activity from your agents in this workspace.">
+    <div className="stack-sm">
       {status ? <>
         <div className="split oc-preference-row">
           <div className="oc-preference-status" role="status" aria-atomic="true">
@@ -72,6 +72,6 @@ export function RecordingSettings({adapter}: {adapter: LibraryAdapter}) {
         : state.error ? <div className="stack-sm oc-form-measure"><Notice tone="danger">{state.error}</Notice><div><Button onClick={state.retry}>Try again</Button></div></div>
         : <LoadingState label="Checking recording status"/>}
       {error && <Notice tone="danger" className="oc-form-measure">{error}</Notice>}
-    </Section>
-  </div>;
+    </div>
+  </Section>;
 }
