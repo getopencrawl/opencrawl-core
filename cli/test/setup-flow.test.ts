@@ -167,7 +167,7 @@ test('an unavailable saved agent can be kept without reinstalling or losing its 
  const result=await setupCommand('run',api,{},{
   interactive:true,canInstall:async()=>false,
   choose:async screen=>{
-   if(screen.phase===1)expect(screen.items).toEqual([{id:'cursor',label:'Keep Cursor selected for later',selected:true,installState:'review'}]);
+   if(screen.phase===1)expect(screen.items).toEqual([{id:'cursor',label:'Cursor',selected:true,installState:'review'}]);
    return screen.items;
   },
   installPlugins:async(_api,clients)=>{expect(clients).toEqual([]);return {results:[],humanTasks:[]};}

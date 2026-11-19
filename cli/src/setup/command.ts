@@ -340,7 +340,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    }
    // A missing CLI cannot silently revoke an existing recording choice.
    optionalFailures!.set(client.id,{client:client.id as LocalPluginClient,status:'pending',message:'A compatible native CLI is required to install this integration.'});
-   return {...item,label:'Keep '+client.label+' selected for later',installState:'review' as const};
+   return {...item,installState:'review' as const};
   }));
   const selected=await choose({phase:1,title:'Record new sessions',description:'Choose local coding agents to record sessions from',noneLabel:'Do not record any sessions on this machine',items:options.filter(item=>item!==null)});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
