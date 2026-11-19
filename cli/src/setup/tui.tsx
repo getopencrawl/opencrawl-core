@@ -23,9 +23,9 @@ export function createSetupUi(){
   else app=render(element,{stdout:process.stderr,stdin:process.stdin,stderr:process.stderr,patchConsole:false,exitOnCtrlC:false,alternateScreen:true,interactive:Boolean(process.stdin.isTTY&&process.stderr.isTTY)});
  };
  const notice=(props:Notice)=>show(<NoticeScreen key={++serial} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)}/>);
- const progress=(title:string,description:string,details?:string[],animate=false)=>{
+ const progress=(title:string,description:string,details?:string[],animate=false,status?:string)=>{
   controller.signal.throwIfAborted();
-  notice({title,description,details,animate,onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}});
+  notice({title,description,details,animate,status:status&&clean(status),onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}});
  };
  const close=()=>{app?.unmount();app?.cleanup();app=undefined;};
  return {
