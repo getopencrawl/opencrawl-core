@@ -494,14 +494,14 @@ img { max-width: 100%; }
 .oc-preference-status p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-ui); }
 .oc-preference-dot { justify-self: center; width: var(--space-2); height: var(--space-2); margin-top: .45em; border-radius: 50%; background: var(--success); }
 .oc-preference-dot.paused { background: var(--pending); }
-.oc-preference-row [aria-expanded="true"] > .oc-icon:last-child { transform: rotate(180deg); }
-.oc-preference-options:not([hidden]) { display: grid; border-top: 1px solid var(--line); padding: var(--space-2); }
-.oc-preference-options .oc-button { border: 0; display: grid; grid-template-columns: 18px 1fr 14px; gap: var(--space-3); padding: var(--space-3); align-items: center; text-align: start; color: var(--text); }
+.oc-preference-dialog { max-width: 26rem; }
+.oc-preference-options { display: grid; gap: var(--space-2); }
+.oc-preference-options .oc-button { display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; gap: var(--space-3); padding: var(--space-3) var(--space-4); align-items: center; text-align: start; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); }
+.oc-preference-options .oc-button:hover:not(:disabled) { border-color: var(--quiet); }
 .oc-preference-options .oc-icon { color: var(--muted); }
 .oc-preference-section > .oc-notice { margin-top: var(--space-4); }
 @media (max-width: 480px) {
   .oc-preference-row { gap: var(--space-3); padding: var(--space-4); }
-  .oc-preference-options .oc-button { padding-inline: var(--space-2); }
 }
 @media (max-width: 359px) {
   .oc-preference-row > .oc-button { width: 100%; }

@@ -24,12 +24,20 @@ test('members can pause and resume their recording under Settings / Privacy', as
   await expect(pause).toHaveCount(0);
   await page.goto('/settings/privacy?full-app');
   await expect(page.getByRole('navigation',{name:'Settings'}).getByRole('link',{name:'Privacy'})).toHaveAttribute('aria-current','page');
-  await pause.focus(); await page.keyboard.press('Enter'); await page.keyboard.press('Tab');
-  await expect(page.getByRole('button',{name:'For 1 hour'})).toBeFocused();
-  await page.keyboard.press('Escape'); await expect(pause).toBeFocused();
+  const dialog = page.getByRole('dialog',{name:'Pause recording',exact:true});
+  await pause.focus(); await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(el => el.matches(':modal'))).toBe(true);
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button',{name:'For 1 hour'})).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden(); await expect(pause).toBeFocused();
+  await pause.click(); await dialog.getByRole('button',{name:'Close dialog'}).click();
+  await expect(pause).toBeFocused();
+  expect(modes).toEqual([]);
   for (const label of ['For 1 hour','Until I turn it back on']) {
     await pause.click();
-    await page.getByRole('group',{name:'Pause duration'}).getByRole('button',{name:label}).click();
+    await dialog.getByRole('button',{name:label}).click();
+    await expect(dialog).toBeHidden();
     await expect(page.getByText('Recording is paused',{exact:true})).toBeVisible();
     await page.reload();
     await expect(page.getByText(label === 'For 1 hour' ? /Resumes at/ : 'Until you resume recording.')).toBeVisible();
