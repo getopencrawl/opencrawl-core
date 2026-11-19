@@ -15,9 +15,13 @@ export function pluginHookFiles(client:PluginClient,binding:PluginHookBinding,pl
     ||[...command,configHome,pluginName,api].some(value=>value.length>4096||/[\x00-\x1f\x7f]/.test(value)||windows&&value.includes('"')))
     throw new CliError('INVALID_PLUGIN_BINDING','Use absolute native command/profile paths and a valid plugin name.');
   const env=binding.env??process.env;
-  const data={schemaVersion:1,api,client,pluginName,configHome,command,
-    dataHome:path.resolve(env.XDG_DATA_HOME??path.join(homedir(),'.local','share')),
-    cacheHome:path.resolve(env.XDG_CACHE_HOME??path.join(homedir(),'.cache'))};
+  // Cloud exports are prepared on another machine. Existing native runners
+  // validate both fields even though Devin uses its own runtime environment.
+  const directories=client==='devin'
+    ? {dataHome:posix.join(configHome,'data'),cacheHome:posix.join(configHome,'cache')}
+    : {dataHome:path.resolve(env.XDG_DATA_HOME??path.join(homedir(),'.local','share')),
+      cacheHome:path.resolve(env.XDG_CACHE_HOME??path.join(homedir(),'.cache'))};
+  const data={schemaVersion:1,api,client,pluginName,configHome,command,...directories};
   return {...sharedAssets,...hookAssets[client+':'+(windows?'win32':'linux')],
     '.opencrawl-binding.json':JSON.stringify(data,null,2)+'\n','.opencrawl-command':command.join('\n')+'\n'};
 }

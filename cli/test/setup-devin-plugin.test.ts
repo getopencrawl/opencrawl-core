@@ -64,6 +64,10 @@ test('Cloud bundle exports on any host with Linux target paths and public config
  expect(result).toMatchObject({client:'devin',api,directory:bundle,recording:true,installed:false});
  for(const [name,content] of Object.entries(files))expect(readFileSync(join(bundle,name),'utf8')).toBe(content);
  expect(JSON.parse(files['.opencrawl-devin.json']!)).toEqual({schemaVersion:1,api,...options});
+ const binding=JSON.parse(files['.opencrawl-binding.json']!);
+ expect(binding.dataHome).toBe(options.configHome+'/data');expect(binding.cacheHome).toBe(options.configHome+'/cache');
+ const otherMachine=setupPluginFiles('devin',api,{...options,env:{XDG_DATA_HOME:'/private/exporter/data',XDG_CACHE_HOME:'/private/exporter/cache'}});
+ expect(otherMachine).toEqual(files);
  expect(JSON.parse(files['.devin-plugin/plugin.json']!).platforms).toEqual(['cloud']);
  expect(JSON.parse(files['.mcp.json']!).mcpServers[setupPluginIdentity(api).name]).toEqual({command:'/bin/sh',args:['${PLUGIN_ROOT}/scripts/opencrawl-hook.sh','mcp']});
  const hooks=JSON.parse(files['hooks.json']!);expect(Object.keys(hooks).sort()).toEqual(['PostCompaction','PostToolUse','SessionStart','Stop','UserPromptSubmit']);
