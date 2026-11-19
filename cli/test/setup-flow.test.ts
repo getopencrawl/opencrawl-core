@@ -255,6 +255,42 @@ test('Codex setup sends no task until native hook review completes, then starts 
  expect(code).toBe(0);expect(choices).toBe(2);expect(calls[0]).toEqual(['/native/codex']);expect(calls[1]).toEqual(['/native/codex','mcp','login',setupPluginIdentity(api).name]);expect(calls[2][1]).toContain('Finish OpenCrawl setup in this conversation');expect(calls).toHaveLength(3);expect(screens).toEqual(['Review Codex hooks','Connect Codex to OpenCrawl','Setup complete']);
 }));
 
+test('Codex Desktop can review hooks and verify setup even when the CLI is installed',()=>fixture(async(api,_dir,_observations,setCodex)=>{
+ let reviews=0,polls=0,desktopPrompts=0;
+ const actions:string[]=[];
+ const unexpected=async():Promise<never>=>{throw Error('Unexpected native launch');};
+ const ui:SetupUi={
+  signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,native:unexpected,close:()=>{},
+  choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'})),
+  action:async screen=>{
+   actions.push(screen.title);
+   if(screen.title!=='Review Codex hooks')return 'done';
+   expect(screen.details?.[0]).toContain('Settings → Hooks');
+   expect(screen.details?.[1]).toMatch(/Codex CLI.*\/hooks.*\/quit/);
+   expect(screen.actions?.map(action=>action.label)).toEqual(['Continue in Desktop','Open Codex CLI','Finish later']);
+   return 'desktop';
+  },
+  progress:(title,description,details)=>{
+   if(title==='Open Codex Desktop'){
+    desktopPrompts++;
+    expect(reviews).toBe(3);
+    expect(description).toContain('new chat in Codex Desktop');
+    expect(details?.[0]).toContain(api);
+   }
+  }
+ };
+ const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:unexpected},{
+  createUi:()=>ui,which:()=>'/native/codex',native:unexpected,findConnection:unexpected,
+  inspectCodex:async()=>({state:'observed',total:12,pending:++reviews<3?1:0,disabled:0}),
+  pause:async()=>{if(++polls===2)setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});},
+  setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
+ });
+ expect(code).toBe(0);
+ expect(polls).toBe(2);
+ expect(desktopPrompts).toBe(1);
+ expect(actions).toEqual(['Review Codex hooks','Review Codex hooks','Setup complete']);
+}));
+
 test('unknown or disabled Codex hooks can close without OAuth, model task, or changed recording choices',async()=>{
  for(const review of [{state:'unknown',total:12,pending:null,disabled:null},{state:'observed',total:12,pending:0,disabled:1}] as CodexHookReview[])await fixture(async api=>{
   const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'})),action:async screen=>{expect(screen.title).toBe('Review Codex hooks');return 'close';},close:()=>{},native:async run=>run()};
