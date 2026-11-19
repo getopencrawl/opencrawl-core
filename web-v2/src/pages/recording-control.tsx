@@ -1,49 +1,80 @@
-import {useEffect, useRef, useState} from 'react';
-import {Button, Dialog} from '../design/components.js';
+import {useEffect, useId, useRef, useState} from 'react';
+import {Button, LoadingState, Notice, Section} from '../design/components.js';
+import {Icon} from '../design/icons.js';
 import type {LibraryAdapter, LibraryContract} from './library-types.js';
-import {failureMessage,useResource} from './use-resource.js';
+import {failureMessage, useResource} from './use-resource.js';
 
-export function RecordingControl({adapter}: {adapter:LibraryAdapter}) {
-  const state=useResource(adapter,'recording/status','',0,signal=>adapter('recording/status',{},signal),'Recording status unavailable.');
-  const status=state.data&&'paused' in state.data?state.data:null;
-  const [selection,setSelection]=useState<typeof status>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const pending=useRef<AbortController|null>(null);
-  const reload=useRef(state.retry);
-  reload.current=state.retry;
-  useEffect(()=>()=>pending.current?.abort(),[adapter]);
-  useEffect(()=>{
-    const until=status?.until;
-    if(!status?.paused || until==null)return;
-    const timer=window.setTimeout(()=>reload.current(),Math.max(0,until-Date.now())+100);
-    return ()=>window.clearTimeout(timer);
-  },[status?.revision,status?.paused,status?.until]);
-  async function change(mode:LibraryContract['recording/change']['input']['mode']){
-    const shown=selection??status;
-    if(!shown||pending.current)return;
-    const request=new AbortController();
-    pending.current=request; setBusy(true); setError('');
-    try{
-      const next=await adapter('recording/change',{mode,revision:shown.revision,subject:shown.subject},request.signal);
-      if(!request.signal.aborted){state.replace(()=>next);setSelection(null);}
-    }catch(failure){
-      if(!request.signal.aborted){setError(failureMessage(failure,'Could not update recording. Try again.'));state.retry();}
-    }finally{if(!request.signal.aborted){pending.current=null;setBusy(false);}}
+export function PrivacySettings({adapter}: {adapter: LibraryAdapter}) {
+  const state = useResource(adapter, 'recording/status', '', 0, signal => adapter('recording/status', {}, signal), 'Recording status unavailable.');
+  const status = state.data && 'paused' in state.data ? state.data : null;
+  const [selection, setSelection] = useState<typeof status>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef<AbortController | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const choicesId = useId();
+  const reload = useRef(state.retry);
+  reload.current = state.retry;
+  useEffect(() => () => pending.current?.abort(), [adapter]);
+  useEffect(() => {
+    if (!status?.paused || status.until == null) return;
+    const timer = window.setTimeout(() => reload.current(), Math.max(0, status.until - Date.now()) + 100);
+    return () => window.clearTimeout(timer);
+  }, [status?.revision, status?.paused, status?.until]);
+
+  async function change(mode: LibraryContract['recording/change']['input']['mode']) {
+    const shown = mode === 'resume' ? status : selection;
+    if (!shown || pending.current) return;
+    const request = new AbortController();
+    pending.current = request;
+    setBusy(true);
+    setError('');
+    try {
+      const next = await adapter('recording/change', {mode, revision: shown.revision, subject: shown.subject}, request.signal);
+      if (!request.signal.aborted) state.replace(() => next);
+    } catch (failure) {
+      if (!request.signal.aborted) {
+        setError(failureMessage(failure, 'Could not update recording. Try again.'));
+        state.retry();
+      }
+    } finally {
+      if (!request.signal.aborted) {
+        pending.current = null;
+        setBusy(false);
+        setSelection(null);
+        requestAnimationFrame(() => trigger.current?.focus({preventScroll: true}));
+      }
+    }
   }
-  if(state.data&&'available' in state.data)return null;
-  if(!status)return state.error
-    ? <Button variant="secondary" onClick={state.retry}>Retry recording status</Button>
-    : <Button variant="secondary" disabled>Checking recording…</Button>;
-  const paused=status.paused;
-  return <div className="oc-stack">
-    {paused&&<span role="status">{status.until==null?'Recording paused':`Paused until ${new Date(status.until).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}`}</span>}
-    <Button variant="secondary" disabled={busy} onClick={()=>paused?void change('resume'):setSelection(status)}>{paused?'Resume recording':'Pause recording'}</Button>
-    {!selection&&error&&<span role="alert">{error}</span>}
-    <Dialog open={Boolean(selection)} onClose={()=>{if(!busy)setSelection(null);}} title="Pause recording" description="Pauses every agent signed in as you in this workspace. Activity during the pause stays out of OpenCrawl after you resume.">
-      <div className="oc-stack">
-        <Button disabled={busy} onClick={()=>void change('hour')}>For 1 hour</Button>
-        <Button disabled={busy} onClick={()=>void change('indefinite')}>Until I turn it back on</Button>
-        {error&&<span role="alert">{error}</span>}
+
+  return <Section className="oc-preference-section" title="Session recording" description="Pause recording for agents signed in as you in this workspace. Activity during a pause stays out of OpenCrawl, even after you resume.">
+    {status ? <div className="oc-preference-control oc-form-measure" onKeyDown={event => {
+      if (event.key === 'Escape' && selection && !busy) {
+        event.preventDefault();
+        setSelection(null);
+        trigger.current?.focus();
+      }
+    }}>
+      <div className="oc-preference-row">
+        <div className="oc-preference-status" role="status" aria-atomic="true">
+          <span aria-hidden="true" className={'oc-preference-dot' + (status.paused ? ' paused' : '')}/>
+          <div><strong>{status.paused ? 'Recording is paused' : 'Recording is on'}</strong>
+            {status.paused && <p>{status.until == null ? 'Until you resume recording.' : <>Resumes at <time dateTime={new Date(status.until).toISOString()}>{new Date(status.until).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'})}</time>.</>}</p>}
+          </div>
+        </div>
+        <Button ref={trigger} busy={busy} aria-expanded={status.paused ? undefined : Boolean(selection)} aria-controls={status.paused ? undefined : choicesId}
+          onClick={() => status.paused ? void change('resume') : setSelection(selection ? null : status)}>
+          {status.paused ? 'Resume recording' : 'Pause recording'}
+          {!status.paused && <Icon name="chevron-down" size={14}/>}
+        </Button>
       </div>
-    </Dialog>
-  </div>;
+      <div id={choicesId} hidden={!selection || status.paused} className="oc-preference-options" role="group" aria-label="Pause duration">
+        <Button variant="quiet" disabled={busy} onClick={() => void change('hour')}><Icon name="clock" size={18}/>For 1 hour<Icon name="chevron-right" size={14}/></Button>
+        <Button variant="quiet" disabled={busy} onClick={() => void change('indefinite')}><Icon name="infinity" size={18}/>Until I turn it back on<Icon name="chevron-right" size={14}/></Button>
+      </div>
+    </div> : state.data && 'available' in state.data ? <p className="muted">Recording controls are unavailable in this workspace.</p>
+      : state.error ? <div className="stack-sm oc-form-measure"><Notice tone="danger">{state.error}</Notice><div><Button onClick={state.retry}>Try again</Button></div></div>
+      : <LoadingState label="Checking recording status"/>}
+    {error && <Notice tone="danger" className="oc-form-measure">{error}</Notice>}
+  </Section>;
 }

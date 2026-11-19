@@ -3,7 +3,7 @@
 The console's **Sessions** and **Memories** pages let people read what their
 agents captured and control who else can.
 
-On **Sessions**, choose **Pause recording** and select **For 1 hour** or
+Under **Settings → Privacy**, choose **Pause recording** and select **For 1 hour** or
 **Until I turn it back on**. **Resume recording** ends either pause early.
 The pause applies to agents signed in as you in the workspace where you clicked it.
 Your agents in other workspaces continue recording.
