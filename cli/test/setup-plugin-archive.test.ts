@@ -116,7 +116,7 @@ test('binary native bundle survives registration/resume and rejects byte or perm
   const binding={api,client:'claude-code' as const,pluginName:identity.name,configHome,nativeRoot:root};
   expect(verifyPluginBundle(binding).files['bin/opencrawl-hook']).toBe(fileHash(parsed.binaries['bin/opencrawl-hook']));
   expect((await installSetupPlugins(api,['claude-code'],options)).results[0]).toMatchObject({status:'prepared'});expect(installs).toBe(1);
-  rmSync(join(directory,'../installed.json'));expect((await installSetupPlugins(api,['claude-code'],options)).results[0]).toMatchObject({status:'prepared'});expect(installs).toBe(1);
+  rmSync(join(configHome,'opencrawl/setup-plugins/claude-code',identity.key,'installed.json'));expect((await installSetupPlugins(api,['claude-code'],options)).results[0]).toMatchObject({status:'prepared'});expect(installs).toBe(1);
   if(process.platform!=='win32'){chmodSync(executable,0o600);expect(()=>verifyPluginBundle(binding)).toThrow();chmodSync(executable,0o755);}
   writeFileSync(executable,'tampered');expect(()=>verifyPluginBundle(binding)).toThrow();expect((await installSetupPlugins(api,['claude-code'],options)).results[0].status).toBe('pending');expect(installs).toBe(1);
   expect(readFileSync(join(directory,'bin/opencrawl-hook')).equals(parsed.binaries['bin/opencrawl-hook'])).toBe(true);

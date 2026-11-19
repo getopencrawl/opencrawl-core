@@ -7,7 +7,8 @@ import {recordNativeDaemonHook} from '../capture/daemon-handoff.ts';
 import {sessionStart} from '../session-start.ts';
 import {setupCommand} from './command.ts';
 import {readSetupState} from './state.ts';
-import {setupPluginIdentity,type PluginResult} from './plugins.ts';
+import type {PluginResult} from './plugins.ts';
+import {scopedPluginIdentity as setupPluginIdentity} from './plugin-identity.ts';
 import {verifyPluginBundle,pluginHookContext,pluginRecordingEnabled,recordPluginActivation,pluginActivationMatches,type PluginBinding,type VerifiedPluginBundle} from './plugin-context.ts';
 
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));

@@ -66,13 +66,12 @@ test('modified assets and symlinked bundle files never count as the installed pl
  }finally{f.close();}
 });
 
-test('Codex activation rejects owned generic, wrong-name and wrong-endpoint MCP bundles but permits migration ownership',()=>{
+test('Codex activation rejects multiple servers, wrong-name and wrong-endpoint MCP bundles but permits migration ownership',()=>{
  const f=fixture();try{
   for(const servers of [
-   {opencrawl:{type:'http',url:f.binding.api+'/mcp'}},
    {'opencrawl-000000000000':{type:'http',url:f.binding.api+'/mcp'}},
    {[f.binding.pluginName]:{type:'http',url:'https://another.example/mcp'}},
-   {[f.binding.pluginName]:{type:'http',url:f.binding.api+'/mcp'},opencrawl:{type:'http',url:f.binding.api+'/mcp'}},
+   {[f.binding.pluginName]:{type:'http',url:f.binding.api+'/mcp'},unexpected:{type:'http',url:f.binding.api+'/mcp'}},
   ]){
    f.files['.mcp.json']=json({mcpServers:servers});const digest=f.seal();
    expect(verifyPluginBundle(f.binding).digest).toBe(digest);

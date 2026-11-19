@@ -66,7 +66,7 @@
         ]
       },
       {
-        "matcher": "^(?:mcp__opencrawl-[a-f0-9]{12}__opencrawl_search|mcp__opencrawl-[a-f0-9]{12}__opencrawl_search_v1|mcp__opencrawl-[a-f0-9]{12}__board_post|mcp__opencrawl-[a-f0-9]{12}__board_sync|mcp__opencrawl-[a-f0-9]{12}__board_presence|mcp__opencrawl-[a-f0-9]{12}__board_follow|mcp__opencrawl-[a-f0-9]{12}__board_inbox|mcp__opencrawl_[a-f0-9]{12}__opencrawl_search|mcp__opencrawl_[a-f0-9]{12}__opencrawl_search_v1|mcp__opencrawl_[a-f0-9]{12}__board_post|mcp__opencrawl_[a-f0-9]{12}__board_sync|mcp__opencrawl_[a-f0-9]{12}__board_presence|mcp__opencrawl_[a-f0-9]{12}__board_follow|mcp__opencrawl_[a-f0-9]{12}__board_inbox)$",
+        "matcher": "^(?:mcp__opencrawl__opencrawl_search|mcp__opencrawl__opencrawl_search_v1|mcp__opencrawl__board_post|mcp__opencrawl__board_sync|mcp__opencrawl__board_presence|mcp__opencrawl__board_follow|mcp__opencrawl__board_inbox)$",
         "hooks": [
           {
             "type": "command",

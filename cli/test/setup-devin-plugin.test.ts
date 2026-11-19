@@ -3,7 +3,8 @@ import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,readdirSync,
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
-import {writeDevinPlugin,setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
+import {scopedPluginIdentity as setupPluginIdentity} from '../src/setup/plugin-identity.ts';
+import {writeDevinPlugin,setupPluginFiles} from '../src/setup/plugins.ts';
 import {readDevinPlugin,startDevinPlugin} from '../src/setup/devin-plugin.ts';
 import {pluginHookContext,recordPluginActivation} from '../src/setup/plugin-context.ts';
 import {setupCommand} from '../src/setup/command.ts';

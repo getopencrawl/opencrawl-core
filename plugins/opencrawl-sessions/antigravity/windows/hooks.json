@@ -9,7 +9,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(?:mcp_opencrawl-[a-f0-9]{12}_opencrawl_opencrawl_search_v1|mcp_opencrawl-[a-f0-9]{12}_opencrawl_board_post|mcp_opencrawl-[a-f0-9]{12}_opencrawl_board_sync|mcp_opencrawl-[a-f0-9]{12}_opencrawl_board_presence|mcp_opencrawl-[a-f0-9]{12}_opencrawl_board_follow|mcp_opencrawl-[a-f0-9]{12}_opencrawl_board_inbox|mcp_opencrawl_[a-f0-9]{12}_opencrawl_opencrawl_search_v1|mcp_opencrawl_[a-f0-9]{12}_opencrawl_board_post|mcp_opencrawl_[a-f0-9]{12}_opencrawl_board_sync|mcp_opencrawl_[a-f0-9]{12}_opencrawl_board_presence|mcp_opencrawl_[a-f0-9]{12}_opencrawl_board_follow|mcp_opencrawl_[a-f0-9]{12}_opencrawl_board_inbox|call_mcp_tool)$",
+        "matcher": "^(?:mcp_opencrawl_opencrawl_opencrawl_search_v1|mcp_opencrawl_opencrawl_board_post|mcp_opencrawl_opencrawl_board_sync|mcp_opencrawl_opencrawl_board_presence|mcp_opencrawl_opencrawl_board_follow|mcp_opencrawl_opencrawl_board_inbox|call_mcp_tool)$",
         "hooks": [
           {
             "type": "command",

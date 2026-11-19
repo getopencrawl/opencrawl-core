@@ -31,7 +31,7 @@ export const claudeSearchContextMatcher = '^(?:' + searchTools.join('|') + '|mcp
  * underscore spelling. Cursor's documented payload omits the server name. */
 function selectedTools(harness:string,pluginName?:string) {
   if(pluginName===undefined)return {standard:[...searchTools] as string[],agy:[...antigravitySearchTools],servers:['opencrawl','opencrawl_opencrawl']};
-  if(!/^opencrawl-[a-f0-9]{12}$/.test(pluginName))throw Error('Invalid plugin namespace');
+  if(!/^opencrawl(?:-[a-f0-9]{12})?$/.test(pluginName))throw Error('Invalid plugin namespace');
   const names=[pluginName,pluginName.replaceAll('-','_')];
   return {
     standard:names.flatMap(name=>aliases.map(alias=>harness==='codex'?`mcp__${name}__${alias}`:`mcp__plugin_${name}_opencrawl__${alias}`)),

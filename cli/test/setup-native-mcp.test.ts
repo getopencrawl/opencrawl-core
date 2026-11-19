@@ -3,9 +3,9 @@ import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {findSetupConnection} from '../src/setup/native-mcp.ts';
-import {setupPluginIdentity} from '../src/setup/plugins.ts';
+import {scopedPluginIdentity} from '../src/setup/plugin-identity.ts';
 
-const api='https://selected.example',endpoint=api+'/mcp',scoped=setupPluginIdentity(api).name;
+const api='https://selected.example',endpoint=api+'/mcp',scoped=scopedPluginIdentity(api).name;
 const details=(name:string,url:string,status:string)=>[name+':','  Scope: User config','  Status: '+status,'  Type: http','  URL: '+url].join('\n');
 test('Claude uses the already connected MCP that hides the plugin alias for the same endpoint',async()=>{
   const calls:string[][]=[];

@@ -1,5 +1,5 @@
 import {manifests,extraAssets} from '../../../plugins/opencrawl-sessions/assets.ts';
-import {existsSync, lstatSync, readFileSync, mkdirSync, unlinkSync, chmodSync} from 'node:fs';
+import {existsSync, lstatSync, readFileSync, mkdirSync, unlinkSync, chmodSync, renameSync, mkdtempSync} from 'node:fs';
 import {join, dirname, resolve, isAbsolute, posix} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -13,6 +13,8 @@ import {pluginRelease} from './plugin-release.ts';
 import {pluginHookFiles} from './plugin-hooks.ts';
 import {powershellQuote} from '../hook-runner.ts';
 import {pluginActivationMatches,verifyPluginBundle} from './plugin-context.ts';
+import {setupPluginIdentity,scopedPluginIdentity} from './plugin-identity.ts';
+export {setupPluginIdentity} from './plugin-identity.ts';
 import type {PublishedPackage,CaptureMode,LocalPluginClient} from './published-plugins.ts';
 import {bundleManifest,MAX_PLUGIN_BINARY,MAX_PLUGIN_TEXT,type BundleFiles} from './plugin-bundle.ts';
 
@@ -53,14 +55,10 @@ export async function canInstallRecordingPlugin(id:string,options:PluginOptions=
   const version=options.runner?await options.runner(binary,['--version'],nativeEnv):await runPluginCommand(binary,['--version'],nativeEnv,5000);
   return version.code===0&&!version.timedOut&&supportsMinimumVersion(release.harness,version.stdout?.trim()??'',release.minimumHarnessVersion);
 }
-export function setupPluginIdentity(api:string) {
-  const origin=apiOrigin(api),key=hash(origin).slice(0,12);
-  return {api:origin,key,name:'opencrawl-'+key,marketplace:'opencrawl-cli-'+key};
-}
 type BundleOptions={command?:string[];configHome?:string;env?:NodeJS.ProcessEnv;recording?:boolean};
 /** Bundled in the executable: native plugins own hooks, MCP and agent guidance. */
 export function setupPluginFiles(client:PluginClient,api:string,options:BundleOptions={}):Record<string,string> {
-  const identity=setupPluginIdentity(api),origin=identity.api,url=origin+'/mcp';
+  const identity=client==='devin'?scopedPluginIdentity(api):setupPluginIdentity(api),origin=identity.api,url=origin+'/mcp';
   const command=options.command??setupCommandForSelf(),configHome=(client==='devin'?posix: {resolve}).resolve(options.configHome??process.env.OPENCRAWL_CONFIG_HOME??process.env.XDG_CONFIG_HOME??join(homedir(),'.config'));
   const definition=manifests[client];
   const files:Record<string,string>={
@@ -84,7 +82,7 @@ export function setupPluginFiles(client:PluginClient,api:string,options:BundleOp
  * and installation at runtime; no local installation or token enters the bundle. */
 export function writeDevinPlugin(directory:string,api:string,options:Required<Pick<BundleOptions,'command'|'configHome'|'recording'>>){
   if(!isAbsolute(directory)||!posix.isAbsolute(options.configHome)||options.command.length!==1||!posix.isAbsolute(options.command[0]!))throw new CliError('INVALID_PLUGIN_BINDING','Supply an absolute bundle directory, Linux native command and Cloud configuration home.');
-  const identity=setupPluginIdentity(api),files=setupPluginFiles('devin',identity.api,options);
+  const identity=scopedPluginIdentity(api),files=setupPluginFiles('devin',identity.api,options);
   writeBundle(resolve(directory),files,'devin',identity.api,identity.name,posix.resolve(options.configHome),dirname(resolve(directory)));
   return {client:'devin' as const,api:identity.api,pluginName:identity.name,directory:resolve(directory),digest:hash(json(files)),recording:options.recording,installed:false};
 }
@@ -156,6 +154,10 @@ function otherCodexOwner(home:string,env:NodeJS.ProcessEnv,name:string,pluginId:
 }
 function matchesName(row:Record<string,unknown>,name:string) {return row.name===name||[row.id,row.pluginId].some(id=>typeof id==='string'&&(id===name||id.startsWith(name+'@')));}
 function isManaged(row:Record<string,unknown>,client:PluginClient,identity:ReturnType<typeof setupPluginIdentity>) {return client==='antigravity'?row.name===identity.name:[row.id,row.pluginId].includes(identity.name+'@'+identity.marketplace);}
+export function hasScopedDesktopInstall(configHome:string,api:string,clients:string[]):boolean {
+  const legacy=scopedPluginIdentity(api);
+  return clients.some(client=>client!=='devin'&&read(join(configHome,'opencrawl','setup-plugins',client,legacy.key,'installed.json'))?.pluginName===legacy.name);
+}
 function nativeRoot(row:Record<string,unknown>,client:PluginClient,cachePath?:string):string|undefined {
   const value=client==='codex'?row.installedPath??row.installPath??cachePath:client==='claude-code'?row.readFromFolder??row.installPath:row.path;
   return typeof value==='string'?resolve(value):undefined;
@@ -184,6 +186,65 @@ function nativeBindingMatches(row:Record<string,unknown>,client:PluginClient,dir
   const file=client==='claude-code'||client==='codex'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
   const servers=read(join(root,file))?.mcpServers,server=servers?.[client==='codex'?name:'opencrawl'];
   return server?.url===api+'/mcp'&&(client!=='codex'||Object.keys(servers).length===1&&server.type==='http');
+}
+/** Keep the old receipt until the new installation has been verified and its
+ * predecessor retired. Both steps can be retried after a process interruption. */
+async function prepareDesktopRename(client:LocalPluginClient,api:string,configHome:string,marketRoot:string,pathRoot:string,
+  saved:ReturnType<typeof read>,run:(args:string[])=>Promise<CommandResult>){
+  const old=scopedPluginIdentity(api);
+  if(saved?.pluginName!==old.name)return;
+  const catalogClient=client==='claude-code'||client==='codex';
+  const pluginId=catalogClient?old.name+'@'+old.marketplace:old.name;
+  const directory=client==='cursor'?join(pathRoot,'plugins','local',old.name):join(marketRoot,old.name);
+  const conflict=()=>new CliError('PLUGIN_MIGRATION_CONFLICT','The previous OpenCrawl plugin changed or is disabled. Review its installation in '+labels[client]+' before resuming setup.');
+  if(saved.schemaVersion!==2||saved.api!==api||saved.client!==client||saved.configHome!==configHome||saved.pluginId!==pluginId||saved.directory!==directory)throw conflict();
+  const verify=(root:string)=>{
+    if(verifyPluginBundle({api,client,pluginName:old.name,configHome,nativeRoot:root}).digest!==saved.digest)throw conflict();
+  };
+  if(client==='cursor'){
+    const check=()=>{if(saved.nativeRoot!==directory||stat(directory)?.isSymbolicLink())throw conflict();verify(directory);};
+    if(stat(directory))check();
+    return {directory,retire:()=>{
+      if(!stat(directory))return;
+      check();
+      // Move out of discovery while preserving any user-added files on the same filesystem.
+      const archive=mkdtempSync(join(pathRoot,'.opencrawl-previous-plugin-'));
+      renameSync(directory,join(archive,old.name));
+    }};
+  }
+  const registered=async()=>{
+    const listing=await run(client==='codex'?['plugin','list','--marketplace',old.marketplace,'--json']:['plugin','list','--json']);
+    const rows=listing.code===0?pluginRows(listing.stdout??''):null;
+    if(!rows)throw conflict();
+    const row=rows.find(row=>isManaged(row,client,old));
+    if(!row)return false;
+    const source=row.source as {path?:string}|undefined;
+    if(row.enabled===false||row.installed===false||client==='codex'&&source?.path!==directory||
+      !nativeProfileMatches(row,client,api,old.name,configHome)||nativeRoot(row,client,saved.cachePath)!==saved.nativeRoot)throw conflict();
+    verify(saved.nativeRoot);
+    return true;
+  };
+  await registered();
+  return {directory,retire:async()=>{
+    if(await registered()){
+      const args=client==='codex'?['plugin','remove',pluginId,'--json']:client==='claude-code'?['plugin','uninstall',pluginId,'--scope','user','--keep-data','--json']:['plugin','uninstall',pluginId];
+      if((await run(args)).code!==0||await registered())throw new CliError('PLUGIN_MIGRATION_PENDING','The new OpenCrawl plugin is installed. Resume setup to finish removing the previous registration.');
+    }
+    if(!catalogClient)return;
+    // Only remove the single-entry local catalog that setup originally registered.
+    const catalog=read(join(marketRoot,client==='codex'?'.agents/plugins/marketplace.json':'.claude-plugin/marketplace.json'));
+    if(catalog?.name!==old.marketplace||catalog.plugins?.length!==1||catalog.plugins[0]?.name!==old.name)return;
+    const listed=await run(['plugin','marketplace','list','--json']);
+    if(listed.code!==0)throw conflict();
+    const data=JSON.parse(listed.stdout??''),rows=client==='codex'?data.marketplaces:data;
+    if(!Array.isArray(rows))throw conflict();
+    const row=rows.find(row=>row?.name===old.marketplace);
+    if(!row)return;
+    const local=client==='codex'?row.marketplaceSource?.sourceType==='local'&&row.marketplaceSource.source:row.source==='directory'&&row.path;
+    if(typeof local!=='string'||resolve(local)!==marketRoot)return;
+    const removed=await run(['plugin','marketplace','remove',old.marketplace,...(client==='claude-code'?['--scope','user']:[]),'--json']);
+    if(removed.code!==0)throw conflict();
+  }};
 }
 function bundleMatches(directory:string,bundle:BundleFiles,digest:string,client:PluginClient,api:string,pluginName:string,configHome:string) {
   try {
@@ -233,7 +294,9 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
       const cursorArchive=client==='cursor'&&Boolean(published?.source.archive);
       const cursorProfile=resolve(env.CURSOR_CONFIG_DIR||join(home,'.cursor'));
       const marketRoot=join(root,client,identity.key),pathRoot=client==='cursor'?(cursorArchive?resolve(home,'.cursor'):cursorProfile):configHome;
-      const directory=client==='cursor'?join(pathRoot,'plugins','local',identity.name):join(marketRoot,identity.name);
+      // Keep the old marketplace readable until the new registration is confirmed.
+      const marketSource=join(marketRoot,'marketplace');
+      const directory=client==='cursor'?join(pathRoot,'plugins','local',identity.name):join(marketSource,identity.name);
       const receipt=join(marketRoot,'installed.json'),digest=bundleManifest(bundle,published?.executable).digest,saved=read(receipt);
       const prior=saved?.schemaVersion===2&&saved.api===origin&&saved.client===client&&saved.pluginName===identity.name&&saved.directory===directory?saved:null;
       const pluginId=client==='codex'||client==='claude-code'?identity.name+'@'+identity.marketplace:identity.name;
@@ -259,6 +322,8 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           }
         }
         let native:Record<string,unknown>|undefined,loadedRoot:string|undefined,cachePath=typeof prior?.cachePath==='string'?prior.cachePath:undefined;
+        const previousPlugin=await prepareDesktopRename(client,origin,configHome,marketRoot,pathRoot,saved,
+          async args=>binary?runner(binary,args,nativeEnv):{code:1});
         if(binary&&client!=='cursor'){
           const listing=await inventory(binary);
           const rows=listing.code===0?pluginRows(listing.stdout??''):null;
@@ -288,7 +353,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         if(client==='cursor'&&!published)await retireCursorSetupHooks(origin,pathRoot,true);
         options.validateBinding?.();
         const install=()=>{if(!unchanged)writeBundle(directory,bundle,client,origin,identity.name,configHome,pathRoot,published?.executable);};
-        if(cursorArchive)await installCursorArchive(pathRoot,directory,cursorHooksReceipt,unchanged,install);
+        if(cursorArchive)await installCursorArchive(pathRoot,directory,cursorHooksReceipt,unchanged,install,previousPlugin?.directory);
         else install();
         if(client==='cursor') {
           // Supported persistent local discovery; policy can still prevent loading.
@@ -303,8 +368,8 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
             if(client==='codex'||client==='claude-code') {
               const file=client==='codex'?'.agents/plugins/marketplace.json':'.claude-plugin/marketplace.json';
               const entry=client==='codex'?{name:identity.name,source:{source:'local',path:'./'+identity.name},policy:{installation:'AVAILABLE',authentication:'ON_USE'},category:'Productivity'}:{name:identity.name,source:'./'+identity.name};
-              safeDirectory(dirname(join(marketRoot,file)),configHome);atomicJson(join(marketRoot,file),{name:identity.marketplace,owner:{name:'OpenCrawl'},plugins:[entry]});
-              commands=client==='codex'?[['plugin','marketplace','add',marketRoot,'--json'],['plugin','add',pluginId,'--json']]:[['plugin','marketplace','add',marketRoot,'--json'],['plugin','install',pluginId,'--scope','user','--json']];
+              safeDirectory(dirname(join(marketSource,file)),configHome);atomicJson(join(marketSource,file),{name:identity.marketplace,owner:{name:'OpenCrawl'},plugins:[entry]});
+              commands=client==='codex'?[['plugin','marketplace','add',marketSource,'--json'],['plugin','add',pluginId,'--json']]:[['plugin','marketplace','add',marketSource,'--json'],['plugin','install',pluginId,'--scope','user','--json']];
             } else commands=[['plugin','install',directory]];
             let success=true;
             for(const args of commands){options.validateBinding?.();options.onProgress?.(args[1]==='marketplace'?'Adding the OpenCrawl marketplace in '+labels[client]+'.':'Installing the OpenCrawl plugin in '+labels[client]+'.');const result=await runner(binary,args,nativeEnv);if(result.timedOut)throw new CliError('PLUGIN_INSTALL_TIMEOUT',labels[client]+' took more than 45 seconds to confirm installation. Retry to check its current state.');if(result.code!==0){success=false;break;}if(client==='codex'&&args[1]==='add')try{const installed=JSON.parse(result.stdout??'');if(typeof installed.installedPath==='string')cachePath=installed.installedPath;}catch{}}
@@ -316,6 +381,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           }
         }
         options.validateBinding?.();
+        await previousPlugin?.retire();
         const cursor=cursorArchive?cursorPreparation(prior,unchanged,digest,configHome,JSON.parse(published!.files['.opencrawl-binding.json']!).installationId,options.cursorCapture):undefined;
         safeDirectory(dirname(receipt),configHome);atomicJson(receipt,{schemaVersion:2,api:origin,client,pluginName:identity.name,configHome,digest,pluginId,directory,nativeRoot:loadedRoot,...(client==='codex'&&loadedRoot?{cachePath:loadedRoot}:{}),...cursor});
         const active=cursor?.captureConfirmed??published?.captureAvailable??Boolean(loadedRoot&&pluginActivationMatches({api:origin,client,pluginName:identity.name,digest,nativeRoot:loadedRoot,configHome}));

@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {pluginHookContext,recordPluginActivation,pluginActivationMatches} from '../src/setup/plugin-context.ts';
 import {pluginCommand,pluginInventory,setupPluginFiles,setupPluginIdentity,installSetupPlugins,type PluginOptions} from '../src/setup/plugins.ts';
+import {scopedPluginIdentity} from '../src/setup/plugin-identity.ts';
 
 const origin='https://selfhost.example',identity=setupPluginIdentity(origin);
 const read=(file:string)=>JSON.parse(readFileSync(file,'utf8'));
@@ -16,6 +17,10 @@ async function fixture(run:(home:string,options:PluginOptions,calls:string[][])=
  const options:PluginOptions={home,command:[join(home,'private cli','opencrawl')],env:{OPENCRAWL_CONFIG_HOME:join(home,'config')},which:name=>'/client/'+name,runner:async(command,args)=>{
   calls.push([command,...args]);
   if(args[1]==='marketplace'&&args[2]==='add')markets[command]=args[3];
+  if(args[1]==='remove'||args[1]==='uninstall'){
+   installed[command]=(installed[command]??[]).filter(row=>row.pluginId!==args[2]);
+   return {code:0,stdout:'{}'};
+  }
   if(args[1]==='add'||args[1]==='install'){
    const agy=command.endsWith('/agy'),codex=command.endsWith('/codex'),directory=agy?args[2]:join(markets[command],args[2].split('@')[0]);
    const manifest=read(join(directory,agy?'plugin.json':codex?'.codex-plugin/plugin.json':'.claude-plugin/plugin.json'));
@@ -30,6 +35,49 @@ async function fixture(run:(home:string,options:PluginOptions,calls:string[][])=
 }
 const receipt=(home:string,client:string,api=origin)=>join(home,'config/opencrawl/setup-plugins',client,setupPluginIdentity(api).key,'installed.json');
 
+async function installOld(home:string,client:'claude-code'|'codex'|'cursor'|'antigravity',options:PluginOptions){
+ const old=scopedPluginIdentity(origin),configHome=join(home,'config'),market=dirname(receipt(home,client));
+ const directory=client==='cursor'?join(home,'.cursor/plugins/local',old.name):join(market,old.name);
+ const files=setupPluginFiles(client,origin,{command:options.command,configHome});
+ const manifest=client==='claude-code'?'.claude-plugin/plugin.json':client==='codex'?'.codex-plugin/plugin.json':client==='cursor'?'.cursor-plugin/plugin.json':'plugin.json';
+ const setJson=(file:string,value:unknown)=>{files[file]=JSON.stringify(value,null,2)+'\n';};
+ setJson(manifest,{...JSON.parse(files[manifest]!),name:old.name});
+ setJson('.opencrawl-binding.json',{...JSON.parse(files['.opencrawl-binding.json']!),pluginName:old.name});
+ if(client==='codex')setJson('.mcp.json',{mcpServers:{[old.name]:{type:'http',url:origin+'/mcp'}}});
+ for(const [name,data] of Object.entries(files)){mkdirSync(dirname(join(directory,name)),{recursive:true});writeFileSync(join(directory,name),data);}
+ const hash=(value:string)=>createHash('sha256').update(value).digest('hex'),digest=hash(JSON.stringify(files,null,2)+'\n');
+ save(join(directory,'.opencrawl-setup-plugin.json'),{schemaVersion:2,api:origin,client,pluginName:old.name,configHome,digest,files:Object.fromEntries(Object.entries(files).map(([name,bytes])=>[name,hash(bytes)]))});
+ const pluginId=client==='codex'||client==='claude-code'?old.name+'@'+old.marketplace:old.name;
+ let nativeRoot=directory;
+ if(client!=='cursor'){
+  const cmd=client==='claude-code'?'/client/claude':client==='codex'?'/client/codex':'/client/agy';
+  await options.runner!(cmd,['plugin','marketplace','add',market],options.env!);
+  const result=await options.runner!(cmd,['plugin',client==='codex'?'add':'install',client==='antigravity'?directory:pluginId],options.env!);
+  if(client!=='claude-code')nativeRoot=JSON.parse(result.stdout!).installedPath;
+ }
+ save(receipt(home,client),{schemaVersion:2,api:origin,client,configHome,pluginId,pluginName:old.name,digest,directory,nativeRoot,...(client==='codex'?{cachePath:nativeRoot}:{})});
+ return {directory,nativeRoot,pluginId};
+}
+
+for(const client of ['codex','claude-code','cursor','antigravity'] as const)test(client+' upgrades the owned suffixed plugin to one plain native registration',()=>fixture(async(home,options,calls)=>{
+ const old=await installOld(home,client,options);
+ const updated=await installSetupPlugins(origin,[client],options);
+ expect(updated.results[0]).toMatchObject({status:'prepared',pluginId:client==='codex'||client==='claude-code'?'opencrawl@opencrawl-cli':'opencrawl'});
+ expect(read(receipt(home,client)).pluginName).toBe('opencrawl');
+ if(client==='cursor')expect(existsSync(old.directory)).toBe(false);
+ else expect(calls.filter(call=>['remove','uninstall'].includes(call[2]!)&&call[3]===old.pluginId)).toHaveLength(1);
+ expect((await installSetupPlugins(origin,[client],options)).results[0]?.status).toBe('prepared');
+}));
+
+test('a failed native removal is retried from the old receipt after the new plugin is installed',()=>fixture(async(home,options)=>{
+ const old=await installOld(home,'codex',options),run=options.runner!;
+ options.runner=async(cmd,args,env)=>args[1]==='remove'?{code:1}:run(cmd,args,env);
+ expect((await installSetupPlugins(origin,['codex'],options)).results[0]?.status).toBe('error');
+ expect(read(receipt(home,'codex')).pluginId).toBe(old.pluginId);
+ options.runner=run;
+ expect((await installSetupPlugins(origin,['codex'],options)).results[0]?.pluginId).toBe('opencrawl@opencrawl-cli');
+}));
+
 test('inventory detects supported clients without creating configuration',()=>{
  const home=mkdtempSync(join(tmpdir(),'opencrawl-plugin-inventory-'));
  try{
@@ -37,10 +85,11 @@ test('inventory detects supported clients without creating configuration',()=>{
   expect(pluginInventory({home,env:{},which:()=>null}).filter(row=>row.detected).map(row=>row.id)).toEqual(['codex']);expect(existsSync(join(home,'.config'))).toBe(false);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
-test('identity is canonical and separate for each deployment',()=>{
+test('desktop plugin names are stable and private receipt paths remain deployment-specific',()=>{
  expect(setupPluginIdentity(origin+'/')).toEqual(identity);
- expect(identity.name).toBe('opencrawl-'+createHash('sha256').update(origin).digest('hex').slice(0,12));
- expect(setupPluginIdentity('https://other.example').name).not.toBe(identity.name);
+ expect(identity.name).toBe('opencrawl');expect(identity.marketplace).toBe('opencrawl-cli');
+ expect(setupPluginIdentity('https://other.example')).toMatchObject({name:identity.name,marketplace:identity.marketplace});
+ expect(setupPluginIdentity('https://other.example').key).not.toBe(identity.key);
 });
 test('all four bundles contain native hooks bound to the exact profile, command and endpoint',()=>{
  for(const client of ['claude-code','codex','cursor','antigravity'] as const){
@@ -124,7 +173,7 @@ test('Codex inventory timeouts name the operation without suggesting that access
 
 test('foreign same-deployment identity is preserved, unrelated named plugins do not shadow new identity',()=>fixture(async(_home,options,calls)=>{
  const native=options.runner!;
- options.runner=async(command,args,env)=>{const result=await native(command,args,env);if(args[1]==='list'){const body=JSON.parse(result.stdout!);body.installed.push({id:'opencrawl@synced',enabled:true});return {...result,stdout:JSON.stringify(body)};}return result;};
+ options.runner=async(command,args,env)=>{const result=await native(command,args,env);if(args[1]==='list'){const body=JSON.parse(result.stdout!);body.installed.push({id:'unrelated@synced',enabled:true});return {...result,stdout:JSON.stringify(body)};}return result;};
  expect((await installSetupPlugins(origin,['claude-code'],options)).results[0]?.status).toBe('prepared');calls.length=0;
  options.runner=async(command,args)=>{calls.push([command,...args]);return {code:0,stdout:JSON.stringify([{id:identity.name+'@foreign-market',enabled:true}])};};
  expect((await installSetupPlugins(origin,['claude-code'],options)).results[0]?.status).toBe('pending');expect(calls).toHaveLength(1);
@@ -133,11 +182,11 @@ test('zero native install exit without inventory confirmation remains pending',(
  options.runner=async()=>({code:0,stdout:JSON.stringify({installed:[]})});const result=await installSetupPlugins(origin,['codex'],options);
  expect(result.results[0]?.status).toBe('pending');expect(result.humanTasks.some(task=>task.kind==='mcp_auth')).toBe(false);expect(existsSync(receipt(home,'codex'))).toBe(false);
 }));
-test('separate deployments keep separate native names, sources and catalog registrations',()=>fixture(async(_home,options,calls)=>{
+test('an occupied native plugin stays bound to the original deployment',()=>fixture(async(_home,options,calls)=>{
  const a=await installSetupPlugins('https://endpoint-a.example',['codex','claude-code'],options),b=await installSetupPlugins('https://endpoint-b.example',['codex','claude-code'],options);
- expect(a.results.every(row=>row.status==='prepared')).toBe(true);expect(b.results.every(row=>row.status==='prepared')).toBe(true);
+ expect(a.results.every(row=>row.status==='prepared')).toBe(true);expect(b.results.every(row=>row.status==='pending')).toBe(true);
  expect(b.results.map(row=>row.directory)).not.toEqual(a.results.map(row=>row.directory));
- for(const client of ['codex','claude'])expect(new Set(calls.filter(call=>call[0]==='/client/'+client&&call[2]==='marketplace').map(call=>call[4])).size).toBe(2);
+ for(const client of ['codex','claude'])expect(new Set(calls.filter(call=>call[0]==='/client/'+client&&call[2]==='marketplace').map(call=>call[4])).size).toBe(1);
  expect((await installSetupPlugins('https://endpoint-a.example',['codex','claude-code'],options)).results.map(row=>row.status)).toEqual(['prepared','prepared']);
 }));
 test('native cache endpoint and source must match before writing an installation receipt',()=>fixture(async(home,options)=>{
@@ -195,23 +244,21 @@ function legacyCodexBundle(directory:string) {
  const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
  save(markerFile,{...metadata,digest:digest(JSON.stringify(files,null,2)+'\n'),files:Object.fromEntries(Object.entries(files).map(([name,text])=>[name,digest(text)]))});
 }
-function genericCodexMcp(directory:string) {
+function obsoleteCodexMcp(directory:string) {
  const markerFile=join(directory,'.opencrawl-setup-plugin.json'),metadata=read(markerFile);
- save(join(directory,'.mcp.json'),{mcpServers:{opencrawl:{type:'http',url:origin+'/mcp'}}});
+ save(join(directory,'.mcp.json'),{mcpServers:{obsolete:{type:'http',url:origin+'/mcp'}}});
  const files=Object.fromEntries(Object.keys(metadata.files).map(name=>[name,readFileSync(join(directory,name),'utf8')]));
  const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
  save(markerFile,{...metadata,digest:hash(JSON.stringify(files,null,2)+'\n'),files:Object.fromEntries(Object.entries(files).map(([name,text])=>[name,hash(text)]))});
  return read(markerFile);
 }
-test('owned generic Codex MCP migrates without changing hooks, manual MCP, auth, trust or another deployment',()=>fixture(async(home,options,calls)=>{
+test('owned obsolete Codex MCP migrates without changing hooks, manual MCP, auth or trust',()=>fixture(async(home,options,calls)=>{
  const first=await installSetupPlugins(origin,['codex'],options),directory=first.results[0]!.directory!;
  activate(home,'codex');
  const activationFile=join(dirname(receipt(home,'codex')),'activation.json');
- const otherApi='https://other.example';await installSetupPlugins(otherApi,['codex'],options);
- const other=read(receipt(home,'codex',otherApi)),otherBefore=readFileSync(join(other.nativeRoot,'.opencrawl-setup-plugin.json'),'utf8');
  const native=read(receipt(home,'codex')),hooksBefore=readFileSync(join(native.nativeRoot,'hooks/hooks.json'),'utf8');
  const runnerFile=process.platform==='win32'?'scripts/opencrawl-hook.cmd':'scripts/opencrawl-hook.sh',runnerBefore=readFileSync(join(native.nativeRoot,runnerFile),'utf8');
- genericCodexMcp(directory);const old=genericCodexMcp(native.nativeRoot);save(receipt(home,'codex'),{...native,digest:old.digest});
+ obsoleteCodexMcp(directory);const old=obsoleteCodexMcp(native.nativeRoot);save(receipt(home,'codex'),{...native,digest:old.digest});
  save(activationFile,{...read(activationFile),digest:old.digest});const activationBefore=readFileSync(activationFile,'utf8');
  const preserved={
   'config.toml':'[mcp_servers.opencrawl]\nurl = "https://manual.example/mcp"\n',
@@ -223,8 +270,6 @@ test('owned generic Codex MCP migrates without changing hooks, manual MCP, auth,
  const migrated=await installSetupPlugins(origin,['codex'],options);expect(migrated.results[0]?.status).toBe('prepared');
  expect(calls.filter(call=>call[2]==='add').map(call=>call[3])).toEqual([identity.name+'@'+identity.marketplace]);
  for(const root of [directory,native.nativeRoot])expect(read(join(root,'.mcp.json')).mcpServers).toEqual({[identity.name]:{type:'http',url:origin+'/mcp'}});
- expect(read(join(other.nativeRoot,'.mcp.json')).mcpServers).toEqual({[setupPluginIdentity(otherApi).name]:{type:'http',url:otherApi+'/mcp'}});
- expect(readFileSync(join(other.nativeRoot,'.opencrawl-setup-plugin.json'),'utf8')).toBe(otherBefore);
  expect(readFileSync(join(native.nativeRoot,'hooks/hooks.json'),'utf8')).toBe(hooksBefore);expect(readFileSync(join(native.nativeRoot,runnerFile),'utf8')).toBe(runnerBefore);
  for(const [name,text] of Object.entries(preserved))expect(readFileSync(join(home,'.codex',name),'utf8')).toBe(text);
  expect(readFileSync(activationFile,'utf8')).toBe(activationBefore);expect(pluginActivationMatches(read(receipt(home,'codex')))).toBe(false);
@@ -285,7 +330,7 @@ test('Cursor installs hooks exclusively in its plugin and preserves unrelated us
 test('Cursor migration retires exact old user entries and refuses changed or disabled choices',()=>fixture(async(home,options)=>{
  const file=join(home,'.cursor/hooks.json'),directory=join(home,'.cursor/plugins/local',identity.name),marker=join(home,'config/opencrawl/setup-plugins/cursor',identity.key,'native-hooks.json');
  const old={command:'old-owned-runner',timeout:3},foreign={command:'user-owned',enabled:false};
- save(marker,{file,directory,hooks:{stop:[old]}});save(file,{version:1,hooks:{stop:[{...old,enabled:false},foreign]}});
+ save(marker,{file,directory:join(dirname(directory),'opencrawl-'+identity.key),hooks:{stop:[old]}});save(file,{version:1,hooks:{stop:[{...old,enabled:false},foreign]}});
  const before=readFileSync(file,'utf8');expect((await installSetupPlugins(origin,['cursor'],options)).results[0]?.status).toBe('error');expect(readFileSync(file,'utf8')).toBe(before);expect(existsSync(directory)).toBe(false);
  save(file,{version:1,hooks:{stop:[old,foreign]}});
  expect((await installSetupPlugins(origin,['cursor'],options)).results[0]?.status).toBe('prepared');expect(read(file).hooks.stop).toEqual([foreign]);expect(read(marker).hooks).toEqual({});

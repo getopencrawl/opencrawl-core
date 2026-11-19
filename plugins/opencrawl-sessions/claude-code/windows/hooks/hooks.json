@@ -88,7 +88,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(?:mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__opencrawl_search|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__opencrawl_search_v1|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_post|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_sync|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_presence|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_follow|mcp__plugin_opencrawl-[a-f0-9]{12}_opencrawl__board_inbox|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__opencrawl_search|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__opencrawl_search_v1|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_post|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_sync|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_presence|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_follow|mcp__plugin_opencrawl_[a-f0-9]{12}_opencrawl__board_inbox)$",
+        "matcher": "^(?:mcp__plugin_opencrawl_opencrawl__opencrawl_search|mcp__plugin_opencrawl_opencrawl__opencrawl_search_v1|mcp__plugin_opencrawl_opencrawl__board_post|mcp__plugin_opencrawl_opencrawl__board_sync|mcp__plugin_opencrawl_opencrawl__board_presence|mcp__plugin_opencrawl_opencrawl__board_follow|mcp__plugin_opencrawl_opencrawl__board_inbox)$",
         "hooks": [
           {
             "type": "command",

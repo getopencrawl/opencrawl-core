@@ -2,7 +2,8 @@ import {open} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {isAbsolute,join} from 'node:path';
 import {CliError} from '../oauth.ts';
-import {labels,runPluginCommand,setupPluginIdentity} from './plugins.ts';
+import {labels,runPluginCommand} from './plugins.ts';
+import {scopedPluginIdentity} from './plugin-identity.ts';
 
 export type NativeClient = 'claude-code' | 'codex' | 'antigravity';
 export type SetupConnection = {name:string; skipLogin:boolean};
@@ -73,7 +74,7 @@ export async function findSetupConnection(client:NativeClient,executable:string,
   const result=await runPluginCommand(executable,args,process.env,12_000);
   return result.code===0?result.stdout:undefined;
 }):Promise<SetupConnection>{
-  const identity=setupPluginIdentity(api),endpoint=identity.api+'/mcp';
+  const identity=scopedPluginIdentity(api),endpoint=identity.api+'/mcp';
   const rows=client==='claude-code'?await claudeConnections(inspect,endpoint,'plugin:'+identity.name+':opencrawl')
     :client==='codex'?codexConnections(await inspect(['mcp','list','--json']),endpoint,identity.name)
     :await antigravityConnections(inspect,endpoint,identity.name);

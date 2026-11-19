@@ -1,6 +1,6 @@
 import {existsSync,readFileSync,realpathSync} from 'node:fs';
 import {join,resolve,dirname} from 'node:path';
-import {createHash} from 'node:crypto';
+import {setupPluginIdentity,scopedPluginIdentity} from '../setup/plugin-identity.ts';
 import {configDir} from '../session.ts';
 import {verifyPluginBundle} from '../setup/plugin-context.ts';
 import {spawn} from 'node:child_process';
@@ -35,9 +35,10 @@ function snapshot(root:string):Snapshot {
  // This is capture readiness, not a requirement to enable recording for search.
  if(!capture.harnesses?.includes('codex'))return {...result,review:{state:'not_applicable',total:0,pending:0,disabled:0}};
  try{
-  const key=createHash('sha256').update(capture.api).digest('hex').slice(0,12),name='opencrawl-'+key,pluginId=name+'@opencrawl-cli-'+key;
+  const identity=setupPluginIdentity(capture.api),legacy=scopedPluginIdentity(capture.api),key=identity.key;
   const receiptBytes=readFileSync(join(configDir(),'setup-plugins/codex',key,'installed.json'),'utf8');
   const receipt=JSON.parse(receiptBytes);
+  const {name,marketplace}=receipt.pluginName===legacy.name?legacy:identity,pluginId=name+'@'+marketplace;
   if(receipt.schemaVersion!==2||receipt.api!==capture.api||receipt.client!=='codex'||receipt.pluginName!==name||receipt.pluginId!==pluginId||typeof receipt.nativeRoot!=='string')return result;
   const bundle=verifyPluginBundle({nativeRoot:receipt.nativeRoot,api:capture.api,client:'codex',pluginName:name,configHome:dirname(configDir())});
   if(bundle.digest!==receipt.digest||!('hooks/hooks.json' in bundle.files))return result;

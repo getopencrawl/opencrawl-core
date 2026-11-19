@@ -65,13 +65,18 @@ export async function reconcileCursorNativeHooks(root:string,directory:string,re
  });
 }
 
+function ownedCursorDirectory(root:string,receipt:string,key:string){
+ const current=join(root,'plugins','local','opencrawl');
+ return read(receipt).directory===current?current:join(root,'plugins','local','opencrawl-'+key);
+}
+
 /** One-time retirement of exact owned user entries. New hooks live only in the
  * canonical plugin; modified/disabled entries require native review. */
 export async function retireCursorSetupHooks(api:string,root:string,preflight=false){
  const key=createHash('sha256').update(apiOrigin(api)).digest('hex').slice(0,12);
  const receipt=join(configDir(),'setup-plugins','cursor',key,'native-hooks.json');
  if(!existsSync(receipt))return;
- await reconcileCursorNativeHooks(root,join(root,'plugins','local','opencrawl-'+key),receipt,undefined,preflight,true);
+ await reconcileCursorNativeHooks(root,ownedCursorDirectory(root,receipt,key),receipt,undefined,preflight,true);
 }
 
 export async function removeCursorSetupHooks(api:string,root?:string){
@@ -79,12 +84,12 @@ export async function removeCursorSetupHooks(api:string,root?:string){
  const key=createHash('sha256').update(apiOrigin(api)).digest('hex').slice(0,12);
  const receipt=join(configDir(),'setup-plugins','cursor',key,'native-hooks.json');
  if(!existsSync(receipt))return;
- await reconcileCursorNativeHooks(root,join(root,'plugins','local','opencrawl-'+key),receipt);
+ await reconcileCursorNativeHooks(root,ownedCursorDirectory(root,receipt,key),receipt);
 }
 
 /** The standalone Cursor archive supplies its own hooks. Retire only unchanged
  * callbacks from the same deployment's older CLI-managed installation. */
-export async function installCursorArchive(root:string,directory:string,receipt:string,unchanged:boolean,install:()=>void){
+export async function installCursorArchive(root:string,directory:string,receipt:string,unchanged:boolean,install:()=>void,previousDirectory?:string){
  if(existsSync(root)&&lstatSync(root).isSymbolicLink())throw new CliError('CURSOR_HOOK_CONFLICT','Cursor configuration must be an ordinary directory.');
  await withFileLock(join(root,'.opencrawl-hooks.lock'),async()=>{
   const file=join(root,'hooks.json'),before=read(file),saved=read(receipt);
@@ -92,7 +97,7 @@ export async function installCursorArchive(root:string,directory:string,receipt:
   if(before.version!==undefined&&before.version!==1)throw new CliError('CURSOR_HOOK_CONFLICT','The existing Cursor hooks use an unknown format. Their configuration was preserved.');
   const current=hooks(before.hooks),owned=hooks(saved.hooks);
   if(!Object.keys(saved).length){install();return;}
-  if(saved.file!==file||saved.directory!==directory)throw new CliError('CURSOR_HOOK_CONFLICT','The existing Cursor hooks belong to a different installation.');
+  if(saved.file!==file||(saved.directory!==directory&&(!previousDirectory||saved.directory!==previousDirectory)))throw new CliError('CURSOR_HOOK_CONFLICT','The existing Cursor hooks belong to a different installation.');
   const next={...current};
   for(const [event,entries] of Object.entries(owned)){
    const rows=current[event]??[];
@@ -107,6 +112,6 @@ export async function installCursorArchive(root:string,directory:string,receipt:
   }
   install();
   if(!isDeepStrictEqual(current,next))atomicJson(file,{...before,hooks:next});
-  if(Object.keys(owned).length)atomicJson(receipt,{file,directory,hooks:{}});
+  if(Object.keys(owned).length||saved.directory!==directory)atomicJson(receipt,{file,directory,hooks:{}});
  });
 }

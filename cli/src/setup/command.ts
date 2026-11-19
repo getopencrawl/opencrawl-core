@@ -18,7 +18,7 @@ import {defaultClaudeDesktopSessionsRoot} from '../capture/desktop-history.ts';
 import type {Harness,TranscriptHarness} from '../capture/parse.ts';
 import {setupInventory} from './inventory.ts';
 import {assertSetupAvailability,newSetupClientAvailable,selectOfferedGroup,setupAvailabilityMessage} from './availability.ts';
-import {canInstallRecordingPlugin,installSetupPlugins,type PluginResult} from './plugins.ts';
+import {canInstallRecordingPlugin,hasScopedDesktopInstall,installSetupPlugins,type PluginResult} from './plugins.ts';
 import {installPublishedSetupPlugins,loadPublishedPackage,packageRelease,type LocalPluginClient,type CaptureMode} from './published-plugins.ts';
 import {daemonEligibility,daemonStartupGuidance,savedCaptureMode,requestedCaptureMode} from './capture-mode.ts';
 import {chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupCheckpoint,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
@@ -279,7 +279,8 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  }
  const automatic=action==='run'&&(!workload||legacyCheckpoint)&&(interactive||!values.json||values.yes===true||legacyCheckpoint)&&
   ['plugins','forward','history','capture-mode','client','plan-id'].every(key=>values[key]===undefined);
- const pending=automatic&&previous&&(previous.firstRun!=='complete'||values.yes===true||deferredPlugins(previous).length>0)&&(
+ const rename=previous&&installPlugins===installPublishedSetupPlugins&&hasScopedDesktopInstall(dirname(configDir()),api,chosen(previous.selections,'plugins'));
+ const pending=automatic&&previous&&(rename||previous.firstRun!=='complete'||values.yes===true||deferredPlugins(previous).length>0)&&(
   previous.firstRun||admitted&&nextSetupAction(previous,server).kind!=='complete');
  if(pending&&(boundConfig&&!sameOwner||previous.installationId&&boundConfig?.installationId!==previous.installationId))
   throw new CliError('SETUP_SCOPE_CHANGED','The saved setup belongs to a different installation. Review the current workspace before continuing.');
@@ -307,7 +308,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   // or any expansion of the approved historical snapshot.
   const next=nextSetupAction({...previous,selections:selected},server);
   const missing=await unavailableSavedPlugins(selected);
-  const repair=missing?.size||deferredPlugins(previous).length>0||action==='resume'||!interactive&&chosen(selected,'plugins').length>0||['repair_worker','repair_plugin','reconcile_activation','plugin_unavailable'].includes(next.kind);
+  const repair=rename||missing?.size||deferredPlugins(previous).length>0||action==='resume'||!interactive&&chosen(selected,'plugins').length>0||['repair_worker','repair_plugin','reconcile_activation','plugin_unavailable'].includes(next.kind);
   const state=repair?await applyClients(scope,selected,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,eligibility(selected).eligible,stopDaemon,onProgress,false,missing):{...previous,selections:selected};
   return completed(state);
  }
