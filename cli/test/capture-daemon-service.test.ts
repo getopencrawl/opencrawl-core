@@ -201,7 +201,7 @@ const config=${JSON.stringify(f.config)},secret='private-launchctl-output';
 const run=(_command,args)=>({pid:0,output:[null,Buffer.from(secret),Buffer.from(secret)],stdout:Buffer.from(secret),stderr:Buffer.from(args[0]==='print'?'Could not find service':secret),status:args[0]==='bootstrap'?5:113,signal:null});
 mock.module(${module('setup/command.ts')},()=>({...setup,setupCommand:async()=>installCaptureDaemon(config,{home:${JSON.stringify(f.root)},platform:'darwin',run})}));
 globalThis.fetch=()=>{throw Error('Unexpected network');};
-const {main}=await import(${module('cli.ts')});process.exitCode=await main(['setup','resume','--api',config.api,'--json']);`;
+const {main}=await import(${module('cli.ts')});process.exitCode=await main(['setup','--yes','--api',config.api,'--json']);`;
   const child=Bun.spawn([process.execPath,'-e',code],{env:{...process.env,OPENCRAWL_TOKEN:'',OPENCRAWL_SESSIONS_TOKEN:'',OPENCRAWL_AUTH:''},stdout:'pipe',stderr:'pipe'});
   const timer=setTimeout(()=>child.kill(),5000);
   try{

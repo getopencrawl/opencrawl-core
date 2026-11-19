@@ -70,6 +70,15 @@ test.skipIf(process.platform === 'win32')('setup shows the code before opening a
   const opened = join(directory, 'opened');
   writeFileSync(opener, '#!/bin/sh\nprintf "%s\\n" "$1" >> "$OPENED"\n', {mode: 0o755});
   state.oauthDenied = true;
+  // Linux supports the picker for previously enrolled profiles.
+  if(process.platform==='linux'){
+    const owner={tenantId:workspace.id,userId:user.id},scope={api,...owner},installationId='fixture-installation';
+    const key=createHash('sha256').update(JSON.stringify([api,owner.tenantId,owner.userId])).digest('hex');
+    const capture=join(directory,'opencrawl','capture','config.json'),state=join(directory,'opencrawl','setup',key+'.json');
+    mkdirSync(dirname(capture),{recursive:true});mkdirSync(dirname(state),{recursive:true});
+    writeFileSync(capture,JSON.stringify({schemaVersion:1,api,installationId,owner,roots:{codex:directory},harnesses:[]}));
+    writeFileSync(state,JSON.stringify({schemaVersion:1,scope,installationId,acceptedAt:new Date().toISOString(),selections:{plugins:{},forward:{},history:{}}}));
+  }
   for (const mode of ['cancel', 'open', 'no-browser', 'ssh']) {
     const local = mode === 'open' || mode === 'cancel';
     const before = state.polls;
@@ -77,9 +86,7 @@ test.skipIf(process.platform === 'win32')('setup shows the code before opening a
     state.holdApproval = approval.promise;
     const childEnv = {...env, PATH: directory, OPENED: opened, SSH_CONNECTION: mode === 'ssh' ? 'fixture' : '', SSH_TTY: ''};
     let output = '';
-    // Fresh setup is offered on macOS. Resuming uses the same interactive sign-in on Linux.
-    const resume = process.platform !== 'darwin';
-    const args = ['setup', ...(resume ? ['resume'] : []), '--api', api, ...(mode === 'no-browser' ? ['--no-browser'] : [])];
+    const args = ['setup', '--api', api, ...(mode === 'no-browser' ? ['--no-browser'] : [])];
     const child = Bun.spawn([process.execPath, resolve(import.meta.dir, '../src/cli.ts'), ...args], {
       env: childEnv,
       terminal: {cols: 90, rows: 28, data: (_terminal, bytes) => {output += new TextDecoder().decode(bytes);}},
@@ -90,12 +97,9 @@ test.skipIf(process.platform === 'win32')('setup shows the code before opening a
       expect(output).toContain(text);
     };
     try {
-      if (!resume && mode === 'cancel') {
-        await waitFor('› [ Continue ]');
-        child.terminal!.write('\r');
-      }
+      await waitFor('› [ Continue ]');
+      child.terminal!.write('\r');
       await waitFor('Device code: TEST-CODE');
-      if (mode !== 'cancel') expect(output).not.toContain('Welcome to OpenCrawl');
       if (local) {
         await waitFor('› [ Open browser ]');
         await Bun.sleep(80);

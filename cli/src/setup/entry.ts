@@ -4,8 +4,7 @@ import {join} from 'node:path';
 import {readCaptureConfig} from '../capture/runtime.ts';
 import {apiOrigin,CliError} from '../oauth.ts';
 import {atomicJson,withSessionLock} from '../session.ts';
-import {deferredPlugins} from './next.ts';
-import {readSetupState,setupRoot} from './state.ts';
+import {setupRoot} from './state.ts';
 
 type Entry={id:string;api?:string};
 const entryPath=()=>join(setupRoot(),'interactive.json');
@@ -26,10 +25,9 @@ export function terminalSetupEntry(requestedApi?:string){
  const requested=requestedApi?apiOrigin(requestedApi):undefined;
  const previous=readEntry(),saved=previous&&(!requested||!previous.api||previous.api===requested)?previous:null;
  const config=readCaptureConfig(),api=requested??saved?.api??config?.api;
- const bound=config?.api===api&&config?.owner?readSetupState({api:config.api,...config.owner}):null;
  const id=randomUUID();
  return {
-  api,continuing:Boolean(saved||bound&&bound.installationId===config?.installationId&&(bound.firstRun&&bound.firstRun!=='complete'||deferredPlugins(bound).length>0)),
+  api,
   save:(api?:string)=>withSessionLock('setup:terminal-entry',async()=>atomicJson(entryPath(),{id,api})),
   finish:()=>withSessionLock('setup:terminal-entry',async()=>{if(readEntry()?.id===id)unlinkSync(entryPath());}),
  };

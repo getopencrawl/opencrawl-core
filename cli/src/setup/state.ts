@@ -1,5 +1,5 @@
 import {readFileSync} from 'node:fs';
-import {isAbsolute,join} from 'node:path';
+import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {atomicJson,configDir,withSessionLock} from '../session.ts';
 import {CliError} from '../oauth.ts';
@@ -13,36 +13,17 @@ export type SetupSelections={plugins:Record<string,boolean>;forward:Record<strin
 export type SetupClient={id:string;label:string;detected:boolean;plugin:boolean;forward:boolean;history:boolean;historyFiles:number;historyBytes:number};
 export type HistoryJob={id:string;clients:string[];files:HistoryFile[];state:'queued'|'running'|'complete'|'failed'|'paused';completedClients:string[];createdAt:string;updatedAt:string;progress?:{client:string;completed:number;total:number;uploaded:number};error?:string;pid?:number};
 export type SetupWorker={kind:string;status?:string;supervised:boolean;harnesses:string[];startup:boolean;command?:string[];environment?:Record<string,string>;reason?:string};
-export type SetupCheckpoint={
-  step:'service'|'install'|'history'|'import';
-  client?:'claude-code';
-  recordingBaseline?:string;
-  approvedHistory?:{files:HistoryFile[];retained:string[]};
-};
-export type SetupState={schemaVersion:1;firstRun?:'choosing'|'ready'|'complete';checkpoint?:SetupCheckpoint;scope:SetupScope;selections:SetupSelections;captureMode?:CaptureMode;acceptedAt:string;installationId?:string;machine?:{id:string;label:string};historyJob?:HistoryJob;worker?:SetupWorker;pluginResults?:{client:string;status:string;message?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PluginResult['source']}[];humanTasks?:SetupHumanTask[]};
+export type SetupState={schemaVersion:1;firstRun?:'choosing'|'ready'|'complete';scope:SetupScope;selections:SetupSelections;captureMode?:CaptureMode;acceptedAt:string;installationId?:string;machine?:{id:string;label:string};historyJob?:HistoryJob;worker?:SetupWorker;pluginResults?:{client:string;status:string;message?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PluginResult['source']}[];humanTasks?:SetupHumanTask[]};
 export const historyBenefit='Import past sessions so your agents can find previous decisions, fixes, and context.';
 export const scopeKey=(scope:SetupScope)=>createHash('sha256').update(JSON.stringify([scope.api,scope.tenantId,scope.userId])).digest('hex');
 export const setupRoot=()=>join(configDir(),'setup');
 export function statePath(key:string){if(!/^[a-f0-9]{64}$/.test(key))throw new CliError('SETUP_SCOPE_INVALID','Invalid setup scope.');return join(setupRoot(),key+'.json');}
 export function readStateKey(key:string):SetupState|null {
-  let value:SetupState;
+  let value:SetupState & {checkpoint?:unknown};
   try{value=JSON.parse(readFileSync(statePath(key),'utf8'));}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return null;throw new CliError('SETUP_STATE_INVALID','Saved setup choices could not be read. Preserve this file and repair it before continuing.');}
   if(value.captureMode!==undefined&&!['hook','daemon'].includes(value.captureMode)||value.schemaVersion!==1||!value.scope?.api||!value.scope.tenantId||!value.scope.userId||scopeKey(value.scope)!==key||!value.selections||!['plugins','forward','history'].every(k=>{const group=value.selections[k as keyof SetupSelections];return group&&typeof group==='object'&&!Array.isArray(group)&&Object.values(group).every(v=>typeof v==='boolean');}))throw new CliError('SETUP_STATE_INVALID','Saved setup scope or choices are invalid; no changes were made.');
-  const checkpoint=value.checkpoint;
-  if(checkpoint!==undefined){
-    const approval=checkpoint?.approvedHistory;
-    if(!checkpoint||value.firstRun!=='choosing'||!['service','install','history','import'].includes(checkpoint.step)||
-       checkpoint.client!==undefined&&checkpoint.client!=='claude-code'||
-       checkpoint.recordingBaseline!==undefined&&!/^[a-f0-9]{64}$/.test(checkpoint.recordingBaseline)||
-       checkpoint.step==='import'&&!approval||
-       approval!==undefined&&(!approval||!['install','import'].includes(checkpoint.step)||
-        !Array.isArray(approval.retained)||!approval.retained.every(id=>typeof id==='string')||
-        !Array.isArray(approval.files)||!approval.files.every(file=>file&&value.selections.history[file.harness]===true&&
-         ['claude-code','codex','antigravity'].includes(file.harness)&&typeof file.path==='string'&&isAbsolute(file.path)&&
-         [file.bytes,file.ino,file.mtimeMs].every(Number.isFinite)))){
-      throw new CliError('SETUP_STATE_INVALID','The saved setup checkpoint is invalid. Preserve it and review it before continuing.');
-    }
-  }
+  // Older versions stored TUI navigation here. Discard it on the next state write.
+  delete value.checkpoint;
   return value;
 }
 export const readSetupState=(scope:SetupScope)=>readStateKey(scopeKey(scope));

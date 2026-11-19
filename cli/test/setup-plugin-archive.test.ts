@@ -132,7 +132,7 @@ test('unknown, prerelease or old Claude cannot mutate the plugin source or nativ
   for(const version of ['2.1.326 (Claude Code)','1.99.999 (Claude Code)','2.1.327-beta','unknown','']){
    const calls:string[][]=[];
    const result=await installSetupPlugins('https://selfhost.example',['claude-code'],{home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],which:()=>'/fixture/claude',bundles:{'claude-code':source},runner:async(_command,args)=>{calls.push(args);return {code:0,stdout:version};}});
-   expect(result.results[0]).toMatchObject({status:'pending',message:'Claude Code 2.1.327 or later is required. Update the client, then resume setup.'});
+   expect(result.results[0]).toMatchObject({status:'pending',message:'Claude Code 2.1.327 or later is required. Update the client, then run setup again.'});
    expect(calls).toEqual([['--version']]);expect(existsSync(join(configHome,'opencrawl/setup-plugins'))).toBe(false);
   }
  }finally{rmSync(home,{recursive:true,force:true});}

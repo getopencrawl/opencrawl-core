@@ -78,6 +78,14 @@ test('a failed native removal is retried from the old receipt after the new plug
  expect((await installSetupPlugins(origin,['codex'],options)).results[0]?.pluginId).toBe('opencrawl@opencrawl-cli');
 }));
 
+test('an interrupted old install with a missing managed asset can be reinstalled under the plain name',()=>fixture(async(home,options)=>{
+ const old=await installOld(home,'codex',options);
+ for(const root of [old.directory,old.nativeRoot])rmSync(join(root,'skills/opencrawl/SKILL.md'));
+ const result=await installSetupPlugins(origin,['codex'],{...options,reinstall:true});
+ expect(result.results[0]).toMatchObject({status:'prepared',pluginId:'opencrawl@opencrawl-cli'});
+ expect(existsSync(join(read(receipt(home,'codex')).nativeRoot,'skills/opencrawl/SKILL.md'))).toBe(true);
+}));
+
 test('inventory detects supported clients without creating configuration',()=>{
  const home=mkdtempSync(join(tmpdir(),'opencrawl-plugin-inventory-'));
  try{

@@ -93,7 +93,7 @@ export async function startDevinPlugin(api:string,event:unknown,{identity=reques
    const context=pluginHookContext(origin,'devin');recordPluginActivation(context,event);
    return {results:[await adoptDevinPlugin(origin,{configHome:bundle.configHome})],humanTasks:[]};
   };
-  await setup(saved?'resume':'apply',bundle.api,saved?{json:true}:{plugins:'devin',forward:recording?'devin':'none',history:'none',yes:true,json:true},{command:bundle.command,installPlugins,interactive:false,expectedScope:scope,validateCapturePrincipal});
+  await setup(saved?'run':'apply',bundle.api,saved?{yes:true,json:true}:{plugins:'devin',forward:recording?'devin':'none',history:'none',yes:true,json:true},{command:bundle.command,installPlugins,interactive:false,expectedScope:scope,validateCapturePrincipal});
   const context=pluginHookContext(bundle.api,'devin');recordPluginActivation(context,event);
   if(context&&pluginRecordingEnabled(context))recordNativeDaemonHook('devin',event);
   return sessionStart(bundle.api,'devin',event);

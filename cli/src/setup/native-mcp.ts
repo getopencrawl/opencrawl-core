@@ -79,7 +79,7 @@ export async function findSetupConnection(client:NativeClient,executable:string,
     :client==='codex'?codexConnections(await inspect(['mcp','list','--json']),endpoint,identity.name)
     :await antigravityConnections(inspect,endpoint,identity.name);
   const connection=rows.find(row=>row.skipLogin)??rows[0];
-  if(!connection)throw new CliError('NATIVE_MCP_UNAVAILABLE','Setup could not confirm an enabled '+labels[client]+' connection at '+endpoint+'. Check the endpoint in the client’s MCP settings, then resume setup.');
+  if(!connection)throw new CliError('NATIVE_MCP_UNAVAILABLE','Setup could not confirm an enabled '+labels[client]+' connection at '+endpoint+'. Check the endpoint in the client’s MCP settings, then run setup again.');
   return connection;
 }
 
