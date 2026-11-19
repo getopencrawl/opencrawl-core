@@ -121,6 +121,18 @@ test('waiting screen cancels and error actions use the same arrow and Enter beha
  try{await tick();error.stdin.write(right);await tick();error.stdin.write(enter);await tick();expect(answer).toBe('close');}finally{error.unmount();}
 });
 
+test('the hook trust spinner animates with Skip for now as its only button',async()=>{
+ const pressed:(string|null)[]=[];
+ const app=await renderReady(<NoticeScreen title="Trust hooks" description="Codex Desktop or CLI" spinner="Checking trust…" actions={[{id:'skip',label:'Skip for now'}]} onAction={id=>pressed.push(id)}/>);
+ try{
+  await waitForFrame(app,'› [ Skip for now ]');
+  await waitForFrame(app,'⠙ Checking trust…');
+  expect(app.lastFrame()?.match(/\[ [^\]]+ \]/g)).toEqual(['[ Skip for now ]']);
+  app.stdin.write(enter);await tick();
+  expect(pressed).toEqual(['skip']);
+ }finally{app.unmount();}
+});
+
 test('invite screen validates, sends once, allows another address, and skips without submitting a draft',async()=>{
  const emails:string[]=[];
  let continued=0,release!:()=>void;
