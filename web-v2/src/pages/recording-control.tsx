@@ -46,30 +46,32 @@ export function PrivacySettings({adapter}: {adapter: LibraryAdapter}) {
     }
   }
 
-  return <Section className="oc-preference-section" title="Session recording" description="Pause recording for agents signed in as you in this workspace. Activity during a pause stays out of OpenCrawl.">
-    {status ? <div className="oc-preference-control oc-form-measure">
-      <div className="oc-preference-row">
-        <div className="oc-preference-status" role="status" aria-atomic="true">
-          <span aria-hidden="true" className={'oc-preference-dot' + (status.paused ? ' paused' : '')}/>
-          <div><strong>{status.paused ? 'Recording is paused' : 'Recording is on'}</strong>
-            {status.paused && <p>{status.until == null ? 'Until you resume recording.' : <>Resumes at <time dateTime={new Date(status.until).toISOString()}>{new Date(status.until).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'})}</time>.</>}</p>}
+  return <div className="oc-management-page">
+    <Section className="oc-management-panel" title="Session recording" description="Pause recording for agents signed in as you in this workspace. Activity during a pause stays out of OpenCrawl.">
+      {status ? <>
+        <div className="split oc-preference-row">
+          <div className="oc-preference-status" role="status" aria-atomic="true">
+            <span aria-hidden="true" className={'oc-preference-dot' + (status.paused ? ' paused' : '')}/>
+            <div><strong>{status.paused ? 'Recording is paused' : 'Recording is on'}</strong>
+              {status.paused && <p>{status.until == null ? 'Until you resume recording.' : <>Resumes at <time dateTime={new Date(status.until).toISOString()}>{new Date(status.until).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'})}</time>.</>}</p>}
+            </div>
           </div>
+          <Button ref={trigger} busy={busy} aria-haspopup={status.paused ? undefined : 'dialog'}
+            onClick={() => status.paused ? void change('resume') : setSelection(status)}>
+            {status.paused ? 'Resume recording' : 'Pause recording'}
+          </Button>
         </div>
-        <Button ref={trigger} busy={busy} aria-haspopup={status.paused ? undefined : 'dialog'}
-          onClick={() => status.paused ? void change('resume') : setSelection(status)}>
-          {status.paused ? 'Resume recording' : 'Pause recording'}
-        </Button>
-      </div>
-      <Dialog className="oc-preference-dialog" open={Boolean(selection) && !status.paused} title="Pause recording"
-        description="How long would you like to pause?" onClose={() => {if (!pending.current) setSelection(null);}}>
-        <div className="oc-preference-options">
-          <Button variant="quiet" disabled={busy} onClick={() => void change('hour')}><Icon name="clock" size={18}/>For 1 hour<Icon name="chevron-right" size={14}/></Button>
-          <Button variant="quiet" disabled={busy} onClick={() => void change('indefinite')}><Icon name="infinity" size={18}/>Until I turn it back on<Icon name="chevron-right" size={14}/></Button>
-        </div>
-      </Dialog>
-    </div> : state.data && 'available' in state.data ? <p className="muted">Recording controls are unavailable in this workspace.</p>
-      : state.error ? <div className="stack-sm oc-form-measure"><Notice tone="danger">{state.error}</Notice><div><Button onClick={state.retry}>Try again</Button></div></div>
-      : <LoadingState label="Checking recording status"/>}
-    {error && <Notice tone="danger" className="oc-form-measure">{error}</Notice>}
-  </Section>;
+        <Dialog className="oc-preference-dialog" open={Boolean(selection) && !status.paused} title="Pause recording"
+          description="How long would you like to pause?" onClose={() => {if (!pending.current) setSelection(null);}}>
+          <div className="oc-preference-options">
+            <Button variant="quiet" disabled={busy} onClick={() => void change('hour')}><Icon name="clock" size={18}/>For 1 hour<Icon name="chevron-right" size={14}/></Button>
+            <Button variant="quiet" disabled={busy} onClick={() => void change('indefinite')}><Icon name="infinity" size={18}/>Until I turn it back on<Icon name="chevron-right" size={14}/></Button>
+          </div>
+        </Dialog>
+      </> : state.data && 'available' in state.data ? <p className="muted">Recording controls are unavailable in this workspace.</p>
+        : state.error ? <div className="stack-sm oc-form-measure"><Notice tone="danger">{state.error}</Notice><div><Button onClick={state.retry}>Try again</Button></div></div>
+        : <LoadingState label="Checking recording status"/>}
+      {error && <Notice tone="danger" className="oc-form-measure">{error}</Notice>}
+    </Section>
+  </div>;
 }

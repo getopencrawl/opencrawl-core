@@ -483,13 +483,7 @@ img { max-width: 100%; }
 /* Bounded management pages share the directory's typography and quiet surfaces. */
 .oc-management-page { container-type: inline-size; }
 .oc-management-page > .oc-page-scroll > .oc-page-body > .oc-notice, .oc-management-page > .oc-notice { margin-bottom: var(--space-4); }
-/* A personal setting keeps its status and actions together on either viewport. */
-.oc-preference-section { padding: 0; border: 0; }
-.oc-preference-section > .oc-section-heading { margin-bottom: var(--space-5); max-width: var(--console-form-width); }
-.oc-preference-section > .oc-section-heading p { max-width: 62ch; margin-top: var(--space-2); }
-.oc-preference-control { border: 1px solid var(--line-strong); border-radius: var(--radius-panel); background: var(--surface); }
-.oc-preference-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-4) var(--space-5); }
-.oc-preference-status { display: grid; grid-template-columns: 18px 1fr; align-items: start; gap: var(--space-3); min-width: 0; }
+.oc-preference-status { display: grid; grid-template-columns: var(--space-2) 1fr; align-items: start; gap: var(--space-3); min-width: 0; }
 .oc-preference-status strong { color: var(--text); font-weight: 550; }
 .oc-preference-status p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-ui); }
 .oc-preference-dot { justify-self: center; width: var(--space-2); height: var(--space-2); margin-top: .45em; border-radius: 50%; background: var(--success); }
@@ -499,11 +493,7 @@ img { max-width: 100%; }
 .oc-preference-options .oc-button { display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; gap: var(--space-3); padding: var(--space-3) var(--space-4); align-items: center; text-align: start; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); }
 .oc-preference-options .oc-button:hover:not(:disabled) { border-color: var(--quiet); }
 .oc-preference-options .oc-icon { color: var(--muted); }
-.oc-preference-section > .oc-notice { margin-top: var(--space-4); }
-@media (max-width: 480px) {
-  .oc-preference-row { gap: var(--space-3); padding: var(--space-4); }
-}
-@media (max-width: 359px) {
+@container (max-width: 400px) {
   .oc-preference-row > .oc-button { width: 100%; }
 }
 .oc-management-panel { padding: var(--space-6); margin-bottom: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-paper); }
