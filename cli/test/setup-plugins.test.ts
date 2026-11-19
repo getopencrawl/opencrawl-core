@@ -4,7 +4,7 @@ import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {pluginHookContext,recordPluginActivation,pluginActivationMatches} from '../src/setup/plugin-context.ts';
-import {pluginCommand,pluginInventory,setupPluginFiles,setupPluginIdentity,installSetupPlugins,type PluginOptions} from '../src/setup/plugins.ts';
+import {pluginCommand,pluginInventory,recordingInstallState,setupPluginFiles,setupPluginIdentity,installSetupPlugins,type PluginOptions} from '../src/setup/plugins.ts';
 import {scopedPluginIdentity} from '../src/setup/plugin-identity.ts';
 
 const origin='https://selfhost.example',identity=setupPluginIdentity(origin);
@@ -81,7 +81,7 @@ test('a failed native removal is retried from the old receipt after the new plug
 test('an interrupted old install with a missing managed asset can be reinstalled under the plain name',()=>fixture(async(home,options)=>{
  const old=await installOld(home,'codex',options);
  for(const root of [old.directory,old.nativeRoot])rmSync(join(root,'skills/opencrawl/SKILL.md'));
- const result=await installSetupPlugins(origin,['codex'],{...options,reinstall:true});
+ const result=await installSetupPlugins(origin,['codex'],options);
  expect(result.results[0]).toMatchObject({status:'prepared',pluginId:'opencrawl@opencrawl-cli'});
  expect(existsSync(join(read(receipt(home,'codex')).nativeRoot,'skills/opencrawl/SKILL.md'))).toBe(true);
 }));
@@ -138,6 +138,17 @@ test('all native installers require activation independently of MCP authenticati
  expect(result.results.map(row=>row.status)).toEqual(['prepared','prepared']);
  expect(result.humanTasks.filter(task=>task.kind==='restart')).toHaveLength(2);expect(result.humanTasks.filter(task=>task.kind==='mcp_auth')).toHaveLength(2);
  expect(read(receipt(home,'claude-code')).nativeRoot).toBe(result.results[0]!.directory);expect(read(receipt(home,'antigravity')).nativeRoot).toBe(join(home,'cache/agy',identity.name));
+}));
+test('recording picker checks native inventory and local files for both catalog clients',()=>fixture(async(_home,options)=>{
+ for(const client of ['claude-code','codex'] as const){
+  expect(await recordingInstallState(origin,client,undefined,options)).toBe('new');
+  await installSetupPlugins(origin,[client],options);
+  expect(await recordingInstallState(origin,client,'installed',options)).toBe('installed');
+  const inspect=(stdout:string,code=0)=>recordingInstallState(origin,client,'installed',{...options,runner:async()=>({code,stdout})});
+  expect(await inspect('[]')).toBe('repair');
+  expect(await inspect('',1)).toBe('review');
+  expect(await inspect(JSON.stringify([{pluginId:'opencrawl@opencrawl-cli',enabled:false}]))).toBe('review');
+ }
 }));
 test('disabled deployment plugin is preserved without reinstallation or implicit enabling',()=>fixture(async(home,options,calls)=>{
  await installSetupPlugins(origin,['claude-code'],options);calls.length=0;

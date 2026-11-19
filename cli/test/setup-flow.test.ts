@@ -16,7 +16,7 @@ import {atomicJson,withSessionLock} from '../src/session.ts';
 import {hash} from '../src/capture/parse.ts';
 import {validTranscriptIdentity} from '../src/capture/transcript-checkpoint.ts';
 import {installCapture} from '../src/capture/install.ts';
-import {canInstallRecordingPlugin,installSetupPlugins,setupPluginIdentity} from '../src/setup/plugins.ts';
+import {canInstallRecordingPlugin,installSetupPlugins,recordingInstallState,setupPluginIdentity,type PluginOptions} from '../src/setup/plugins.ts';
 import type {SelectionScreen} from '../src/setup/select.ts';
 import {terminalSetupEntry} from '../src/setup/entry.ts';
 import {needsFirstRunSetup} from '../src/setup/first-run.ts';
@@ -44,38 +44,42 @@ test('interrupted setup repairs a deleted Codex hook with the saved choices and 
  let directory:string;
  const hook=join(cache,'hooks','hooks.json');
  let nativeInstalled=false,installs=0;
- const installPlugins:typeof installSetupPlugins=(origin,ids,options)=>installSetupPlugins(origin,ids,{
-  ...options,home:dir,which:()=>'/fixture/codex',runner:async(_command,args)=>{
+ const native:PluginOptions={
+  home:dir,which:()=>'/fixture/codex',runner:async(_command,args)=>{
    if(args[1]==='marketplace'&&args[2]==='add')directory=join(args[3]!,identity.name);
    if(args[1]==='add'){cpSync(directory,cache,{recursive:true});nativeInstalled=true;installs++;}
    const rows=nativeInstalled?[{pluginId:identity.name+'@'+identity.marketplace,enabled:true,source:{source:'local',path:directory},installedPath:cache}]:[];
    return {code:0,stdout:JSON.stringify(args[1]==='list'?rows:{installedPath:cache})};
   },
- });
+ };
  const phases:number[]=[];
- const run=(again:boolean)=>setupCommand('run',api,{}, {interactive:true,installPlugins,
+ const run=(expected:'new'|'repair'|'installed')=>setupCommand('run',api,{}, {interactive:true,
+  installPlugins:(origin,ids,options)=>installSetupPlugins(origin,ids,{...options,...native}),
+  inspectInstall:(origin,client,prior)=>recordingInstallState(origin,client,prior,native),
   launchHistory:()=>{throw Error('History was never approved');},
   choose:async screen=>{
    phases.push(screen.phase);
    if(screen.phase===2){
     expect(screen.items.every(item=>!item.selected)).toBe(true);
-    return again?screen.items:null;
+    return expected==='new'?null:screen.items;
    }
    const codex=screen.items.find(item=>item.id==='codex')!;
-   expect(codex.needsReinstall).toBe(again);
-   expect(screen.items.find(item=>item.id==='cursor')?.needsReinstall).toBe(false);
-   if(again){expect(codex.selected).toBe(true);return screen.items;}
+   expect(codex.installState).toBe(expected);
+   expect(screen.items.find(item=>item.id==='cursor')?.installState).toBe('new');
+   if(expected!=='new'){expect(codex.selected).toBe(true);return screen.items;}
    return screen.items.map(item=>({...item,selected:item.id==='codex'}));
   },
  });
- expect(await run(false)).toMatchObject({status:'cancelled'});
+ expect(await run('new')).toMatchObject({status:'cancelled'});
  const saved=readSetupState(scope)!,contents=readFileSync(hook);
  expect(saved.historyJob).toBeUndefined();
  // Reproduce the history checkpoint written by a pre-upgrade TUI as well.
  atomicJson(statePath(scopeKey(scope)),{...saved,checkpoint:{step:'history'}});
  rmSync(hook);
- await run(true);
- expect(phases).toEqual([1,2,1,2]);expect(installs).toBe(2);
+ await run('repair');
+ expect(installs).toBe(2);
+ await run('installed');
+ expect(phases).toEqual([1,2,1,2,1,2]);expect(installs).toBe(2);
  expect(readFileSync(hook)).toEqual(contents);
  expect(readSetupState(scope)).toMatchObject({selections:saved.selections,installationId:saved.installationId});
  expect(readSetupState(scope)?.historyJob).toBeUndefined();
@@ -163,7 +167,7 @@ test('an unavailable saved agent can be kept without reinstalling or losing its 
  const result=await setupCommand('run',api,{},{
   interactive:true,canInstall:async()=>false,
   choose:async screen=>{
-   if(screen.phase===1)expect(screen.items).toEqual([{id:'cursor',label:'Keep Cursor selected for later',selected:true,needsReinstall:true}]);
+   if(screen.phase===1)expect(screen.items).toEqual([{id:'cursor',label:'Keep Cursor selected for later',selected:true,installState:'review'}]);
    return screen.items;
   },
   installPlugins:async(_api,clients)=>{expect(clients).toEqual([]);return {results:[],humanTasks:[]};}

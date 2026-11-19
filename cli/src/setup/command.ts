@@ -18,7 +18,7 @@ import {defaultClaudeDesktopSessionsRoot} from '../capture/desktop-history.ts';
 import type {Harness,TranscriptHarness} from '../capture/parse.ts';
 import {setupInventory} from './inventory.ts';
 import {assertSetupAvailability,newSetupClientAvailable,selectOfferedGroup,setupAvailabilityMessage} from './availability.ts';
-import {canInstallRecordingPlugin,hasSetupPluginFiles,installSetupPlugins,type PluginResult} from './plugins.ts';
+import {canInstallRecordingPlugin,recordingInstallState,installSetupPlugins,type PluginResult} from './plugins.ts';
 import {installPublishedSetupPlugins,loadPublishedPackage,packageRelease,type LocalPluginClient,type CaptureMode} from './published-plugins.ts';
 import {daemonEligibility,daemonStartupGuidance,savedCaptureMode,requestedCaptureMode} from './capture-mode.ts';
 import {chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
@@ -31,7 +31,7 @@ import {verifyInstallation} from '../verify-installation.ts';
 import {formatSetupCommand,setupCommandForSelf,profileSetupCommand} from './invocation.ts';
 export {formatSetupCommand} from './invocation.ts';
 type Values=Record<string,unknown>;
-type Dependencies={finishOnboarding?:boolean;canInstall?:(id:string)=>Promise<boolean>;confirmedCaptureMode?:'hook';modeEligibility?:typeof daemonEligibility;stopDaemon?:typeof uninstallCaptureDaemon;platform?:NodeJS.Platform;command?:string[];login?:()=>Promise<unknown>;installPlugins?:typeof installSetupPlugins;launchHistory?:typeof startHistoryWorker;choose?:typeof chooseSetupItems;interactive?:boolean;inspectHooks?:typeof inspectCodexHooks;installDaemon?:typeof installCaptureDaemon;daemonReady?:typeof waitForDaemonReady;expectedScope?:SetupScope;validateCapturePrincipal?:(principal:unknown)=>void;onProgress?:(title:string,description:string,phase?:'installing')=>void};
+type Dependencies={finishOnboarding?:boolean;canInstall?:(id:string)=>Promise<boolean>;inspectInstall?:typeof recordingInstallState;confirmedCaptureMode?:'hook';modeEligibility?:typeof daemonEligibility;stopDaemon?:typeof uninstallCaptureDaemon;platform?:NodeJS.Platform;command?:string[];login?:()=>Promise<unknown>;installPlugins?:typeof installSetupPlugins;launchHistory?:typeof startHistoryWorker;choose?:typeof chooseSetupItems;interactive?:boolean;inspectHooks?:typeof inspectCodexHooks;installDaemon?:typeof installCaptureDaemon;daemonReady?:typeof waitForDaemonReady;expectedScope?:SetupScope;validateCapturePrincipal?:(principal:unknown)=>void;onProgress?:(title:string,description:string,phase?:'installing')=>void};
 function historyFiles(api:string,client?:'claude-code'):HistoryFile[]{if(process.env.OPENCRAWL_AUTH==='devin-cloud')return [];const previous=readCaptureConfig();return inventory(previous?.api===api?previous:{roots:{'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),codex:process.env.CODEX_HOME||join(homedir(),'.codex'),antigravity:process.env.ANTIGRAVITY_HOME||join(homedir(),'.gemini')},claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()},client??'all').files;}
 const list=(values:string[])=>values.length?values.join(','):'none';
 
@@ -146,7 +146,7 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  const cursor=server.installations.find(row=>row.installationId===capture.installationId)?.clients.find(row=>row.client==='cursor');
  const cursorCapture=cursor?.captureObservedAt?{installationId:capture.installationId,observedAt:cursor.captureObservedAt}:undefined;
  const selectedPlugins=chosen(selections,'plugins').filter(client=>!optionalFailures?.has(client));
- const pluginOptions={command,captureMode:mode,reinstall:Boolean(optionalFailures),cursorCapture,onProgress:(message:string)=>onProgress?.('Installing session capture tooling',message,'installing')};
+ const pluginOptions={command,captureMode:mode,cursorCapture,onProgress:(message:string)=>onProgress?.('Installing session capture tooling',message,'installing')};
  const plugins=installPlugins===installPublishedSetupPlugins
   ?await installPublishedSetupPlugins(scope.api,selectedPlugins,{...pluginOptions,loadPackage:async client=>packages.get(client)!})
   :await installPlugins(scope.api,selectedPlugins,pluginOptions);
@@ -212,7 +212,7 @@ export function nativeSetupPrompt(api:string,client:string,command=setupCommandF
  return `Finish OpenCrawl setup in this conversation. Run ${nextCommand} and follow nextAction. Reuse my saved choices. After the native verify_installation call, run setup wait --json with this same profile-bound CLI and follow its nextAction. Never ask me to reply just to wait for capture. After any reconciliation, read setup next again before reporting completion. Work only on ${client}. When this client is verified, tell the person it is connected and they can return to setup. Leave other clients to their own setup screens.`;
 }
 
-async function executeSetup(action:string,api:string,values:Values,{platform=process.platform,command=setupCommandForSelf(),login,installPlugins=installPublishedSetupPlugins,modeEligibility=daemonEligibility,stopDaemon=uninstallCaptureDaemon,launchHistory=startHistoryWorker,choose=chooseSetupItems,inspectHooks=inspectCodexHooks,installDaemon=installCaptureDaemon,daemonReady=waitForDaemonReady,expectedScope,validateCapturePrincipal,onProgress,confirmedCaptureMode,finishOnboarding=false,canInstall=id=>canInstallRecordingPlugin(id,{},platform),interactive=Boolean(process.stdin.isTTY&&process.stderr.isTTY&&!values.json)}:Dependencies={}){
+async function executeSetup(action:string,api:string,values:Values,{platform=process.platform,command=setupCommandForSelf(),login,installPlugins=installPublishedSetupPlugins,modeEligibility=daemonEligibility,stopDaemon=uninstallCaptureDaemon,launchHistory=startHistoryWorker,choose=chooseSetupItems,inspectHooks=inspectCodexHooks,installDaemon=installCaptureDaemon,daemonReady=waitForDaemonReady,expectedScope,validateCapturePrincipal,onProgress,confirmedCaptureMode,finishOnboarding=false,inspectInstall=recordingInstallState,canInstall=id=>canInstallRecordingPlugin(id,{},platform),interactive=Boolean(process.stdin.isTTY&&process.stderr.isTTY&&!values.json)}:Dependencies={}){
  const requestedClients=Array.isArray(values.client)?values.client:values.client===undefined?[]:[values.client];
  const claudeOnly=requestedClients.length===1&&requestedClients[0]==='claude-code'&&['run','plan','apply'].includes(action);
  if(['run','plan','apply'].includes(action)&&requestedClients.length&&!claudeOnly)throw new CliError('INVALID_USAGE','Use opencrawl setup to choose detected agents, or --plugins and --forward for an explicit selection. --client claude-code limits the preview to Claude Code.',64);
@@ -329,13 +329,18 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const candidates=clients.filter(client=>client.plugin&&client.forward);
   const options=await Promise.all(candidates.map(async client=>{
    const selected=selections.forward[client.id]===true;
-   const needsReinstall=Boolean(previous?.pluginResults?.some(row=>row.client===client.id)||previous?.selections.plugins[client.id]||legacyForward?.includes(client.id)||hasSetupPluginFiles(api,client.id));
-   if(!newSetupClientAvailable(client.id,platform)&&!selected)return {id:client.id,label:client.label,selected:false,disabled:true,needsReinstall};
-   if(await canInstall(client.id))return {id:client.id,label:client.label,selected,needsReinstall};
-   if(!selected||!previous?.selections.forward[client.id])return needsReinstall?{id:client.id,label:client.label,selected:false,disabled:true,needsReinstall}:null;
+   const prior=previous?.pluginResults?.find(row=>row.client===client.id);
+   const installState=await inspectInstall(api,client.id as LocalPluginClient,prior?.status);
+   const item={id:client.id,label:client.label,selected,installState};
+   if(!newSetupClientAvailable(client.id,platform)&&!selected)return {...item,disabled:true};
+   if(await canInstall(client.id))return item;
+   if(!selected||!previous?.selections.forward[client.id]){
+    const known=installState!=='new'||prior||previous?.selections.plugins[client.id]||legacyForward?.includes(client.id);
+    return known?{...item,selected:false,disabled:true}:null;
+   }
    // A missing CLI cannot silently revoke an existing recording choice.
    optionalFailures!.set(client.id,{client:client.id as LocalPluginClient,status:'pending',message:'A compatible native CLI is required to install this integration.'});
-   return {id:client.id,label:'Keep '+client.label+' selected for later',selected,needsReinstall};
+   return {...item,label:'Keep '+client.label+' selected for later',installState:'review' as const};
   }));
   const selected=await choose({phase:1,title:'Record new sessions',description:'Choose local coding agents to record sessions from',noneLabel:'Do not record any sessions on this machine',items:options.filter(item=>item!==null)});
   if(selected===null)return {status:'cancelled',humanTasks:[]};

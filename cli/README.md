@@ -42,8 +42,10 @@ native connection. You can use the web app while setup is in progress.
 Agents can run `opencrawl setup --json` to get a plan and use `opencrawl setup apply`
 with the approved choices. Run `opencrawl setup status --local --json` to see saved
 choices. Running `opencrawl setup` again opens the agent picker with your saved
-recording choices. A yellow **⚠ Needs reinstall** marks previous or partial
-installations. Confirm the selected agents to reinstall them. History import
+recording choices. **Installed** means setup found the plugin and checked its files.
+Choose **Continue** to keep those integrations. **⚠ Needs reinstall** marks a
+missing or damaged installation. **Review in agent** means setup could not confirm
+the native installation. History import
 requires its own confirmation. Agents can use
 `opencrawl setup --yes --json` to continue approved work.
 
