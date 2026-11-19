@@ -5,8 +5,9 @@ import {accessToken,withSessionLock} from '../session.ts';
 import {configuredToken,workspaceIdentityEnabled} from '../workspace-identity.ts';
 import type {SetupHumanTask,SetupScope,SetupState} from './state.ts';
 type HookTrust='trusted'|'pending'|'unknown'|'not_required';
-export type SetupHookObservation={scope:SetupScope;installationId:string;recordingSelected:boolean;review:CodexHookReview};
-export type SetupServerStatus={scope:{tenantId:string;userId:string};pluginStateSupported?:boolean;firstWin:unknown;installations:{installationId:string;clients:{client:string;installed?:boolean;forward?:boolean;hookTrust?:HookTrust;captureObservedAt?:string;mcp?:{state:string};proof?:{state:string};humanTasks:SetupHumanTask[]}[]}[]};
+type SetupHookObservation={scope:SetupScope;installationId:string;recordingSelected:boolean;review:CodexHookReview};
+type HookReport=SetupHookObservation & {onlyHooks?:true};
+export type SetupServerStatus={scope:{tenantId:string;userId:string};pluginStateSupported?:boolean;firstWin:unknown;installations:{installationId:string;clients:{client:string;installed?:boolean;pluginState?:string;history?:string;historyProgress?:unknown;forward?:boolean;hookTrust?:HookTrust;captureObservedAt?:string;mcp?:{state:string};proof?:{state:string};humanTasks:SetupHumanTask[]}[]}[]};
 export async function setupRequest(api:string,path:string,input?:unknown,fetcher=fetch,timeoutMs=30000):Promise<unknown>{
   const configured=await configuredToken('OPENCRAWL_TOKEN',api);let token=configured||await accessToken(api,undefined,fetcher);
   const send=()=>jsonRequest(api+path,{method:input===undefined?'GET':'POST',headers:{authorization:'Bearer '+token,...(input===undefined?{}:{'content-type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeoutMs)},fetcher);
@@ -39,8 +40,11 @@ function observedTrust(review:CodexHookReview):HookTrust {
   return review.disabled>0?'not_required':'trusted';
 }
 
-export async function publishSetup(snapshot:SetupState,fetcher=fetch,hooks?:SetupHookObservation){
-  if(!snapshot.installationId||!snapshot.machine)return;
+export async function publishSetup(snapshot:SetupState,fetcher=fetch,hooks?:HookReport){
+  if(!snapshot.installationId||!snapshot.machine){
+    if(hooks)throw new CliError('SETUP_STATE_INVALID','A complete saved installation is required to publish its hook review.');
+    return;
+  }
   // Progress and native review both publish installation rows. Serialize their
   // read-modify-writes so a concurrent history update cannot undo a review.
   return withSessionLock('setup:publish:'+scopeKey(snapshot.scope),async()=>{
@@ -52,18 +56,27 @@ export async function publishSetup(snapshot:SetupState,fetcher=fetch,hooks?:Setu
     if(hooks&&(scopeKey(hooks.scope)!==scopeKey(state.scope)||hooks.installationId!==state.installationId||
         hooks.recordingSelected!==(state.selections.forward.codex===true)))
       throw new CliError('SETUP_SCOPE_CHANGED','The hook review belongs to a different installation or recording choice.');
-    return publishInstallation(state,fetcher,hooks?.review);
+    return publishInstallation(state,fetcher,hooks);
   });
 }
 
-async function publishInstallation(state:SetupState,fetcher:typeof fetch,review?:CodexHookReview){
+async function publishInstallation(state:SetupState,fetcher:typeof fetch,hooks?:HookReport){
   const authenticated=await readServerSetup(state.scope.api,fetcher);
   if(authenticated.scope.tenantId!==state.scope.tenantId||authenticated.scope.userId!==state.scope.userId)throw new CliError('SETUP_SCOPE_CHANGED','The authenticated setup destination changed. Saved observations were not sent.');
   const previousCodex=authenticated.installations.find(row=>row.installationId===state.installationId)?.clients.find(row=>row.client==='codex');
   let codexTrust:HookTrust='not_required';
   if(state.selections.forward.codex){
     const lastReport=previousCodex?.forward?previousCodex.hookTrust:undefined;
-    codexTrust=review?observedTrust(review):lastReport??'unknown';
+    codexTrust=hooks?observedTrust(hooks.review):lastReport??'unknown';
+  }
+  if(hooks?.onlyHooks){
+    if(!previousCodex||previousCodex.forward!==hooks.recordingSelected)
+      throw new CliError('SETUP_SCOPE_CHANGED','The server has a different recording choice for this installation.');
+    // This path can run after a native approval while other clients are still
+    // onboarding. Send only the existing Codex row with the new trust value.
+    const {client,installed,pluginState,forward,history,historyProgress}=previousCodex;
+    const row={client,installed,...(authenticated.pluginStateSupported?{pluginState}:{}),forward,history,historyProgress,hookTrust:codexTrust};
+    return setupRequest(state.scope.api,'/api/setup/installation',{installationId:state.installationId,machine:state.machine,clients:[row]},fetcher);
   }
   const ids=new Set([...Object.keys(state.selections.plugins),...Object.keys(state.selections.forward),...Object.keys(state.selections.history)]);
   const clients=[...ids].map(client=>{

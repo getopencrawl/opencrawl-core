@@ -380,7 +380,12 @@ async function fixture(run:(api:string,dir:string,observations:unknown[],setClie
    if(req.method==='GET')data={scope:{tenantId:'tenant',userId:'user'},workspace:'Example Team',delivery:'email'};
    else{observations.push(body);data={created:true,delivery:'email'};}
   }
-  else if(req.url==='/api/setup/installation'){observations.push(body);installations=[{...body,clients:body.clients.map((client:Record<string,unknown>)=>({...client,humanTasks:[]}))}];data=installations[0];}
+  else if(req.url==='/api/setup/installation'){
+   observations.push(body);
+   const clients=installations.find(row=>row.installationId===body.installationId)?.clients??[];
+   const reported=body.clients.map((client:Record<string,unknown>)=>({...client,humanTasks:[]}));
+   installations=[{...body,clients:[...clients.filter(client=>!reported.some((row:ClientStatus)=>row.client===client.client)),...reported]}];data=installations[0];
+  }
   else if(req.url==='/api/sessions/identity')data={principal:{tenantId:'tenant',userId:'user'},capabilities:{harnesses:['claude-code','codex','cursor','antigravity']}};
   else {res.writeHead(404);res.end();return;}
   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({schemaVersion:1,data}));
@@ -597,6 +602,18 @@ test('saved-choice reconciliation publishes native trust and history progress pr
   await publishSetup(saved);
   expect(trust()).toBe(expected);
  }
+}));
+
+test('an agent can report a later native approval without reinstalling or republishing other clients',()=>fixture(async(api,_dir,observations)=>{
+ await setupCommand('apply',api,{yes:true,plugins:'codex,claude-code',forward:'codex,claude-code',history:'none'},setupCodex);
+ const before=(observations.at(-1) as {clients:{client:string;hookTrust:string}[]}).clients.find(row=>row.client==='codex')!;
+ expect(before.hookTrust).toBe('unknown');
+ const result=await setupCommand('report-hooks',api,{json:true},{
+  inspectHooks:async()=>({state:'observed',total:12,pending:0,disabled:0}),
+  installPlugins:async()=>{throw Error('Reporting trust must not reinstall the plugin');}
+ });
+ expect(result).toMatchObject({status:'hooks_reported',serverChecked:true});
+ expect(observations.at(-1)).toMatchObject({clients:[{...before,hookTrust:'trusted'}]});
 }));
 
 test('a hook review from another installation, account or recording choice cannot update setup',()=>fixture(async(api,_dir,observations)=>{

@@ -212,7 +212,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        ui.signal.throwIfAborted();
        if(observation==='skipped')codexTrust='skipped';
        else {
-        await publishSetup(state,fetch,observation);
+        await publishSetup(state,fetch,{...observation,onlyHooks:true});
         codexTrust='trusted';
        }
        ui.progress('Checking setup','Checking the remaining setup steps.');

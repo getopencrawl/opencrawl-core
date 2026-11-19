@@ -220,10 +220,17 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  if(values.local!==undefined){if(values.local!==true||action!=='status')throw new CliError('INVALID_USAGE','Use --local only with setup status.',64);return localSetupStatus(api);}
  if(action==='hooks')return setupHookStatus(api,inspectHooks);
  if(action==='worker'){if(typeof values['scope-key']!=='string')throw new CliError('INVALID_USAGE','Missing history scope.',64);const state=readStateKey(values['scope-key']);if(state?.scope.api!==api)throw new CliError('SETUP_SCOPE_CHANGED','History worker API does not match its approved scope.');await runHistoryWorker(values['scope-key']);return null;}
- if(!['run','plan','status','next','wait','apply','verify'].includes(action))throw new CliError('INVALID_USAGE','Use setup, setup --json, setup apply, setup status, setup next, setup wait, setup hooks, or setup verify.',64);
+ if(!['run','plan','status','next','wait','apply','verify','report-hooks'].includes(action))throw new CliError('INVALID_USAGE','Use setup, setup --json, setup apply, setup status, setup next, setup wait, setup hooks, setup report-hooks, or setup verify.',64);
  // Only the validated workload adapter supplies both contracts. Public CLI
  // arguments/environment cannot opt out of the local-client release policy.
  if(process.env.OPENCRAWL_TOKEN||process.env.OPENCRAWL_SESSIONS_TOKEN)assertTokenDestination(api);
+ if(action==='report-hooks'){
+  const hooks=await setupHookStatus(api,inspectHooks);
+  const state=readSetupState(hooks.scope);
+  if(!state)throw new CliError('SETUP_NOT_STARTED','Run setup first.');
+  await publishSetup(state,fetch,{...hooks,onlyHooks:true});
+  return {...hooks,status:'hooks_reported',serverChecked:true};
+ }
  const workload=Boolean(expectedScope&&validateCapturePrincipal);
  const changing=['run','plan','apply'].includes(action);
  let admitted:ReturnType<typeof localSetupStatus>|undefined;

@@ -15,6 +15,7 @@ Detected agents start selected; saved off choices stay off. History starts off.
 Each selected plugin records new sessions. You can import history with recording off.
 Run setup again to review your choices. Installed integrations can continue. ⚠ Needs reinstall marks a missing or damaged installation.
 setup hooks inspects this installation's Codex hook trust locally without changing it.
+setup report-hooks publishes the native review for the saved installation without reinstalling plugins.
 
   --plugins IDS   Harness IDs to install: comma-separated IDs, all, or none
   --forward IDS   Same harness IDs as --plugins; installation enables capture
