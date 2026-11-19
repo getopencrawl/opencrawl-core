@@ -2,8 +2,8 @@ import {test, expect} from '@playwright/test';
 import type {Bootstrap} from '../src/application/api.ts';
 
 const bootstrap:Bootstrap={cacheScope:'cli-setup-test',workspace:{name:'Disposable workspace',userName:'Alex',email:'alex@example.com',role:'admin'},mcpUrl:'https://disposable.example/mcp',setupPrompt:'',canInvite:true,onboarding:{completed:false,next:'/onboarding'},setup:{schemaVersion:1,scope:{tenantId:'workspace',userId:'alex'},firstWin:null,installations:[]}};
-const installer = 'curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh -s -- --setup';
-const terminalLabel = 'Run in Terminal on the Mac you want to connect';
+const installer = "curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh -s -- --connect --api 'https://disposable.example'";
+const copyLabel = 'Copy setup command';
 
 for(const viewport of [{width:1280,height:800},{width:390,height:844}])test(`incomplete CLI setup permits navigation and history at ${viewport.width}px`,async({page})=>{
   await page.setViewportSize(viewport);
@@ -11,7 +11,20 @@ for(const viewport of [{width:1280,height:800},{width:390,height:844}])test(`inc
   await page.route('**/api/console/bootstrap',route=>{reads++;return route.fulfill({json:bootstrap});});
   await page.goto('/setup?full-app');
   await expect(page.getByRole('heading',{name:'Setup',exact:true})).toBeVisible();
-  await expect(page.getByRole('textbox',{name:terminalLabel,exact:true})).toHaveValue(installer);
+  const command = page.getByRole('button',{name:copyLabel,exact:true}).locator('code');
+  await expect(command).toHaveText(installer);
+  await page.evaluate(() => document.fonts.ready);
+  expect(await command.evaluate(field => field.scrollHeight <= field.clientHeight + 1 && field.scrollWidth <= field.clientWidth + 1)).toBe(true);
+  await expect(page.getByRole('heading', {name:'Connect your first agent'})).toBeVisible();
+  const tabs = page.getByRole('tablist', {name:'Operating system'});
+  await expect(tabs.getByRole('tab')).toHaveCount(2);
+  await expect(tabs.getByRole('tab', {name:'macOS / Linux'})).toHaveAttribute('aria-selected','true');
+  await tabs.getByRole('tab', {name:'Windows'}).click();
+  await expect(command).toContainText('install.ps1 | iex');
+  await expect(command).toContainText('opencrawl login --api https://disposable.example');
+  await expect(command).toContainText('opencrawl collect install --api https://disposable.example');
+  await tabs.getByRole('tab', {name:'macOS / Linux'}).click();
+  await expect(command).toHaveText(installer);
   expect(reads).toBe(1);
   let documents=0;page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())documents++;});
   if(viewport.width<600)await page.getByRole('button',{name:'Open workspace navigation'}).click();
@@ -27,18 +40,20 @@ test('searchable capture alone stays pending until native Claude MCP is verified
   data.setup!.installations=[{installationId:'install',machine:{id:'machine',label:'Test Mac'},updatedAt:'2026-11-17T12:00:00Z',clients:[{client:'claude-code',installed:true,pluginState:'installed',forward:true,history:'skip',historyProgress:{state:'not_started',completed:0},hookTrust:'not_required',mcp:{state:'observed'},proof:{state:'verified'},humanTasks:[]}]}];
   await page.route('**/api/console/bootstrap',route=>route.fulfill({json:data}));
   await page.goto('/setup?full-app');
-  const machine = page.locator('summary').filter({hasText:'Test Mac'});
-  await expect(machine).toContainText('0 of 1 ready');
-  await machine.press('Enter');
-  const details = page.getByRole('list', {name:'Agent setup on Test Mac'});
-  await expect(details).toContainText('Captured and searchable');
-  await expect(details).toContainText('Waiting for workspace connection');
+  const tile = page.getByRole('listitem').filter({has:page.getByRole('heading', {name:'Test Mac'})});
+  await expect(tile).toContainText('No connected agents');
+  await expect(tile.locator('.oc-presence, time')).toHaveCount(0);
+  await expect(tile).not.toContainText('Claude Code');
   data.setup!.installations[0]!.clients[0]!.mcp.state='authenticated';
-  await expect(machine).toContainText('1 of 1 ready',{timeout:6000});
-  await expect(details).toContainText('Workspace connection verified');
+  await expect(tile).toContainText('Claude Code',{timeout:6000});
+  await expect(tile.locator('.oc-computer-contact time')).toBeVisible();
+  data.setup!.installations[0]!.clients = [];
+  data.setup!.installations[0]!.updatedAt = new Date().toISOString();
+  await expect(tile).toContainText('No connected agents',{timeout:6000});
+  await expect(tile.locator('.oc-presence, time')).toHaveCount(0);
 });
 
-test('existing machines stay compact, disclose checks, and can add another machine', async ({page}) => {
+test('computer tiles show connected agent names and allow connecting another agent', async ({page}) => {
   const data = structuredClone(bootstrap);
   const client: NonNullable<Bootstrap['setup']>['installations'][number]['clients'][number] = {
     client: 'codex', installed: true, forward: true, history: 'import',
@@ -48,7 +63,7 @@ test('existing machines stay compact, disclose checks, and can add another machi
   const laptop = {installationId: 'one', machine: {id: 'one', label: 'Development laptop'}, updatedAt: '2026-11-17T12:00:00Z'};
   const desktop = {installationId: 'two', machine: {id: 'two', label: 'Office desktop'}, updatedAt: laptop.updatedAt};
   data.setup!.installations = [
-    {...laptop, clients: [client, {...client, client: 'cursor', history: 'skip', forward: false}]},
+    {...laptop, clients: [client, {...client, client: 'cursor', history: 'skip', forward: false, mcp:{state:'observed'}}]},
     {...desktop, clients: [{...client, history: 'skip'}]},
     {...desktop, installationId: 'history', machine: {id:'history', label:'Archive Mac'},
       clients: [{...client, installed:false, forward:false, pluginState:'not_selected', historyProgress:{state:'complete', completed:3}}]},
@@ -57,30 +72,84 @@ test('existing machines stay compact, disclose checks, and can add another machi
   ];
   await page.route('**/api/console/bootstrap', route => route.fulfill({json: data}));
   await page.goto('/setup?full-app');
-  const laptopSummary = page.locator('summary').filter({hasText: 'Development laptop'});
-  await expect(laptopSummary).toContainText('Needs attention');
-  const details = page.getByRole('list', {name:'Agent setup on Development laptop'});
-  await expect(details).toBeHidden();
-  await laptopSummary.press('Space');
-  await expect(details).toContainText('Past session import needs attention in the CLI');
-  await expect(details).toContainText('Recording off');
-  for (const width of [1280, 900, 390, 320]) {
-    await page.setViewportSize({width, height: 850});
-    expect(await laptopSummary.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await expect(details).toBeVisible();
+  const computers = page.getByRole('list', {name:'Computers'});
+  const tiles = computers.getByRole('listitem');
+  await expect(tiles).toHaveCount(4);
+  await expect(tiles.nth(0).locator('dt')).toHaveText(['Codex', 'Cursor']);
+  await expect(tiles.nth(1)).toContainText('Codex');
+  for (const tile of [tiles.nth(2), tiles.nth(3)]) {
+    await expect(tile).toContainText('No connected agents');
+    await expect(tile).not.toContainText('Codex');
   }
-  await expect(page.locator('summary').filter({hasText:'Unused machine'})).toContainText('No agents selected');
-  const archive = page.locator('summary').filter({hasText:'Archive Mac'});
-  await expect(archive).toContainText('History only');
-  await archive.press('Enter');
-  await expect(page.getByRole('list', {name:'Agent setup on Archive Mac'})).toContainText('Past sessions imported');
-  await page.getByRole('button', {name:'Add machine', exact:true}).click();
-  const dialog = page.getByRole('dialog', {name:'Add a machine'});
-  await expect(dialog.getByRole('textbox',{name:terminalLabel})).toHaveValue(installer);
+  await expect(computers.locator('details, button')).toHaveCount(0);
+  for (const width of [1280, 900, 390, 320]) {
+    await page.setViewportSize({width, height:850});
+    expect(await tiles.evaluateAll(items => items.every(el => el.scrollWidth <= el.clientWidth + 1))).toBe(true);
+  }
+  await page.getByRole('button', {name:'Connect an agent', exact:true}).click();
+  const dialog = page.getByRole('dialog', {name:'Connect an agent'});
+  await expect(dialog.getByRole('button',{name:copyLabel}).locator('code')).toHaveText(installer);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('button', {name:'Add machine', exact:true})).toBeFocused();
-  await expect(details).toBeVisible();
+  await expect(page.getByRole('button', {name:'Connect an agent', exact:true})).toBeFocused();
+  await expect(computers).toBeVisible();
+});
+
+test('computer contact ages in place and refreshes only the reporting tile', async ({page}) => {
+  const start = new Date('2026-11-19T12:00:00Z');
+  await page.clock.install({time:start});
+  const data = structuredClone(bootstrap);
+  const connected: NonNullable<Bootstrap['setup']>['installations'][number]['clients'][number] = {
+    client:'codex', installed:true, forward:true, history:'skip', historyProgress:{state:'not_started',completed:0},
+    hookTrust:'trusted', mcp:{state:'authenticated'}, proof:{state:'verified'}, humanTasks:[],
+  };
+  const computer = (id:string, updatedAt:string) => ({installationId:id, machine:{id,label:id}, updatedAt, clients:[connected]});
+  const recent = computer('Laptop', '2026-11-19T11:46:00Z');
+  data.setup!.installations = [recent, computer('Desktop', '2026-11-17T12:00:00Z')];
+  await page.route('**/api/console/bootstrap', route => route.fulfill({json:data}));
+  await page.goto('/setup?full-app');
+  const tile = (name:string) => page.getByRole('listitem').filter({has:page.getByRole('heading', {name})});
+  const contact = tile('Laptop').locator('.oc-computer-contact');
+  await expect(contact).toHaveText('Seen 14 minutes ago');
+  await expect(contact).toHaveAttribute('data-recent', 'true');
+  await page.clock.fastForward(60_000);
+  await expect(contact).toHaveText('Seen 15 minutes ago');
+  await expect(contact).toHaveAttribute('data-recent', 'false');
+  recent.updatedAt = '2026-11-19T12:01:00Z';
+  await page.clock.runFor(3_100);
+  await expect(contact).toHaveText('Seen just now');
+  await expect(contact.locator('time')).toHaveAttribute('datetime', recent.updatedAt);
+  await expect(contact.locator('time')).toHaveAttribute('title', /^Last setup report or live capture received /);
+  await expect(contact).toHaveAttribute('data-recent', 'true');
+  await expect(tile('Desktop').locator('time')).toHaveText('Seen 2 days ago');
+});
+
+test('connected agent types on the same computer have independent last-seen indicators', async ({page}) => {
+  await page.clock.install({time:new Date('2026-11-19T12:00:00Z')});
+  const data = structuredClone(bootstrap);
+  const client: NonNullable<Bootstrap['setup']>['installations'][number]['clients'][number] = {
+    client:'codex', installed:true, forward:true, history:'skip', historyProgress:{state:'not_started',completed:0},
+    hookTrust:'trusted', mcp:{state:'authenticated'}, proof:{state:'verified'}, humanTasks:[], lastSeenAt:'2026-11-19T11:46:00Z',
+  };
+  const laptop = {installationId:'laptop', machine:{id:'laptop',label:'Laptop'}, updatedAt:'2026-11-19T12:00:00Z',
+    clients:[client, {...client, client:'claude-code' as const, lastSeenAt:'2026-11-19T10:00:00Z'},
+      {...client, client:'cursor' as const, lastSeenAt:undefined, forward:false, mcp:{state:'observed' as const}}]};
+  data.setup!.installations = [laptop];
+  await page.route('**/api/console/bootstrap', route => route.fulfill({json:data}));
+  await page.goto('/setup?full-app');
+  const row = (name:string) => page.locator('.oc-agent-contact').filter({has:page.getByText(name,{exact:true})});
+  await expect(row('Codex').locator('time')).toHaveText('14 minutes ago');
+  await expect(row('Codex').locator('dt')).toHaveAttribute('data-recent','true');
+  await expect(row('Claude Code').locator('dt')).toHaveAttribute('data-recent','false');
+  await expect(row('Cursor')).toContainText('No signal yet');
+  await page.clock.fastForward(60_000);
+  await expect(row('Codex').locator('dt')).toHaveAttribute('data-recent','false');
+  laptop.clients[1]!.lastSeenAt = '2026-11-19T12:01:00Z';
+  await page.clock.runFor(3_100);
+  await expect(row('Claude Code').locator('dt')).toHaveAttribute('data-recent','true');
+  await expect(row('Claude Code').locator('time')).toHaveText('just now');
+  await expect(row('Codex').locator('time')).toHaveText('15 minutes ago');
+  await expect(row('Cursor').locator('dt')).not.toHaveAttribute('data-recent');
 });
 
 test('Setup and Integrations keep their sidebar positions before bootstrap and through retry', async ({page}) => {
@@ -107,7 +176,7 @@ test('Setup and Integrations keep their sidebar positions before bootstrap and t
     expect(await integrations.boundingBox()).toEqual(position);
     fail = false;
     await page.getByRole('button', {name:'Try again'}).click();
-    await expect(page.getByRole('textbox', {name:terminalLabel})).toHaveValue(installer);
+    await expect(page.getByRole('button', {name:copyLabel}).locator('code')).toHaveText(installer);
     await expect(first).toHaveText('Setup');
     expect((await first.boundingBox())?.y).toBe(top?.y);
     expect(await integrations.boundingBox()).toEqual(position);

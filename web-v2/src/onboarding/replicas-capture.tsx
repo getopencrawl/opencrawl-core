@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, ExternalLink, Field, Notice, Section, Textarea} from '../design/components.tsx';
+import {Button, ExternalLink, Field, IntegrationLogo, Notice, Section, Textarea} from '../design/components.tsx';
 import type {OnboardingAdapter} from './types.ts';
 
 export const replicasCapturePath = '/agent-setup#replicas-capture';
@@ -46,14 +46,18 @@ export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdap
     }
   }
 
-  return <Section id="replicas-capture" title="Record new Replicas chats" description="Copy the setup prompt and paste it into a chat in the Replicas environment where you want to record Claude Code and Codex. The prompt expires in 30 minutes.">
+  return <Section id="replicas-capture" className="oc-management-panel oc-provider-setup"
+    title={<><IntegrationLogo src="/assets/integrations/replicas.svg"/>Record new Replicas chats</>}
+    description="Copy the setup prompt and paste it into a chat in the Replicas environment where you want to record Claude Code and Codex. The prompt expires in 30 minutes.">
     <div className="oc-form-measure stack-sm">
       {error && <Notice tone="danger">{error}</Notice>}
-      {manual ? <>
-        <Field label="Prompt to copy" hint="Copy the selected text, then paste it into Replicas."><Textarea ref={field} value={manual} readOnly rows={5}/></Field>
-        <div className="actions"><Button onClick={() => {setManual(''); setCopied(true); requestAnimationFrame(() => button.current?.focus());}}>I’ve copied it</Button></div>
-      </> : <div className="actions"><Button ref={button} disabled={busy} onClick={() => void install()}>{busy ? 'Preparing setup…' : copied ? 'Copied' : 'Install on Replicas'}</Button></div>}
-      <ExternalLink href={replicasCaptureGuide}>Replicas capture guide</ExternalLink>
+      {manual && <Field label="Prompt to copy" hint="Copy the selected text, then paste it into Replicas."><Textarea ref={field} value={manual} readOnly rows={5}/></Field>}
+      <div className="actions">
+        {manual
+          ? <Button onClick={() => {setManual(''); setCopied(true); requestAnimationFrame(() => button.current?.focus());}}>I’ve copied it</Button>
+          : <Button ref={button} disabled={busy} onClick={() => void install()}>{busy ? 'Preparing setup…' : copied ? 'Copied' : 'Install on Replicas'}</Button>}
+        <ExternalLink href={replicasCaptureGuide}>Replicas capture guide</ExternalLink>
+      </div>
     </div>
   </Section>;
 }

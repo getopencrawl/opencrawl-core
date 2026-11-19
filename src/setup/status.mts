@@ -21,6 +21,18 @@ import {validateSetupState,type SetupEvidence as Evidence,type SetupStoredClient
 function fail(status:number,message:string):never {throw Object.assign(new Error(message),{status,expose:true});}
 const token=()=>randomBytes(16).toString('hex');
 const instant=(value:unknown)=>typeof value==='string'&&Number.isFinite(Date.parse(value))?Date.parse(value):NaN;
+function latestReceipt(...receipts:(string | undefined)[]) {
+  return receipts.reduce<string | undefined>((latest, receipt) =>
+    receipt && (!latest || instant(receipt) > instant(latest)) ? receipt : latest, undefined);
+}
+function nativeMcpReceipt(evidence?:Evidence) {
+  const native = evidence?.mcpNative;
+  return native && evidence.mcpCall && native.sessionId === evidence.capture?.sessionId ? native.observedAt : undefined;
+}
+function lastAgentContact(client:StoredClient) {
+  return latestReceipt(client.lastSeenAt, client.captureObservedAt, client.evidence?.capture?.observedAt, nativeMcpReceipt(client.evidence));
+}
+const unchanged = Symbol('unchanged');
 function conversationText(event:SessionEvent):string {
   const content=event.data?.content;
   if(typeof content==='string')return content;
@@ -136,6 +148,7 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
   async function update<T>(principal:Principal,apply:(data:StoredStatus)=>T):Promise<T> {
     for(let attempt=0;attempt<8;attempt++) {
       const {version,data}=await load(principal),result=apply(data);
+      if(result===unchanged)return result;
       const bytes=Buffer.from(JSON.stringify(data));
       if(bytes.length>256*1024)fail(409,'Setup status limit reached. Remove unused local observations before adding more.');
       if(await state.setup.save(principal,version,data))return result;
@@ -152,15 +165,23 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
     const {evidence,...observation}=client;
     const proof:SetupProof=evidence?{...evidence.proof}:{state:client.forward?'pending':'not_selected'};
     if(!['verified','not_selected'].includes(proof.state)&&proof.expiresAt&&instant(proof.expiresAt)<now().getTime())proof.state='expired';
-    const boundMcp=evidence?.mcpCall&&evidence.mcpNative&&evidence.capture?.sessionId===evidence.mcpNative.sessionId;
-    const mcp:SetupClientStatus['mcp']=boundMcp?{state:'authenticated',observedAt:evidence.mcpNative!.observedAt}:evidence?.mcpCall?{state:'observed',observedAt:evidence.mcpCall.issuedAt}:{state:'pending'};
+    const nativeReceipt = nativeMcpReceipt(evidence);
+    const mcp:SetupClientStatus['mcp']=nativeReceipt?{state:'authenticated',observedAt:nativeReceipt}:evidence?.mcpCall?{state:'observed',observedAt:evidence.mcpCall.issuedAt}:{state:'pending'};
     const humanTasks:SetupHumanTask[]=[];
     if(client.forward&&!evidence?.capture&&['unknown','pending'].includes(client.hookTrust))humanTasks.push({id:client.client+':hook-trust',kind:'hook_trust',client:client.client,title:'Approve this client’s hooks',instruction:'Open this client’s own trust controls and approve the installed OpenCrawl hooks. The CLI cannot approve trust on your behalf.'});
     if(client.installed&&mcp.state==='pending')humanTasks.push({id:client.client+':mcp-auth',kind:'mcp_auth',client:client.client,title:'Connect this client to OpenCrawl',instruction:client.client==='devin'?'In this Devin Cloud session, use the installed plugin’s native MCP tools with its renewable workload identity and call verify_installation with this installationId, client and proofId. Repair the provider helper or organization connection if tools are unavailable; do not copy a human token or start interactive login.':'In this client, finish its OpenCrawl MCP sign-in, then call verify_installation with this installationId, client and proofId. Leave other clients pending until they run their own check.'});
     if(proof.state==='waiting_capture'&&proof.marker)humanTasks.push({id:client.client+':native-event',kind:'native_event',client:client.client,title:'Record one new native message',instruction:`In this client’s current native conversation, include ${proof.marker} in a normal assistant message, then let its installed capture hooks run. Do not write a synthetic transcript or upload a test batch.`});
-    return {...observation,...(evidence?.capture?{captureObservedAt:evidence.capture.observedAt}:{}),mcp,proof,humanTasks};
+    const lastSeenAt = lastAgentContact(client);
+    return {...observation,...(evidence?.capture?{captureObservedAt:evidence.capture.observedAt}:{}),...(lastSeenAt ? {lastSeenAt} : {}),mcp,proof,humanTasks};
   }
-  const view=(data:StoredStatus):SetupStatus=>({...data,pluginStateSupported:true,installations:data.installations.map(i=>({...i,clients:i.clients.map(publicClient)}))});
+  function view(data:StoredStatus):SetupStatus {
+    const installations = data.installations.map(installation => {
+      const clients = installation.clients.map(publicClient);
+      const updatedAt = latestReceipt(installation.updatedAt, ...clients.map(client => client.lastSeenAt)) ?? installation.updatedAt;
+      return {...installation, updatedAt, clients};
+    });
+    return {...data, pluginStateSupported:true, installations};
+  }
   function fresh(event:SessionEvent,since:string) {
     const time=instant(event.timestamp);return Number.isFinite(time)&&time>=instant(since)&&time<=now().getTime()+60_000;
   }
@@ -185,6 +206,10 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
           // installed reports plugin files, not authentication or capture consent.
           // Plugin choice is independent of future capture and historical import.
           const next:StoredClient={...observed,...(forwardSince?{forwardSince}:{}),...(prior?.evidence&&prior.forward===observed.forward?{evidence:prior.evidence}:{})};
+          if (prior) {
+            const lastSeenAt = lastAgentContact(prior);
+            if (lastSeenAt) next.lastSeenAt = lastSeenAt;
+          }
           if(prior)installation.clients[installation.clients.indexOf(prior)]=next;else installation.clients.push(next);
         }
         return view(data);
@@ -198,11 +223,23 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
       // unknown for native sessions). It grants no authority: authenticated owner,
       // selected installation/harness, live mode, boundary and nonce remain required.
       if(batch.captureMode!=='live'||!isSessionHarness(batch.harness)||!['cli','desktop','cloud','unknown'].includes(batch.origin))return;
-      const existing=(await load(principal)).data.installations.find(i=>i.installationId===batch.installationId)?.clients.find(c=>c.client===batch.harness);
-      if(!existing?.forward||!existing.evidence)return;
+      const received = now();
       await update(principal,data=>{
-        const client=data.installations.find(i=>i.installationId===batch.installationId)?.clients.find(c=>c.client===batch.harness),e=client?.evidence;
-        if(!client?.forward||!client.forwardSince||!e||e.proof.state!=='verified'&&instant(e.proof.expiresAt)<now().getTime())return;
+        const installation = data.installations.find(i => i.installationId === batch.installationId);
+        const client = installation?.clients.find(c => c.client === batch.harness);
+        if (!installation || !client?.forward) return unchanged;
+        // The receiver's clock measures contact even when the CLI flushes a queued live upload.
+        // Coalesce by agent so one busy client never suppresses a sibling's first receipt.
+        const refreshContact = !client.lastSeenAt || received.getTime() - instant(client.lastSeenAt) >= 60_000;
+        if (refreshContact) {
+          client.lastSeenAt = received.toISOString();
+          if (received.getTime() > instant(installation.updatedAt)) installation.updatedAt = client.lastSeenAt;
+        }
+        const e = client.evidence;
+        const verified = e?.proof.state === 'verified' && nativeMcpReceipt(e);
+        if (!client.forwardSince || !e || verified || (e.proof.state !== 'verified' && instant(e.proof.expiresAt) < received.getTime())) {
+          return refreshContact ? undefined : unchanged;
+        }
         const since=instant(client.forwardSince)>instant(e.proof.issuedAt)?client.forwardSince:e.proof.issuedAt!;
         const message=batch.events.find(event=>event.kind==='message'&&fresh(event,since)&&['user','assistant'].includes(String(event.data?.role))&&conversationText(event).includes(e.proof.marker!));
         if(message&&!e.capture) {e.capture={sessionId:batch.sessionId,eventId:message.id,timestamp:message.timestamp!,observedAt:now().toISOString()};e.proof={...e.proof,state:'waiting_index',sessionId:batch.sessionId,eventId:message.id};}

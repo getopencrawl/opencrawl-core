@@ -12,6 +12,8 @@ macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 ```
 
+To connect an agent immediately after installing on macOS or Linux, use the same installer with `sh -s -- --connect`. It opens guided setup on macOS and prompts for sign-in and recording on Linux. Self-hosted workspaces can pass `--api URL` after `--connect`.
+
 Windows PowerShell:
 
 ```powershell
