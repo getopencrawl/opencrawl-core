@@ -21,11 +21,11 @@ async function fixture(run:(home:string,options:PluginOptions,calls:string[][])=
    installed[command]=(installed[command]??[]).filter(row=>row.pluginId!==args[2]);
    return {code:0,stdout:'{}'};
   }
-  if(args[1]==='add'||args[1]==='install'){
+  if(args[1]==='add'||args[1]==='install'||args[1]==='update'){
    const agy=command.endsWith('/agy'),codex=command.endsWith('/codex'),directory=agy?args[2]:join(markets[command],args[2].split('@')[0]);
    const manifest=read(join(directory,agy?'plugin.json':codex?'.codex-plugin/plugin.json':'.claude-plugin/plugin.json'));
    const cache=join(home,'cache',command.split('/').at(-1)!,manifest.name);cpSync(directory,cache,{recursive:true});
-   const row={name:manifest.name,pluginId:agy?manifest.name:args[2],enabled:true,source:{source:'local',path:directory},readFromFolder:directory,...(codex?{}:{installPath:cache}),path:cache};
+   const row={name:manifest.name,scope:'user',version:manifest.version,pluginId:agy?manifest.name:args[2],enabled:true,source:{source:'local',path:directory},readFromFolder:directory,...(codex?{}:{installPath:cache}),path:cache};
    installed[command]=[...(installed[command]??[]).filter(r=>r.name!==manifest.name),row];
    return {code:0,stdout:JSON.stringify({installedPath:cache})};
   }
@@ -131,6 +131,22 @@ test('the four embedded desktop bundles include their native listing fields and 
   expect(files[(listing.logo??listing.icon).replace(/^\.\//,'')]).toContain('<svg');
  }
 });
+test('Claude upgrades its cached user installation when the local marketplace version changes',()=>fixture(async(home,options,calls)=>{
+ const files=setupPluginFiles('claude-code',origin,{command:options.command,configHome:join(home,'config')});
+ const manifestPath='.claude-plugin/plugin.json', manifest=JSON.parse(files[manifestPath]!);
+ const install=(version:string)=>installSetupPlugins(origin,['claude-code'],{...options,bundles:{'claude-code':{
+  files:{...files,[manifestPath]:JSON.stringify({...manifest,version})},
+  source:{repository:'fixture',ref:'fixture',path:'local/claude-code',name:'opencrawl-local-claude-code',version},
+  captureAvailable:true,daemonHandoff:true,
+ }}});
+ expect((await install('0.2.1')).results[0]?.status).toBe('installed');
+ calls.length=0;
+ expect((await install('0.2.2')).results[0]?.status).toBe('installed');
+ expect(calls).toContainEqual(['/client/claude','plugin','update','opencrawl@opencrawl-cli','--scope','user','--json']);
+ calls.length=0;
+ expect((await install('0.2.2')).results[0]?.status).toBe('unchanged');
+ expect(calls.some(call=>call.includes('update'))).toBe(false);
+}));
 test('canonical Cursor rule delivers retrieval and native notifications for its bound deployment',()=>{
  const command=[join(tmpdir(),'private cli','opencrawl')],files=setupPluginFiles('cursor',origin,{command,configHome:join(tmpdir(),'private profile')});
  const rule=files['rules/opencrawl.mdc'];
