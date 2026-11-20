@@ -942,6 +942,21 @@ test('a daily catalog scan skips unchanged history, resumes changed chats and di
   assert.equal((await f.reopen().runStep(job(id))).done,true);assert.equal(f.calls.length,before+5);
 });
 
+test('daily catalog leaves a changed record with its existing deferred checkpoint',async t=>{
+  const {selectCatalogRows}=await import('../dist/src/integrations/replicas-catalog.mjs');
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);
+  const db=f.database.pool,scope=[f.database.namespace,principal.tenantId,id];
+  await db.query('UPDATE opencrawl_replicas_workspace_inventories SET chat_versions=$5 WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND workspace=$4',
+    [...scope,chat.workspace_id,JSON.stringify({[chat.chat_id]:{created:chat.created_at,updated:'2026-11-19T12:00:00Z'}})]);
+  assert.deepEqual(await selectCatalogRows(db,scope,[chat],true),[chat]);
+  await db.query("INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,now(),$3,'{}','{}')",
+    [...scope.slice(0,2),JSON.stringify(chat)]);
+  assert.deepEqual(await selectCatalogRows(db,scope,[chat],true),[]);
+  const revised={...chat,title:'Revised catalog record'};
+  assert.deepEqual(await selectCatalogRows(db,scope,[revised],true),[revised]);
+});
+
 test('Replicas and native captures group only inside the verified thread and the current reader’s visibility',async t=>{
   const {mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{pathToFileURL}=await import('node:url');
   const {createSessionSearch}=await import('../dist/src/sessions/search.mjs');

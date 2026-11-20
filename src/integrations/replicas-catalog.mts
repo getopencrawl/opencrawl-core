@@ -12,12 +12,6 @@ export async function selectCatalogRows(client:Pick<ApplicationDatabase['pool'],
     SELECT $1,$2,$3,v FROM unnest($4::text[]) v ON CONFLICT DO NOTHING RETURNING record_hash`,[...scope,hashes]):{rows:[]};
   const unseen=new Set(inserted.rows.map(row=>row.record_hash));
   if(!daily)return rows;
-  if(unseen.size){
-    const legacy=(await client.query<{ordinal:number}>(`SELECT entry.ordinality::int AS ordinal FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY entry(chat,ordinality)
-      WHERE EXISTS(SELECT 1 FROM opencrawl_replicas_deferred d WHERE d.namespace=$1 AND d.tenant=$2 AND
-      d.chat->>'workspace_id'=entry.chat->>'workspace_id' AND d.chat->>'chat_id'=entry.chat->>'chat_id' AND d.chat=entry.chat)`,[scope[0],scope[1],JSON.stringify(rows)])).rows;
-    for(const row of legacy)unseen.delete(hashes[row.ordinal-1]!);
-  }
   const selected:ReplicasConversation[]=[];
   const versions=await client.query<{workspace:string;chat_id:string;version:Date;native:WorkspaceVersion;verify_next:boolean}>(`
     SELECT s.workspace,s.chat_id,s.source_version AS version,i.chat_versions->s.chat_id AS native,s.verify_next
@@ -32,5 +26,13 @@ export async function selectCatalogRows(client:Pick<ApplicationDatabase['pool'],
     const changed=snapshot&&revision&&(snapshot.verify_next||Date.parse(revision)>snapshot.version.getTime())&&!refreshing.has(pair);
     if(unseen.delete(hashes[i]!)||changed){selected.push(c);if(revision)refreshing.add(pair);}
   }
-  return selected;
+  if(!selected.length)return selected;
+  // A workspace review or a prior catalog pass can already own the retry
+  // for this exact record, including a source revision still being refreshed.
+  const deferred=await client.query<{ordinal:number}>(`SELECT entry.ordinality::int AS ordinal FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY entry(chat,ordinality)
+    WHERE EXISTS(SELECT 1 FROM opencrawl_replicas_deferred d WHERE d.namespace=$1 AND d.tenant=$2 AND
+    d.chat->>'workspace_id'=entry.chat->>'workspace_id' AND d.chat->>'chat_id'=entry.chat->>'chat_id' AND d.chat=entry.chat)`,
+    [scope[0],scope[1],JSON.stringify(selected)]);
+  const pending=new Set(deferred.rows.map(row=>row.ordinal-1));
+  return selected.filter((_,i)=>!pending.has(i));
 }
