@@ -8,6 +8,7 @@ import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
+import {hasWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
@@ -22,7 +23,7 @@ export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
   workspaceChecks?:{id:string;at:number}[];
-  initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
+  initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;exportReviewSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 // Reserve one activity in five for due pages while catalog work remains.
 const freshStepsPerRetry=4;
@@ -46,6 +47,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
+    await client.query('ALTER TABLE opencrawl_replicas_workspace_inventories ADD COLUMN IF NOT EXISTS export_check jsonb');
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_chat
       ON opencrawl_replicas_deferred(namespace,tenant,(chat->>'workspace_id'),(chat->>'chat_id'))`);
   }).catch(error=>{prepared=undefined;throw error;});
@@ -112,6 +114,17 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     delete state.retryAt;
     const pending=deferredHistory(client,namespace,principal.tenantId);
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
+    const reviewScope:[string,string,string]=[namespace,principal.tenantId,state.id];
+    const sweep=Boolean(state.workspaceChecks?.length);
+    const review=async()=>{
+      const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now(),sweep);
+      if(result.added){state.total+=result.added;state.blocked=(state.blocked??0)+result.added;delete state.waitingForSource;}
+      return result.requested;
+    };
+    if(!hasFresh){
+      state.exportReviewSteps=(state.exportReviewSteps??0)+1;
+      if(!state.blocked||state.exportReviewSteps>=5){state.exportReviewSteps=0;if(await review())return;}
+    }
     if(state.blocked&&(!hasFresh||(state.freshSteps??freshStepsPerRetry)>=freshStepsPerRetry)){
       state.freshSteps=0;
       // Once the catalog is drained, let a readable long transcript advance
@@ -138,6 +151,9 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         return;
       }
       if(!hasFresh){
+        if(await hasWorkspaceExportReview(client,reviewScope,sweep)){
+          if(await review()||await hasWorkspaceExportReview(client,reviewScope,sweep))return;
+        }
         state.retryAt=row.retry_at.toISOString();
         state.waitingForSource=await pending.onlyAbsent();
         return;
@@ -208,6 +224,10 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         const hash=state.next?replicasDigest(state.next):undefined;
         if(hash&&state.listCursors.includes(hash))throw new ReplicasPageError('cursor','Replicas repeated a catalog cursor.');
         const page=await api.conversations(state.next);
+        const workspaces=[...new Set(page.conversations.map(item=>item.workspace_id))];
+        if(workspaces.length)await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,result)
+          SELECT $1,$2,$3,id,'epoch'::timestamptz,'unobserved' FROM unnest($4::text[]) AS ids(id)
+          ON CONFLICT(namespace,tenant,import_id,workspace) DO NOTHING`,[namespace,principal.tenantId,state.id,workspaces]);
         if(state.initialCatalog)state.total=page.total;
         delete state.initialCatalog;
         state.queue=page.conversations;state.next=page.next_cursor;
@@ -252,7 +272,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         ...(chat?{workspaceId:chat.workspace_id,chatId:chat.chat_id,pageLimit:limit}:{}),
         ...(state.before||(!chat&&state.next)?{cursorHash:replicasDigest((chat?state.before:state.next)!)}:{})};
       const empty=fields.reason==='empty_with_messages'||fields.reason==='empty_unverified';
-      if(chat&&retry&&!state.before&&(empty||missing&&attempt>=3)){
+      if(chat&&retry&&!state.before&&(empty||missing)){
         const observation=await observeReplicasWorkspace(client,{namespace,tenant:principal.tenantId,importId:state.id,workspace:chat.workspace_id},
           now(),()=>observedInventory?Promise.resolve(observedInventory):api.workspaceChats(chat.workspace_id));
         const ids=observation.ids;
@@ -335,9 +355,13 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(resume&&resume.organization.id!==identity.organization.id)throw replicasError('Use the Replicas organization that owns the saved import.',409);
         state=resume??{id:'',organization:identity.organization,phase:'importing',total:0,processed:0,imported:0,events:0,turns:0,pages:0,
           updatedAt:'',queue:[],initialCatalog:true,next:null,listCursors:[],completedSessions:[],...emptyCheckpoint()};
-        await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',[namespace,principal.tenantId]);
+        const generation=randomUUID();
+        if(resume?.id)await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,result)
+          SELECT namespace,tenant,$4,workspace,'epoch'::timestamptz,'unobserved' FROM opencrawl_replicas_workspace_inventories
+          WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
+        await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
         delete state.waitingForSource;
-        state.id=randomUUID();state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
+        state.id=generation;state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
         state.phase=state.queue.length||state.initialCatalog||state.next||state.blocked?'importing':'complete';
         if(!resume)await step(client,principal,state,api);
         credential=envelope.seal(path,Buffer.from(apiKey));
@@ -351,7 +375,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           await step(client,principal,state,replicasApi(envelope.open(path,credential).toString(),request));
         }
       }
-      if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked)state.phase='complete';
+      if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked&&
+        !await hasWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length)))state.phase='complete';
       if(state.phase!=='importing')credential=null;
       state.updatedAt=new Date(now()).toISOString();
       await client.query('INSERT INTO opencrawl_replicas_imports(namespace,tenant,state,credential) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(namespace,tenant) DO UPDATE SET state=EXCLUDED.state,credential=EXCLUDED.credential',[namespace,principal.tenantId,JSON.stringify(state),credential]);
