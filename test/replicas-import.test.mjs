@@ -781,3 +781,83 @@ test('a short terminal export shifts its next page boundary and compares the row
   const status=await f.service.status(principal);assert.equal(status.phase,'complete');assert.equal(status.imported,2);
   assert.deepEqual(pages,[[100,null],[100,'p2'],[99,null],[100,null],[100,'p2']]);
 });
+
+test('a growing native chat is refreshed from the exact retained row and only its source delta is credited',async t=>{
+  let clock=Date.now(),changed=false,allowOlder=false;
+  const oldTime='2026-10-01T00:00:00Z',newTime='2026-10-03T00:00:00Z';
+  const missing={...chat,chat_id:randomUUID()},wrong={...chat,created_at:'2026-09-01T00:00:00Z'};
+  const reads=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations')){
+      const rows=url.searchParams.has('workspace_id')?[wrong,chat,missing]:[chat,missing];
+      return Response.json({conversations:rows,total:rows.length,next_cursor:null});
+    }
+    if(url.pathname.endsWith('chats'))return Response.json({chats:[{id:chat.chat_id,created_at:chat.created_at,updated_at:changed?newTime:oldTime}]});
+    if(url.pathname.endsWith('history')){
+      if(url.searchParams.get('chat_id')===missing.chat_id)return new Response(null,{status:404});
+      const cursor=url.searchParams.get('before_cursor');reads.push(cursor);
+      if(!changed)return Response.json({events:[event('old',oldTime)],before_cursor:null});
+      if(cursor&&!allowOlder)return new Response(null,{status:429,headers:{'retry-after':'2'}});
+      return Response.json(cursor?{events:[event('old',oldTime)],before_cursor:null}:{events:[event('new',newTime)],before_cursor:'older'});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<4;i++)await advance(f.reopen(),id);
+  clock+=60_000;for(let i=0;i<9;i++)await advance(f.reopen(),id);
+  assert.deepEqual(reads,[null]);assert.equal((await f.service.status(principal)).events,1);
+  changed=true;clock+=31*60_000;
+  for(let i=0;i<15;i++)await advance(f.reopen(),id);
+  assert.deepEqual(reads,[null,null,'older']);
+  assert.equal((await f.service.status(principal)).events,1);
+  allowOlder=true;clock+=3_000;
+  for(let i=0;i<10;i++)await advance(f.reopen(),id);
+  const status=await f.service.status(principal);
+  assert.equal(status.imported,1);assert.equal(status.events,2);assert.equal(status.pages,2);
+  assert.equal(status.total,3);assert.equal(status.processed,2);assert.equal(status.blocked,1);
+  const {rows:[snap]}=await f.database.pool.query('SELECT source_version,counts FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
+  assert.equal(snap.source_version.toISOString(),new Date(newTime).toISOString());assert.deepEqual(snap.counts,{events:2,turns:0,pages:2});
+  clock+=31*60_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
+  assert.deepEqual(reads,[null,null,'older','older']);
+});
+
+test('a completed legacy chat can verify a newly observed native revision once without recounting the original import',async t=>{
+  let clock=Date.now();
+  const version='2026-10-08T00:00:00Z',missing={...chat,chat_id:randomUUID()},reads=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[chat,missing],total:2,next_cursor:null});
+    if(url.pathname.endsWith('chats'))return Response.json({chats:[{id:chat.chat_id,created_at:chat.created_at,updated_at:version}]});
+    if(url.pathname.endsWith('history')){
+      if(url.searchParams.get('chat_id')===missing.chat_id)return new Response(null,{status:404});
+      reads.push(chat.chat_id);return Response.json({events:[event('saved')],before_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});await advance(f.service,id);await advance(f.service,id);
+  await f.database.pool.query('DELETE FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
+  clock+=60_000;for(let i=0;i<12;i++)await advance(f.reopen(),id);
+  assert.equal(reads.length,2);assert.equal((await f.service.status(principal)).imported,1);assert.equal((await f.service.status(principal)).events,1);
+  clock+=31*60_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
+  assert.equal(reads.length,2);
+});
+
+test('an explicit snapshot recheck still requires the matching retained native chat and rejects an empty placeholder',async t=>{
+  let clock=Date.now(),placeholder=false;
+  const missing={...chat,chat_id:randomUUID()},reads=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[chat,missing],total:2,next_cursor:null});
+    if(url.pathname.endsWith('chats'))return Response.json({chats:[{id:chat.chat_id,created_at:chat.created_at,updated_at:chat.updated_at}]});
+    if(url.pathname.endsWith('history')){
+      if(url.searchParams.get('chat_id')===missing.chat_id)return new Response(null,{status:404});
+      reads.push(chat.chat_id);
+      return Response.json({thread_id:chat.chat_id,events:placeholder?[]:[event('real',chat.updated_at)],before_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});await advance(f.service,id);await advance(f.service,id);
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query('UPDATE opencrawl_replicas_snapshots SET verify_next=true WHERE namespace=$1 AND tenant=$2',scope);
+  placeholder=true;clock+=60_000;for(let i=0;i<12;i++)await advance(f.reopen(),id);
+  const {rows:[snap]}=await f.database.pool.query('SELECT verify_next,counts FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',scope);
+  assert.equal(snap.verify_next,true);assert.equal(snap.counts.events,1);assert.ok(reads.length>1);
+  const status=await f.service.status(principal);assert.equal(status.imported,1);assert.equal(status.events,1);
+  placeholder=false;clock+=31*60_000;for(let i=0;i<15;i++)await advance(f.reopen(),id);
+  assert.equal((await f.database.pool.query('SELECT verify_next FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',scope)).rows[0].verify_next,false);
+});
