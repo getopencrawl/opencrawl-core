@@ -207,7 +207,7 @@ test('SQLite keeps the actual MCP search/fetch interface, controls and connector
   assert.equal((await client.callTool({name: 'fetch', arguments: {id: all.results.find(r => r.source === 'sessions').id}})).isError, true);
 });
 
-test('Claude client application survives ingestion, scoped search and fetch', async t => {
+for (const harness of ['codex', 'claude-code']) test(harness + ' client application survives ingestion, scoped search and fetch', async t => {
   const {endpoint, principal} = await fixture(t);
   const store = memorySessionStore(), prefix = 'capture-v1';
   const ingest = createSessionIngest({store, prefix});
@@ -216,7 +216,7 @@ test('Claude client application survives ingestion, scoped search and fetch', as
   const workspace = createWorkspaceSearch({sessions});
   for (const clientApp of ['t3-code', 'conductor', undefined, 'unrecognized']) {
     const sessionId = clientApp ?? 'legacy';
-    await ingest.putBatch(principal, {schemaVersion: 1, owner: principal, harness: 'claude-code',
+    await ingest.putBatch(principal, {schemaVersion: 1, owner: principal, harness,
       origin: 'unknown', installationId: 'fixture', sessionId, clientApp, attachments: [],
       events: [{id: 'event', kind: 'message', data: {role: 'user', content: 'attribution fixture'}}]});
   }

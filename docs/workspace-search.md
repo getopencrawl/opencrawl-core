@@ -81,9 +81,10 @@ evidence can come from subagents. Search includes every origin by default.
 The field already exists in session projections, so this control needs no
 mapping change or additional backfill.
 
-Claude Code capture also records `provenance.clientApp` when its native session
-identifies T3 Code (`t3-code`) or matches a Claude chat in Conductor on macOS
-(`conductor`). Use `filters.clientApps` to find those sessions. Older or
+Codex and Claude Code capture record `provenance.clientApp` when the native
+launcher identifies T3 Code (`t3-code`) or the native session ID and harness
+match a chat in Conductor on macOS (`conductor`). Standard capture setup
+enables this automatically. Use `filters.clientApps` to find those sessions. Older or
 unidentified captures omit the field.
 
 `facets` requests any of source/kind/author/harness/origin/clientApp/provider/repository/project/
