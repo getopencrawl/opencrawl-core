@@ -3,6 +3,7 @@ import {ReplicasProviderError,type ReplicasResponseInfo,type replicasApi} from '
 import {deferredHistory,emptyCheckpoint} from './replicas-deferred.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {issueFor,retryDelay} from './replicas-recovery.mjs';
+import {sourceRevision,snapshotsForPage,type WorkspaceVersion} from './replicas-snapshots.mjs';
 import {canonical,replicasDigest} from './replicas-events.mjs';
 
 type Client=Pick<ApplicationDatabase['pool'],'query'>;
@@ -27,13 +28,13 @@ export async function nextWorkspaceExportReview(client:Client,scope:Scope,sweep:
  * export page per activity, under the same tenant lock as the ordinary queue. */
 export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:readonly string[],api:ReturnType<typeof replicasApi>,now:number,sweep:boolean){
   const [namespace,tenant,importId]=scope;
-  const result=await client.query<{workspace:string;chat_ids:string[]|null;export_check:Review|null}>(`SELECT workspace,chat_ids,export_check
+  const result=await client.query<{workspace:string;result:string;chat_ids:string[]|null;chat_versions:Record<string,WorkspaceVersion>;export_check:Review|null}>(`SELECT workspace,result,chat_ids,chat_versions,export_check
     FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible} AND ${dueAt}<=$5
     ORDER BY checked_at,workspace LIMIT 1`,[...scope,sweep,new Date(now)]);
   const row=result.rows[0];
   if(!row)return {requested:false,added:0};
   const workspace=row.workspace,args=[...scope,workspace],at=new Date(now).toISOString();
-  if(!row.chat_ids){
+  if(!row.chat_ids||sweep&&row.result==='unobserved'){
     await observeReplicasWorkspace(client,{namespace,tenant,importId,workspace},now,()=>api.workspaceChats(workspace));
     return {requested:true,added:0};
   }
@@ -95,15 +96,28 @@ export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:
       [namespace,tenant,workspace,page.conversations.map(chat=>chat.chat_id)]);
     for(const item of existing.rows)knownIds.add(item.id);
   }
-  let added=0;
+  const completedOnPage=sweep?page.conversations.filter(chat=>row.chat_versions[chat.chat_id]&&done.has(replicasDigest(workspace+':'+chat.chat_id))).map(chat=>chat.chat_id):[];
+  const snapshots=await snapshotsForPage(client,scope,workspace,completedOnPage);
+  let added=0,refreshed=0;
   for(const chat of page.conversations){
     const listed=unknown.delete(chat.chat_id);
-    if((!sweep&&!listed)||knownIds.has(chat.chat_id)||done.has(replicasDigest(workspace+':'+chat.chat_id)))continue;
+    if((!sweep&&!listed)||knownIds.has(chat.chat_id))continue;
+    const position=emptyCheckpoint(),complete=done.has(replicasDigest(workspace+':'+chat.chat_id));
+    if(complete){
+      const native=row.chat_versions[chat.chat_id];
+      if(!sweep||!native)continue;
+      const revision=sourceRevision(chat,native),prior=snapshots.get(chat.chat_id);
+      if(!revision||prior&&!prior.verify_next&&Date.parse(revision)<=prior.source_version.getTime())continue;
+      // Legacy completed sessions carry no source watermark. Verify their
+      // current revision once, then share the same revision gate as new imports.
+      position.refresh={revision,baseline:prior?.counts??null};refreshed++;
+    }
     knownIds.add(chat.chat_id);
-    await pending.save(chat,emptyCheckpoint(),{at,operation:'catalog',reason:'newly_exported',decision:'continue',attempt:0,
+    await pending.save(chat,position,{at,operation:'catalog',reason:complete?'source_updated':'newly_exported',decision:'continue',attempt:0,
       elapsedMs:0,importId,workspaceId:workspace,chatId:chat.chat_id},at);
     added++;
   }
+  if(refreshed)console.info(JSON.stringify({event:'replicas.import.refresh_queued',tenantId:tenant,importId,workspaceId:workspace,refreshed}));
   let inconsistency:string|undefined;
   if(previous.total!==undefined&&previous.total!==page.total)inconsistency='total_changed';
   else if(examined>page.total)inconsistency='exceeded_total';

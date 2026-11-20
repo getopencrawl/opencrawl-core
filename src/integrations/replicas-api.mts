@@ -81,7 +81,7 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
     identity:()=>get('identity','whoami',z.object({organization:z.object({id:uuid,name:z.string()}),caller:z.string()})),
     conversations:(next?:string|null,workspaceId?:string,observe?:(info:ReplicasResponseInfo)=>void,limit=100)=>get('catalog','organization/conversations?'+new URLSearchParams({limit:String(limit),...(next?{cursor:next}:{}),...(workspaceId?{workspace_id:workspaceId}:{})}),conversationsSchema,undefined,observe),
     workspaceChats:(workspaceId:string)=>get('workspace_chats','replica/'+workspaceId+'/chats',
-      z.object({chats:z.array(z.object({id:z.string()})),waking:z.boolean().optional()})),
+      z.object({chats:z.array(z.object({id:z.string(),created_at:z.string().optional(),updated_at:z.string().optional()})),waking:z.boolean().optional()})),
     async history(conversation:ReplicasConversation,before?:string|null,limit=100,observe?:(info:ReplicasResponseInfo)=>void){
       const page=await get('history','replica/'+conversation.workspace_id+'/history?'+new URLSearchParams({chat_id:conversation.chat_id,limit:String(limit),...(before?{before_cursor:before}:{})}),historySchema,limit===1?singleHistoryPageBytes:undefined,observe);
       if(page.waking===true)throw new ReplicasPageError('waking','Replicas is preparing the workspace history.');
