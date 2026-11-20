@@ -11,7 +11,7 @@ import {claudeDesktopHistories,defaultClaudeDesktopSessionsRoot} from './desktop
 
 export const backfillNotice = 'Import local Claude Code, Codex and Antigravity history, including desktop coding sessions and host-mirrored Claude Desktop transcripts. Messages, tool arguments/results and available attachments will be shared with your signed-in OpenCrawl team and attributed to you. Cloud-only chats and VM-only records are not included.';
 type Selection = 'all'|TranscriptHarness;
-export type HistoryFile={harness:TranscriptHarness;path:string;bytes:number;ino:number;mtimeMs:number};
+export type HistoryFile={harness:TranscriptHarness;path:string;bytes:number;ino:number;mtimeMs:number;scope?:{sessionId:string;project:string|null;blocks:string[]}};
 export function selection(value = 'all'): Selection {
   const normalized = normalizeHarness(value);
   if (!['all','claude-code','codex','antigravity'].includes(normalized)) throw new CliError('INVALID_USAGE','Choose all, claude-code, codex, or antigravity.',64);
@@ -22,6 +22,13 @@ function configFor(api:string) {
   if(!config || config.disabled)throw new CliError('CAPTURE_NOT_INSTALLED','Run opencrawl collect install first.');
   if(config.api!==api)throw new CliError('CAPTURE_API_MISMATCH','Use the installed collector’s --api URL, or run collect install with the new URL first.');
   return config;
+}
+export function defaultHistoryRoots() {
+  return {roots:{
+    'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),
+    codex:process.env.CODEX_HOME||join(homedir(),'.codex'),
+    antigravity:process.env.ANTIGRAVITY_HOME||(!process.env.CLAUDE_CONFIG_DIR&&!process.env.CODEX_HOME?join(homedir(),'.gemini'):undefined),
+  },claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()};
 }
 /** File metadata only: preview never reads transcript contents, spools data, or contacts the server. */
 export function inventory(config:Pick<CaptureConfig,'roots'|'claudeDesktopSessionsRoot'>, selected:Selection) {
@@ -79,11 +86,7 @@ export function backfillPreview(api:string, selected:Selection='all') {
   if(config&&config.api!==api)throw new CliError('CAPTURE_API_MISMATCH','Use the installed collector’s --api URL, or run collect install with the new URL first.');
   // Metadata discovery is useful before consent and must not install hooks,
   // create capture state, authenticate, or read transcript contents.
-  const roots=config??{roots:{
-    'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),
-    codex:process.env.CODEX_HOME||join(homedir(),'.codex'),
-    antigravity:process.env.ANTIGRAVITY_HOME||(!process.env.CLAUDE_CONFIG_DIR&&!process.env.CODEX_HOME?join(homedir(),'.gemini'):undefined),
-  },claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()};
+  const roots=config??defaultHistoryRoots();
   const {sources}=inventory(roots,selected);
   return {status:'preview',api,owner:config?.authPending?null:config?.owner??null,sources,notice:backfillNotice,
     nextStep:'Ask the user whether to import Claude, Codex, Antigravity, all, or skip. Only after they choose, run opencrawl collect backfill --harness <claude-code|codex|antigravity|all> --yes --api '+api+'. Install capture with the approved recording scope before importing. To skip during setup, use collect install --backfill skip.'};

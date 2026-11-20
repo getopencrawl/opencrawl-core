@@ -29,6 +29,9 @@ import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 import {replicasAttribution,replicasEventAttribution,replicasTitle,type ReplicasTitle} from './replicas.ts';
 import {enqueueLiveBatch,pendingLiveSince,isPendingLive,recoverLiveSeals,sealLiveBatches} from './live-batches.ts';
 import {attachmentReceipts} from './attachment-receipts.ts';
+import {historyBlocks,historyLineChunks} from './history-snapshot.ts';
+import type {HistoryFile} from './backfill.ts';
+import {inHistoryProject} from './policy.ts';
 import {archiveChunks} from './archive.ts';
 
 const compressBatch=promisify(gzip);
@@ -398,17 +401,24 @@ function leadingCodexRecord(fd: number, size: number, required: boolean) {
 }
 
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:{bytes:number;ino:number;mtimeMs:number},{sessionScoped=false,sessionPath}:{sessionScoped?:boolean,sessionPath?:string}={}) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:Pick<HistoryFile,'bytes'|'ino'|'mtimeMs'|'scope'>,{sessionScoped=false,sessionPath}:{sessionScoped?:boolean,sessionPath?:string}={}) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
   const spool=async(meta:any,events:any[],attachments:any[])=>{
+    if(events.length&&approvedFile?.scope){
+      const {sessionId,project}=approvedFile.scope;
+      if(meta.sessionId!==sessionId||!inHistoryProject(meta.cwd,project))throw new CliError('HISTORY_SCOPE_CHANGED','Transcript identity or project differs from the reviewed selection.');
+    }
     enqueue(config,meta,events,attachments);
     await onEnqueued?.();
   };
   const path=transcriptAllowed(file,config,harness,reconcileHistory);
   const desktopAudit=harness==='claude-code'&&basename(path)==='audit.jsonl'&&isClaudeDesktopTranscript(path,config);
-  const stateFile=join(captureDir(),'state',hash(harness+path)+'.json');
+  // A bounded import must neither inherit nor advance the live capture cursor.
+  const stateFile=approvedFile?.scope
+    ? join(captureDir(),'history-cursors',hash(JSON.stringify([config.api,config.owner.tenantId,config.owner.userId,config.installationId,harness,path,approvedFile.scope.blocks]))+'.json')
+    : join(captureDir(),'state',hash(harness+path)+'.json');
   return withSessionLock('capture:'+stateFile,async()=>{
     const scoped=sessionScoped?assertSessionTranscriptPath(config,harness,hook.session_id,harness==='antigravity'?resolveAntigravityTranscript(file):file,sessionPath??file):null;
     if(scoped&&scoped.path!==path)throw new CliError('CAPTURE_SESSION_PATH_REJECTED','Native transcript changed before reading');
@@ -418,6 +428,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     let archiveComplete=false;
     if(compressed) {
       if(old.archiveSize===source.size && old.archiveMtime===source.mtimeMs && old.ino===source.ino && (!reconcileHistory || old.parserVersion===2)) {
+        if(approvedFile?.scope)return old.meta;
         const platform=await platformTitle(config,old.meta);
         if(platform)capturePlatformTitle(config,old.meta,platform,reconcileHistory?'history':'live');else captureCodexTitle(config,old.meta,sessionScoped,reconcileHistory?'history':'live');
         atomicJson(stateFile, old);
@@ -509,6 +520,21 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       if(p.cli_version || r.version)meta.harnessVersion=p.cli_version??r.version;
     }
     const chunks=async function*():AsyncGenerator<Buffer>{
+      if(approvedFile?.scope){
+        const expected=approvedFile.scope.blocks;
+        let count=0,skip=offset;
+        const sourceChunks=compressed?archiveChunks(path,source.size,done=>{archiveComplete=done;}):createReadStream(path,{fd,autoClose:false,start:0,end:st.size-1});
+        const verified=historyBlocks(sourceChunks,(digest,index)=>{
+          if(expected[index]!==digest)throw new CliError('HISTORY_PLAN_CHANGED','Reviewed transcript bytes changed during import.');
+          count++;
+        });
+        for await(const bytes of historyLineChunks(verified)){
+          if(skip>=bytes.length){skip-=bytes.length;continue;}
+          yield bytes.subarray(skip);skip=0;
+        }
+        if(skip||count!==expected.length)throw new CliError('HISTORY_PLAN_CHANGED','Reviewed transcript ended early.');
+        return;
+      }
       if(compressed){yield* archiveChunks(path,source.size,complete=>{archiveComplete=complete;});return;}
       while(offset<st.size) {
         // Ordinary reads stay small even for multi-gigabyte histories. Grow only
@@ -570,7 +596,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd || meta.clientApp!==priorMeta.clientApp)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed?.kind==='session_title') {
-              const platform=await platformTitle(config,meta);
+              const platform=approvedFile?.scope?undefined:await platformTitle(config,meta);
               if(platform)parsed.data={title:platform.title,titleType:'custom'};
               if(parsed.data.titleType==='custom'){meta.customTitle=parsed.data.title;meta.customTitleTime=platform?.timestamp??parsed.timestamp;}
               // A later automatic suggestion must not overwrite a manual rename.
@@ -630,6 +656,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
         atomicJson(stateFile,{offset,ino:source.ino,parserVersion,meta,archiveSize:source.size,archiveMtime:source.mtimeMs});
       }
     } finally{if(fd!==undefined)closeSync(fd);}
+    if(approvedFile?.scope)return meta;
     const platform=await platformTitle(config,meta);
     if(platform?capturePlatformTitle(config,meta,platform,reconcileHistory?'history':'live'):harness==='codex'&&captureCodexTitle(config,meta,sessionScoped,reconcileHistory?'history':'live'))atomicJson(stateFile,{...read(stateFile,old),meta});
     return meta;

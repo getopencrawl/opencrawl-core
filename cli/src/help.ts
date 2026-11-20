@@ -1,5 +1,18 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
+  if(command==='history')return `Usage: opencrawl history list --limit N [--project DIR] [--harness all|claude-code|codex|antigravity] --json
+       opencrawl history import --plan-id ID --yes --json
+
+List up to N distinct local sessions across the selected clients by latest native
+event time (file modification time if undated). With --project, every captured
+working directory must be known and inside that directory or a descendant.
+Ambiguous multi-session files and excluded sessions are skipped. Listing scans
+local transcripts and returns metadata only. An enrolled profile also saves a
+private, destination-bound plan. Use data.planId for the approved import.
+Import reads only the reviewed session files through their listed byte bounds.
+Later sessions and appends require a fresh plan. Retry with the same ID after
+an interruption. The uploaded count measures batches. Run search to verify indexing.
+`+common;
   if(command==='setup')return `Usage: opencrawl setup [--api URL]
        opencrawl setup --client claude-code [--api URL]
        opencrawl setup --json

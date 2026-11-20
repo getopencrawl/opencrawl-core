@@ -39,6 +39,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   verify-installation  Prove a selected client's fresh session is searchable
   login       Sign in with a browser approval and device code
   logout      Remove this deployment's credentials from this machine
+  history     List the last N local sessions and import a reviewed selection
   memories    Scan, verify or import your memory files from another client
   provision   With --capture-new, connect all detected agents to Cloud and record future sessions only
   signup      Register this agent and activate its own workspace without a browser
@@ -310,16 +311,24 @@ export async function main(args = process.argv.slice(2)) {
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
     const manyFetch=command==='fetch'||command==='board'&&parsed.positionals[1]==='fetch';
-    if (!(command==='board'&&agentBoardCommands.has(parsed.positionals[1])) && parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup','signup'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (!(command==='board'&&agentBoardCommands.has(parsed.positionals[1])) && parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup','signup','history'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     informational=hasLocalFlag(args)||Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && !['skills','setup','verify-installation'].includes(command)) throw new CliError('INVALID_USAGE', 'Use --client with skills or installation verification.', 64);
+    if(command==='history'){
+      informational=true;
+      const explicit=(parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL;
+      const api=apiOrigin(explicit??readCaptureConfig()?.api??DEFAULT_API_ORIGIN);
+      const {historyCommand}=await import('./capture/history.ts');
+      const result=await withEnvironmentTokenOrigin(explicit,()=>historyCommand(parsed.positionals[1],api,parsed.values));
+      emit(result,JSON.stringify(result,null,2));return 0;
+    }
     if(parsed.values.local){const data=localSetupStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
     if(command==='setup'&&parsed.positionals[1]==='hooks'){const data=await setupHookStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
     if(command==='setup'||command==='verify-installation'){
