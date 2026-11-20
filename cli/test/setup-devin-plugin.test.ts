@@ -96,6 +96,7 @@ cloudRuntimeTest('fresh Cloud startup binds the verified native owner through sh
  const state=readSetupState({api:f.api,tenantId:'fixture-tenant',userId:'workload_devin_fixture'})!;
  expect(state.selections).toEqual({plugins:{devin:true},forward:{devin:true},history:{devin:false}});
  expect(state.pluginResults).toMatchObject([{client:'devin',status:'installed'}]);
+ expect(f.observations[0]).toMatchObject({clients:[{client:'devin',installed:true,forward:true}]});
  expect(f.observations.at(-1)).toMatchObject({clients:[{client:'devin',installed:true,forward:true,hookTrust:'not_required'}]});
  const inbox=readdirSync(join(captureDir(),'daemon','inbox'));expect(inbox.some(name=>name.startsWith('startup-'))).toBe(true);expect(inbox.some(name=>!name.startsWith('startup-'))).toBe(true);
  expect(readFileSync(join(captureDir(),'config.json'),'utf8')).not.toContain('synthetic.');
