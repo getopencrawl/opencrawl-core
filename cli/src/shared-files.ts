@@ -2,7 +2,7 @@ import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {isAbsolute, join, relative, sep} from 'node:path';
+import {dirname, isAbsolute, join, relative, sep} from 'node:path';
 import {promisify} from 'node:util';
 import {commandForSelf, readCaptureConfig} from './capture/runtime.ts';
 import {nativeId} from './context-check-events.ts';
@@ -70,20 +70,24 @@ function gitEnvironment() {
   for (const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_CONFIG_COUNT','GIT_CONFIG_PARAMETERS']) delete env[key];
   return env;
 }
-async function projectRoot() {
-  const cwd = realpathSync(process.cwd());
-  try { return realpathSync((await git('git', ['rev-parse','--show-toplevel'], {cwd,env:gitEnvironment()})).stdout.trimEnd()); }
-  catch { return cwd; }
+// Check the filesystem marker, including the .git file used by linked worktrees.
+// This also works when Git rejects a checkout owned by a different OS account.
+function enclosingCheckout(path: string): string | undefined {
+  let outermost: string | undefined;
+  for (let directory = path; ; directory = dirname(directory)) {
+    if (exists(join(directory, '.git'))) outermost = directory;
+    if (dirname(directory) === directory) return outermost;
+  }
 }
 function freshScratch(project: string) {
-  const temp = realpathSync(tmpdir());
-  if (!contains(project, temp)) return mkdtempSync(join(temp, 'opencrawl-files-'));
-  const home = realpathSync(homedir());
+  const temp = realpathSync.native(tmpdir());
+  if (!contains(project, temp) && !enclosingCheckout(temp)) return mkdtempSync(join(temp, 'opencrawl-files-'));
+  const home = realpathSync.native(homedir());
   const fallback = join(home, '.cache', 'opencrawl', 'scratch');
-  if (!contains(project, fallback)) {
+  if (!contains(project, fallback) && !enclosingCheckout(home)) {
     mkdirSync(fallback, {recursive:true,mode:0o700});
-    const directory = realpathSync(fallback);
-    if (!contains(project, directory)) return mkdtempSync(join(directory, 'opencrawl-files-'));
+    const directory = realpathSync.native(fallback);
+    if (!contains(project, directory) && !enclosingCheckout(directory)) return mkdtempSync(join(directory, 'opencrawl-files-'));
   }
   throw new CliError('FILES_SCRATCH_UNAVAILABLE', 'Set TMPDIR to a writable directory outside the project.', 2);
 }
@@ -95,7 +99,8 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
   const {repo} = await discoverRepo(api);
   const key = bindingKey(api, repo, session);
   const remote = api + repo.remotePath;
-  const project = await projectRoot();
+  const cwd = realpathSync.native(process.cwd());
+  const project = enclosingCheckout(cwd) ?? cwd;
   return withSessionLock('files:' + key, async () => {
     let binding = loadBinding(key);
     if (!binding || !exists(binding.scratch)) {
@@ -107,7 +112,8 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
     if (!directory?.isDirectory() || (process.getuid && (directory.uid !== process.getuid() || (directory.mode & 0o077) !== 0)))
       throw new CliError('FILES_SCRATCH_UNSAFE', 'The file session directory is no longer private.', 2);
     const path = join(scratch, 'repo');
-    if (contains(project, path) && project !== path) throw new CliError('FILES_SCRATCH_UNSAFE', 'The saved file session is inside the working project.', 2);
+    if ((contains(project, path) && project !== path) || enclosingCheckout(realpathSync.native(scratch)))
+      throw new CliError('FILES_SCRATCH_UNSAFE', 'The saved clone is inside a working project at ' + path + '. Your draft is preserved. Open a different file session.', 2);
     const hooks = join(scratch, 'hooks');
     mkdirSync(hooks, {mode:0o700, recursive:true});
     if (!exists(hooks)?.isDirectory()) throw new CliError('FILES_SCRATCH_UNSAFE', 'The private hooks directory was replaced.', 2);

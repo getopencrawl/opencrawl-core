@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {mkdtemp, mkdir, readFile, realpath, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, writeFile} from 'node:fs/promises';
 import {isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {tmpdir} from 'node:os';
 
@@ -26,15 +26,15 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     const token = 'fixture-token-alice';
     const env = {...process.env, OPENCRAWL_CONFIG_HOME:join(home,'config'), OPENCRAWL_TOKEN:token,
       OPENCRAWL_API_URL:api, OPENCRAWL_NO_UPDATE:'1', HOME:home, USERPROFILE:home,
-      TMPDIR:temp, TEMP:temp, TMP:temp, GIT_CONFIG_GLOBAL:gitProfile, GIT_CONFIG_NOSYSTEM:'1', GIT_TERMINAL_PROMPT:'0'};
+      GIT_CEILING_DIRECTORIES:project, TMPDIR:temp, TEMP:temp, TMP:temp, GIT_CONFIG_GLOBAL:gitProfile, GIT_CONFIG_NOSYSTEM:'1', GIT_TERMINAL_PROMPT:'0'};
     const entry = [process.execPath,resolve(import.meta.dir,'../src/cli.ts')];
-    async function run(cmd: string[], options: {token?:string; input?:string; failure?:boolean} = {}) {
+    async function run(cmd: string[], options: {token?:string; input?:string; failure?:boolean; stderr?:boolean} = {}) {
       const child = Bun.spawn(cmd,{cwd,env:{...env,OPENCRAWL_TOKEN:options.token ?? token},
         stdin:new Blob([options.input ?? '']),stdout:'pipe',stderr:'pipe'});
       const [out,err,code] = await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
       if (options.failure) expect(code).not.toBe(0);
       else if (code !== 0) throw new Error('Command failed: ' + err + out);
-      return out.trim();
+      return (options.stderr ? err : out).trim();
     }
     const open = (session:string) => [...entry,'files','open','--api',api,'--session',session];
     await run(['git','-C',project,'init','--initial-branch=customer-draft']);
@@ -49,10 +49,13 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     const [a,resume,b] = await Promise.all([run(open('alpha')),run(open('alpha')),run(open('beta'))]);
     expect(a).toBe(resume);
     expect(a).not.toBe(b);
+    // Directly inspect the checkout on disk as well as comparing canonical paths.
+    const nestedClones = (await readdir(temp)).filter(name => name.startsWith('opencrawl-files-'));
+    expect(nestedClones, 'A new shared clone was created under '+temp).toEqual([]);
     for (const path of [a,b]) {
       expect(isAbsolute(path)).toBe(true);
       const diff = relative(await realpath(project),await realpath(path));
-      expect(diff === '..' || diff.startsWith('..'+sep) || isAbsolute(diff)).toBe(true);
+      expect(diff === '..' || diff.startsWith('..'+sep) || isAbsolute(diff), JSON.stringify({project,path,diff})).toBe(true);
     }
     const config = await readFile(join(a,'.git','config'),'utf8');
     expect(config).not.toContain(token);
@@ -90,6 +93,17 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     expect(await run(['git','-C',project,'branch','--show-current'])).toBe('customer-draft');
     expect(await run(['git','-C',project,'show',':notes'])).toBe('customer WIP');
     expect(await readFile(join(project,'notes'),'utf8')).toBe('customer WIP plus unstaged updates');
+
+    // An older CLI could put a clone under a checkout when Git couldn't find its root.
+    const record = join(home,'config','opencrawl','files',key+'.json');
+    const binding = JSON.parse(await readFile(record,'utf8'));
+    const misplaced = join(temp,'older-clone');
+    await rename(binding.scratch,misplaced);
+    await writeFile(record,JSON.stringify({...binding,scratch:misplaced}));
+    const message = await run(open('alpha'),{failure:true,stderr:true});
+    expect(message).toContain(join(misplaced,'repo'));
+    expect(await readFile(join(misplaced,'repo','unsent.txt'),'utf8')).toBe('uncommitted draft');
+    expect(JSON.parse(await readFile(record,'utf8')).scratch).toBe(misplaced);
   } finally {
     server.kill('SIGTERM');
     await server.exited;
