@@ -288,10 +288,23 @@ export function createObjectStore(config:S3Config) {
  */
 export function awsCredentials({env = process.env, fetch: fetchImpl = globalThis.fetch} = {}) {
   let cached: AwsCredentials | null = null;
+  let pending: Promise<AwsCredentials> | null = null;
   return async () => {
     if (cached && (!cached.expiration || cached.expiration - Date.now() > 5 * 60_000)) return cached;
-    cached = await loadCredentials(env, fetchImpl);
-    return cached;
+    // One shared client serves many concurrent uploads. Coalesce refreshes onto a
+    // single in-flight request so an expiring role cannot cause a burst of
+    // container/STS/IMDS calls. Clear the slot on settle before any waiter runs
+    // so a slow failure is retried by the next caller instead of being cached.
+    if (!pending) {
+      let refresh: Promise<AwsCredentials>;
+      refresh = loadCredentials(env, fetchImpl)
+        .then(credentials => { cached = credentials; return credentials; })
+        .finally(() => { if (pending === refresh) pending = null; });
+      pending = refresh;
+      // Mark the shared promise handled; every caller also observes its result.
+      void refresh.catch(() => {});
+    }
+    return pending;
   };
 }
 
