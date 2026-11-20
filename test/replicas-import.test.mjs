@@ -751,3 +751,33 @@ test('an unavailable filtered export resumes its saved cursor after Retry-After'
   await advance(f.reopen(),id);
   assert.deepEqual(cursors,[null,'later','later']);assert.equal((await f.service.status(principal)).phase,'complete');
 });
+
+test('a short terminal export shifts its next page boundary and compares the rows actually returned',async t=>{
+  let clock=Date.now(),fixed=false;
+  const hidden={...chat,chat_id:randomUUID()},pages=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('history'))return Response.json({events:[event('available')],before_cursor:null});
+    if(url.pathname.endsWith('conversations')&&url.searchParams.has('workspace_id')){
+      const limit=Number(url.searchParams.get('limit')),cursor=url.searchParams.get('cursor');
+      pages.push([limit,cursor]);
+      // Return the same ordered rows under two different page boundaries.
+      if(limit===100&&!cursor)return Response.json({conversations:[chat],total:3,next_cursor:'p2'});
+      const conversations=limit===99?[chat,chat]:[chat];
+      return Response.json({conversations:fixed?[...conversations,hidden]:conversations,total:3,next_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query("UPDATE opencrawl_replicas_workspace_inventories SET result='ready',chat_ids='{}' WHERE namespace=$1 AND tenant=$2",scope);
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state||$3::jsonb WHERE namespace=$1 AND tenant=$2",[...scope,JSON.stringify({workspaceChecks:[{id:chat.workspace_id,at:clock}]})]);
+  const failure=async()=>(await f.database.pool.query("SELECT export_check->'lastFailure' f FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2",scope)).rows[0].f;
+  for(let i=0;i<4;i++)await advance(f.reopen(),id);
+  const first=await failure();assert.equal(first.reason,'terminal_count');assert.equal(first.pageLimit,100);
+  clock+=60_000;await advance(f.reopen(),id);
+  const second=await failure();assert.equal(second.pageLimit,99);assert.equal(second.catalogHash,first.catalogHash);
+  const pause=await f.reopen().runStep(job(id));assert.equal(pause.delayMs,30*60_000);
+  fixed=true;clock+=pause.delayMs;
+  for(let i=0;i<5;i++)await advance(f.reopen(),id);
+  const status=await f.service.status(principal);assert.equal(status.phase,'complete');assert.equal(status.imported,2);
+  assert.deepEqual(pages,[[100,null],[100,'p2'],[99,null],[100,null],[100,'p2']]);
+});
