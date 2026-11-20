@@ -1,9 +1,11 @@
+import {matchCaptures,type CaptureFingerprints} from '../sessions/capture-matches.mjs';
+import type {CaptureLookup} from '../integrations/replicas-threads.mjs';
 import {activityInput,admitActivity} from '../application/agent-activity.mjs';
 import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
-interface WorkspaceOptions {sessions?: SearchAdapter & {memories?: SearchAdapter}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
+interface WorkspaceOptions {capturePairs?:CaptureLookup;sessions?: SearchAdapter & {memories?: SearchAdapter;captureFingerprints?:CaptureFingerprints}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
 import {serviceError} from '../sessions/types.mjs';
 import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
@@ -56,7 +58,7 @@ const WINDOW = 100, TTL = 5 * 60_000;
  * recognized machine approval records after evidence, unless approvals are queried.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
-export function createWorkspaceSearch({sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
+export function createWorkspaceSearch({capturePairs,sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
   function sign(value: string) {return createHmac('sha256', cursorKey).update(value).digest('base64url');}
   function encode(payload: SearchCursor) {const data = Buffer.from(JSON.stringify(payload)).toString('base64url'); return data + '.' + sign(data);}
   function decode(cursor: string, fingerprint: string): SearchCursor {
@@ -104,8 +106,9 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
       });
       const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
-      const deduped = query.dedupe ? groupDuplicates(prioritized.results) : {results: prioritized.results, suppressed: 0};
-      const grouped=groupResources(deduped.results,query.groupBy);
+      const captures=capturePairs&&(query.dedupe||query.groupBy==='session')?await matchCaptures(principal,groups.find(g=>g.source==='sessions')?.hits??[],capturePairs,sessions?.captureFingerprints,query.dedupe):undefined;
+      const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
+      const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
       const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
         const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
         return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));

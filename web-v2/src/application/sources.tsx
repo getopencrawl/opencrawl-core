@@ -71,12 +71,12 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   function replicasActions(source:SourceCard){
     const history=source.history;
     const setup=canSetUpReplicas&&['syncing','synced','connected'].includes(source.state);
-    if(source.state!=='syncing'||!history)return setup?<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>:undefined;
+    if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup?<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>:undefined;
     return <div className="actions">{setup&&<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>}
       <Button disabled={pending!==null} onClick={()=>void run(source.provider,async request=>{
         await adapter.replicasHistory!({action:'stop',id:history.id},request.signal);
         if(current(request))setSuccess('Replicas import stopped. Your progress is saved.');
-      })}>Stop import</Button></div>;
+      })}>{source.state==='synced'?'Disconnect':'Stop import'}</Button></div>;
   }
 
   function connect(source: SourceCard, key?: string) {

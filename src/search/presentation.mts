@@ -39,9 +39,22 @@ export function workspaceHit(source: string, hit: Passage, sourceRank?: number) 
 /** Conservative grouping: preserve different resources, roles, values and wording.
  * Counts describe this candidate window only. Originals remain individually fetchable.
  */
-export function groupDuplicates(hits: WorkspaceHit[]) {
+export function groupDuplicates(hits: WorkspaceHit[],matches?:ReadonlyMap<string,string>) {
   const groups = new Map<string, WorkspaceHit>(), results: WorkspaceHit[] = [];
+  const paired=new Map<string,WorkspaceHit>(),representatives=new Map<string,WorkspaceHit>();
+  if(matches?.size)for(const hit of hits){
+    const id=matches.get(hit.id)??hit.id;
+    const existing=representatives.get(id);
+    if(existing){paired.set(hit.id,existing);}else representatives.set(id,hit);
+  }
+  const resolved=new Map<string,WorkspaceHit>();
   for (const hit of hits) {
+    const other=paired.get(hit.id),same=other&&resolved.get(other.id);
+    if(same){
+      same.duplicateCount=(same.duplicateCount??0)+1;same.duplicateIds??=[];
+      if(same.duplicateIds.length<3)same.duplicateIds.push(hit.id);
+      continue;
+    }
     // Preserve indentation and line breaks: whitespace can change code meaning.
     const p = hit.provenance, normalized = hit.text.replace(/\r\n/g, '\n').replace(/[\t ]+$/gm, '').replace(/\n+$/, '');
     const scope = hit.source === 'sessions'
@@ -52,10 +65,11 @@ export function groupDuplicates(hits: WorkspaceHit[]) {
     const key = normalized.length >= 80 ? JSON.stringify([hit.source, scope, createHash('sha256').update(normalized).digest('hex')]) : hit.id;
     const existing = groups.get(key);
     if (existing) {
+      resolved.set(hit.id,existing);
       existing.duplicateCount = (existing.duplicateCount || 0) + 1;
       existing.duplicateIds ||= [];
       if (existing.duplicateIds.length < 3) existing.duplicateIds.push(hit.id);
-    } else {const group = {...hit}; groups.set(key, group); results.push(group);}
+    } else {const group = {...hit}; groups.set(key, group);resolved.set(hit.id,group); results.push(group);}
   }
   return {results, suppressed: hits.length - results.length};
 }
@@ -87,12 +101,13 @@ export function prioritizeEvidence(hits: WorkspaceHit[], query: string) {
   return {results: [...evidence, ...approvals], demoted: approvals.length};
 }
 
-export function groupResources(hits:WorkspaceHit[], mode:'none'|'resource'|'session') {
+export function groupResources(hits:WorkspaceHit[], mode:'none'|'resource'|'session',captureSessions?:ReadonlyMap<string,string>) {
   if(mode==='none')return {results:hits,suppressed:0};
   const seen=new Map<string,WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>(),results:Array<WorkspaceHit&{groupedCount?:number;groupedIds?:string[]}>=[];
   for(const hit of hits){
     const p=hit.provenance;
-    const key=JSON.stringify(hit.source==='sessions'?[hit.source,p.userId,p.harness,p.sessionId,...(mode==='session'?[]:[p.eventId||hit.id])]:
+    const session=JSON.stringify([p.userId,p.harness,p.sessionId]);
+    const key=mode==='session'&&hit.source==='sessions'?JSON.stringify(['sessions',captureSessions?.get(session)??session]):JSON.stringify(hit.source==='sessions'?[hit.source,p.userId,p.harness,p.sessionId,...(mode==='session'?[]:[p.eventId||hit.id])]:
       hit.source==='memories'?[hit.source,p.userId,p.harness,p.installationId,p.path,p.snapshotId]:
       [hit.source,p.provider,p.connectionId,p.workspaceId,p.parentKind||p.kind,p.parentId||p.sourceId||hit.id]);
     const existing=seen.get(key);

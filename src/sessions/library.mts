@@ -1,3 +1,4 @@
+import {captureKey,type CaptureLookup} from '../integrations/replicas-threads.mjs';
 import {isWorkloadUserId} from './types.mjs';
 import {promptText} from './prompt-text.mjs';
 export {promptText} from './prompt-text.mjs';
@@ -20,8 +21,10 @@ import {validParticipant, type SessionParticipant} from './participants.mjs';
 import {fail} from '../errors.mjs';
 import {capturedReplicasRecord,replicasProjection,replicasRaw,record} from './replicas-record.mjs';
 
-export interface SessionKey {userId: string; harness: string; sessionId: string}
+import type {SessionKey} from './session-reference.mjs';
+export type {SessionKey} from './session-reference.mjs';
 export interface SessionSummary extends SessionKey {
+  historyCapture?:SessionKey;
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   hosts: string[]; hostsTruncated: boolean;
   participants: SessionParticipant[]; participantsTruncated: boolean;
@@ -143,8 +146,8 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; forgetSearches?: (p:Principal,key:SessionKey)=>Promise<void>; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
-export function createSessionLibrary({store, prefix, eventIdentities, forgetSearches, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
+export interface SessionLibraryOptions extends RealmOptions {capturePairs?:CaptureLookup; store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; forgetSearches?: (p:Principal,key:SessionKey)=>Promise<void>; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
+export function createSessionLibrary({store, prefix, capturePairs, eventIdentities, forgetSearches, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
@@ -391,124 +394,159 @@ export function createSessionLibrary({store, prefix, eventIdentities, forgetSear
       const collection = reader(principal);
       if (!['all', 'mine'].includes(String(scope)) || typeof query !== 'string' || query.length > 500 || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 500) fail(400, 'Invalid session list');
       if (participant !== undefined && !validParticipant(participant)) fail(400, 'Invalid participant');
-      // Summarize from conversation records only: bookkeeping is most of the index.
-      // A Grok Bot runtime that reports only tool hooks has no messages to list by.
-      const listed = (kinds: string[]): QueryBody => ({bool: {minimum_should_match: 1, should: [{terms: {[f('kind')]: kinds}},
-        {bool: {filter: [{term: {[f('harness')]: 'grok-bot'}}, {term: {[f('kind')]: 'tool_call'}}]}}]}});
-      const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, listed(CONVERSATION), visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
-      const fields = ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)}));
-      const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
-      const restrict = (keys: Array<{key: string[]}>) => {
-        const groups = new Map<string, {userId: string; harness: string; sessionIds: string[]}>();
-        for (const bucket of keys) {
-          const key = checkKey({userId: bucket.key[0], harness: bucket.key[1], sessionId: bucket.key[2]}), id = JSON.stringify([key.userId, key.harness]);
-          const group = groups.get(id) ?? {...key, sessionIds: []}; group.sessionIds.push(key.sessionId); groups.set(id, group);
-        }
-        return {bool: {minimum_should_match: 1, should: [...groups.values()].map(group => ({bool: {filter: [
-          {term: {[f('userId')]: group.userId}}, {term: {[f('harness')]: group.harness}}, {terms: {[f('sessionId')]: group.sessionIds}},
-        ]}}))}};
-      };
-      if (participant) {
-        const matches: QueryBody[] = [{term: {[f('participantId')]: participant}}];
-        const owner = participant.startsWith('user:') ? participant.slice(5) : null;
-        const personalOwner = owner && !isWorkloadUserId(owner) ? owner : null;
-        if (personalOwner) matches.push({term: {[f('userId')]: personalOwner}});
-        // Select sessions by sender, then summarize the whole conversation.
-        // The search words may have been written by another participant.
-        type Match = {key: string[]; lastActivity: {value: number | null}};
-        let cursor: string[] | undefined, selected: Match[] = [];
-        // Walk all sender sessions in stable key order. A page limit must not
-        // hide older search matches or sort by just this sender's last message.
-        for (;;) {
-          const after: QueryBody[] = cursor ? [{bool: {minimum_should_match: 1, should: ['userId','harness','sessionId'].map((field, index) => ({bool: {filter: [
-            ...['userId','harness','sessionId'].slice(0, index).map((prefix, i) => ({term: {[f(prefix)]: cursor![i]}})), {range: {[f(field)]: {gt: cursor![index]}}},
-          ]}}))}}] : [];
-          const candidates = await collection.search(principal, {size: 0, query: {bool: {filter: [...filter, ...after, {bool: {should: matches, minimum_should_match: 1}}]}},
-            aggs: {sessions: {multi_terms: {terms: fields, size: 200, order: {_key: 'asc'}}, aggs: {
-              matching: {filter: {term: {[f('participantId')]: participant}}}, known: {filter: {exists: {field: f('participantId')}}}, unknown: {filter: {term: {[f('participantUnknown')]: true}}},
-            }}}});
-          type Candidate = {key: string[]; matching: {doc_count: number}; known: {doc_count: number}; unknown: {doc_count: number}};
-          const candidatesPage = candidates.aggregations?.sessions?.buckets as unknown as Candidate[];
-          if (!Array.isArray(candidatesPage)) throw new Error('Invalid participant matches');
-          if (!candidatesPage.length) break;
-          // Match the summary's personal-owner fallback for incomplete captures,
-          // but never promote an uploader over recorded or unknown senders.
-          const keys = candidatesPage.filter(bucket => bucket.matching.doc_count > 0 || bucket.key[0] === personalOwner && bucket.known.doc_count === 0 && bucket.unknown.doc_count === 0);
-          if (keys.length) {
-            const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
-            const matched = await collection.search(principal, {size: 0, query: {bool: {filter: [...matchFilter, restrict(keys)], ...(query.trim() ? {must: [{match: {text: {query: query.trim(), operator: 'and'}}}]} : {})}},
-              aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
-            const values = matched.aggregations?.sessions?.buckets as unknown as Match[];
-            if (!Array.isArray(values)) throw new Error('Invalid participant matches');
-            selected = [...selected, ...values].sort((a,b) => (b.lastActivity.value ?? 0) - (a.lastActivity.value ?? 0) || JSON.stringify(a.key).localeCompare(JSON.stringify(b.key))).slice(0, limit as number);
+      const load=async(window:number):Promise<SessionSummary[]>=>{
+        // Summarize from conversation records only: bookkeeping is most of the index.
+        // A Grok Bot runtime that reports only tool hooks has no messages to list by.
+        const listed = (kinds: string[]): QueryBody => ({bool: {minimum_should_match: 1, should: [{terms: {[f('kind')]: kinds}},
+          {bool: {filter: [{term: {[f('harness')]: 'grok-bot'}}, {term: {[f('kind')]: 'tool_call'}}]}}]}});
+        const filter: QueryBody[] = [{term: {[f('chunk')]: 0}}, listed(CONVERSATION), visibleTo('session', principal), ...(scope === 'mine' ? [{term: {[f('userId')]: principal.userId}}] : [])];
+        const fields = ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)}));
+        const order = [{lastActivity: 'desc'}, {_key: 'asc'}];
+        const restrict = (keys: Array<{key: string[]}>) => {
+          const groups = new Map<string, {userId: string; harness: string; sessionIds: string[]}>();
+          for (const bucket of keys) {
+            const key = checkKey({userId: bucket.key[0], harness: bucket.key[1], sessionId: bucket.key[2]}), id = JSON.stringify([key.userId, key.harness]);
+            const group = groups.get(id) ?? {...key, sessionIds: []}; group.sessionIds.push(key.sessionId); groups.set(id, group);
           }
-          const next = candidatesPage.at(-1)!.key;
-          if (JSON.stringify(next) === JSON.stringify(cursor)) throw new Error('Non-advancing participant cursor');
-          cursor = next;
-          if (candidatesPage.length < 200) break;
+          return {bool: {minimum_should_match: 1, should: [...groups.values()].map(group => ({bool: {filter: [
+            {term: {[f('userId')]: group.userId}}, {term: {[f('harness')]: group.harness}}, {terms: {[f('sessionId')]: group.sessionIds}},
+          ]}}))}};
+        };
+        if (participant) {
+          const matches: QueryBody[] = [{term: {[f('participantId')]: participant}}];
+          const owner = participant.startsWith('user:') ? participant.slice(5) : null;
+          const personalOwner = owner && !isWorkloadUserId(owner) ? owner : null;
+          if (personalOwner) matches.push({term: {[f('userId')]: personalOwner}});
+          // Select sessions by sender, then summarize the whole conversation.
+          // The search words may have been written by another participant.
+          type Match = {key: string[]; lastActivity: {value: number | null}};
+          let cursor: string[] | undefined, selected: Match[] = [];
+          // Walk all sender sessions in stable key order. A page limit must not
+          // hide older search matches or sort by just this sender's last message.
+          for (;;) {
+            const after: QueryBody[] = cursor ? [{bool: {minimum_should_match: 1, should: ['userId','harness','sessionId'].map((field, index) => ({bool: {filter: [
+              ...['userId','harness','sessionId'].slice(0, index).map((prefix, i) => ({term: {[f(prefix)]: cursor![i]}})), {range: {[f(field)]: {gt: cursor![index]}}},
+            ]}}))}}] : [];
+            const candidates = await collection.search(principal, {size: 0, query: {bool: {filter: [...filter, ...after, {bool: {should: matches, minimum_should_match: 1}}]}},
+              aggs: {sessions: {multi_terms: {terms: fields, size: 200, order: {_key: 'asc'}}, aggs: {
+                matching: {filter: {term: {[f('participantId')]: participant}}}, known: {filter: {exists: {field: f('participantId')}}}, unknown: {filter: {term: {[f('participantUnknown')]: true}}},
+              }}}});
+            type Candidate = {key: string[]; matching: {doc_count: number}; known: {doc_count: number}; unknown: {doc_count: number}};
+            const candidatesPage = candidates.aggregations?.sessions?.buckets as unknown as Candidate[];
+            if (!Array.isArray(candidatesPage)) throw new Error('Invalid participant matches');
+            if (!candidatesPage.length) break;
+            // Match the summary's personal-owner fallback for incomplete captures,
+            // but never promote an uploader over recorded or unknown senders.
+            const keys = candidatesPage.filter(bucket => bucket.matching.doc_count > 0 || bucket.key[0] === personalOwner && bucket.known.doc_count === 0 && bucket.unknown.doc_count === 0);
+            if (keys.length) {
+              const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
+              const matched = await collection.search(principal, {size: 0, query: {bool: {filter: [...matchFilter, restrict(keys)], ...(query.trim() ? {must: [{match: {text: {query: query.trim(), operator: 'and'}}}]} : {})}},
+                aggs: {sessions: {multi_terms: {terms: fields, size: window, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
+              const values = matched.aggregations?.sessions?.buckets as unknown as Match[];
+              if (!Array.isArray(values)) throw new Error('Invalid participant matches');
+              selected = [...selected, ...values].sort((a,b) => (b.lastActivity.value ?? 0) - (a.lastActivity.value ?? 0) || JSON.stringify(a.key).localeCompare(JSON.stringify(b.key))).slice(0, window);
+            }
+            const next = candidatesPage.at(-1)!.key;
+            if (JSON.stringify(next) === JSON.stringify(cursor)) throw new Error('Non-advancing participant cursor');
+            cursor = next;
+            if (candidatesPage.length < 200) break;
+          }
+          if (!selected.length) return [];
+          filter.push(restrict(selected));
         }
-        if (!selected.length) return {sessions: [], limit};
-        filter.push(restrict(selected));
-      }
-      if (query.trim() && !participant) {
-        // Select sessions containing the words, then summarize each whole session.
-        const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
-        const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
-          aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
-        const keys = (matched.aggregations?.sessions?.buckets ?? []) as unknown as Array<{key: string[]}>;
-        if (!keys.length) return {sessions: [], limit};
-        filter.push({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter({userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!})}}))}});
-      }
-      const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: limit, order}, aggs: {
-        lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
-        private: {filter: {term: {[f('private')]: true}}},
-        origin: {terms: {field: f('origin'), size: 1}}, host: hostTerms,
-        participants: {terms: {field: f('participantId'), size: 100, order: {_key: 'asc'}}, aggs: {name: {terms: {field: f('participantName'), size: 1}}}},
-        unknownParticipants: {filter: {term: {[f('participantUnknown')]: true}}},
-      }}}});
-      type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
-        origin: {buckets: Array<{key: string}>}; host: HostBuckets;
-        participants?: {buckets: Array<{key: string; name: {buckets: Array<{key: string}>}}> ; sum_other_doc_count?: number}; unknownParticipants?: {doc_count: number}};
-      const buckets = result.aggregations?.sessions?.buckets as unknown as Bucket[] | undefined;
-      if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
-      const sessions: SessionSummary[] = buckets.map(bucket => {
-        const [userId, harness, sessionId] = bucket.key;
-        if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) throw new Error('Invalid session list response');
-        const participants: SessionParticipant[] = (bucket.participants?.buckets ?? []).map(person => {
-          if (!validParticipant(person.key)) throw new Error('Invalid session participant');
-          return {id: person.key, ...(person.name.buckets[0]?.key ? {name: person.name.buckets[0].key} : {})};
-        });
-        if (!participants.length && !bucket.unknownParticipants?.doc_count && !isWorkloadUserId(userId!)) participants.push({id: 'user:' + userId!});
-        return {userId: userId!, harness: harness!, sessionId: sessionId!, participants, participantsTruncated: (bucket.participants?.sum_other_doc_count ?? 0) > 0, title: `Session ${sessionId}`,
-          private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
-          firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
-      });
-      // Summarize all event kinds, including tools, once per event. Missing
-      // historical counts must never turn a partial sum into a session total.
-      if (sessions.length) {
-        const counts = await collection.search(principal, {size: 0, query: {bool: {filter: [
-          {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
-          {bool: {minimum_should_match: 1, should: sessions.map(key => ({bool: {filter: sessionFilter(key)}}))}},
-        ]}}, aggs: {tokenCounts: {multi_terms: {terms: fields, size: sessions.length}, aggs: {
-          tokens: {sum: {field: f('capturedTokens')}}, counted: {value_count: {field: f('capturedTokens')}},
+        if (query.trim() && !participant) {
+          // Select sessions containing the words, then summarize each whole session.
+          const matchFilter = filter.map((value, index) => index === 1 ? listed([...CONVERSATION, ...TITLE_KINDS]) : value);
+          const matched = await collection.search(principal, {size: 0, query: {bool: {filter: matchFilter, must: [{match: {text: {query: query.trim(), operator: 'and'}}}]}},
+            aggs: {sessions: {multi_terms: {terms: fields, size: window, order}, aggs: {lastActivity: {max: {field: 'timestamp'}}}}}});
+          const keys = (matched.aggregations?.sessions?.buckets ?? []) as unknown as Array<{key: string[]}>;
+          if (!keys.length) return [];
+          filter.push({bool: {minimum_should_match: 1, should: keys.map(bucket => ({bool: {filter: sessionFilter({userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!})}}))}});
+        }
+        const result = await collection.search(principal, {size: 0, query: {bool: {filter}}, aggs: {sessions: {multi_terms: {terms: fields, size: window, order}, aggs: {
+          lastActivity: {max: {field: 'timestamp'}}, firstActivity: {min: {field: 'timestamp'}},
+          private: {filter: {term: {[f('private')]: true}}},
+          origin: {terms: {field: f('origin'), size: 1}}, host: hostTerms,
+          participants: {terms: {field: f('participantId'), size: 100, order: {_key: 'asc'}}, aggs: {name: {terms: {field: f('participantName'), size: 1}}}},
+          unknownParticipants: {filter: {term: {[f('participantUnknown')]: true}}},
         }}}});
-        type Count = {key: string[]; doc_count: number; tokens: {value: number}; counted: {value: number}};
-        const values = counts.aggregations?.tokenCounts?.buckets as unknown as Count[] | undefined;
-        if (!Array.isArray(values)) throw new Error('Invalid session token response');
-        const selected = new Set(sessions.map(key => JSON.stringify([key.userId, key.harness, key.sessionId])));
-        const totals = new Map<string, number | null>();
-        for (const value of values) {
-          const key = JSON.stringify(value.key);
-          if (!selected.has(key) || totals.has(key) || !Number.isSafeInteger(value.tokens?.value) || value.tokens.value < 0 ||
-            !Number.isSafeInteger(value.doc_count) || value.doc_count < 1 || !Number.isSafeInteger(value.counted?.value) || value.counted.value < 0 || value.counted.value > value.doc_count) throw new Error('Invalid session token response');
-          totals.set(key, value.counted.value === value.doc_count ? value.tokens.value : null);
+        type Bucket = {key: string[]; doc_count: number; lastActivity: {value: number | null}; firstActivity: {value: number | null}; private: {doc_count: number};
+          origin: {buckets: Array<{key: string}>}; host: HostBuckets;
+          participants?: {buckets: Array<{key: string; name: {buckets: Array<{key: string}>}}> ; sum_other_doc_count?: number}; unknownParticipants?: {doc_count: number}};
+        const buckets = result.aggregations?.sessions?.buckets as unknown as Bucket[] | undefined;
+        if (!Array.isArray(buckets)) throw new Error('Invalid session list response');
+        const sessions: SessionSummary[] = buckets.map(bucket => {
+          const [userId, harness, sessionId] = bucket.key;
+          if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) throw new Error('Invalid session list response');
+          const participants: SessionParticipant[] = (bucket.participants?.buckets ?? []).map(person => {
+            if (!validParticipant(person.key)) throw new Error('Invalid session participant');
+            return {id: person.key, ...(person.name.buckets[0]?.key ? {name: person.name.buckets[0].key} : {})};
+          });
+          if (!participants.length && !bucket.unknownParticipants?.doc_count && !isWorkloadUserId(userId!)) participants.push({id: 'user:' + userId!});
+          return {userId: userId!, harness: harness!, sessionId: sessionId!, participants, participantsTruncated: (bucket.participants?.sum_other_doc_count ?? 0) > 0, title: `Session ${sessionId}`,
+            private: bucket.private.doc_count > 0, mine: userId === principal.userId, origin: bucket.origin.buckets[0]?.key ?? null, ...capturedHosts(bucket.host),
+            firstActivityAt: iso(bucket.firstActivity.value), lastActivityAt: iso(bucket.lastActivity.value), events: bucket.doc_count};
+        });
+        return sessions;
+      };
+      const requested=limit as number;
+      let window=requested;
+      for(;;){
+        const sessions=await load(window);
+        const pairs=capturePairs&&scope==='all'&&sessions.some(s=>s.harness==='replicas')&&sessions.some(s=>s.harness==='claude-code'||s.harness==='codex')
+          ?await capturePairs(principal.tenantId,sessions):[];
+        const allowed=pairs.length?await Promise.all(sessions.map(s=>readable(principal,s))):sessions.map(()=>true);
+        const visible=sessions.filter((_,i)=>allowed[i]);
+        const candidates=new Map(visible.map(s=>[captureKey(s),s]));
+        const merged=new Map<string,SessionSummary>();
+        for(const pair of pairs){
+          const live=candidates.get(captureKey(pair.live)),history=candidates.get(captureKey(pair.history));
+          if(!live||!history)continue;
+          const summary={...live,historyCapture:{userId:history.userId,harness:history.harness,sessionId:history.sessionId},
+            lastActivityAt:[live.lastActivityAt,history.lastActivityAt].filter((s):s is string=>!!s).sort().at(-1)??null};
+          merged.set(captureKey(live),summary);merged.set(captureKey(history),summary);
         }
-        for (const session of sessions) session.capturedTokens = totals.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? null;
+        const grouped=[...new Set(visible.map(s=>merged.get(captureKey(s))??s))];
+        if(merged.size&&grouped.length<requested&&sessions.length===window&&window===requested){
+          window=2*requested;continue;
+        }
+        const result=grouped.slice(0,requested);
+        // Summarize all event kinds, including tools, once per event. Missing
+        // historical counts must never turn a partial sum into a session total.
+        if (result.length) {
+          const counts = await collection.search(principal, {size: 0, query: {bool: {filter: [
+            {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
+            {bool: {minimum_should_match: 1, should: result.map(key => ({bool: {filter: sessionFilter(key)}}))}},
+          ]}}, aggs: {tokenCounts: {multi_terms: {terms: ['userId','harness','sessionId'].map(key=>({field:f(key)})), size: result.length}, aggs: {
+            tokens: {sum: {field: f('capturedTokens')}}, counted: {value_count: {field: f('capturedTokens')}},
+          }}}});
+          type Count = {key: string[]; doc_count: number; tokens: {value: number}; counted: {value: number}};
+          const values = counts.aggregations?.tokenCounts?.buckets as unknown as Count[] | undefined;
+          if (!Array.isArray(values)) throw new Error('Invalid session token response');
+          const selected = new Set(result.map(key => JSON.stringify([key.userId, key.harness, key.sessionId])));
+          const totals = new Map<string, number | null>();
+          for (const value of values) {
+            const key = JSON.stringify(value.key);
+            if (!selected.has(key) || totals.has(key) || !Number.isSafeInteger(value.tokens?.value) || value.tokens.value < 0 ||
+              !Number.isSafeInteger(value.doc_count) || value.doc_count < 1 || !Number.isSafeInteger(value.counted?.value) || value.counted.value < 0 || value.counted.value > value.doc_count) throw new Error('Invalid session token response');
+            totals.set(key, value.counted.value === value.doc_count ? value.tokens.value : null);
+          }
+          for (const session of result) session.capturedTokens = totals.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? null;
+        }
+        const names=await titles(principal,result);
+        for(const session of result)session.title=names.get(captureKey(session))??session.title;
+        // Titles may read raw batches. Check both independently owned sources
+        // again after that I/O, including a revocation racing the merge.
+        const checked=await Promise.all(result.map(async s=>({
+          live:await readable(principal,s),history:s.historyCapture?await readable(principal,s.historyCapture):false
+        })));
+        return {sessions:result.flatMap((s,i)=>{
+          const access=checked[i]!;
+          if(!access.live)return [];
+          if(s.historyCapture&&!access.history)return [candidates.get(captureKey(s))!];
+          return [s];
+        }),limit};
       }
-      const names = await titles(principal, sessions);
-      for (const session of sessions) session.title = names.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? session.title;
-      const allowed = await Promise.all(sessions.map(session => readable(principal, session)));
-      return {sessions: sessions.filter((_, index) => allowed[index]), limit};
     },
 
     /** Index order and paging; content comes from the verified original batch. */

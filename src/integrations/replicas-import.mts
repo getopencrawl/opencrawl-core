@@ -1,3 +1,7 @@
+import {selectCatalogRows} from './replicas-catalog.mjs';
+import {prepareReplicasThreads,saveReplicasThread,visibleCapturePairs,type CaptureLookup} from './replicas-threads.mjs';
+import {backfillReplicasEvidence} from './replicas-archive-evidence.mjs';
+import type {ObjectStore} from '../sessions/types.mjs';
 import {randomUUID} from 'node:crypto';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {Principal,SessionBatch,SessionEvent} from '../sessions/types.mjs';
@@ -8,7 +12,7 @@ import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
-import {prepareSnapshots,saveSnapshot,snapshotProgress} from './replicas-snapshots.mjs';
+import {prepareSnapshots,saveSnapshot,snapshotProgress,snapshotsForPage,sourceRevision,type WorkspaceVersion} from './replicas-snapshots.mjs';
 import {nextWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
@@ -24,17 +28,19 @@ export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
   workspaceChecks?:{id:string;at:number}[];
+  nextCatalogAt?:string; dailyCatalog?:boolean; rosterCutoff?:string; archivePending?:boolean;
   initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;exportReviewSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 // Reserve one activity in five for due pages while catalog work remains.
 const freshStepsPerRetry=4;
+const day=86_400_000;
 const defaultHistoryLimit=100,largeHistoryLimit=400;
 export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 
 /** One explicit step reads one complete API page. Checkpoint only after the
  * original response and every projected record reach durable ingest/indexing.
  * Missing access and unknown pagination fail closed; no conversation is skipped. */
-export function createReplicasImport({database,key,ingest,schedule,request=fetch,now=Date.now}:{database:ApplicationDatabase;key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch,gate?:undefined,blobs?:ReadonlyMap<string,Uint8Array>)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
+export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch,gate?:undefined,blobs?:ReadonlyMap<string,Uint8Array>)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
@@ -51,6 +57,10 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
     await client.query("ALTER TABLE opencrawl_replicas_workspace_inventories ADD COLUMN IF NOT EXISTS export_check jsonb, ADD COLUMN IF NOT EXISTS chat_versions jsonb NOT NULL DEFAULT '{}'::jsonb");
     await prepareSnapshots(client);
+    await prepareReplicasThreads(client);
+    await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_catalog_records(
+      namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,record_hash text NOT NULL,
+      PRIMARY KEY(namespace,tenant,import_id,record_hash))`);
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_chat
       ON opencrawl_replicas_deferred(namespace,tenant,(chat->>'workspace_id'),(chat->>'chat_id'))`);
   }).catch(error=>{prepared=undefined;throw error;});
@@ -109,6 +119,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     if(next){state.before=next;state.historyCursors.push(replicasDigest(next));return;}
     if(state.progress){
       const progress=state.progress;
+      if(progress.thread&&progress.evidenceFromStart)await saveReplicasThread(client,namespace,principal.tenantId,owner.userId,base.sessionId,progress.thread);
       await saveSnapshot(client,[namespace,principal.tenantId,state.id],chat,progress,state.refresh);
       if(state.refresh){
         const baseline=state.refresh.baseline;
@@ -130,12 +141,32 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
   }
 
   async function step(client:Pick<ApplicationDatabase['pool'],'query'>,principal:Principal,state:State,api:ReturnType<typeof replicasApi>){
+    // A source retry and the daily catalog have independent deadlines. Never
+    // replace an in-flight foreground cursor to start a scheduled scan.
+    if(!state.queue.length&&!state.next&&!state.initialCatalog&&state.nextCatalogAt&&Date.parse(state.nextCatalogAt)<=now()){
+      state.initialCatalog=true;state.dailyCatalog=true;state.rosterCutoff=new Date(now()-day).toISOString();state.listCursors=[];delete state.retryAt;
+      state.nextCatalogAt=new Date(now()+day).toISOString();
+    }
     if(state.retryAt&&Date.parse(state.retryAt)>now())return;
     delete state.retryAt;
     const pending=deferredHistory(client,namespace,principal.tenantId);
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
     const reviewScope:[string,string,string]=[namespace,principal.tenantId,state.id];
     const sweep=Boolean(state.workspaceChecks?.length);
+    if(state.rosterCutoff){
+      const {rows:[stale]}=await client.query<{workspace:string}>(`SELECT workspace FROM opencrawl_replicas_workspace_inventories
+        WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND checked_at<=$4 ORDER BY checked_at,workspace LIMIT 1`,[...reviewScope,state.rosterCutoff]);
+      if(stale){
+        const observed=await observeReplicasWorkspace(client,{namespace,tenant:principal.tenantId,importId:state.id,workspace:stale.workspace},now(),()=>api.workspaceChats(stale.workspace));
+        if(!sweep&&observed.ids){
+          const completed=new Set(state.completedSessions);
+          if([...observed.ids].every(id=>completed.has(replicasDigest(stale.workspace+':'+id))))await client.query(`UPDATE opencrawl_replicas_workspace_inventories
+            SET export_check='{"phase":"complete","outside":[]}'::jsonb WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND workspace=$4 AND export_check IS NULL`,[...reviewScope,stale.workspace]);
+        }
+        return;
+      }
+      delete state.rosterCutoff;
+    }
     const review=async()=>{
       const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now(),sweep);
       if(result.added){state.total+=result.added;state.blocked=(state.blocked??0)+result.added;delete state.waitingForSource;}
@@ -192,6 +223,15 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     let operation:ImportOperation=chat?'history':'catalog';
     try{
       if(chat){
+        if(state.dailyCatalog&&!retry&&!state.before&&!state.refresh){
+          const prior=(await snapshotsForPage(client,[namespace,principal.tenantId,state.id],chat.workspace_id,[chat.chat_id])).get(chat.chat_id);
+          if(prior){
+            const result=await client.query<{native:WorkspaceVersion|null}>(`SELECT chat_versions->$5::text AS native FROM opencrawl_replicas_workspace_inventories
+              WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND workspace=$4`,[namespace,principal.tenantId,state.id,chat.workspace_id,chat.chat_id]);
+            const native=result.rows[0]?.native;
+            state.refresh={revision:(native&&sourceRevision(chat,native))||prior.source_version.toISOString(),baseline:prior.counts};
+          }
+        }
         if(!retry&&state.blocked){
           const shared=await pending.backoff(chat,state,state.id);
           previousMissingAttempt=shared?.issue.attempt??0;
@@ -251,9 +291,15 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(workspaces.length)await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,result)
           SELECT $1,$2,$3,id,'epoch'::timestamptz,'unobserved' FROM unnest($4::text[]) AS ids(id)
           ON CONFLICT(namespace,tenant,import_id,workspace) DO NOTHING`,[namespace,principal.tenantId,state.id,workspaces]);
-        if(state.initialCatalog)state.total=page.total;
+        const selected=await selectCatalogRows(client,[namespace,principal.tenantId,state.id],page.conversations,!!state.dailyCatalog);
+        if(state.dailyCatalog){
+          state.total+=selected.length;
+          console.info(JSON.stringify({event:'replicas.import.daily_catalog',tenantId:principal.tenantId,importId:state.id,
+            examined:page.conversations.length,queued:selected.length,unchanged:page.conversations.length-selected.length,hasNext:Boolean(page.next_cursor)}));
+        }else if(state.initialCatalog)state.total=page.total;
+        state.nextCatalogAt??=new Date(now()+day).toISOString();
         delete state.initialCatalog;
-        state.queue=page.conversations;state.next=page.next_cursor;
+        state.queue=selected;state.next=page.next_cursor;
         if(hash)state.listCursors.push(hash);
       }
       if(state.retryAttempts||recoveredAttempt){
@@ -362,7 +408,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       }
     }
   }
-  async function operate(principal:Principal,input:ReplicasImportInput|{action:'step';id:string}):Promise<ReplicasImportStatus|null>{
+  async function operate(principal:Principal,input:ReplicasImportInput|{action:'step';id:string}):Promise<(ReplicasImportStatus&{archivePending?:boolean})|null>{
     await ready();
     return database.transaction(async client=>{
       const path=JSON.stringify([namespace,principal.tenantId]);
@@ -374,11 +420,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(!apiKey||apiKey.length>4000||/[\r\n]/.test(apiKey))throw replicasError('Enter a Replicas organization API key.');
         const api=replicasApi(apiKey,request),identity=await api.identity();
         if(identity.caller!=='organization_api_key')throw replicasError('Create an organization API key in Replicas Settings → API Keys.');
-        if(state?.background&&state.phase==='importing'){
+        if(state?.background&&(state.phase==='importing'||state.phase==='complete'&&credential)){
           if(state.organization.id!==identity.organization.id)throw replicasError('This workspace already has a Replicas import in progress.',409);
           return visible(state);
         }
-        const resume=state&&['failed','importing','disconnected'].includes(state.phase)?state:undefined;
+        const resume=state&&(['failed','importing','disconnected'].includes(state.phase)||state.phase==='complete'&&state.organization.id===identity.organization.id)?state:undefined;
         if(resume&&resume.organization.id!==identity.organization.id)throw replicasError('Use the Replicas organization that owns the saved import.',409);
         state=resume??{id:'',organization:identity.organization,phase:'importing',total:0,processed:0,imported:0,events:0,turns:0,pages:0,
           updatedAt:'',queue:[],initialCatalog:true,next:null,listCursors:[],completedSessions:[],...emptyCheckpoint()};
@@ -387,6 +433,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           SELECT namespace,tenant,$4,workspace,'epoch'::timestamptz,'unobserved' FROM opencrawl_replicas_workspace_inventories
           WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
         await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
+        if(resume?.id)await client.query(`UPDATE opencrawl_replicas_catalog_records SET import_id=$4 WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
+        await client.query('DELETE FROM opencrawl_replicas_catalog_records WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
         if(resume?.id)await client.query(`UPDATE opencrawl_replicas_snapshots SET import_id=$4 WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
         await client.query('DELETE FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
         delete state.waitingForSource;
@@ -395,7 +443,13 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(!resume)await step(client,principal,state,api);
         credential=envelope.seal(path,Buffer.from(apiKey));
       }else{
-        if(!state||state.id!==input.id||state.phase!=='importing')return null;
+        if(!state||state.id!==input.id||!(state.phase==='importing'||state.phase==='complete'&&credential))return null;
+        if(input.action==='step'&&state.phase==='complete'){
+          if(state.nextCatalogAt&&Date.parse(state.nextCatalogAt)>now()){
+            if(!state.archivePending)return visible(state);
+          }else state.phase='importing';
+        }
+        state.nextCatalogAt??=new Date(now()+day).toISOString();
         if(input.action==='stop'){
           state.phase='disconnected';delete state.retryAt;delete state.error;
         }else if(!credential){
@@ -409,16 +463,24 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(next===undefined)state.phase='complete';
         else if(next>now()){state.retryAt=new Date(next).toISOString();state.waitingForSource=true;}
       }
-      if(state.phase!=='importing')credential=null;
+      if(input.action==='step'&&archive&&(state.phase==='complete'||state.phase==='importing'&&state.retryAt&&Date.parse(state.retryAt)>now())){
+        state.archivePending=await backfillReplicasEvidence(client,archive,[namespace,principal.tenantId,state.id],state.organization.id,now());
+      }
+      if(state.phase==='complete'){
+        state.nextCatalogAt??=new Date(now()+day).toISOString();
+        state.retryAt=state.nextCatalogAt;
+      }else if(state.phase==='importing'&&state.retryAt&&state.nextCatalogAt&&!state.queue.length&&!state.next&&!state.initialCatalog){
+        state.retryAt=new Date(Math.min(Date.parse(state.retryAt),Date.parse(state.nextCatalogAt))).toISOString();
+      }else if(state.phase==='disconnected'||state.phase==='failed')credential=null;
       state.updatedAt=new Date(now()).toISOString();
       await client.query('INSERT INTO opencrawl_replicas_imports(namespace,tenant,state,credential) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(namespace,tenant) DO UPDATE SET state=EXCLUDED.state,credential=EXCLUDED.credential',[namespace,principal.tenantId,JSON.stringify(state),credential]);
       // Hold the tenant lock through acceptance. The first worker waits for commit.
-      if(input.action==='connect'&&state.phase==='importing')await schedule({tenantId:principal.tenantId,id:state.id});
+      if(input.action==='connect'&&credential)await schedule({tenantId:principal.tenantId,id:state.id});
       if(input.action!=='step'||state.phase!=='importing'){
         console.info(JSON.stringify({event:'replicas.import.transition',tenantId:principal.tenantId,importId:state.id,
           action:input.action,phase:state.phase,processed:state.processed,total:state.total,blocked:state.blocked??0,pages:state.pages}));
       }
-      return visible(state);
+      return {...visible(state),...(input.action==='step'&&state.archivePending?{archivePending:true}:{})};
     });
   }
   async function source(principal:Principal):Promise<SourceCard>{
@@ -431,7 +493,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       lastSyncedAt:phase==='complete'?history?.updatedAt:undefined,
       rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'}]:[],history:history??undefined};
   }
-  return {status,source,
+  const capturePairs:CaptureLookup=async(tenant,visible)=>{await ready();return visibleCapturePairs(database.pool,namespace,tenant,visible);};
+  return {status,source,capturePairs,
     async action(principal:Principal,input:ReplicasImportInput){
       let result;
       try{result=await operate(principal,input);}
@@ -448,7 +511,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     async advance(job:ReplicasJob){return (await operate({tenantId:job.tenantId,userId:'replicas-import'},{action:'step',id:job.id}))?.phase!=='importing';},
     async runStep(job:ReplicasJob){
       const result=await operate({tenantId:job.tenantId,userId:'replicas-import'},{action:'step',id:job.id});
-      return {done:result?.phase!=='importing',...(result?.phase==='failed'?{requiresReconnect:true}:{}),delayMs:result?.retryAt?Math.max(0,Date.parse(result.retryAt)-now()):0};
+      return {done:result?.phase!=='importing'&&!(result?.phase==='complete'&&result.retryAt),...(result?.phase==='failed'?{requiresReconnect:true}:{}),delayMs:result?.archivePending?0:result?.retryAt?Math.max(0,Date.parse(result.retryAt)-now()):0};
     },
   };
 }

@@ -61,7 +61,7 @@ export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:
     const attempt=(saved?.attempt??0)+1;
     const sameTerminal=details.reason==='terminal_count'&&details.catalogHash!==undefined&&details.catalogHash===previousFailure?.catalogHash&&
       previousFailure.reportedTotal===details.reportedTotal&&previousFailure.pageLimit!==pageLimit;
-    const delay=retryDelay(attempt,60_000,Math.max(providerDelay,sameTerminal?30*60_000:0));
+    const delay=retryDelay(attempt,60_000,Math.max(providerDelay,sameTerminal?86_400_000:0));
     const retryAt=new Date(now+delay).toISOString();
     const lastFailure={at,pageLimit,httpStatus:response?.httpStatus,requestId:response?.requestId,
       cursorHash:previous.cursor?replicasDigest(previous.cursor):undefined,...details};

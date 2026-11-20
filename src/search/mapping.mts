@@ -2,7 +2,7 @@ import type {Mapping} from './types.mjs';
 export const passageFields={passageVersion:{type:'integer'},textStart:{type:'integer'},textEnd:{type:'integer'},chunkCount:{type:'integer'}};
 export const memoryProjectionFields={projectionId:{type:'keyword'}};
 export const sessionSearchContextFields={containsToolOutput:{type:'boolean'}};
-export const sessionCaptureFields={captureMode:{type:'keyword'},clientApp:{type:'keyword'}};
+export const sessionCaptureFields={captureHash:{type:'keyword',index:false,doc_values:false},captureMode:{type:'keyword'},clientApp:{type:'keyword'}};
 export const sessionTokenFields={capturedTokens:{type:'long'}};
 export const sessionParticipantFields={participantEmailKey:{type:'keyword'},participantVersion:{type:'integer'},participantId:{type:'keyword'},participantName:{type:'keyword',ignore_above:320},participantUnknown:{type:'boolean'}};
 export const connectorMapping = {dynamic: 'strict', properties: {
