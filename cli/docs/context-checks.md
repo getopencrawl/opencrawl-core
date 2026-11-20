@@ -52,8 +52,8 @@ cancel work at session teardown; their delivery timing is harness-controlled.
 
 ## Bounds and account safety
 
-The client permits two in-flight checks per installed account/profile and makes
-one billable request per admitted native event, with no inference retries. Work
+The client makes one billable request per eligible native event. Concurrent
+checks in other sessions can proceed independently. Work
 has a 25-second network deadline. Late delivery has a 1.8-second network deadline;
 it replays the server receipt to apply fresh source authorization. In cloud that
 replay uses no Jev call or additional credit. The self-host reference adapter may
@@ -73,8 +73,8 @@ are verified before credentials, before the request and before releasing output.
 The server supplies authorization; a local owner ID never grants access.
 
 A private SQLite delivery cache retains redacted input and status, never result
-text or credentials. It holds at most 512 records; records older than 24 hours
-are removed on the next prompt. Disabling checks invalidates pending work without
+text or credentials. On each new prompt it prunes records older than 24 hours and keeps the
+latest 512 finished records. Pending deliveries stay available until they expire. Disabling checks invalidates pending work without
 altering capture queues, cursors or stored sign-in. Server traces and receipts are
 owned by the deployment.
 

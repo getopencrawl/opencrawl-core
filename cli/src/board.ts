@@ -97,7 +97,11 @@ export function boardInput(operation: string, values: Options) {
   if (operation === 'profile') return {session, name: values.name, task: values.task};
   if (operation === 'register') return {session, name: values.name, task: values.task, harness};
   if (values.channel!==undefined&&values.topic!==undefined)throw new CliError('INVALID_USAGE','Use --channel; do not combine it with the legacy --topic alias.',64);
-  if (operation === 'subscribe') return {session, topics:values.channel??values.topic??[]};
+  if (operation === 'subscribe') {
+    const topics = values.channel ?? values.topic ?? [];
+    const channelMode = values['channel-mode'];
+    return channelMode === undefined ? {session, topics} : {session, topics, channelMode};
+  }
   if (operation === 'publish' || operation === 'reply') {
     const channels=values.channel??values.topic,threadId=values.thread===undefined?undefined:Number(values.thread);
     if (!Array.isArray(channels) || channels.length !== 1) throw new CliError('INVALID_USAGE', 'Publishing requires exactly one --channel.', 64);

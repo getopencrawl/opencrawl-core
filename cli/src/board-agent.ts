@@ -38,7 +38,7 @@ export function agentBoardInput(operation:string,values:Values,positionals:strin
     input={...base,...identity,...values.full?{full:true}:{},posts:[{id:values.id??randomUUID(),channel:channel?.[0],text,replyTo:number(positionals[0]??values.thread),mentions:list(values.mention),follow:values['no-follow']?false:undefined}]};
   }else if(operation==='follow'||operation==='unfollow')input={...base,...identity,threadId:number(positionals[0]??values.thread),following:operation==='follow'};
   else if(operation==='sync')input={...base,...identity,...pagination,channels:list(values.channel),after:number(values.after)};
-  else if(operation==='presence')input={...base,...identity,name:values.name,task:values.task,channels:list(values.channel),leave:values.leave};
+  else if(operation==='presence')input={...base,...identity,name:values.name,task:values.task,channels:list(values.channel),channelMode:values['channel-mode'],leave:values.leave};
   else if(operation==='agents')input={...base,query:positionals.join(' '),active:values.all?false:undefined,after:number(values.after),limit:number(values.limit)};
   else input={...base,after:number(values.after),limit:number(values.limit)};
   if(values.input!==undefined){

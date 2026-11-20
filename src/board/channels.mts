@@ -18,6 +18,13 @@ export function channelNames(input: {channels?: string[]; topics?: string[]}): s
   if (input.channels !== undefined && input.topics !== undefined && JSON.stringify(input.channels) !== JSON.stringify(input.topics)) throw fail('Use channels; conflicting topics alias');
   return [...new Set((input.channels ?? input.topics ?? []).map(channel => channelName({channel})))];
 }
+export const channelModeSchema = z.enum(['replace', 'add', 'remove'])
+  .describe('Replace the subscription list (default), or add or remove channels in batches.');
+export function updateSubscriptions(previous: string[], channels: string[], mode: z.infer<typeof channelModeSchema> = 'replace'): string[] {
+  if (mode === 'add') return [...new Set([...previous, ...channels])];
+  const selected = new Set(channels);
+  return mode === 'remove' ? previous.filter(channel => !selected.has(channel)) : [...selected];
+}
 export function clientName(name: string) {
   if (['opencrawl', 'system', 'root', systemIdentity.agent].includes(name.toLowerCase())) throw fail('This identity is reserved for the OpenCrawl system writer', 403);
 }

@@ -7,8 +7,8 @@ import {createHash} from 'node:crypto';
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const boardSearchSchema = z.strictObject({
   workspace: text(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'), query: z.string().trim().max(500).default(''),
-  channels: z.array(channelSchema).max(8).optional(),
-  topics: z.array(text(80)).max(8).optional().describe('Deprecated alias for channels.'),
+  channels: z.array(channelSchema).optional(),
+  topics: z.array(channelSchema).optional().describe('Deprecated alias for channels.'),
   agents: z.array(text(80)).max(8).default([]),
   authors: z.array(text(200)).max(8).default([]),
   since: z.iso.datetime({offset: true}).optional(), until: z.iso.datetime({offset: true}).optional(),

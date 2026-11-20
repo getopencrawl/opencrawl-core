@@ -6,7 +6,7 @@ import type {BoardRepository,BoardReader,BoardTransaction} from '../state/board.
 import type {BoardMessage} from './types.mjs';
 import {currentSessionSchema} from '../search/context.mjs';
 import {boardIdentity} from './identity.mjs';
-import {channelSchema,channelName,clientName,fail} from './channels.mjs';
+import {channelSchema,channelModeSchema,updateSubscriptions,channelName,clientName,fail} from './channels.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
 import {agentMessage,messageId,messagePage,replyNotification,messageSelection,selectMessage,threadRoot} from './messages.mjs';
 
@@ -15,18 +15,18 @@ const workspace=short.optional();
 const identity={currentSession:currentSessionSchema.optional(),session:short.optional(),agent:z.string().trim().min(3).max(80).optional()};
 const pagination={limit:z.number().int().min(1).max(50).default(5),select:messageSelection};
 export const agentReadSchema=z.strictObject({workspace,ids:z.array(messageId).min(1).max(20),select:messageSelection});
-export const agentListSchema=z.strictObject({workspace,...pagination,channels:z.array(channelSchema).max(32).default([]),from:z.array(short).max(32).default([]),
+export const agentListSchema=z.strictObject({workspace,...pagination,channels:z.array(channelSchema).default([]),from:z.array(short).max(32).default([]),
   query:z.string().trim().max(500).default(''),after:z.number().int().nonnegative().optional(),before:messageId.optional(),thread:messageId.optional(),
   rootsOnly:z.boolean().default(false),since:z.iso.datetime({offset:true}).optional(),until:z.iso.datetime({offset:true}).optional(),
   order:z.enum(['oldest','newest','relevance']).default('newest'),cursor:short.optional(),facets:z.array(z.enum(['channel','agent','day'])).max(3).default([])});
 export const agentThreadSchema=z.strictObject({workspace,threadId:messageId,...pagination,after:z.number().int().nonnegative().optional(),before:messageId.optional(),order:z.enum(['oldest','newest']).default('oldest'),cursor:short.optional()});
 export const agentSearchSchema=agentListSchema.extend({order:z.enum(['oldest','newest','relevance']).default('relevance')});
-export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,channels:z.array(channelSchema).max(32).optional(),after:z.number().int().nonnegative().optional()});
+export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,channels:z.array(channelSchema).optional(),after:z.number().int().nonnegative().optional()});
 export const agentInboxSchema=z.strictObject({workspace,...identity,acknowledge:z.string().regex(/^[a-f0-9]{64}$/, 'must be the full cursor returned by the board inbox').optional(),noticeOnly:z.boolean().default(false)});
 export const agentPostSchema=z.strictObject({workspace,...identity,full:z.boolean().optional().describe('Return complete published messages instead of compact receipts.'),posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
   text:z.string().min(1),replyTo:messageId.optional(),threadId:messageId.optional().describe('Compatibility alias for replyTo.'),mentions:z.array(short).max(32).default([]),follow:z.boolean().default(true)})).min(1).max(20)});
 export const agentFollowSchema=z.strictObject({workspace,...identity,threadId:messageId,following:z.boolean().default(true)});
-export const agentPresenceSchema=z.strictObject({workspace,...identity,announce:z.boolean().optional(),installationId:short.optional(),name:z.string().trim().min(3).max(80).optional(),task:z.string().trim().max(240).optional(),channels:z.array(channelSchema).max(32).optional(),leave:z.boolean().default(false)});
+export const agentPresenceSchema=z.strictObject({workspace,...identity,channelMode:channelModeSchema.optional(),announce:z.boolean().optional(),installationId:short.optional(),name:z.string().trim().min(3).max(80).optional(),task:z.string().trim().max(240).optional(),channels:z.array(channelSchema).optional(),leave:z.boolean().default(false)});
 export const agentDirectorySchema=z.strictObject({workspace,active:z.boolean().default(true),query:z.string().max(200).default(''),limit:z.number().int().min(1).max(50).default(10),after:z.number().int().nonnegative().default(0)});
 export const agentChannelsSchema=z.strictObject({workspace,limit:z.number().int().min(1).max(50).default(10),after:z.number().int().nonnegative().default(0)});
 type Identity=Pick<z.infer<typeof agentPresenceSchema>,'currentSession'|'session'|'agent'>;
@@ -183,7 +183,7 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
         if(p.userId!==undefined&&p.userId!==principal.userId)throw fail('Session is not owned by this account',403);
         const announce=args.announce??(p.announced || p.left || args.name!==undefined || args.task!==undefined);
         if(p.left||p.seen<=time-onlineWindow)p.announced=false;
-        Object.assign(p,{userId:principal.userId,name,seen:time,left:args.leave,...args.task!==undefined?{task:args.task}:{},...args.channels?{topics:[...new Set(args.channels)]}:{}});
+        Object.assign(p,{userId:principal.userId,name,seen:time,left:args.leave,...args.task!==undefined?{task:args.task}:{},...args.channels?{topics:updateSubscriptions(p.topics,args.channels,args.channelMode)}:{}});
         bindPresenceSession(p,principal,session,args.installationId,args.currentSession?.harness);
         const peers=announce&&!args.leave?await announceOnline(tx,id,p,time,preview):undefined;
         await tx.putParticipant(id,p);
