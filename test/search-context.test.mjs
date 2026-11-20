@@ -237,17 +237,18 @@ for(const scenario of ['missing-source','foreign-source','deleted'])test('search
   assert.deepEqual((await collection.mget(principal,legacy.map(d=>d.id))).docs,before);
 });
 
-test('tool-output mapping upgrade adds only its field and refuses foreign or incompatible mappings before mutation',async()=>{
+for(const [field,expected] of Object.entries({containsToolOutput:{type:'boolean'},clientApp:{type:'keyword'}}))
+test(`optional ${field} mapping upgrades only its field and rejects incompatible or foreign mappings`,async()=>{
   for(const mode of ['valid','foreign','incompatible']){
-    const mapping=structuredClone(realmMapping);delete mapping.properties.session.properties.containsToolOutput;
+    const mapping=structuredClone(realmMapping);delete mapping.properties.session.properties[field];
     mapping._meta={schema:1,tenantId:mode==='foreign'?'other':'tenant'};
-    if(mode==='incompatible')mapping.properties.session.properties.containsToolOutput={type:'keyword'};
+    if(mode==='incompatible')mapping.properties.session.properties[field]={type:'text'};
     let writes=0;
     const realm=createRealm({endpoint:'http://search.test',index:'test',tenantId:'tenant',fetch:async(url,options)=>{
       if(url.pathname.endsWith('/_mapping')){
         if(options.method==='PUT'){
-          writes++;assert.deepEqual(JSON.parse(options.body),{properties:{session:{properties:{containsToolOutput:{type:'boolean'}}}}});
-          mapping.properties.session.properties.containsToolOutput={type:'boolean'};return Response.json({acknowledged:true});
+          writes++;assert.deepEqual(JSON.parse(options.body),{properties:{session:{properties:{[field]:expected}}}});
+          mapping.properties.session.properties[field]=expected;return Response.json({acknowledged:true});
         }
         return Response.json({test:{mappings:mapping}});
       }

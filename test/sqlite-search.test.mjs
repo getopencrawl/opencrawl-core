@@ -207,6 +207,35 @@ test('SQLite keeps the actual MCP search/fetch interface, controls and connector
   assert.equal((await client.callTool({name: 'fetch', arguments: {id: all.results.find(r => r.source === 'sessions').id}})).isError, true);
 });
 
+test('Claude client application survives ingestion, scoped search and fetch', async t => {
+  const {endpoint, principal} = await fixture(t);
+  const store = memorySessionStore(), prefix = 'capture-v1';
+  const ingest = createSessionIngest({store, prefix});
+  const sessions = createSessionSearch({endpoint, store, prefix});
+  const pipeline = createSessionPipeline({store, prefix, search: sessions, resolvePrincipal: async ({batch}) => batch.owner});
+  const workspace = createWorkspaceSearch({sessions});
+  for (const clientApp of ['t3-code', 'conductor', undefined, 'unrecognized']) {
+    const sessionId = clientApp ?? 'legacy';
+    await ingest.putBatch(principal, {schemaVersion: 1, owner: principal, harness: 'claude-code',
+      origin: 'unknown', installationId: 'fixture', sessionId, clientApp, attachments: [],
+      events: [{id: 'event', kind: 'message', data: {role: 'user', content: 'attribution fixture'}}]});
+  }
+  for (const key of (await pipeline.listPage()).keys) await pipeline.processObject({key});
+  const input = {query: 'attribution fixture', source: 'sessions'};
+  const all = await workspace.search(principal, {...input, facets: ['clientApp']});
+  assert.equal(all.results.length, 4);
+  assert.deepEqual(all.facets.clientApp.values, [{value: 'conductor', count: 1}, {value: 't3-code', count: 1}]);
+  for (const row of all.results) {
+    const {sessionId} = row.provenance;
+    const expected = ['t3-code', 'conductor'].includes(sessionId) ? sessionId : undefined;
+    assert.equal(row.provenance.clientApp, expected);
+    assert.deepEqual((await workspace.fetch(principal, {id: row.id})).provenance, row.provenance);
+    assert.equal(row.provenance.origin, 'unknown');
+  }
+  const filtered = await workspace.search(principal, {...input, filters: {clientApps: ['conductor']}});
+  assert.deepEqual(filtered.results.map(r => r.provenance.sessionId), ['conductor']);
+});
+
 test('SQLite supports library and usage aggregations', async t => {
   const {endpoint, principal} = await fixture(t), realm = createRealm({endpoint, tenantId: principal.tenantId});
   const sessions = createSessionSearch({endpoint, store: memorySessionStore(), prefix: 'capture-v1'});
