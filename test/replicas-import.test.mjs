@@ -188,6 +188,30 @@ test('a cached 404 cannot suppress a different workspace, another tenant or a ne
   missing=true;assert.equal((await advance(f.service,resumed.id)).processed,2,'different workspace must actually read');
   assert.equal((await f.service.status(secondTenant)).blockedChats,undefined);
 });
+test('repeated history 404 samples the workspace inventory once and waking history stays pending',async t=>{
+  let clock=Date.now(),mode='missing';
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:[{id:chat.chat_id,title:'private title'}]});
+    if(url.pathname.endsWith('/history')){
+      if(mode==='missing')return Response.json({error:'Chat not found',details:'sensitive upstream detail'},{status:404});
+      if(mode==='waking')return Response.json({events:[],waking:true,has_more:false});
+      return Response.json({events:[event('recovered')],before_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<4;i++){await advance(f.service,id);clock+=10*60_000;}
+  const diagnostics=await f.database.pool.query('SELECT state FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
+  const checks=diagnostics.rows[0].state.recentIssues.flatMap(issue=>issue.workspaceInventory??[]);
+  assert.equal(diagnostics.rows[0].state.recentIssues.at(-1).missingResource,'chat');
+  assert.ok(!JSON.stringify(diagnostics.rows[0].state.recentIssues).includes('sensitive upstream detail'));
+  assert.deepEqual(checks,[{result:'listed',chats:1}]);
+  assert.equal(f.calls.filter(url=>url.pathname.endsWith('/chats')).length,1);
+  mode='waking';
+  const waking=await advance(f.service,id);assert.equal(waking.processed,0);assert.equal(waking.phase,'importing');assert.equal(f.handed.length,0);
+  mode='ready';clock+=24*60*60_000;
+  const done=await advance(f.service,id);assert.equal(done.phase,'complete');assert.equal(done.events,1);
+});
+
 test('repeated history cursor defers the exact checkpoint without duplicate handoff',async t=>{
   const f=await fixture(t,{answer:url=>url.pathname.endsWith('/history')?Response.json({events:[event('one')],before_cursor:'same'}):null});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});await advance(f.service,id);
@@ -261,8 +285,8 @@ test('duplicate catalog entries preserve their metadata while counting one disti
   assert.equal(new Set(events.filter(e=>e.kind!=='replicas_history_page').map(e=>e.id)).size,1);
   assert.deepEqual(new Set(events.filter(e=>e.kind==='replicas_history_page').map(e=>e.data.replicasPage.conversation.title)),new Set([chat.title,'Another catalog label']));
   const card=await f.service.source(principal);
-  assert.equal(card.state,'synced');assert.deepEqual(card.units,['conversation record','conversation records']);
-  assert.equal(card.synced,2);assert.equal(card.total,2);assert.equal(card.rows.find(row=>row.label==='Sessions').count,1);
+  assert.equal(card.state,'synced');assert.deepEqual(card.units,['session','sessions']);
+  assert.equal(card.synced,1);assert.equal(card.total,undefined);assert.equal(card.rows.find(row=>row.label==='Sessions').count,1);
   assert.ok(card.rows.every(row=>row.done));
 });
 
