@@ -72,8 +72,7 @@ are verified before credentials, before the request and before releasing output.
 The server supplies authorization; a local owner ID never grants access.
 
 A private SQLite delivery cache retains redacted input and status, never result
-text or credentials. On each new prompt it prunes records older than 24 hours and keeps the
-latest 512 finished records. Pending deliveries stay available until they expire. Disabling checks invalidates pending work without
+text or credentials. On each new prompt it prunes redacted check records older than 24 hours. Pending deliveries stay available until they expire. Disabling checks invalidates pending work without
 altering capture queues, cursors or stored sign-in. Server traces and receipts are
 owned by the deployment.
 
@@ -87,13 +86,12 @@ References: [Codex hooks](https://learn.chatgpt.com/docs/hooks),
 
 Eligible opted-in hooks queue bounded lifecycle metadata for the selected
 deployment: observed, skipped, requested, received, handoff and dropped. The
-private outbox holds at most 512 events for 24 hours; each flush sends at most 24
-and has a 1,500 ms deadline. Failed sends retry on a later eligible hook, with
-stable IDs. No extra model call or credit is used for telemetry.
+private outbox keeps pending metadata across restarts and offline periods. Each
+eligible hook sends batches of 24 within a 1,500 ms deadline. Unacknowledged
+reports retry with stable IDs. Disabling a harness clears its pending reports. No extra model call or credit is used for telemetry.
 
 A handoff means the CLI wrote context to the harness; it does not establish model
-consumption or usefulness. Missing callbacks, disabled/excluded hooks, expired
-outbox records and interrupted processes leave unknown coverage. Model relevance
+consumption or usefulness. Missing callbacks, disabled/excluded hooks and interrupted processes leave unknown coverage. Model relevance
 scores remain separate from explicit user/agent labels. To assess a receipt:
 
 ```sh

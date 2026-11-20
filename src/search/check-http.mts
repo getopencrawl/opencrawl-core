@@ -24,7 +24,9 @@ export function createContextCheckHandler({authenticate,check}:{authenticate:Aut
       finally{controller.signal.removeEventListener('abort',aborted);}
       controller.signal.throwIfAborted();
       send(200,{data:result});
-    }catch(error){const status=serviceError(error).status;send(status&&[400,401,402,403,409,429].includes(status)?status:503,{error:{code:status===402?'CHECK_CREDITS_EXHAUSTED':status===429?'CHECK_BUDGET_REACHED':status===409?'CHECK_ALREADY_SUBMITTED':'CONTEXT_CHECK_UNAVAILABLE'}});}
+    }catch(error){const status=serviceError(error).status;
+      if(status===403 && error instanceof Error && 'code' in error && error.code==='SUGGESTION_RECEIPT_FORBIDDEN')return send(403,{error:{code:error.code}});
+      send(status&&[400,401,402,403,409,429].includes(status)?status:503,{error:{code:status===402?'CHECK_CREDITS_EXHAUSTED':status===429?'CHECK_BUDGET_REACHED':status===409?'CHECK_ALREADY_SUBMITTED':'CONTEXT_CHECK_UNAVAILABLE'}});}
     finally{clearTimeout(timer);res.off('close',disconnect);}
   };
 }

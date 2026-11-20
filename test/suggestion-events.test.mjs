@@ -10,12 +10,15 @@ import {createContextCheck,lexicalCheckJudgment} from '../dist/src/search/check.
 
 const principal={tenantId:'a',userId:'alice'};
 const event=()=>({id:randomUUID(),at:new Date().toISOString(),harness:'codex',stage:'observed',eventKey:'a'.repeat(64),sessionHash:'b'.repeat(64)});
-test('suggestion observations reject raw content, forged scope, stale reports and capture-only credentials',async()=>{
+test('suggestion observations reject raw content, forged scope, future reports and capture-only credentials',async()=>{
   const seen=[],run=createSuggestionEvents({authorize:async p=>{if(p.tenantId!=='a')throw Object.assign(Error('denied'),{status:403});},observe:async(p,events)=>seen.push({p,events})});
-  for(const input of [{events:[{...event(),prompt:'private'}]},{events:[event()],tenantId:'b'},{events:Array.from({length:25},event)},{events:[{...event(),at:'2020-01-01T00:00:00Z'}]}])await assert.rejects(run(principal,input),{status:400});
+  for(const input of [{events:[{...event(),prompt:'private'}]},{events:[event()],tenantId:'b'},{events:[{...event(),at:new Date(Date.now()+3600000).toISOString()}]}])await assert.rejects(run(principal,input),{status:400});
   await assert.rejects(run({...principal,captureAccess:'write'},{events:[event()]}),{status:403});
   await assert.rejects(run({...principal,tenantId:'b'},{events:[event()]}),{status:403});assert.equal(seen.length,0);
   const e=event();assert.deepEqual(await run(principal,{events:[e]}),{accepted:[e.id],observed:true});assert.deepEqual(seen[0],{p:principal,events:[e]});
+  const delayed=Array.from({length:32},()=>({...event(),at:'2020-01-01T00:00:00Z',stage:'received',latencyMs:67000,results:0,outputTokens:0,replay:false}));
+  assert.deepEqual((await run(principal,{events:delayed})).accepted,delayed.map(e=>e.id));assert.deepEqual(seen[1].events,delayed);
+  await assert.rejects(run(principal,{events:[e,{...e,id:e.id.toUpperCase()}]}),{status:400});
   const local=createSuggestionEvents({authorize:async()=>{}});assert.equal((await local(principal,{events:[event()]})).observed,false);
 });
 test('operator extension loads explicitly and drives the same bounded self-host operation without hosted credentials',async t=>{
