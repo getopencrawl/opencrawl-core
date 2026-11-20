@@ -9,6 +9,7 @@ import {readDevinPlugin,startDevinPlugin} from '../src/setup/devin-plugin.ts';
 import {pluginHookContext,recordPluginActivation} from '../src/setup/plugin-context.ts';
 import {setupCommand} from '../src/setup/command.ts';
 import {readSetupState,updateSetupState} from '../src/setup/state.ts';
+import {literal} from '../src/hook-runner.ts';
 import {captureDevinStartup,readCaptureConfig,captureDir} from '../src/capture/runtime.ts';
 import {atomicJson} from '../src/session.ts';
 import {withEnvironmentTokenOrigin} from '../src/environment-token.ts';
@@ -29,6 +30,7 @@ async function fixture(run:(f:Fixture)=>Promise<void>,recording=true){
   calls.push(req.url??'');
   if(req.headers.authorization!=='Bearer '+token){res.writeHead(401);res.end('{}');return;}
   const send=(data:unknown)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({schemaVersion:1,data}));};
+  if(req.url==='/api/files'){send({tenantId:'fixture-tenant',userId,remotePath:'/api/files/'+'a'.repeat(64)+'.git',clonePath:'/git/fixture-tenant/files.git'});return;}
   if(req.url==='/api/sessions/identity'){if(++identityCalls===2&&changeAt==='capture')sessionId='devin-changed-session';send({principal:principal(),capabilities:{harnesses:['devin']}});return;}
   if(req.url==='/api/setup'){if(changeAt==='setup')userId='changed-after-startup';send({scope:{tenantId:'fixture-tenant',userId},pluginStateSupported:true,firstWin:null,installations});return;}
   if(req.url==='/api/setup/installation'){
@@ -101,6 +103,22 @@ cloudRuntimeTest('fresh Cloud startup binds the verified native owner through sh
  const inbox=readdirSync(join(captureDir(),'daemon','inbox'));expect(inbox.some(name=>name.startsWith('startup-'))).toBe(true);expect(inbox.some(name=>!name.startsWith('startup-'))).toBe(true);
  expect(readFileSync(join(captureDir(),'config.json'),'utf8')).not.toContain('synthetic.');
  for(const client of ['claude','codex','cursor','agy','desktop'])expect(existsSync(join(f.dir,client))).toBe(false);
+}));
+
+cloudRuntimeTest('ordinary Git keeps the enrolled workload identity in a fresh shell',()=>fixture(async f=>{
+ const cli=[process.execPath,join(import.meta.dir,'../src/cli.ts')].map(word=>literal(word,false)).join(' ');
+ writeFileSync(join(f.dir,'opencrawl'),'#!/bin/sh\nexec '+cli+' "$@"\n',{mode:0o700});
+ process.env.GIT_CONFIG_GLOBAL=join(f.dir,'gitconfig');
+ await f.start();
+ const git=Bun.spawn(['git','credential','fill'],{
+  env:{HOME:f.dir,PATH:process.env.PATH,GIT_CONFIG_GLOBAL:process.env.GIT_CONFIG_GLOBAL,GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0'},
+  stdin:new Blob(['url='+f.api+'/git/fixture-tenant/files.git\n\n']),stdout:'pipe',stderr:'pipe'
+ });
+ const output=await new Response(git.stdout).text();
+ expect(await git.exited).toBe(0);
+ expect(output).toContain('username=opencrawl');
+ expect(output).toContain('password=synthetic.');
+ expect(f.calls).toContain('/api/files');
 }));
 
 cloudRuntimeTest('search-only Cloud startup keeps recording off and creates no capture notice',()=>fixture(async f=>{

@@ -25,6 +25,36 @@ import {runInteractiveSetup} from '../src/setup/interactive.ts';
 import type {SetupUi} from '../src/setup/tui.tsx';
 const setupCommand=(action:string,api:string,values:Parameters<typeof realSetupCommand>[2],dependencies:NonNullable<Parameters<typeof realSetupCommand>[3]>={})=>realSetupCommand(action,api,values,{platform:'darwin',canInstall:async()=>true,modeEligibility:()=>({eligible:values['capture-mode']==='daemon'||Boolean(readCaptureConfig()?.captureWorker||readCaptureConfig()?.daemonRequested),reason:'Fixture supervisor'}),daemonReady:async()=>true,installDaemon:async()=>({kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'}),...dependencies});
 
+test('authenticated setup registers the Git helper on apply and repairs it on rerun',async()=>{
+ const git=Bun.which('git')!;
+ expect(git).toBeTruthy();
+ await fixture(async(api,dir)=>{
+  const global=join(dir,'gitconfig');
+  process.env.GIT_CONFIG_GLOBAL=global;
+  process.env.GIT_CONFIG_NOSYSTEM='1';
+  const choices={plugins:'none',forward:'none',history:'none',json:true};
+  await setupCommand('plan',api,choices);
+  await setupCommand('run',api,choices,{interactive:true,choose:async()=>null});
+  expect(existsSync(global)).toBe(false);
+
+  // The fixture initially has no Git on PATH. Other setup choices still apply.
+  const applied=await setupCommand('apply',api,{...choices,yes:true});
+  expect(applied).toMatchObject({status:'recording_off',gitCredentials:{status:'unavailable'}});
+  process.env.PATH=dirname(git);
+  const command=[process.execPath,join(import.meta.dir,'../src/cli.ts')];
+  // A global config that cannot be opened for writing remains recoverable.
+  process.env.GIT_CONFIG_GLOBAL=dir;
+  expect(await setupCommand('run',api,{yes:true,json:true},{command})).toMatchObject({gitCredentials:{status:'unavailable'}});
+  process.env.GIT_CONFIG_GLOBAL=global;
+  for(let i=0;i<2;i++)expect(await setupCommand('run',api,{yes:true,json:true},{command})).toMatchObject({gitCredentials:{status:'configured'}});
+  const config=(...args:string[])=>Bun.spawnSync([git,'config',...args],{env:{...process.env}}).stdout.toString().trim();
+  expect(config('--global','--get-all','include.path').split('\n')).toHaveLength(1);
+  expect(config('--get-urlmatch','credential.helper',api+'/git/tenant/files.git')).toContain('files-credential');
+  expect(config('--get-urlmatch','credential.helper','https://example.invalid/repo.git')).toBe('');
+  expect(readFileSync(config('--global','--get','include.path'),'utf8')).not.toContain(process.env.OPENCRAWL_TOKEN!);
+ });
+});
+
 test('first run stays open after interruption and remembers an explicit opt-out without capture',()=>fixture(async api=>{
  expect(await needsFirstRunSetup()).toBe(true);
  const selectNone=(screen:SelectionScreen)=>screen.items.map(item=>({...item,selected:false}));

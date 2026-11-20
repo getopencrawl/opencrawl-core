@@ -12,10 +12,11 @@ the same membership and history rules. The CLI uses ordinary Git.
 ## Clone your workspace
 
 Each workspace has a private HTTPS Git URL. A teammate can share the URL, or
-you can print it with `opencrawl files url`. After signing in to OpenCrawl,
-run `opencrawl files setup-git` once on your machine. It registers a Git
-credential helper for the workspace repository paths on that deployment.
-If you use a self-hosted deployment, pass its origin with `--api`.
+you can print it with `opencrawl files url`. When you apply `opencrawl setup`,
+it registers a Git credential helper for the selected deployment under your OS
+account, even if you turn off session recording. Git uses the same OpenCrawl
+profile as setup. To register the helper separately or after installing Git,
+run `opencrawl files setup-git --api <origin>`.
 
 In an empty directory, use the URL with ordinary Git:
 

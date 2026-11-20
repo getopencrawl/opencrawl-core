@@ -2,9 +2,10 @@ import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {dirname, isAbsolute, join, relative, sep} from 'node:path';
+import {dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {promisify} from 'node:util';
 import {commandForSelf, readCaptureConfig} from './capture/runtime.ts';
+import {setupCommandForSelf} from './setup/invocation.ts';
 import {nativeId} from './context-check-events.ts';
 import {literal} from './hook-runner.ts';
 import {sessionPrivate} from './incognito-state.ts';
@@ -63,16 +64,23 @@ export async function sharedFilesUrl(api:string) {
   const {repo} = await discoverRepo(api);
   return api + (repo.clonePath ?? repo.remotePath);
 }
-function credentialCommand(target:string) {
+function credentialCommand(target:string, command=commandForSelf()) {
   // Git runs shell credential helpers through sh, including on Windows.
-  const entry = commandForSelf().map(word => process.platform === 'win32' ? word.replaceAll('\\', '/') : word);
-  return '!' + [...entry, 'files-credential', target].map(word => literal(word, false)).join(' ');
+  const entry = command.map(word => process.platform === 'win32' ? word.replaceAll('\\', '/') : word);
+  return [...entry, 'files-credential', target].map(word => literal(word, false)).join(' ');
 }
 
-export async function setupFilesGit(api:string) {
+export async function setupFilesGit(api:string, command=setupCommandForSelf()) {
   const name = createHash('sha256').update(api).digest('hex') + '.gitconfig';
-  const file = join(configDir(), 'files', name);
-  const helper = JSON.stringify(credentialCommand(api));
+  const file = resolve(configDir(), 'files', name);
+  // Git may run in a new shell. Bind the setup profile and workload identity,
+  // while letting the CLI obtain and refresh credentials when Git asks.
+  const profile = resolve(dirname(configDir()));
+  const env = ['OPENCRAWL_CONFIG_HOME=' + literal(profile, false)];
+  if (workspaceIdentityEnabled()) {
+    env.push('OPENCRAWL_AUTH=' + literal(process.env.OPENCRAWL_AUTH!, false), 'OPENCRAWL_API_URL=' + literal(api, false));
+  }
+  const helper = JSON.stringify('!' + [...env, credentialCommand(api, command)].join(' '));
   const config = ['/git/', '/api/files/'].map(prefix => {
     const scope = JSON.stringify(api + prefix);
     return ['[credential ' + scope + ']', '  useHttpPath = true', '  helper =', '  helper = ' + helper,
@@ -163,7 +171,7 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
       return {path, remote, session, reused:true};
     }
     const stage = mkdtempSync(join(scratch, 'clone-'));
-    const helper = credentialCommand(key);
+    const helper = '!' + credentialCommand(key);
     const config = ['credential.helper=', 'credential.helper=' + helper, 'credential.useHttpPath=true',
       'http.extraHeader=', 'http.followRedirects=false', 'core.hooksPath=' + hooks, 'core.symlinks=false',
       'user.name=OpenCrawl ' + session, 'user.email=agent-' + key.slice(0,16) + '@opencrawl.invalid'];

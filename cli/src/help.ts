@@ -5,7 +5,7 @@ export function commandHelp(command:string, operation?:string):string|undefined 
        opencrawl files open [--session NATIVE_ID] [--api URL] [--json]
 
 Clone a workspace with git clone <url>. The url command prints its HTTPS URL.
-Run setup-git once to let Git use your OpenCrawl sign-in for this deployment.
+opencrawl setup configures Git to use your OpenCrawl sign-in. Run files setup-git to configure it separately.
 For an agent session, open prints the absolute path of a private scratch clone.
 Use the same session ID on resume. The checkout lives outside your working project.
 Edit and commit chosen files there, then git push origin main. Fetch or pull to
