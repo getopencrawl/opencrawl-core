@@ -188,6 +188,26 @@ test('a cached 404 cannot suppress a different workspace, another tenant or a ne
   missing=true;assert.equal((await advance(f.service,resumed.id)).processed,2,'different workspace must actually read');
   assert.equal((await f.service.status(secondTenant)).blockedChats,undefined);
 });
+test('polling the Replicas card reads a bounded summary of a large in-flight checkpoint',async t=>{
+  const f=await fixture(t);
+  await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const occurrences=Object.fromEntries(Array.from({length:4096},(_,i)=>[String(i).padStart(64,'0'),1]));
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state||$3::jsonb WHERE namespace=$1 AND tenant=$2",
+    [f.database.namespace,principal.tenantId,JSON.stringify({occurrences,processed:75,imported:30})]);
+  const query=f.database.pool.query.bind(f.database.pool);
+  let bytes=0;
+  f.database.pool.query=async(...args)=>{
+    const result=await query(...args);
+    bytes+=Buffer.byteLength(JSON.stringify(result.rows));
+    return result;
+  };
+  try{
+    const card=await f.service.source(principal);
+    assert.equal(card.synced,30);assert.equal(card.history.processed,75);assert.equal(card.state,'syncing');
+    assert.ok(bytes>0&&bytes<2048,`status read ${bytes} bytes from the database`);
+  }finally{f.database.pool.query=query;}
+});
+
 test('repeated history 404 samples the workspace inventory once and waking history stays pending',async t=>{
   let clock=Date.now(),mode='missing';
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -204,12 +224,31 @@ test('repeated history 404 samples the workspace inventory once and waking histo
   const checks=diagnostics.rows[0].state.recentIssues.flatMap(issue=>issue.workspaceInventory??[]);
   assert.equal(diagnostics.rows[0].state.recentIssues.at(-1).missingResource,'chat');
   assert.ok(!JSON.stringify(diagnostics.rows[0].state.recentIssues).includes('sensitive upstream detail'));
-  assert.deepEqual(checks,[{result:'listed',chats:1}]);
+  assert.deepEqual(checks,[{result:'listed',chats:1,savedChats:0}]);
   assert.equal(f.calls.filter(url=>url.pathname.endsWith('/chats')).length,1);
   mode='waking';
   const waking=await advance(f.service,id);assert.equal(waking.processed,0);assert.equal(waking.phase,'importing');assert.equal(f.handed.length,0);
   mode='ready';clock+=24*60*60_000;
   const done=await advance(f.service,id);assert.equal(done.phase,'complete');assert.equal(done.events,1);
+});
+
+test('workspace diagnostics compare only the requested export scope and never skip the missing chat',async t=>{
+  let clock=Date.now();
+  const other={...chat,workspace_id:randomUUID()};
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:[]});
+    if(url.pathname.endsWith('/history'))return Response.json({error:'Chat not found'},{status:404});
+    if(url.searchParams.has('workspace_id')){
+      assert.equal(url.searchParams.get('workspace_id'),chat.workspace_id);
+      return Response.json({conversations:[other],total:1,next_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<3;i++){await advance(f.service,id);clock+=10*60_000;}
+  const {rows:[row]}=await f.database.pool.query('SELECT state FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
+  assert.deepEqual(row.state.recentIssues.at(-1).workspaceExport,{result:'scope_mismatch'});
+  assert.equal(row.state.blocked,1);assert.equal(row.state.processed,0);
+  assert.equal(f.calls.some(url=>url.pathname.includes(other.workspace_id)),false);
 });
 
 test('repeated history cursor defers the exact checkpoint without duplicate handoff',async t=>{
@@ -274,6 +313,42 @@ test('a large page splits into durable batches and a partial handoff retries wit
   const partial=await advance(service,id);assert.equal(partial.events,0);clock=Date.parse(partial.retryAt);
   const state=await advance(service,id,principal);assert.equal(state.phase,'complete');assert.equal(state.events,1);assert.equal(state.pages,1);
   assert.equal([...store.data.keys()].filter(k=>k.endsWith('.json.gz')).length,2);
+});
+
+test('a single oversized history event survives checkpoints, indexing and authorized readback',async t=>{
+  const {createSessionIngest}=await import('../dist/src/sessions/ingest.mjs');
+  const {createSessionPipeline}=await import('../dist/src/sessions/indexer.mjs');
+  const {gunzipSync}=await import('node:zlib');
+  const large='z'.repeat(17*1024*1024)+'tail of original record';
+  const history={events:[{type:'future-record',payload:{message:large}}],before_cursor:null};
+  const db=await applicationDatabaseFixture(t),store=memorySessionStore(),prefix='replicas/oversized';
+  const indexed=[];
+  const pipeline=createSessionPipeline({store,prefix,resolvePrincipal:async({batch})=>batch.owner,
+    search:{identity:'test',ensureIndex:async()=>{},putDocuments:async docs=>{indexed.push(docs.some(d=>d.document.text?.includes('tail of original record')));}}});
+  const receiver=createSessionIngest({store,prefix,scheduleIndexing:key=>pipeline.processObject({key})});
+  const service=createReplicasImport({database:db,key:randomBytes(32),schedule:async()=>{},ingest:receiver.putBatch,request:async input=>{
+    const url=new URL(input);
+    if(url.pathname.endsWith('whoami'))return Response.json({organization,caller:'organization_api_key'});
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[chat],total:1,next_cursor:null});
+    return url.searchParams.get('limit')==='1'?Response.json(history):new Response(null,{status:413});
+  }});
+  let status=await service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<12&&status.phase==='importing';i++)status=await advance(service,status.id);
+  assert.equal(status.phase,'complete');assert.equal(status.events,1);
+  assert.ok(indexed.includes(true),'the event body is searchable through its final characters');
+  const batches=[...store.data].filter(([key])=>key.endsWith('.json.gz'));
+  assert.equal(batches.length,2);
+  for(const [key,bytes] of batches){
+    const stored=JSON.parse(gunzipSync(bytes)),receipt={userId:stored.owner.userId,harness:stored.harness,installationId:stored.installationId,sessionId:stored.sessionId,batchId:key.split('/').at(-1).split('.')[0]};
+    assert.ok(stored.events[0].data.replicasPayloadV1);assert.ok(stored.attachments.every(a=>a.objectKey.startsWith(key.slice(0,key.lastIndexOf('/')+1)+'attachments/')));
+    const restored=await receiver.getBatch(principal,receipt);
+    assert.deepEqual(restored.events[0].data.replicasPage?.response??restored.events[0].data.replicas.record,stored.events[0].kind==='replicas_history_page'?history:history.events[0]);
+    assert.equal(await receiver.getBatch({...principal,tenantId:'outside'},receipt),null);
+  }
+  const [key,bytes]=batches[0],manifest=JSON.parse(gunzipSync(bytes));
+  const {expandReplicasPayload}=await import('../dist/src/sessions/replicas-payload.mjs');
+  manifest.attachments[0].objectKey='outside/attachments/'+manifest.attachments[0].sha256;
+  await assert.rejects(expandReplicasPayload(store,prefix,manifest.owner,key,manifest),/scoped/);
 });
 
 test('duplicate catalog entries preserve their metadata while counting one distinct session',async t=>{

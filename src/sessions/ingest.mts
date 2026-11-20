@@ -15,6 +15,7 @@ import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
 import {createControls} from './controls.mjs';
 import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 import {fail} from '../errors.mjs';
+import {expandReplicasPayload} from './replicas-payload.mjs';
 import type {RecordingPolicy} from './recording.mjs';
 export {digest,sessionScope,auditSessionEventIdentities,auditSessionEventSource} from './event-identity.mjs';
 
@@ -61,7 +62,7 @@ export function createSessionIngest({store, privacy, eventIdentities, prefix = '
       } catch (error) {if ((await barrier.inspect()).closed) return {sha256: hash, size: bytes.length, discarded: 'session_deleted'}; throw error;}
       return {sha256: hash, size: bytes.length};
     },
-    async putBatch(principal: Principal, batch: SessionBatch, gate:WriteGate=directWrite) {
+    async putBatch(principal: Principal, batch: SessionBatch, gate:WriteGate=directWrite, blobs?:ReadonlyMap<string,Uint8Array>) {
       const keyPrefix = scope(principal);
       let serialized;
       try {serialized = JSON.stringify(batch);} catch {fail(400, 'Invalid capture JSON');}
@@ -99,7 +100,13 @@ export function createSessionIngest({store, privacy, eventIdentities, prefix = '
       const {key,batchId}=await gate(async()=>{
       for (const hash of attachments) {
         const scoped = `${keyPrefix}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${hash}`, legacy = `${keyPrefix}/attachments/${hash}`;
+        const supplied=blobs?.get(hash);
+        if(supplied&&(supplied.byteLength>MAX_ATTACHMENT_BYTES||digest(supplied)!==hash))fail(400,'Invalid inline attachment');
         if (await exists(scoped, MAX_ATTACHMENT_BYTES)) attachmentKeys.set(hash, scoped);
+        else if(supplied){
+          await writes.put(scoped,supplied,'application/octet-stream');
+          attachmentKeys.set(hash,scoped);
+        }
         else {
           // New manifests must never acquire a dependency on an owner-wide blob.
           const bytes = await store.get(legacy, {maxBytes: MAX_ATTACHMENT_BYTES});
@@ -157,8 +164,9 @@ export function createSessionIngest({store, privacy, eventIdentities, prefix = '
         (await controls.read(owner,'sessions',harness!,sessionId))?.visibility!=='team')return null;
       // A receipt locates content; it cannot override a visibility change or
       // tombstone, including one committed while the object was being read.
+      const expanded=await expandReplicasPayload(store,prefix,owner,key,batch);
       if (!await readable()) return null;
-      return batch;
+      return expanded;
     }
   };
 }

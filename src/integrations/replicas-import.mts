@@ -4,8 +4,9 @@ import type {Principal,SessionBatch,SessionEvent} from '../sessions/types.mjs';
 import type {SourceCard} from '../application/types.mjs';
 import {sealedEnvelope} from './credential-vault.mjs';
 import {replicasApi,replicasError,ReplicasProviderError,ReplicasPageError,type ReplicasConversation,type ReplicasHistory} from './replicas-api.mjs';
+import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
-import {replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
+import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
@@ -29,7 +30,7 @@ export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 /** One explicit step reads one complete API page. Checkpoint only after the
  * original response and every projected record reach durable ingest/indexing.
  * Missing access and unknown pagination fail closed; no conversation is skipped. */
-export function createReplicasImport({database,key,ingest,schedule,request=fetch,now=Date.now}:{database:ApplicationDatabase;key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
+export function createReplicasImport({database,key,ingest,schedule,request=fetch,now=Date.now}:{database:ApplicationDatabase;key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch,gate?:undefined,blobs?:ReadonlyMap<string,Uint8Array>)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
@@ -50,10 +51,15 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
   }
   async function status(principal:Principal,includeBlockedChats=true){
     await ready();
-    const row=(await database.pool.query(`SELECT state, CASE WHEN $3 AND (state->>'blocked')::int>0 THEN
-      (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int FROM opencrawl_replicas_deferred
-       WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
-      FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
+    const row=(await database.pool.query(`SELECT jsonb_strip_nulls(to_jsonb(summary)) AS state,
+      CASE WHEN $3 AND summary.blocked>0 THEN
+        (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int
+           FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
+      FROM opencrawl_replicas_imports AS i
+      CROSS JOIN LATERAL jsonb_to_record(i.state) AS summary(id text,organization jsonb,phase text,background boolean,
+        total bigint,processed bigint,imported bigint,events bigint,turns bigint,pages bigint,"updatedAt" text,
+        error text,blocked bigint,"retryAt" text)
+      WHERE i.namespace=$1 AND i.tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
     return row?{...visible(row.state as State),blockedChats:row.blocked_chats??undefined}:null;
   }
   async function savePage(principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
@@ -67,9 +73,21 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const base={schemaVersion:1,installationId:'replicas-history-v2:'+state.organization.id,sessionId:'replicas-chat:'+chat.chat_id,harness:'replicas',origin:'cloud',captureMode:'history',owner,title:'[Replicas history] '+(chat.title??chat.workspace_name),attachments:[]};
     // A full response archive and its searchable records can together
     // exceed one ingest batch. Split without truncating any record.
-    let batch:SessionEvent[]=[],bytes=Buffer.byteLength(JSON.stringify(base))+32;
-    const flush=async()=>{if(!batch.length)return;const result=await ingest(owner,{...base,...chunkSenderEvidence(batch,evidence.replicasSenders),events:batch});if(result&&typeof result==='object'&&'discarded' in result)throw new ReplicasPageError('deleted','The session was deleted in OpenCrawl.');batch=[];bytes=Buffer.byteLength(JSON.stringify(base))+32;};
-    for(const event of events){const size=Buffer.byteLength(JSON.stringify(event))+1;if(size>15*1024*1024)throw new ReplicasPageError('page_size','A history record exceeds the ingest limit.');if(batch.length&&(batch.length===1000||bytes+size>15*1024*1024))await flush();batch.push(event);bytes+=size;}
+    const baseBytes=Buffer.byteLength(JSON.stringify(base))+32,limit=15*1024*1024;
+    let batch:SessionEvent[]=[],bytes=baseBytes;
+    const put=async(events:SessionEvent[],evidenceEvents:SessionEvent[],attachments:SessionBatch['attachments']=[],blobs?:ReadonlyMap<string,Uint8Array>)=>{
+      const result=await ingest(owner,{...base,...chunkSenderEvidence(evidenceEvents,evidence.replicasSenders),attachments,events},undefined,blobs);
+      if(result&&typeof result==='object'&&'discarded' in result)throw new ReplicasPageError('deleted','The session was deleted in OpenCrawl.');
+    };
+    const flush=async()=>{if(batch.length)await put(batch,batch);batch=[];bytes=baseBytes;};
+    for(const event of events){
+      const size=Buffer.byteLength(JSON.stringify(event))+1;
+      if(bytes+size>limit||batch.length===1000)await flush();
+      if(baseBytes+size>limit){
+        const packed=packReplicasPayload(event,canonical(event.data));
+        await put([packed.event],[event],packed.attachments,packed.blobs);
+      }else{batch.push(event);bytes+=size;}
+    }
     await flush();
     state.events+=history.events.length;state.turns+=replicasTurns(history).length;state.pages++;
     state.occurrences=occurrences;state.chatAttempts=0;
@@ -183,7 +201,18 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           state.workspaceChecks=[...recent,{id:chat.workspace_id,at:now()}];
           try{
             const inventory=await api.workspaceChats(chat.workspace_id);
-            issue.workspaceInventory={result:inventory.waking?'waking':inventory.chats.some(item=>item.id===chat.chat_id)?'listed':'absent',chats:inventory.chats.length};
+            const ids=new Set(inventory.chats.map(item=>item.id));
+            const saved=new Set(state.completedSessions);
+            const savedChats=[...ids].filter(id=>saved.has(replicasDigest(chat.workspace_id+':'+id))).length;
+            issue.workspaceInventory={result:inventory.waking?'waking':ids.has(chat.chat_id)?'listed':'absent',chats:ids.size,savedChats};
+            if(issue.workspaceInventory.result==='absent'){
+              try{
+                const page=await api.conversations(null,chat.workspace_id);
+                issue.workspaceExport=page.conversations.every(item=>item.workspace_id===chat.workspace_id)
+                  ?{result:'scoped',total:page.total,hasMore:Boolean(page.next_cursor),onFirstPage:page.conversations.some(item=>item.chat_id===chat.chat_id)}
+                  :{result:'scope_mismatch'};
+              }catch{issue.workspaceExport={result:'unavailable'};}
+            }
           }catch(check){
             issue.workspaceInventory={result:'unavailable',httpStatus:check instanceof ReplicasProviderError?check.status:undefined};
           }

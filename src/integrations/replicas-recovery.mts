@@ -8,7 +8,8 @@ export type ImportIssue={
   attempt:number;elapsedMs:number;originalHttpStatus?:number;originalOperation?:ReplicasOperation;originalRequestId?:string;httpStatus?:number;internalStatus?:number;requestId?:string;retryAt?:string;
   workspaceId?:string;chatId?:string;cursorHash?:string;pageLimit?:number;
   missingResource?:ReplicasProviderError['missingResource'];
-  workspaceInventory?:{result:'listed'|'absent'|'waking';chats:number}|{result:'unavailable';httpStatus?:number};
+  workspaceExport?:{result:'scoped';total:number;hasMore:boolean;onFirstPage:boolean}|{result:'scope_mismatch'|'unavailable'};
+  workspaceInventory?:{result:'listed'|'absent'|'waking';chats:number;savedChats?:number}|{result:'unavailable';httpStatus?:number};
 };
 
 export function issueFor(error:unknown,operation:ImportOperation):Pick<ImportIssue,'operation'|'reason'|'httpStatus'|'internalStatus'|'requestId'|'missingResource'>{

@@ -242,7 +242,9 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
     rendered.set(sourceKey, entry);
     entry.value.then(events => {
       if (rendered.get(sourceKey) !== entry) return;
-      entry.size = events ? weigh(events) : 0; cachedChars += entry.size;
+      entry.size = events ? weigh(events) : 0;
+      if(entry.size>CACHE_CHARS){rendered.delete(sourceKey);return;}
+      cachedChars += entry.size;
       for (const [oldest, value] of rendered) {if (cachedChars <= CACHE_CHARS || oldest === sourceKey) break; rendered.delete(oldest); cachedChars -= value.size;}
     }, () => {if (rendered.get(sourceKey) === entry) rendered.delete(sourceKey);});
     return entry.value;
