@@ -28,7 +28,7 @@ async function fixture(t,options={}){
   const setupState=cliSetup?createSetupState(database):undefined;await setupState?.ready();
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const settings={sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
   app=selfhostApplication({settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
@@ -48,7 +48,7 @@ async function fixture(t,options={}){
     assert.equal((await identity.invitationLinks()).has(email),false);
     return invited;
   };
-  return {request,post,identity,store,prefix,origin,admin,join:join_};
+  return {request,post,identity,store,prefix,origin,admin,settings,join:join_};
 }
 
 test('CLI setup leaves authenticated pages and console operations open before any agent receipt',async t=>{
@@ -411,6 +411,10 @@ test('admin removal immediately denies existing browser, CLI, Git, MCP and captu
  const {remotePath,clonePath}=(await discovery.json()).data;
  assert.equal(clonePath,'/git/'+org+'/files.git');
  const refs=remotePath+'/info/refs?service=git-upload-pack';
+ f.settings.sharedFilesAccess='read-only';
+ assert.equal((await f.request(clonePath+'/info/refs?service=git-receive-pack',null,{headers:basic})).status,403);
+ assert.equal((await f.request(refs,null,{headers:basic})).status,200);
+ f.settings.sharedFilesAccess='read-write';
  assert.equal((await f.request(refs,null,{headers:basic})).status,200);
  assert.equal((await f.request(refs,null,{headers:{...basic,origin:f.origin}})).status,403);
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,200);
@@ -603,4 +607,10 @@ test('self-host reload bootstraps the last authorized Team read only for the sam
   const loggedOut = await app.request('/settings/team');
   assert.equal(loggedOut.status,303);
   assert.doesNotMatch(await loggedOut.text(),/opencrawl-reload|ada@example.com/);
+});
+
+test('self-host keeps provisioned Git endpoints hidden when access is disabled',async t=>{
+ const f=await fixture(t,{files:'off'});
+ for(const path of ['/api/files','/git/'+org+'/files.git/info/refs?service=git-upload-pack'])
+   assert.equal((await f.request(path)).status,404);
 });

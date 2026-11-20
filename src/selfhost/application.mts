@@ -160,7 +160,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   const sessions=createSessionLibrary({capturePairs:replicasImport?.capturePairs,forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
   const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage,authorization=req.headers.authorization)=>{const token=/^Bearer (.+)$/i.exec(authorization||'')?.[1];return identifyWorkload(token)??identifyCli(authorization,{capture:true});};
-  const filesHandler=sharedFiles && createSharedFilesHandler({store:sharedFiles,limits:filesLimits});
+  const filesHandler=settings.sharedFilesAccess && settings.sharedFilesAccess!=='off' && sharedFiles && createSharedFilesHandler({store:sharedFiles,limits:filesLimits});
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
   const contextCheck=createContextCheckHandler({authenticate,check:measuredCheck(usageActivity,createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize}))});
   const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:measuredSuggestionEvents(usageActivity,contextSuggestions.observe)})});
@@ -244,7 +244,10 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
           return respond(identity.status,'Shared files authentication required');
         }
         await authorize(identity.principal);
+        const writing=url.pathname.endsWith('/git-receive-pack')||url.searchParams.get('service')==='git-receive-pack';
+        if(writing&&settings.sharedFilesAccess!=='read-write')return respond(403,'Workspace Git is read-only');
         return await filesHandler(req,res,identity.principal,async()=>{
+          if(writing&&settings.sharedFilesAccess!=='read-write')throw Object.assign(new Error('Workspace Git is read-only'),{status:403});
           const fresh=await check();
           if(fresh.status!==200)throw Object.assign(new Error('Shared files access expired'),{status:fresh.status});
           if(fresh.principal.userId!==identity.principal.userId || fresh.principal.tenantId!==identity.principal.tenantId)
