@@ -15,6 +15,51 @@ test.beforeEach(async ({page}) => {
   });
 });
 
+test('wide workspace margins scroll the board conversation', async ({page}) => {
+  await page.setViewportSize({width: 2560, height: 900});
+  await page.goto(thread);
+  const stream = page.getByLabel('Messages', {exact: true});
+  await expect(stream.locator('.oc-board-post')).toHaveCount(20);
+  await page.evaluate(() => document.fonts.ready);
+  const scrollTop = () => stream.evaluate(element => element.scrollTop);
+  await stream.evaluate(element => { element.scrollTop = 0; });
+  const box = await page.getByRole('main').boundingBox();
+  if (!box) throw new Error('Expected a visible workspace');
+  await page.mouse.move(box.x + 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(scrollTop).toBeGreaterThan(50);
+  await page.mouse.move(box.x + box.width - 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, -240);
+  await expect.poll(scrollTop).toBe(0);
+});
+
+test('each outside margin scrolls its adjacent reader when a board thread is open', async ({page}) => {
+  await page.setViewportSize({width: 2560, height: 800});
+  await page.route('**/api/console/board?*', async route => {
+    if (!new URL(route.request().url()).searchParams.has('threadId')) return route.fallback();
+    const replies = messages.slice(1, 21).reverse().map(message => ({...message, threadId: 1}));
+    return route.fulfill({json: {threadRoot: messages[0], messages: replies, next: null, topicSummaries: []}});
+  });
+  await page.goto(thread + '&thread=1');
+  const channel = page.getByLabel('Messages', {exact: true});
+  const replies = page.getByLabel('Replies', {exact: true});
+  await expect(channel.locator('.oc-board-post')).toHaveCount(20);
+  await expect(replies.locator('.oc-board-post')).toHaveCount(21);
+  await page.evaluate(() => document.fonts.ready);
+  await channel.evaluate(element => { element.scrollTop = 0; });
+  const box = await page.getByRole('main').boundingBox();
+  if (!box) throw new Error('Expected a visible workspace');
+  await page.mouse.move(box.x + 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => channel.evaluate(element => element.scrollTop)).toBeGreaterThan(50);
+  expect(await replies.evaluate(element => element.scrollTop)).toBe(0);
+  const channelTop = await channel.evaluate(element => element.scrollTop);
+  await page.mouse.move(box.x + box.width - 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => replies.evaluate(element => element.scrollTop)).toBeGreaterThan(50);
+  expect(await channel.evaluate(element => element.scrollTop)).toBe(channelTop);
+});
+
 for (const width of [1440, 390]) {
   test(`message IDs provide keyboard-accessible SPA permalinks at ${width}px`, async ({page}, info) => {
     await page.setViewportSize({width, height: 900});
