@@ -8,7 +8,7 @@ import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
-import {hasWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
+import {nextWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
@@ -151,10 +151,9 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         return;
       }
       if(!hasFresh){
-        if(await hasWorkspaceExportReview(client,reviewScope,sweep)){
-          if(await review()||await hasWorkspaceExportReview(client,reviewScope,sweep))return;
-        }
-        state.retryAt=row.retry_at.toISOString();
+        const nextReview=await nextWorkspaceExportReview(client,reviewScope,sweep);
+        if(nextReview!==undefined&&nextReview<=now()){await review();return;}
+        state.retryAt=new Date(Math.min(row.retry_at.getTime(),nextReview??Infinity)).toISOString();
         state.waitingForSource=await pending.onlyAbsent();
         return;
       }
@@ -376,8 +375,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           await step(client,principal,state,replicasApi(envelope.open(path,credential).toString(),request));
         }
       }
-      if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked&&
-        !await hasWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length)))state.phase='complete';
+      if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked){
+        const next=await nextWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length));
+        if(next===undefined)state.phase='complete';
+        else if(next>now()){state.retryAt=new Date(next).toISOString();state.waitingForSource=true;}
+      }
       if(state.phase!=='importing')credential=null;
       state.updatedAt=new Date(now()).toISOString();
       await client.query('INSERT INTO opencrawl_replicas_imports(namespace,tenant,state,credential) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(namespace,tenant) DO UPDATE SET state=EXCLUDED.state,credential=EXCLUDED.credential',[namespace,principal.tenantId,JSON.stringify(state),credential]);

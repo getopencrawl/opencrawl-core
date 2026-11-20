@@ -694,3 +694,60 @@ test('workspace absence cannot keep postponing a direct history check or overrid
   assert.ok(rows.find(r=>r.id===chat.chat_id).retry_at.getTime()<=now);
   assert.equal(rows.find(r=>r.id===peer.chat_id).retry_at.toISOString(),later);
 });
+
+test('a failed export owns its wakeup, retains scoped rows and restarts from page one when totals change',async t=>{
+  let clock=Date.now(),firstPass=true;
+  const extra={...chat,chat_id:randomUUID()},reads=[],cursors=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('history')){
+      reads.push(url.searchParams.get('chat_id'));return Response.json({events:[event('saved')],before_cursor:null});
+    }
+    if(url.pathname.endsWith('conversations')&&url.searchParams.has('workspace_id')){
+      const cursor=url.searchParams.get('cursor');cursors.push(cursor);
+      const total=cursor&&firstPass?3:2;
+      if(cursor)firstPass=false;
+      return Response.json({conversations:cursor?[extra]:[chat],total,next_cursor:cursor?null:'second'},
+        {headers:{'x-request-id':'11223344-5566-7788-9900-aabbccddeeff'}});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId];
+  // Upgrade an existing import whose last version recorded only the failure phase.
+  await f.database.pool.query("UPDATE opencrawl_replicas_workspace_inventories SET result='ready',chat_ids='{}',export_check=$3 WHERE namespace=$1 AND tenant=$2",[...scope,{phase:'inconsistent_catalog'}]);
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state||$3::jsonb WHERE namespace=$1 AND tenant=$2",[...scope,JSON.stringify({workspaceChecks:[{id:chat.workspace_id,at:clock}]})]);
+  for(let i=0;i<6;i++)await advance(f.reopen(),id);
+  const check=async()=>(await f.database.pool.query('SELECT export_check FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',scope)).rows[0].export_check;
+  const failed=await check();
+  assert.equal(failed.phase,'inconsistent_catalog');assert.equal(failed.lastFailure.reason,'total_changed');
+  assert.equal(failed.lastFailure.previousTotal,2);assert.equal(failed.lastFailure.reportedTotal,3);assert.equal(failed.lastFailure.examined,2);
+  assert.equal(failed.lastFailure.httpStatus,200);assert.equal(failed.lastFailure.requestId,'11223344-5566-7788-9900-aabbccddeeff');
+  assert.deepEqual(cursors,[null,'second']);assert.deepEqual(reads,[chat.chat_id,extra.chat_id]);
+  const waiting=await f.reopen().runStep(job(id));assert.equal(waiting.done,false);assert.equal(waiting.delayMs,60_000);
+  clock+=waiting.delayMs;
+  for(let i=0;i<3;i++)await advance(f.reopen(),id);
+  assert.deepEqual(cursors,[null,'second',null,'second']);assert.deepEqual(reads,[chat.chat_id,extra.chat_id]);
+  assert.equal((await check()).fullCatalog,true);assert.equal((await check()).phase,'complete');
+  assert.equal((await f.service.status(principal)).phase,'complete');
+});
+
+test('an unavailable filtered export resumes its saved cursor after Retry-After',async t=>{
+  let clock=Date.now(),unavailable=true;
+  const cursors=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('history'))return Response.json({events:[event('saved')],before_cursor:null});
+    if(url.pathname.endsWith('conversations')&&url.searchParams.has('workspace_id')){
+      const cursor=url.searchParams.get('cursor');cursors.push(cursor);
+      if(cursor&&unavailable)return new Response(null,{status:429,headers:{'Retry-After':'600'}});
+      return Response.json({conversations:[chat],total:2,next_cursor:cursor?null:'later'});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query("UPDATE opencrawl_replicas_workspace_inventories SET result='ready',chat_ids='{}' WHERE namespace=$1 AND tenant=$2",scope);
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state||$3::jsonb WHERE namespace=$1 AND tenant=$2",[...scope,JSON.stringify({workspaceChecks:[{id:chat.workspace_id,at:clock}]})]);
+  for(let i=0;i<4;i++)await advance(f.reopen(),id);
+  const waiting=await f.reopen().runStep(job(id));assert.equal(waiting.delayMs,600_000);
+  unavailable=false;clock+=waiting.delayMs;
+  await advance(f.reopen(),id);
+  assert.deepEqual(cursors,[null,'later','later']);assert.equal((await f.service.status(principal)).phase,'complete');
+});

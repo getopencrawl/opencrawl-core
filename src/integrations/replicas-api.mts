@@ -79,7 +79,7 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
   }
   return {
     identity:()=>get('identity','whoami',z.object({organization:z.object({id:uuid,name:z.string()}),caller:z.string()})),
-    conversations:(next?:string|null,workspaceId?:string)=>get('catalog','organization/conversations?'+new URLSearchParams({limit:'100',...(next?{cursor:next}:{}),...(workspaceId?{workspace_id:workspaceId}:{})}),conversationsSchema),
+    conversations:(next?:string|null,workspaceId?:string,observe?:(info:ReplicasResponseInfo)=>void)=>get('catalog','organization/conversations?'+new URLSearchParams({limit:'100',...(next?{cursor:next}:{}),...(workspaceId?{workspace_id:workspaceId}:{})}),conversationsSchema,undefined,observe),
     workspaceChats:(workspaceId:string)=>get('workspace_chats','replica/'+workspaceId+'/chats',
       z.object({chats:z.array(z.object({id:z.string()})),waking:z.boolean().optional()})),
     async history(conversation:ReplicasConversation,before?:string|null,limit=100,observe?:(info:ReplicasResponseInfo)=>void){

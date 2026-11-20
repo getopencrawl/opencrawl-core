@@ -29,8 +29,8 @@ export async function observeReplicasWorkspace(client:Client,scope:{namespace:st
   await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,chat_ids,result)
     VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,tenant,import_id,workspace) DO UPDATE
     SET checked_at=EXCLUDED.checked_at,chat_ids=EXCLUDED.chat_ids,result=EXCLUDED.result,
-      export_check=CASE WHEN opencrawl_replicas_workspace_inventories.chat_ids IS DISTINCT FROM EXCLUDED.chat_ids
-        OR opencrawl_replicas_workspace_inventories.export_check->>'phase' IN ('unavailable','inconsistent_catalog','scope_mismatch')
+      export_check=CASE WHEN opencrawl_replicas_workspace_inventories.export_check ? 'retryAt' THEN opencrawl_replicas_workspace_inventories.export_check
+        WHEN opencrawl_replicas_workspace_inventories.chat_ids IS DISTINCT FROM EXCLUDED.chat_ids
         OR jsonb_array_length(COALESCE(opencrawl_replicas_workspace_inventories.export_check->'outside','[]'::jsonb))>0
         THEN NULL ELSE opencrawl_replicas_workspace_inventories.export_check END`,[...args,at,ids,result]);
   let moved=0,released=0;
