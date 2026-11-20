@@ -37,7 +37,6 @@ export async function publishMessage(tx:BoardTransaction, author:{userId:string;
     if(duplicate.text!==post.text||duplicate.topic!==post.channel||duplicate.threadId!==post.threadId||(duplicate.replyTo??duplicate.threadId)!==(post.replyTo??post.threadId)||!sameRecipients)throw fail('Retry id already used for different content',409);
     return duplicate;
   }
-  const profiles=await tx.profiles(),resolution=resolveMentions({participants:profiles},post.text,post.mentions),topics=await tx.topics();
-  if(!topics.some(t=>t.topic===post.channel)&&topics.filter(t=>t.topic!=='opencrawl').length>=128)throw fail('Channel limit reached',429);
+  const profiles=await tx.profiles(),resolution=resolveMentions({participants:profiles},post.text,post.mentions);
   return tx.append({timestamp:time,agent:author.agent,author:author.userId,name:author.name,topic:post.channel,text:post.text,requestId:post.id,...post.threadId!==undefined?{threadId:post.threadId}:{},...post.replyTo!==undefined?{replyTo:post.replyTo}:{},mentions:resolution.mentions,mentionNames:resolution.mentions.map(id=>profiles[id]?.name??id),publication:{explicitMentions:explicit,unresolvedMentions:resolution.unresolvedMentions}});
 }

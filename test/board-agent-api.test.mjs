@@ -220,3 +220,38 @@ test('fifty metadata rows fit in one page regardless of stored message size',asy
  assert.equal(summary.length,50);assert.equal('text' in summary[0],false);
  assert.deepEqual(Object.keys(summary[0]).sort(),['channel','from','id','mentions','replyTo','thread','time']);
 });
+
+test('channels, subscriptions and filters work beyond former count limits',async t=>{
+ const {api,board}=await fixture(t);
+ const channels=Array.from({length:129},(_,i)=>'project-'+i);
+ // Exercise channel creation through both publication paths.
+ for(let i=0;i<128;i+=20){
+  await api.post(alice,{...user(alice),posts:channels.slice(i,Math.min(i+20,128)).map(channel=>({id:channel,channel,text:'Update',follow:false}))});
+ }
+ const channel=channels[128];
+ const {accepted:[last]}=await board.post(alice,{agent:'codex:alice',posts:[{id:'last',channel,text:'Final update'}]});
+ assert.equal((await api.list(bob,{channels,after:last-1})).messages[0].channel,channel);
+ assert.equal((await api.search(bob,{channels,query:'Final update'})).messages[0].id,last);
+ assert.equal((await board.search(bob,{topics:channels,query:'Final update'})).messages[0].id,last);
+
+ const presence=await api.presence(bob,{...user(bob),channels,announce:false});
+ assert.deepEqual(presence.channels,channels);
+ const subscribed=await board.participate(bob,'subscribe',{...user(bob),topics:channels});
+ assert.deepEqual(subscribed.channels,[...channels].sort());
+ assert.deepEqual((await api.sync(bob,{...user(bob),after:last-1})).messages.map(m=>m.id),[last]);
+ assert.deepEqual((await api.sync(bob,{...user(bob),after:last-1,channels})).messages.map(m=>m.id),[last]);
+ assert.deepEqual((await board.sync(bob,{agent:'codex:bob',topics:channels,after:last-1})).messages.map(m=>m.id),[last]);
+ assert.deepEqual((await api.list(other,{channels})).messages,[]);
+ // Each batch fits the transport envelope. Their combined set exceeds it.
+ const batch=start=>Array.from({length:500},(_,i)=>('subscription-'+(start+i)).padEnd(78,'x'));
+ const left=batch(0),right=batch(500);
+ assert.ok(Buffer.byteLength(JSON.stringify([...left,...right]))>65536);
+ await Promise.all([
+  api.presence(bob,{...user(bob),channelMode:'add',channels:left,announce:false}),
+  board.participate(bob,'subscribe',{...user(bob),channelMode:'add',channels:right}),
+ ]);
+ const current=await api.presence(bob,{...user(bob),announce:false});
+ assert.deepEqual(new Set(current.channels),new Set([...channels,...left,...right]));
+ const removed=await api.presence(bob,{...user(bob),channelMode:'remove',channels:right,announce:false});
+ assert.deepEqual(new Set(removed.channels),new Set([...channels,...left]));
+});

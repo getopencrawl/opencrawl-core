@@ -90,20 +90,16 @@ export class CheckStore {
       this.db.query("UPDATE checks SET state='failed' WHERE (state IN ('running','working') AND created<?) OR (state IN ('ready','delivering') AND created<?)").run(now-30000,now-120000);
       const previous=this.db.query<CheckTask,[string]>("SELECT * FROM checks WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 1").get(session);
       if(previous&&!['failed','delivered'].includes(previous.state))this.record(previous,{stage:'dropped',reason:'superseded'});
-      this.db.query("DELETE FROM checks WHERE created<? OR id IN (SELECT id FROM checks WHERE state NOT IN ('running','working') ORDER BY created DESC LIMIT -1 OFFSET 509)").run(now-86400000);
-      const active=this.db.query<{count:number},[]>("SELECT count(*) AS count FROM checks WHERE state IN ('running','working')").get()!.count;
+      this.db.query("DELETE FROM checks WHERE created<? OR id IN (SELECT id FROM checks WHERE state IN ('failed','delivered') ORDER BY created DESC,rowid DESC LIMIT -1 OFFSET 512)").run(now-86400000);
       const prior=this.db.query<{input:string},[string]>('SELECT input FROM checks WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 4').all(session);
       const inputs=prior.map(row=>JSON.parse(row.input) as CheckInput),message=checkText(event.message!,4000);
       const input:CheckInput={eventId:event.eventId,currentSession:{harness:this.harness,sessionId:event.sessionId},role:'user',message,
         task:checkText(inputs[0]?.task||message,1000),context:inputs.reverse().map(previous=>({role:'user',text:checkText(previous.message,400)})),timestamp:new Date(now).toISOString()};
-      // Reserve even a skipped event locally: replaying the same native event
-      // must not create a surprise debit once capacity becomes available.
-      const task:CheckTask={id:hash(JSON.stringify([this.settings.revision,session,event.eventId])),session,event:event.eventId,created:now,state:active<2?'running':'failed',input:JSON.stringify(input),projects:JSON.stringify(event.projects),binding:this.settings.revision};
+      const task:CheckTask={id:hash(JSON.stringify([this.settings.revision,session,event.eventId])),session,event:event.eventId,created:now,state:'running',input:JSON.stringify(input),projects:JSON.stringify(event.projects),binding:this.settings.revision};
       if(Buffer.byteLength(task.input)>12000)throw new CliError('CHECK_INPUT_TOO_LARGE','Prompt could not fit the bounded check request.');
       this.db.query('INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)').run(task.id,task.session,task.event,task.created,task.state,task.input,task.projects,task.binding);
       this.record(task,{stage:'observed'});
-      if(task.state==='failed')this.record(task,{stage:'skipped',reason:'capacity'});
-      return task.state==='running'?task:undefined;
+      return task;
     }).immediate();
   }
 }

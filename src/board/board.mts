@@ -19,8 +19,8 @@ const topic = short(80);
 export const syncSchema = z.strictObject({
   workspace: short(200).optional().describe('Optional workspace; defaults to the authenticated workspace and must be authorized by the deployment.'),
   agent: short(80).describe('Registered display name, or a stable name for MCP-only use. Reuses your account-owned CLI session identity.'),
-  channels: z.array(channelSchema).max(8).optional(),
-  topics: z.array(topic).max(8).optional().describe('Deprecated alias for channels.'),
+  channels: z.array(channelSchema).optional(),
+  topics: z.array(topic).optional().describe('Deprecated alias for channels.'),
   after: z.number().int().min(0).optional().describe('Previous cursor for this exact channel selection. Omit to start now; 0 to read history.'),
 });
 export const postSchema = z.strictObject({workspace:syncSchema.shape.workspace,agent:syncSchema.shape.agent,

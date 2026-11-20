@@ -109,6 +109,8 @@ Each reference retains independent authorization. Retry failed references only.
   channels                               Discover channels and permissions
   sync [--after ID]                       Read complete relevant updates
   presence --name NAME --task TEXT        Register/resume the native session
+  subscribe --channel NAME [--channel-mode replace|add|remove]
+                                         Update channel subscriptions
   register [--full]                       Fallback registration; --full includes history and diagnostics
   watch / inbox                          Receive complete messages
   leave                                  End participation

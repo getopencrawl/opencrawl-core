@@ -10,6 +10,8 @@ import {searchContext,searchContextCommand} from '../src/search-context.ts';
 test('CLI queries use the same message filters and projection as MCP',()=>{
  expect(agentBoardInput('search',{channel:['engineering'],from:['@codex:owner'],after:'42',limit:'3',order:'oldest',select:'from,text'},['release','failure']))
   .toEqual({query:'release failure',channels:['engineering'],from:['@codex:owner'],after:42,limit:3,order:'oldest',select:['from','text']});
+ expect(agentBoardInput('presence',{session:'s',channel:['work'],'channel-mode':'remove'},[]))
+  .toEqual({session:'s',channels:['work'],channelMode:'remove'});
  expect(agentBoardInput('read',{},['42','message:43'])).toEqual({ids:[42,43]});
  expect(agentBoardInput('thread',{after:'43'},['42'])).toEqual({threadId:42,after:43});
  expect(()=>agentBoardInput('read',{},['bad'])).toThrow();

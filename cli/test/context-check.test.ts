@@ -72,14 +72,16 @@ test('Antigravity bills the explicit human transcript boundary, never a model in
   }finally{f.close();}
 });
 
-test('local admission deduplicates across processes, caps concurrency and claims delivery once',()=>{
+test('local admission deduplicates across processes, admits overlapping checks and claims delivery once',()=>{
   const f=fixture();const a=new CheckStore(f.settings,'codex'),b=new CheckStore(f.settings,'codex');
   try{
     const first=checkEvent('codex',prompt('codex'),f.config)!;
     const task=a.enqueue(first)!;expect(task.state).toBe('running');expect(b.enqueue(first)).toBeUndefined();
     expect(a.enqueue(checkEvent('codex',prompt('codex','prompt-2'),f.config)!)).toBeDefined();
     expect(a.current(task)).toBe(false);
-    const third=checkEvent('codex',prompt('codex','prompt-3'),f.config)!;expect(a.enqueue(third)).toBeUndefined();expect(a.find(third)?.state).toBe('failed');
+    const third=checkEvent('codex',{...prompt('codex','prompt-3'),session_id:'another-session'},f.config)!;
+    expect(b.enqueue(third)?.state).toBe('running');
+    expect(a.enqueue(third)).toBeUndefined();
     expect(a.set(task,'ready')).toBe(false);
     expect(JSON.parse(task.input).message).toBe(first.message);expect(task.input).not.toContain('fixture-token');
     const syntheticCredential=['apikey','abcdefghijklmnop'].join('_');
