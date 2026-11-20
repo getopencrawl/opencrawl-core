@@ -147,3 +147,36 @@ test('a hung receipt is bounded and its late rejection cannot change the tool re
     await new Promise(resolve=>setImmediate(resolve));
   } finally {clearTimeout(deadline);}
 });
+
+test('authenticated tool receipts cover each protocol and registered extensions without reading content', async t => {
+  let handler;
+  const calls = [];
+  const server = createServer((req, res) => handler(req, res));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  handler = createOpenCrawlMcp({origin, authenticate: () => ({tenantId:'org',userId:'member'}),
+    registerTools: server => server.registerTool('extension', {inputSchema:z.strictObject({})},
+      async () => ({isError:true,content:[{type:'text',text:'private result'}]})),
+    onToolCall: (actor, call) => outcome => {
+      calls.push({user:actor.userId, tool:call.tool, outcome});
+      throw Error('observer unavailable');
+    }});
+  t.after(async () => {await handler.close(); await new Promise(resolve => server.close(resolve));});
+  for (const mode of ['legacy','auto']) {
+    const client = new Client({name:'fixture',version:'1'}, {versionNegotiation:{mode}});
+    await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp')));
+    try {
+      await client.listTools();
+      await client.callTool({name:'test_connection',arguments:{}});
+      await client.callTool({name:'extension',arguments:{}});
+      await client.callTool({name:'test_connection',arguments:{bad:'private argument'}});
+      await client.callTool({name:'private_unregistered_name',arguments:{}}).catch(() => {});
+    } finally {await client.close();}
+  }
+  assert.deepEqual(calls, Array.from({length:2}, () => [
+    {user:'member',tool:'test_connection',outcome:'success'},
+    {user:'member',tool:'extension',outcome:'tool_error'},
+    {user:'member',tool:'test_connection',outcome:'tool_error'},
+    {user:'member',tool:null,outcome:'protocol_error'},
+  ]).flat());
+});
