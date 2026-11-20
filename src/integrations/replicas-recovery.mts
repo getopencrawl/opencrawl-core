@@ -3,11 +3,11 @@ import {ReplicasPageError,ReplicasProviderError,type ReplicasOperation} from './
 
 export type ImportOperation=ReplicasOperation|'ingest';
 export type ImportIssue={
-  importId?:string;at:string;operation:ImportOperation;reason:string;decision:'retry'|'defer'|'resize'|'reconnect';
+  importId?:string;at:string;operation:ImportOperation;reason:string;decision:'retry'|'defer'|'resize'|'reconnect'|'continue';
   identityCheck?:'verified'|'identity_mismatch'|'rejected'|'unavailable';
   attempt:number;elapsedMs:number;originalHttpStatus?:number;originalOperation?:ReplicasOperation;originalRequestId?:string;httpStatus?:number;internalStatus?:number;requestId?:string;retryAt?:string;
   workspaceId?:string;chatId?:string;cursorHash?:string;pageLimit?:number;
-  observedBytes?:number;limitBytes?:number;
+  bytesRead?:number;observedBytes?:number;limitBytes?:number;
   missingResource?:ReplicasProviderError['missingResource'];
   workspaceAbsentAt?:string;
   workspaceExport?:{result:'scoped';total:number;hasMore:boolean;onFirstPage:boolean}|{result:'scope_mismatch'|'unavailable'};

@@ -574,3 +574,49 @@ test('one retained inventory postpones absent chats across a workspace and relea
   assert.equal(next.imported,2);assert.equal(next.processed,2);assert.equal(next.blocked,1);assert.notEqual(next.waitingForSource,true);
   assert.ok(f.handed.length>=2);
 });
+
+test('a small successful continuation grows the page size and clears the stale oversized failure',async t=>{
+  let clock=Date.now();
+  const sizes=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(!url.pathname.endsWith('/history'))return;
+    const size=Number(url.searchParams.get('limit')),cursor=url.searchParams.get('before_cursor');
+    sizes.push(size);
+    if(!cursor&&size>1)return new Response(null,{status:413});
+    if(!cursor&&sizes.filter(s=>s===1).length===1)return new Response(null,{status:413});
+    const n=Number(cursor??0);
+    return Response.json({events:[event('page '+n)],before_cursor:n===4?null:String(n+1)});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<7;i++)await advance(f.service,id);
+  assert.deepEqual(sizes,[100,50,25,12,6,3,1]);clock+=60_000;
+  await advance(f.reopen(),id);
+  const {rows:[row]}=await f.database.pool.query('SELECT issue,checkpoint FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
+  assert.equal(row.issue.reason,'page_saved');assert.equal(row.issue.decision,'continue');assert.equal(row.issue.httpStatus,undefined);
+  assert.equal(row.checkpoint.before,'1');assert.equal(row.checkpoint.pageLimit,4);
+  let status;
+  for(let i=0;i<4;i++)status=await advance(f.reopen(),id);
+  assert.deepEqual(sizes.slice(-5),[1,4,16,64,100]);
+  assert.equal(status.phase,'complete');assert.equal(status.processed,1);assert.equal(status.events,5);
+});
+
+test('a recovered long transcript makes progress alongside older unavailable chats',async t=>{
+  const clock=Date.now(),others=Array.from({length:8},()=>({...chat,chat_id:randomUUID()})),reads=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('/history')){
+      const id=url.searchParams.get('chat_id');reads.push(id);
+      if(id!==chat.chat_id)return new Response(null,{status:404});
+      const page=Number(url.searchParams.get('before_cursor')??1);
+      return Response.json({events:[event('page '+page)],before_cursor:page>=7?null:String(page+1)});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId];
+  const cp={before:null,historyCursors:[],occurrences:{},pageLimit:100,chatAttempts:1};
+  const issue={at:new Date(clock-60_000).toISOString(),attempt:1,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state||$3::jsonb WHERE namespace=$1 AND tenant=$2",[...scope,JSON.stringify({queue:[],total:9,blocked:9})]);
+  for(const other of others)await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',[...scope,new Date(clock-1000),other,cp,issue]);
+  await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',[...scope,new Date(clock),chat,{...cp,before:'1'},{...issue,continuation:true}]);
+  for(let i=0;i<6;i++)await advance(f.reopen(),id);
+  assert.deepEqual(reads.slice(0,4),Array(4).fill(chat.chat_id));assert.ok(others.some(o=>o.chat_id===reads[4]));assert.equal(reads[5],chat.chat_id);
+});

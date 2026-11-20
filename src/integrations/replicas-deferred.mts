@@ -29,7 +29,13 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
         WHERE namespace=$1 AND tenant=$2 AND (NOT(issue ? 'workspaceAbsentAt') OR issue ? 'continuation' OR checkpoint->>'before' IS NOT NULL)) AS only_absent`,scope);
       return result.rows[0].only_absent;
     },
-    async oldest(){
+    async oldest(preferContinuation:boolean,now:number){
+      if(preferContinuation){
+        const due=await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
+          WHERE namespace=$1 AND tenant=$2 AND issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL AND retry_at<=$3
+          ORDER BY retry_at,id LIMIT 1`,[...scope,new Date(now).toISOString()]);
+        if(due.rows[0])return due.rows[0];
+      }
       return (await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
         WHERE namespace=$1 AND tenant=$2 ORDER BY retry_at,id LIMIT 1`,scope)).rows[0];
     },
