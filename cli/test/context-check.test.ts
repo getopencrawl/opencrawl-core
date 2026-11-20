@@ -249,3 +249,21 @@ test('a rejected report is isolated across restarts and revoked access preserves
     }finally{store.close();f.close();}
   }
 });
+
+test('the next opener finishes an interrupted settings change and reports every expired check',()=>{
+ const f=fixture();let store=new CheckStore(f.settings,'codex');
+ try{
+   const task=store.enqueue(checkEvent('codex',prompt('codex'),f.config)!)!;
+   const report=store.pending()[0]!;
+   const next=saveCheckSettings(f.settings,['cursor','codex']);
+   store.db.query('UPDATE suggestion_outbox SET binding=?').run(f.settings.revision);
+   store.db.exec('DELETE FROM suggestion_outbox_revision');
+   store.close();store=new CheckStore(next,'codex');
+   expect(store.pending().map(e=>e.id)).toEqual([report.id]);store.acknowledge([report.id]);
+   const insert=store.db.query("INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)");
+   store.db.transaction(()=>{for(let i=0;i<513;i++)insert.run('expired-'+i,'session-'+i,'prompt-'+i,Date.now()-60000,'running',task.input,'[]',next.revision);}).immediate();
+   store.enqueue(checkEvent('codex',prompt('codex','next'),f.config)!);
+   expect(store.db.query("SELECT count(*) AS count FROM suggestion_outbox WHERE json_extract(payload,'$.reason')='expired'").get()).toEqual({count:513});
+   expect(store.db.query("SELECT count(*) AS count FROM checks WHERE id LIKE 'expired-%'").get()).toEqual({count:513});
+ }finally{store.close();f.close();}
+});

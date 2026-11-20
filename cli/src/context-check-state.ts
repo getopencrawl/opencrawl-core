@@ -1,7 +1,7 @@
 import type {SuggestionEvent} from '../../src/search/suggestion-events.mts';
 import {Database} from 'bun:sqlite';
 import {randomUUID} from 'node:crypto';
-import {existsSync,mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
+import {mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
 import {join} from 'node:path';
 import {atomicJson,configDir} from './session.ts';
 import {readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
@@ -9,7 +9,7 @@ import {apiOrigin,CliError} from './oauth.ts';
 import {CHECK_HARNESSES,hash,object,checkText,type CheckHarness,type CheckEvent} from './context-check-events.ts';
 
 export type CheckBinding={api:string;installationId:string;owner:{tenantId:string;userId:string}};
-export type CheckSettings=CheckBinding&{schemaVersion:1;revision:string;harnesses:CheckHarness[]};
+export type CheckSettings=CheckBinding&{schemaVersion:1;revision:string;previousRevision?:string;harnesses:CheckHarness[]};
 export type CheckInput={eventId:string;currentSession:{harness:CheckHarness;sessionId:string};role:'user';message:string;task:string;context:{role:'user';text:string}[];timestamp:string};
 export type LifecycleDetail=SuggestionEvent extends infer E ? E extends SuggestionEvent ? Omit<E,'id'|'at'|'harness'|'eventKey'|'sessionHash'> : never : never;
 export type CheckTask={id:string;session:string;event:string;created:number;state:'running'|'working'|'ready'|'delivering'|'delivered'|'failed';input:string;projects:string;binding:string};
@@ -29,19 +29,25 @@ export function checkSettings(binding:CheckBinding):CheckSettings|undefined {
   }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
 }
 export function saveCheckSettings(binding:CheckBinding,harnesses:CheckHarness[]):CheckSettings {
-  const previous=checkSettings(binding);
-  const selected=[...new Set(harnesses)];
-  if(previous && previous.harnesses.length===selected.length && selected.every(h=>previous.harnesses.includes(h)))return previous;
-  const settings:CheckSettings={schemaVersion:1,...binding,revision:randomUUID(),harnesses:selected};
-  atomicJson(settingsFile(binding.api),settings);
-  if(previous && existsSync(checkDatabaseFile(binding))) {
-    const db=openCheckDatabase(binding);
-    try {db.transaction(()=>{
-      db.query("UPDATE suggestion_outbox SET binding=? WHERE binding=? AND json_extract(payload,'$.harness') IN (SELECT value FROM json_each(?))").run(settings.revision,previous.revision,JSON.stringify(selected));
-      db.query('DELETE FROM suggestion_outbox WHERE binding=?').run(previous.revision);
-    }).immediate();} finally {db.close();}
-  }
-  return settings;
+  const db=openCheckDatabase(binding);
+  try {return db.transaction(()=>{
+    const previous=checkSettings(binding);
+    if(previous)applyOutboxSettings(db,previous);
+    const selected=[...new Set(harnesses)];
+    if(previous && previous.harnesses.length===selected.length && selected.every(h=>previous.harnesses.includes(h)))return previous;
+    const settings:CheckSettings={schemaVersion:1,...binding,revision:randomUUID(),harnesses:selected,...previous?{previousRevision:previous.revision}:{}};
+    applyOutboxSettings(db,settings);
+    // The file also records the predecessor. The next opener can finish the
+    // queue transition if the process exits between the rename and commit.
+    atomicJson(settingsFile(binding.api),settings);
+    return settings;
+  }).immediate();} finally {db.close();}
+}
+function applyOutboxSettings(db:Database,settings:CheckSettings):void {
+  if(!settings.previousRevision || db.query('SELECT 1 FROM suggestion_outbox_revision WHERE revision=?').get(settings.revision))return;
+  db.query("UPDATE suggestion_outbox SET binding=? WHERE binding=? AND json_extract(payload,'$.harness') IN (SELECT value FROM json_each(?))").run(settings.revision,settings.previousRevision,JSON.stringify(settings.harnesses));
+  db.query('DELETE FROM suggestion_outbox WHERE binding=?').run(settings.previousRevision);
+  db.query('INSERT OR REPLACE INTO suggestion_outbox_revision(slot,revision) VALUES(1,?)').run(settings.revision);
 }
 export function assertCheckSettings(settings:CheckSettings,harness:CheckHarness):void {
   const binding=checkBinding(readCaptureConfig(),settings.api),current=checkSettings(binding);
@@ -52,13 +58,13 @@ export const checkBindingFromSettings=(settings:CheckBinding):CheckBinding=>({ap
 const checkDatabaseFile=(binding:CheckBinding)=>join(configDir(),'context-checks',hash(JSON.stringify(checkBindingFromSettings(binding)))+'.sqlite');
 
 function openCheckDatabase(binding:CheckBinding):Database {
-    const root=join(configDir(),'context-checks');mkdirSync(root,{recursive:true,mode:0o700});
-    const path=checkDatabaseFile(binding);
-    try{const fd=openSync(path,'wx',0o600);closeSync(fd);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
-    const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink())throw invalid();
-    chmodSync(path,0o600);const db=new Database(path);
-    db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=100; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS checks(id TEXT PRIMARY KEY,session TEXT NOT NULL,event TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,input TEXT NOT NULL,projects TEXT NOT NULL,binding TEXT NOT NULL); CREATE INDEX IF NOT EXISTS check_session ON checks(session,created); CREATE TABLE IF NOT EXISTS suggestion_outbox(id TEXT PRIMARY KEY,dedup TEXT UNIQUE NOT NULL,binding TEXT NOT NULL,created INTEGER NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS suggestion_outbox_pending ON suggestion_outbox(binding,created); CREATE TABLE IF NOT EXISTS suggestion_outbox_singletons(id TEXT PRIMARY KEY REFERENCES suggestion_outbox(id) ON DELETE CASCADE);');
-    return db;
+  const root=join(configDir(),'context-checks');mkdirSync(root,{recursive:true,mode:0o700});
+  const path=checkDatabaseFile(binding);
+  try{const fd=openSync(path,'wx',0o600);closeSync(fd);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+  const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink())throw invalid();
+  chmodSync(path,0o600);const db=new Database(path);
+  db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=100; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS checks(id TEXT PRIMARY KEY,session TEXT NOT NULL,event TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,input TEXT NOT NULL,projects TEXT NOT NULL,binding TEXT NOT NULL); CREATE INDEX IF NOT EXISTS check_session ON checks(session,created); CREATE TABLE IF NOT EXISTS suggestion_outbox(id TEXT PRIMARY KEY,dedup TEXT UNIQUE NOT NULL,binding TEXT NOT NULL,created INTEGER NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS suggestion_outbox_pending ON suggestion_outbox(binding,created); CREATE TABLE IF NOT EXISTS suggestion_outbox_revision(slot INTEGER PRIMARY KEY CHECK(slot=1),revision TEXT NOT NULL); CREATE TABLE IF NOT EXISTS suggestion_outbox_singletons(id TEXT PRIMARY KEY REFERENCES suggestion_outbox(id) ON DELETE CASCADE);');
+  return db;
 }
 
 /** Private delivery cache, separate from capture and credentials. Each
@@ -67,6 +73,9 @@ export class CheckStore {
   readonly db:Database;
   constructor(readonly settings:CheckSettings,readonly harness:CheckHarness){
     this.db=openCheckDatabase(settings);
+    if(settings.previousRevision)this.db.transaction(()=>{
+      if(checkSettings(settings)?.revision===settings.revision)applyOutboxSettings(this.db,settings);
+    }).immediate();
   }
   close(){this.db.close();}
   record(task:CheckTask,detail:LifecycleDetail):void {
