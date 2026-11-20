@@ -125,7 +125,7 @@ export async function request(api:string,path:string,init:RequestInit={},tokenOv
   const body=await res.json().catch(()=>{throw res.status>=500||res.status===429
     ?new CliError('CAPTURE_RETRY_EXHAUSTED',`Capture endpoint ${new URL(api).hostname} is temporarily unavailable (HTTP ${res.status}). Queued data is retained; retry the approved import.`)
     :new CliError('CAPTURE_NETWORK_BLOCKED',`Capture endpoint ${new URL(api).hostname} returned HTTP ${res.status} without JSON. Check this host in your cloud environment network allowlist.`);});
-  if(!res.ok)throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`),{httpStatus:res.status});
+  if(!res.ok)throw Object.assign(new CliError('CAPTURE_UPLOAD_FAILED',`Capture request failed (${res.status}): ${body.error?.code ?? 'unknown'}`),{httpStatus:res.status,responseCode:body.error?.code});
   return body.data;
 }
 export function commandForSelf() {
@@ -794,6 +794,47 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
   }
   if(!transcriptOnly)state.lastNotice=notice.id;commit();
   },Infinity);
+}
+
+/** Recover records from before this fresh installation could receive hooks.
+ * Never feed provider results through attachment discovery: provider tool
+ * inputs are text and must not trigger filesystem reads. */
+export async function captureDevinStartup(config:CaptureConfig,sessionId:string,read=request) {
+  const meta={harness:'devin',sessionId,origin:'cloud',originEvidence:'Devin Cloud session events',captureMode:'live'};
+  const selected=()=>{
+    const current=readCaptureConfig();
+    return current && !current.authPending && !current.disabled && current.hookOwnership==='plugin' &&
+      current.api===config.api && current.installationId===config.installationId && current.installedAt===config.installedAt &&
+      current.owner.tenantId===config.owner.tenantId && current.owner.userId===config.owner.userId &&
+      current.harnesses?.includes('devin') && !captureExcluded(current,meta);
+  };
+  if(process.env.OPENCRAWL_AUTH!=='devin-cloud'||!selected())return;
+  let result;
+  try {
+    result=await read(config.api,'/api/cli/workloads/devin/startup-events',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({installationId:config.installationId,through:config.installedAt})});
+  } catch(error:any) {
+    if(error.responseCode==='DEVIN_SESSION_PRIVATE' && selected()) {
+      const {markPrivate,purgePrivateQueue}=await import('../incognito.ts');
+      if(selected()){markPrivate(config,meta);await purgePrivateQueue(config,meta);}
+      return;
+    }
+    if(error.httpStatus===404||error.httpStatus===403)return;
+    throw error;
+  }
+  if(!selected())return;
+  if(result?.sessionId!==sessionId || !Array.isArray(result.events) || result.events.length>1000 ||
+    !result.events.every((event:any)=>event && typeof event.nativeId==='string' && /^event-[a-zA-Z0-9_-]{1,160}$/.test(event.nativeId) &&
+      event.id==='devin-event:'+event.nativeId && ['message','tool_call','tool_result'].includes(event.kind) &&
+      typeof event.timestamp==='string' && Number.isFinite(Date.parse(event.timestamp)) && Date.parse(event.timestamp)<=Date.parse(config.installedAt))) {
+    throw new CliError('DEVIN_EVENTS_INVALID','The server returned invalid Devin startup records.');
+  }
+  if(result.events.length)enqueue(config,meta,result.events,[]);
+  // The provider timeline may lag the native hook. Retrying the same cutoff
+  // yields the same event identities. Never advance it to the retry time.
+  const age=Date.now()-Date.parse(config.installedAt);
+  if(age<30_000 || !result.events.length && age<300_000)throw new CliError('DEVIN_EVENTS_PENDING','Waiting for the original Devin startup events.');
+  if(!result.events.length)recordError(new CliError('DEVIN_STARTUP_GAP','The provider did not return an eligible initial prompt.'));
 }
 
 /** Worker-side event conversion shares the existing redaction, attachment,

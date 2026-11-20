@@ -152,6 +152,7 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.7.19",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
     "@trpc/client": "11.25.2",
@@ -166,7 +167,6 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.4.0",
     "@temporalio/activity": "1.25.0",
     "@temporalio/client": "1.25.0",
     "@temporalio/common": "1.25.0",

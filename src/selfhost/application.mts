@@ -120,6 +120,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
     return result;
   },organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
   const devin=devinState && devinRuntime({repository:devinState,audience:settings.url,key:devinIdentityKey,tenantId:settings.organizationId,isAdmin:canManageWorkloads,
+    startup:setupState&&recording?{setup:setupState,recording,store,prefix}:undefined,
     authenticateAdmin:async req=>{
       const token=/^Bearer (.+)$/i.exec(req.headers.authorization??'')?.[1];
       if(isDevinToken(token)||isReplicasToken(token)||isCaptureCredential(token))throw Object.assign(new Error('Human admin sign-in required'),{status:403});
@@ -221,6 +222,8 @@ export function selfhostApplication({settings,store,boardState,setupState,record
       if(devin && url.pathname==='/api/devin/connect')return await devin.connect(req,res);
       if(devin && url.pathname==='/api/cli/workloads/devin/approval')return await devin.approve(req,res);
       if(devin && url.pathname==='/api/cli/workloads/devin/disconnect')return await devin.disconnect(req,res);
+      if(devin && url.pathname==='/api/cli/workloads/devin/event-grant')return await devin.eventGrant(req,res);
+      if(devin && url.pathname==='/api/cli/workloads/devin/startup-events')return await devin.startupEvents(req,res);
       if(url.pathname==='/api/replicas/connect')return await replicasConnect(req,res);
       if(url.pathname==='/mcp')return await mcp(req,res);
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);

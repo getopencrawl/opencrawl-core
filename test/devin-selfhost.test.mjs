@@ -1,5 +1,8 @@
 import {boardStateFixture} from './fixtures/board-state.mjs';
 import {postgresUrl} from './fixtures/application-database.mjs';
+import {randomBytes} from 'node:crypto';
+import {createSetupState} from '../dist/src/state/setup.mjs';
+import {createRecordingPolicy} from '../dist/src/state/recording.mjs';
 import {createDevinState} from '../dist/src/state/devin.mjs';
 import {createPostgresEventIdentities} from '../dist/src/sessions/postgres-identities.mjs';
 import test from 'node:test';
@@ -22,8 +25,8 @@ import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 
 test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture and native MCP with revocable scoped identities',{skip:!postgresUrl},async t=>{
   const dir=await mkdtemp(join(tmpdir(),'devin-selfhost-')),store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
-  const {database,state:boardState}=await boardStateFixture(t),devinState=createDevinState(database),eventIdentities=createPostgresEventIdentities({connectionString:postgresUrl,namespace:database.namespace});
-  await devinState.ready();
+  const {database,state:boardState}=await boardStateFixture(t),devinState=createDevinState(database,randomBytes(32)),setupState=createSetupState(database),recording=createRecordingPolicy(database),eventIdentities=createPostgresEventIdentities({connectionString:postgresUrl,namespace:database.namespace});
+  await Promise.all([devinState.ready(), setupState.ready(), recording.ready()]);
   t.after(async()=>{await eventIdentities.close();});
   const organizationId='org_local',org='org-11111111111141118111111111111111';
   let app;const server=createServer((req,res)=>app(req,res));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -32,7 +35,7 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
   const {publicKey,privateKey}=await generateKeyPair('RS256');
   const settings={url,authOrigin:url+'/api/auth',clientId:'opencrawl-cli',organizationId,setupToken:'setup',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:organizationId}};
-  app=selfhostApplication({settings,boardState,devinState,eventIdentities,store,prefix,identity,devinIdentityKey:async()=>publicKey,readAsset:async()=>''});
+  app=selfhostApplication({settings,boardState,devinState,setupState,recording,eventIdentities,store,prefix,identity,devinIdentityKey:async()=>publicKey,readAsset:async()=>''});
   const sign=(session,changes={})=>new SignJWT({org_id:org,devin_id:session,...changes}).setProtectedHeader({alg:'RS256'}).setIssuer(DEVIN_ISSUER).setAudience(url).setSubject(`org_id:${org}`).setIssuedAt().setExpirationTime('60s').sign(privateKey);
   const token=await sign('cloud-one'),fresh=await sign('cloud-two');
   const request=(path,body,auth=token,headers={})=>fetch(url+path,{method:body!==undefined?'POST':'GET',headers:{authorization:'Bearer '+auth,'content-type':'application/json',...headers},...(body!==undefined?{body:JSON.stringify(body)}:{})});
@@ -115,6 +118,32 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   assert.equal((await request(approvalPath,{},human)).status,403,'an existing CLI login loses approval authority when demoted');
   await identity.directory.userManagement.updateOrganizationMembership(member.id,{roleSlug:'admin'});
   assert.equal((await connections.sharedInstallations(admin))[0].name,'Devin Cloud');
+  const eventGrant='/api/cli/workloads/devin/event-grant', startupEvents='/api/cli/workloads/devin/startup-events';
+  const realFetch=globalThis.fetch;
+  let inspectedKeys=0;
+  const interception=t.mock.method(globalThis,'fetch',(target,init)=>{
+    if(String(target)==='https://api.devin.ai/v3/self'){
+      assert.equal(new Headers(init.headers).get('authorization'),'Bearer cog_test_org');
+      inspectedKeys++;
+      return Promise.resolve(Response.json({principal_type:'service_user',org_id:org}));
+    }
+    return realFetch(target,init);
+  });
+  const input={organizationId:org,serviceKey:'cog_test_org',restrictToOneSession:true};
+  assert.equal((await request(eventGrant,input,token)).status,403);
+  assert.equal((await request(eventGrant,{...input,tenantId:'other'},human)).status,400);
+  assert.equal((await request(eventGrant,input,human,{origin:url})).status,403);
+  assert.equal(inspectedKeys,0);
+  const grantReceipt=await request(eventGrant,input,human);
+  assert.equal(grantReceipt.status,200);
+  assert.deepEqual((await grantReceipt.json()).data,{enabled:true,organizationId:org});
+  assert.equal(inspectedKeys,1);
+  assert.equal((await request(eventGrant,{organizationId:org,selectSession:'devin-synthetic'},human)).status,200);
+  assert.equal((await request(startupEvents,{installationId:'unknown',through:new Date().toISOString()},token)).status,403);
+  assert.equal((await request(startupEvents,{sessionId:'devin-synthetic',installationId:'unknown',through:new Date().toISOString()},token)).status,400);
+  assert.equal((await request(startupEvents,{installationId:'unknown',through:new Date().toISOString()},human)).status,401);
+  assert.equal(inspectedKeys,1);
+  interception.mock.restore();
   const disconnect='/api/cli/workloads/devin/disconnect';
   assert.equal((await request(disconnect,{organizationId:org},token)).status,403);
   assert.equal((await request(disconnect,{organizationId:org,tenantId:'org_other'},human)).status,400);
