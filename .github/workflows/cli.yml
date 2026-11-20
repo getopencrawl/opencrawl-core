@@ -2,9 +2,9 @@ name: CLI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'plugins/opencrawl-sessions/**', 'src/search/suggestion-events.mts', 'tools/delivery.mts', 'tools/validated-tree.mts', '.github/workflows/cli.yml', '.github/workflows/cli-native.yml']
+    paths: ['cli/**', 'plugins/opencrawl-sessions/**', 'src/search/suggestion-events.mts', 'src/sessions/plugin-release.mts', 'tools/delivery.mts', 'tools/validated-tree.mts', '.github/workflows/cli.yml', '.github/workflows/cli-native.yml']
   pull_request:
-    paths: ['cli/**', 'plugins/opencrawl-sessions/**', 'src/search/suggestion-events.mts', 'tools/delivery.mts', 'tools/validated-tree.mts', '.github/workflows/cli.yml', '.github/workflows/cli-native.yml']
+    paths: ['cli/**', 'plugins/opencrawl-sessions/**', 'src/search/suggestion-events.mts', 'src/sessions/plugin-release.mts', 'tools/delivery.mts', 'tools/validated-tree.mts', '.github/workflows/cli.yml', '.github/workflows/cli-native.yml']
   workflow_dispatch:
     inputs:
       publish:

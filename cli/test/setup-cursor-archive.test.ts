@@ -73,9 +73,9 @@ test('Cursor offers use the same native version requirement as the archive insta
 test('Cursor selection installs the pinned archive offline, binds both MCP files and resumes on current capture',()=>fixture(async f=>{
  const inventory=setupInventory({...f.options,api,platform:'darwin'});
  expect(inventory.find(row=>row.id==='cursor')).toMatchObject({detected:true,plugin:true,forward:true});
- expect(entry.version).toBe('0.2.6');
+ expect(entry.path).toBe('plugins/cursor');
  const first=await f.install(),row=first.results[0]!;
- expect(row).toMatchObject({client:'cursor',status:'prepared',captureAvailable:true,daemonHandoff:true,source:{ref:entry.ref,version:entry.version}});
+ expect(row).toMatchObject({client:'cursor',status:'prepared',captureAvailable:true,daemonHandoff:true,source:{ref:entry.ref??pluginRelease.ref,version:entry.version}});
  expect(first.humanTasks.map(task=>task.kind)).toEqual(['restart','mcp_auth']);
  for(const name of ['mcp.json','.mcp.json'])expect(read(join(f.dir,name)).mcpServers.opencrawl.url).toBe(api+'/mcp');
  expect(read(join(f.dir,'.opencrawl-binding.json'))).toEqual({schemaVersion:1,api,client:'cursor',owner:f.owner,installationId,configHome:f.configHome,captureMode:'hook'});

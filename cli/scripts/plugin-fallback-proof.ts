@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync,existsSync,readdirSync} from 'node:fs';
 import {join,dirname} from 'node:path';
-import {installSetupPlugins,setupPluginIdentity} from '../src/setup/plugins.ts';
+import {installSetupPlugins} from '../test/fixtures/legacy-plugins/prepare.ts';
+import {setupPluginIdentity} from '../src/setup/plugins.ts';
 import {atomicJson,configDir} from '../src/session.ts';
 import {captureDir,readCaptureConfig,type CaptureConfig} from '../src/capture/runtime.ts';
 export async function prepareFallbackPlugins(command:string[],config:CaptureConfig,root:string){

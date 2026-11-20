@@ -67,11 +67,12 @@ export function bindPublishedPackage(client:LocalPluginClient,api:string,source:
 
 /** Enrollment precedes binding; source package loading never invents an owner. */
 export async function installPublishedSetupPlugins(api:string,selected:string[],options:PluginOptions&{captureMode?:CaptureMode;loadPackage?:typeof loadPublishedPackage}={}){
- if(selected.includes('devin'))return installSetupPlugins(api,selected,options);
+ if(selected.length===1&&selected[0]==='devin')return installSetupPlugins(api,selected,options);
  const config=readCaptureConfig(),origin=apiOrigin(api),configHome=dirname(configDir());
  if(selected.length&&(!config||config.api!==origin||config.authPending||config.installationId==='pending'))throw new CliError('INVALID_PLUGIN_BINDING','Enroll this exact workspace profile before installing its native plugin.');
  const bundles:Partial<Record<LocalPluginClient,PublishedPackage>>={};
  for(const client of selected){
+  if(client==='devin')continue;
   if(!packageRelease(client))throw invalid();
   const source=await (options.loadPackage??loadPublishedPackage)(client as LocalPluginClient);
   bundles[client as LocalPluginClient]=bindPublishedPackage(client as LocalPluginClient,origin,source,{configHome,installationId:config!.installationId,owner:config!.owner,captureMode:options.captureMode??'hook',command:options.command,env:options.env});

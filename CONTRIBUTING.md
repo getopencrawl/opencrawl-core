@@ -19,9 +19,7 @@ npm test
 ```
 
 Use Node 24. For CLI changes, also run `bun run --cwd cli typecheck` and
-`bun test cli`. Plugin changes live in `plugins/` and are exported to
-[getopencrawl/opencrawl-plugins](https://github.com/getopencrawl/opencrawl-plugins);
-run `node plugins/scripts/validate.mjs` and `node --test plugins/test/*.test.mjs`.
+`bun test cli`. Desktop harness plugins live in [opencrawl-plugins](https://github.com/getopencrawl/opencrawl-plugins). See [release ownership](docs/PLUGIN-RELEASE.md) to update their consumers.
 
 In the pull request, say where the change belongs (core runtime, CLI, plugin or
 integration) and how you tested it. Add tests that fail closed for any change

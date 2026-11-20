@@ -131,7 +131,7 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  const packages=new Map<LocalPluginClient,Awaited<ReturnType<typeof loadPublishedPackage>>>();
  if(installPlugins===installPublishedSetupPlugins)for(const id of chosen(selections,'plugins')){
   const client=id as LocalPluginClient;
-  if(optionalFailures?.has(client))continue;
+  if(id==='devin'||optionalFailures?.has(client))continue;
   onProgress?.('Installing session capture tooling','Loading the OpenCrawl plugin for '+client+'.','installing');
   try{packages.set(client,await loadPublishedPackage(client));}
   catch(error){
