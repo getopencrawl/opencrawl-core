@@ -60,3 +60,8 @@ deletion removes associated history and fences late writes. Query text and
 message previews stay in the application database and are excluded from external
 analytics. The visibility window is 30 UTC calendar days. Older detail rows are
 pruned in bounded batches. Rollback can retain the additive tables.
+
+A deployment with earlier completed check receipts may import their recorded
+outcomes into the rolling window. Receipts without a source session, message or
+query show those fields as unavailable. They do not increment the newer call
+counter. Reimporting the same receipt does not change the totals.

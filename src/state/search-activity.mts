@@ -93,6 +93,27 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
         on conflict(namespace,tenant_id,day) do update set agent=opencrawl_search_days.agent+excluded.agent,
           proactive=opencrawl_search_days.proactive+excluded.proactive,non_silent=opencrawl_search_days.non_silent+excluded.non_silent`,args);
     },
+    async trackingStart():Promise<string>{
+      const result=await pool.query('select started_at from opencrawl_activity_start where namespace=$1',[namespace]);
+      return result.rows[0].started_at.toISOString();
+    },
+    /** Old completed checks may only retain counts and the native-event digest.
+     * Without a verified source session these receipts are readable only by the owner. */
+    async importChecks(tenantId:string,checks:PriorCheck[]){
+      if(!tenantId||checks.length>256)throw Error('Invalid receipt batch');
+      if(!checks.length)return;
+      await pool.query(`with added as (
+        insert into opencrawl_search_history(namespace,tenant_id,user_id,kind,id,at,operation,queries,event_key,returned,failed)
+        select $1,$2,c.owner,'proactive',c.id,c.at,'Context check',array[]::text[],c.key,c.returned,false
+        from jsonb_to_recordset($3::jsonb) as c(owner text,id uuid,at timestamptz,key text,returned int)
+        where c.at>=${windowStart} at time zone 'UTC' and c.owner<>'' and c.key~'^[a-f0-9]{64}$'
+          and c.returned between 0 and 5
+        on conflict do nothing returning at,returned)
+        insert into opencrawl_search_days(namespace,tenant_id,day,proactive,non_silent)
+        select $1,$2,(at at time zone 'UTC')::date,count(*),count(*) filter(where returned>0) from added group by 3
+        on conflict(namespace,tenant_id,day) do update set proactive=opencrawl_search_days.proactive+excluded.proactive,
+          non_silent=opencrawl_search_days.non_silent+excluded.non_silent`,[namespace,tenantId,JSON.stringify(checks)]);
+    },
     async handoffs(p:Principal,keys:string[]){
       if(!keys.length)return;
       await pool.query(`with marked as (
@@ -142,6 +163,7 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
   };
   return activity;
 }
+export interface PriorCheck {owner:string;id:string;at:string;key:string;returned:number}
 export type SearchActivity=ReturnType<typeof createSearchActivity>;
 
 export function startActivityRetention(activity:SearchActivity){

@@ -54,6 +54,13 @@ test('authenticated call accounting, scoped paging and idempotent proactive outc
   assert.equal(new Set(rows.map(r=>r.id)).size,31);
   assert.deepEqual(rows.map(r=>r.id),rows.map(r=>r.id).sort().reverse());
   assert.equal(next.next,null);
+  await assert.rejects(activity.page(other,{kind:'agent',before:first.next},identity));
+  const earlier=[{owner:alice.userId,id:'00000000-0000-4000-8000-000000000001',at:new Date().toISOString(),key:'a'.repeat(64),returned:1}];
+  await Promise.all([activity.importChecks(alice.tenantId,earlier),activity.importChecks(alice.tenantId,earlier)]);
+  assert.equal((await activity.totals(alice)).proactiveChecks,3);
+  assert.equal((await activity.totals(alice)).calls,32);
+  assert.equal((await activity.page(bob,{kind:'proactive'},identity)).rows.length,2);
+  assert.equal((await activity.page(alice,{kind:'proactive'},identity)).rows.length,3);
   await activity.forget(bob,ctx);
   await activity.agentCall(bob,entry('late write'));
   assert.deepEqual((await activity.page(alice,{kind:'agent'},identity)).rows.map(r=>r.queries),[['needle']]);

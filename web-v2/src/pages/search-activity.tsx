@@ -35,7 +35,7 @@ function SearchTable({adapter,kind,scope}:{adapter:ActivityAdapter;scope:string;
       <th scope="col">Session</th>{proactive&&<th scope="col">Triggering message</th>}<th scope="col">Outcome</th></tr></thead>
       <tbody>{data.rows.map(row=><tr key={row.id}>
         <td><time dateTime={row.at} title={row.at}>{dateFormat.format(new Date(row.at))}</time></td>
-        <td>{!proactive&&<span className="report-email">{row.operation}</span>}{row.queries.length?row.queries.join('\n'):'No query text'}</td>
+        <td>{!proactive&&<span className="report-email">{row.operation}</span>}{row.queries.length?row.queries.join('\n'):proactive?'Query unavailable in earlier receipt':'No query text'}</td>
         <td><SearchSession row={row}/><span className="report-email">{row.userId}</span></td>
         {proactive&&<td>{row.message}<span className="report-email">{row.messageId??'Message unavailable'}</span></td>}
         <td>{row.outcome==='failed'?'Failed':!proactive?'Completed':row.delivered?'Handed to agent':row.returned?'Non-silent':'Silent'}</td>
@@ -47,7 +47,7 @@ function SearchTable({adapter,kind,scope}:{adapter:ActivityAdapter;scope:string;
 
 export function SearchActivity({adapter,scope}:{adapter:ActivityAdapter;scope:string}){
   const {data,error,reload}=useConsoleResource(consoleResourceKey(adapter,'call-totals'),async signal=>scoped(scope,await adapter.callTotals(signal)),refresh);
-  return <Section className="report-section" title="OpenCrawl activity" description={data?'Since '+dateFormat.format(new Date(data.since)):undefined}>
+  return <Section className="report-section" title="OpenCrawl activity" description={data?'Last 30 UTC days. Call and agent search tracking since '+dateFormat.format(new Date(data.since))+'.':undefined}>
     {error&&<Notice tone="warning">Call totals couldn’t update. <Button onClick={reload}>Try again</Button></Notice>}
     {data&&<MetricGrid items={[
       {label:'OpenCrawl calls',value:count(data.calls),note:'Authenticated agent calls across the workspace'},
