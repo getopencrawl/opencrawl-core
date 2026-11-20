@@ -38,7 +38,8 @@ function DataSourcesReport({report, now, retry}: {report: UsageReport; now: numb
   const countsUnavailable = report.failedSources?.includes('connectors') === true;
   const retryCounts = countsUnavailable && !usageSectionFailed(report, 'ingestion') && Boolean(data?.sources.length) && retry;
   return (
-    <Section className="report-section" title="Data sources" actions={retryCounts && <Button variant="quiet" onClick={retryCounts}>Retry counts</Button>}>
+    <Section className="report-section" title="Data sources" description={data?.sources.length ? 'Items OpenCrawl has indexed from each connected integration.' : undefined}
+      actions={retryCounts && <Button variant="quiet" onClick={retryCounts}>Retry counts</Button>}>
       <MeasurementStatus report={report} section="ingestion" label="Connected sources" now={now} retry={retry}/>
       {!data ? (usageSectionFailed(report, 'ingestion') ? null : <EmptyState title="Source reporting isn’t available on this deployment."/>) : data.sources.length ? (
         <div className="oc-integration-grid">

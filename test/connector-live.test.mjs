@@ -1,4 +1,4 @@
-import {realmIndex} from '../dist/src/search/realm.mjs';
+import {realmIndex, realmMapping} from '../dist/src/search/realm.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -7,6 +7,34 @@ import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
 import {createConnectorSearch} from '../dist/src/connectors/search.mjs';
 import {createConnectorPipeline} from '../dist/src/connectors/pipeline.mjs';
 import {normalizeSlack} from '../dist/src/connectors/slack.mjs';
+
+test('real OpenSearch: exact per-connection inventory across shards', {
+  skip: !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
+}, async t => {
+  const endpoint = process.env.OPENCRAWL_TEST_OPENSEARCH_URL;
+  const tenantId = `inventory-${randomUUID()}`, index = realmIndex('test', tenantId);
+  const created = await fetch(endpoint + '/' + index, {
+    method: 'PUT', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({settings: {number_of_shards: 2, number_of_replicas: 0},
+      mappings: {...realmMapping, _meta: {schema: 1, tenantId}}}),
+  });
+  assert.ok(created.ok, await created.text());
+  t.after(() => fetch(endpoint + '/' + index, {method: 'DELETE'}));
+  const search = createConnectorSearch({endpoint, tenantId, index});
+  const principal = {tenantId}, bindings = [];
+  for (const connectionId of ['first', 'second']) {
+    const binding = {tenantId, connectionId, workspaceId: 'T123', provider: 'slack', access: 'team-public',
+      rawPrefix: `raw/v1/source=slack/workspace=T123/connection=${connectionId}/`};
+    bindings.push(binding);
+    const documents = Array.from({length: 32}, (_, n) => normalizeSlack(binding, 'channels', {
+      _airbyte_extracted_at: 1000, _airbyte_data: {id: `C${1000 + n}`, name: `channel-${n}`, is_private: false},
+    }, 'raw'));
+    await search.putDocuments(principal, binding, documents);
+  }
+  await search.refresh();
+  const expected = {total: 32, kinds: {channel: 32}};
+  assert.deepEqual(await search.countByConnection(principal, bindings), {first: expected, second: expected});
+});
 
 test('real S3/OpenSearch: stock Slack, replay ordering, durable suppression and two tenants', {
   skip: !process.env.OPENCRAWL_TEST_S3_ENDPOINT || !process.env.OPENCRAWL_TEST_OPENSEARCH_URL,
