@@ -91,7 +91,8 @@ export async function setupHookStatus(requestedApi?:string,inspectHooks=inspectC
 
 async function tasks(server:SetupServerStatus,state:SetupState|null,inspectHooks:typeof inspectCodexHooks):Promise<SetupHumanTask[]>{
  const row=server.installations.find(row=>row.installationId===state?.installationId);
- const found=row?[...(state?.humanTasks??[]).filter(task=>{const client=row.clients.find(client=>client.client===task.client);if(task.kind==='plugin_install')return !client?.installed;if(task.kind==='restart')return Boolean(task.client&&state?.selections.plugins[task.client]&&(state.pluginResults?.some(result=>result.client===task.client&&result.status==='prepared')||!client?.captureObservedAt&&client?.mcp?.state!=='authenticated'&&client?.proof?.state!=='verified'));return false;}),...row.clients.flatMap(client=>client.humanTasks)]:state?.humanTasks??[];
+ const combined=row?[...(state?.humanTasks??[]).filter(task=>{const client=row.clients.find(client=>client.client===task.client);if(task.kind==='plugin_install')return !client?.installed;if(task.kind==='restart')return Boolean(task.client&&state?.selections.plugins[task.client]&&(state.pluginResults?.some(result=>result.client===task.client&&result.status==='prepared')||!client?.captureObservedAt&&client?.mcp?.state!=='authenticated'&&client?.proof?.state!=='verified'));return false;}),...row.clients.flatMap(client=>client.humanTasks)]:state?.humanTasks??[];
+ const found=server.scope.userId.startsWith('agent_reg_')?combined.filter(task=>task.kind!=='mcp_auth'):combined;
  const others=found.filter(task=>task.client!=='codex'||task.kind!=='hook_trust');
  if(!state)return found;
  // Plugin installation does not consent to recording. Respect saved and local opt-outs.
