@@ -36,7 +36,11 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await expect(page.getByText(/catalog records|conversation records|retry automatically|waiting to retry|HTTP 404/)).toHaveCount(0);
   await expect(stats.getByText('1',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Stop import'})).toBeVisible();
-  Object.assign(history,{blocked:0});
+  Object.assign(history,{waitingForSource:true});await page.clock.runFor(30_001);
+  await expect(stats.locator('.oc-spin')).toHaveCount(0);await expect(stats.getByText('1',{exact:true})).toBeVisible();
+  await expect(page.getByText('Connected',{exact:true}).first()).toBeVisible();await expect(page.getByRole('button',{name:'Stop import'})).toBeVisible();
+  await shot('available-history');
+  Object.assign(history,{blocked:0,waitingForSource:false});
   await page.goto('about:blank');state='synced';Object.assign(history,{phase:'complete',processed:2,imported:2,events:12});
   await page.goto('/integrations-fixture');await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await expect(progress).toHaveCount(0);await shot('complete');
   Object.assign(history,{processed:0,imported:0,events:0,total:0});await page.reload();
