@@ -333,7 +333,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const interactiveHandoff=action==='run'&&interactive&&['codex','antigravity'].includes(client);
   if(repairSaved||configured.nextAction.kind==='complete'||configured.nextAction.kind==='plugin_unavailable'||client!=='claude-code'&&!interactiveHandoff)return configured;
   const latest=await readServerSetup(api),nativeClient=latest.installations.find(row=>row.installationId===state.installationId)?.clients.find(row=>row.client===client);
-  return {...configured,client,nativeMcpLoginRequired:!['authenticated','observed'].includes(nativeClient?.mcp?.state??'pending'),agentPrompt:nativeSetupPrompt(api,client,command),nextAction:nextSetupAction(state,latest)};
+  return {...configured,client,nativeMcpLoginRequired:!registered&&!['authenticated','observed'].includes(nativeClient?.mcp?.state??'pending'),agentPrompt:nativeSetupPrompt(api,client,command),nextAction:nextSetupAction(state,latest)};
  };
  async function importApproved(files:HistoryFile[]){
   const state=await applyHistory(scope,selections,files,retainedHistory);
