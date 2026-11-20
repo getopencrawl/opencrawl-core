@@ -104,7 +104,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       const window = {range:{[f('timestamp')]:{gte:since+'T00:00:00.000Z',lte:until}}};
       const activityMetrics = {last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:new Date(now-7*86400000).toISOString(),lte:until}}}}};
       const ownerMetrics = {sessions,subagentSessions,messages,toolCalls,...activityMetrics};
-      const [result, roster] = await Promise.all([collection.search(principal,{size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
+      const result = await collection.search(principal,{size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
         activity:{filter:window,aggs:{
         sessions,subagentSessions,messages,toolCalls,machines:{cardinality:{field:f('installationId')}},
         tools:{terms:{field:f('toolNames'),size:8}},opencrawl:{filter:{wildcard:{[f('toolNames')]:'*opencrawl*'}}},
@@ -112,10 +112,10 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
         first:{min:{field:f('timestamp')}},last:{max:{field:f('timestamp')}},
         daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}},
         ...(members ? {} : {people:{terms:{field:f('userId'),size:500},aggs:ownerMetrics}}),
-      }}}}), members ? memberUsage(collection,principal,members,window,ownerMetrics,activityMetrics) : null]);
+      }}}});
       const a=result?.aggregations?.activity as unknown as ActivityAggregation | undefined;
       if(!a||!Number.isSafeInteger(a.doc_count)||result.hits.total?.relation!=='eq'||!Number.isSafeInteger(result.hits.total.value))throw new Error('Invalid usage response');
-      const people=roster ?? a.people.buckets.map(ownerUsage);
+      const people = members ? await memberUsage(collection,principal,members,window,ownerMetrics,activityMetrics) : a.people.buckets.map(ownerUsage);
       if(!team&&people.some(p=>p.userId!==principal.userId))throw new Error('Usage returned an invalid ownership scope');
       const terms=(agg: TermsAggregation)=>agg.buckets.map(b=>({name:b.key,count:b.doc_count}));
       return {events:a.doc_count,lifetimeEvents:result.hits.total.value,sessions:a.sessions.count.value,subagentSessions:a.subagentSessions.count.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
