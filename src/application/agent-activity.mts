@@ -24,7 +24,7 @@ export function activityInput(input:unknown){
   if(call)call.entry=agentSearchEntry(call.tool,input);
 }
 export function observeAgentRequest<T>(activity:SearchActivity|undefined,tool:string|undefined,req:IncomingMessage,res:ServerResponse,run:()=>Promise<T>){
-  if(!activity||!tool)return run();
+  if(!activity||!tool||req.headers.origin!==undefined)return run();
   const call:HttpCall={tool,entry:agentSearchEntry(tool,undefined)};
   return active.run(call,async()=>{
     if(tool==='session_search')activityInput({query:new URL(req.url!,'http://localhost').searchParams.get('q')??''});
@@ -36,29 +36,24 @@ export function observeAgentRequest<T>(activity:SearchActivity|undefined,tool:st
   });
 }
 
+// A service request alone does not prove a tool invocation. HTTP routes shared
+// with capture, listeners, startup hooks or onboarding have no foreground signal.
+// MCP tools/call is observed at dispatch and does not use this route classifier.
 const routes = new Map(Object.entries({
   'POST /api/search':'search','POST /api/search/fetch':'fetch','POST /api/connectors/search':'connector_search',
-  'POST /api/context/suggestions':'context_suggestions','POST /api/context/suggestions/events':'context_suggestion_events',
-  'GET /api/setup':'installation_status','POST /api/setup/verify':'verify_installation','POST /api/setup/installation':'setup_installation',
-  'GET /api/setup/invitations':'setup_invitation_list','POST /api/setup/invitations':'setup_invitation_send',
-  'GET /api/cli/me':'cli_identity','POST /api/agent-tokens':'agent_token_issue',
-  'GET /api/sessions/search':'session_search','GET /api/sessions/batches':'session_read','POST /api/sessions/batches':'session_upload',
-  'GET /api/sessions/identity':'capture_identity','GET /api/sessions/recording':'recording_policy','HEAD /api/sessions/recording':'recording_revision',
-  'POST /api/sessions/memories':'memory_upload','POST /api/sessions/credentials':'capture_credential_issue',
-  'POST /api/devin/connect':'devin_connect','POST /api/cli/workloads/devin/approval':'devin_approve',
-  'POST /api/cli/workloads/devin/disconnect':'devin_disconnect','POST /api/replicas/connect':'replicas_connect',
+  'GET /api/sessions/search':'session_search','GET /api/sessions/batches':'session_read',
 }));
-for (const name of ['read','list','search','thread','sync','inbox','post','follow','presence','agents','channels']) {
+for (const name of ['read','list','search','thread','post','follow','agents','channels']) {
   routes.set('POST /api/board/v2/' + name, 'board_' + name);
 }
-for (const name of ['incognito','bootstrap','profile','register','directory','subscribe','inbox','ack','leave','publish','fetch','channels','thread','search']) {
+for (const name of ['directory','subscribe','publish','fetch','channels','thread','search']) {
   routes.set('POST /api/board/' + name, 'board_' + name);
 }
 
+const foregroundTools=new Set(routes.values());
+export function isAgentHttpTool(name:unknown):boolean {
+  return typeof name==='string' && foregroundTools.has(name);
+}
 export function httpTool(method:string | undefined, path:string) {
-  if (method === 'PUT' && /^\/api\/sessions\/attachments\/[a-f0-9]{64}$/.test(path)) return 'attachment_upload';
-  if (method === 'DELETE' && /^\/api\/sessions\/credentials\/[a-f0-9]{64}$/.test(path)) return 'capture_credential_revoke';
-  if (method === 'DELETE' && /^\/api\/agent-tokens\/[a-f0-9]{64}$/.test(path)) return 'agent_token_revoke';
   return routes.get(method + ' ' + path);
 }
-
