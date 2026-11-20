@@ -351,8 +351,8 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
           const listed=ids.has(chat.chat_id);
           if(!listed){
             issue.workspaceAbsentAt=new Date(observation.checkAt).toISOString();
-            // Keep one real history probe per workspace at the next inventory refresh.
-            retryAt=new Date(Math.max(issue.providerRetryAt?Date.parse(issue.providerRetryAt):0,observation.fresh?observation.next:Math.max(Date.parse(retryAt),observation.next))).toISOString();
+            const backstop=attempt>=3?now()+7*day:observation.next;
+            retryAt=new Date(Math.max(Date.parse(retryAt),backstop)).toISOString();
             issue.retryAt=retryAt;
           }
           if(observation.fresh){

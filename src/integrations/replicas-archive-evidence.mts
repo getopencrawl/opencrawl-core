@@ -20,6 +20,7 @@ export async function archivedReplicasEvidence(store:ObjectStore,prefix:string,s
   const {owner,installationId,sessionId}=importSession(scope);
   const root=prefix+'/'+sessionScope(owner)+'/replicas/'+replicasDigest(installationId)+'/'+replicasDigest(sessionId)+'/';
   const listing=await store.listPage(root,{continuationToken:cursor,maxKeys:24});
+  if(listing.nextToken&&listing.nextToken===cursor)throw Error('Replicas archive cursor did not advance');
   const rows=new Set<string>(),threads=new Map<string,NonNullable<ReturnType<typeof replicasThread>>>();
   let bytes=0,batches=0,pages=0;
   const keys=listing.keys.filter(key=>key.startsWith(root)&&/^[a-f0-9]{64}\.json\.gz$/.test(key.slice(root.length)));

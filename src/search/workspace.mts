@@ -5,7 +5,7 @@ import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
-interface WorkspaceOptions {capturePairs?:CaptureLookup;sessions?: SearchAdapter & {memories?: SearchAdapter;captureFingerprints?:CaptureFingerprints}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
+interface WorkspaceOptions {capturePairs?:CaptureLookup;sessions?: SearchAdapter & {memories?: SearchAdapter;captureFingerprints?:CaptureFingerprints;readableHits?:(principal:Principal,docs:Passage[])=>Promise<boolean[]>}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
 import {serviceError} from '../sessions/types.mjs';
 import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
@@ -96,6 +96,13 @@ export function createWorkspaceSearch({capturePairs,sessions, connectors,memorie
         if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
         return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
       }));
+      const sessionGroup=groups.find(g=>g.source==='sessions');
+      const captures=capturePairs&&sessionGroup&&(query.dedupe||query.groupBy==='session')
+        ?await matchCaptures(principal,sessionGroup.hits,capturePairs,sessions?.captureFingerprints,query.dedupe):undefined;
+      if(captures?.sessions.size&&sessionGroup&&sessions?.readableHits){
+        const allowed=await sessions.readableHits(principal,sessionGroup.hits);
+        sessionGroup.hits=sessionGroup.hits.filter((_,i)=>allowed[i]);
+      }
       const ranked: WorkspaceHit[] = [];
       for (let rank = 0; rank < WINDOW; rank++) for (const group of groups) {
         const hit = group.hits[rank]; if (!hit) continue;
@@ -106,7 +113,6 @@ export function createWorkspaceSearch({capturePairs,sessions, connectors,memorie
         const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
       });
       const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
-      const captures=capturePairs&&(query.dedupe||query.groupBy==='session')?await matchCaptures(principal,groups.find(g=>g.source==='sessions')?.hits??[],capturePairs,sessions?.captureFingerprints,query.dedupe):undefined;
       const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
       const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
       const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {

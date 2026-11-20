@@ -986,7 +986,13 @@ test('Replicas and native captures group only inside the verified thread and the
   await ingest(owner,{...uploaded,sessionId:randomUUID()});
   assert.equal((await library.list(principal)).sessions.length,2);
   assert.equal((await workspace.search(principal,input)).results.filter(h=>h.provenance.kind==='message').length,2);
-  await library.setVisibility(owner,{harness:'claude-code',sessionId:thread,visibility:'private'});
+  const racing=createWorkspaceSearch({sessions:search,capturePairs:async(tenant,keys)=>{
+    const pairs=await service.capturePairs(tenant,keys);
+    await library.setVisibility(owner,{harness:'claude-code',sessionId:thread,visibility:'private'});
+    return pairs;
+  }});
+  const raced=await racing.search(principal,input);
+  assert.ok(raced.results.every(r=>r.provenance.sessionId!==thread&&!r.duplicateIds?.some(id=>raw.results.some(h=>h.id===id&&h.provenance.sessionId===thread))));
   assert.equal((await library.list(principal)).sessions.some(s=>s.historyCapture||s.sessionId===thread),false);
   assert.ok((await library.list(owner)).sessions.some(s=>s.historyCapture));
   assert.deepEqual(await service.capturePairs('another-tenant',[rows.sessions[0],rows.sessions[0].historyCapture]),[]);
@@ -1019,4 +1025,21 @@ test('archived thread backfill resumes without Replicas or indexing and withdraw
   await saveReplicasThread(f.database.pool,...scope.slice(0,2),original.owner_id,original.session_id,ambiguous);
   await saveReplicasThread(f.database.pool,...scope.slice(0,2),original.owner_id,original.session_id,{harness:'claude-code',id:thread});
   assert.deepEqual(await f.service.capturePairs(principal.tenantId,visible),[]);
+});
+
+test('daily rosters park repeatedly absent chats without rewriting the same retry or overriding Retry-After',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId],now=Date.now(),at=new Date(now).toISOString(),day=86_400_000;
+  await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
+    [...scope,at,chat,{before:null},{at,importId:id,operation:'history',httpStatus:404,attempt:3,workspaceAbsentAt:at}]);
+  const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
+  const observe=(n,chats)=>f.database.transaction(c=>observeReplicasWorkspace(c,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now+n*day,async()=>({chats})));
+  assert.equal((await observe(0,[])).moved,1);
+  for(let i=1;i<5;i++)assert.equal((await observe(i,[])).moved,0);
+  const retry=async()=>(await f.database.pool.query('SELECT retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',scope)).rows[0].retry_at.getTime();
+  assert.equal(await retry(),now+7*day);
+  const provider=new Date(now+6*day).toISOString();
+  await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET issue=issue||jsonb_build_object('providerRetryAt',$3::text) WHERE namespace=$1 AND tenant=$2",[...scope,provider]);
+  assert.equal((await observe(5,[{id:chat.chat_id}])).released,1);
+  assert.equal(await retry(),Date.parse(provider));
 });
