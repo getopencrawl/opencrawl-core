@@ -1,3 +1,4 @@
+import {isRegistrationMcp} from './registration-mcp.ts';
 import {manifests,extraAssets} from '../../../plugins/opencrawl-sessions/assets.ts';
 import {existsSync, lstatSync, readFileSync, mkdirSync, unlinkSync, chmodSync, renameSync, mkdtempSync} from 'node:fs';
 import {join, dirname, resolve, isAbsolute, posix} from 'node:path';
@@ -230,6 +231,7 @@ function nativeBindingMatches(row:Record<string,unknown>,client:PluginClient,dir
   try{if(verifyPluginBundle({api,client,pluginName:name,configHome,nativeRoot:root}).digest!==digest)return false;}catch{return false;}
   const file=client==='claude-code'||client==='codex'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
   const servers=read(join(root,file))?.mcpServers,server=servers?.[client==='codex'?name:'opencrawl'];
+  if(Object.keys(servers??{}).length===1&&isRegistrationMcp(server,api,configHome))return true;
   return server?.url===api+'/mcp'&&(client!=='codex'||Object.keys(servers).length===1&&server.type==='http');
 }
 /** Keep the old receipt until the new installation has been verified and its
@@ -437,7 +439,9 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         results.push({client,status:active?(unchanged?'unchanged':'installed'):'prepared',pluginId,directory,...(cursor?{preparedAt:cursor.preparedAt}:{}),...(!active?{message:waiting}:{})});
         if(cursor&&!active)humanTasks.push({id:'cursor:restart',kind:'restart',client,title:'Open Cursor',instruction:`Start a new Cursor session and select ${identity.name} for ${origin}. Use its OpenCrawl setup skill to finish verification.`});
         if(!active&&!published)humanTasks.push({id:client+':restart',kind:'restart',client,title:'Load OpenCrawl in '+labels[client],instruction:`Open or reload ${labels[client]} and select the ${identity.name} plugin for ${origin}. Review any native plugin-hook trust request. ${client==='cursor'?'In Customize or /plugin list, confirm this deployment-specific local plugin loads; if local imports are blocked, ask the administrator to allow it. ':''}Run setup again after its native startup hook runs. Do not use a session-only --plugin-dir override as installation proof.`});
-        humanTasks.push({id:client+':mcp_auth',kind:'mcp_auth',client,title:'Connect OpenCrawl in '+labels[client],instruction:`Use the ${identity.name} plugin's native connection flow for ${origin}. Complete requested MCP authentication in this client and run its native verification. Preserve other deployments and never copy CLI credentials.`,url:origin+'/mcp'});
+        const mcpFile=client==='cursor'?'mcp.json':client==='antigravity'?'mcp_config.json':'.mcp.json';
+        const boundMcp=read(join(directory,mcpFile))?.mcpServers?.[client==='codex'?identity.name:'opencrawl'];
+        if(!isRegistrationMcp(boundMcp,origin,configHome))humanTasks.push({id:client+':mcp_auth',kind:'mcp_auth',client,title:'Connect OpenCrawl in '+labels[client],instruction:`Use the ${identity.name} plugin's native connection flow for ${origin}. Complete requested MCP authentication in this client and run its native verification. Preserve other deployments and never copy CLI credentials.`,url:origin+'/mcp'});
       }catch(error){results.push({client,status:'error',message:error instanceof CliError?error.message:'Could not install the plugin. Check native access and retry.'});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Resolve '+labels[client]+' plugin installation',instruction:'Read the reported installation error, preserve existing configuration, and resolve only the required access or conflict before retrying.'});}
     }
     return {results:results.map(row=>{const source=row.client==='devin'?undefined:options.bundles?.[row.client];return source?{...row,captureAvailable:source.captureAvailable,daemonHandoff:source.daemonHandoff,source:source.source}:row;}),humanTasks};

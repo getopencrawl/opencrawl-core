@@ -3,7 +3,7 @@ import {StdioServerTransport} from '@modelcontextprotocol/server/stdio';
 import {parseArgs} from 'node:util';
 import {apiOrigin, CliError, DEFAULT_API_ORIGIN} from './oauth.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
-import {accessToken} from './session.ts';
+import {accessToken,readSession} from './session.ts';
 import {withEnvironmentTokenOrigin} from './environment-token.ts';
 import {readCaptureConfig} from './capture/runtime.ts';
 import {hasPluginContext,pluginHookContext} from './setup/plugin-context.ts';
@@ -110,12 +110,21 @@ export async function bridgeMcp({input,remote,signal,timeoutMs=70000,maxPending=
  * can run while stdout belongs to the MCP protocol. */
 export async function mcpCommand(args:string[]):Promise<number>{
   try{
-    const {values,positionals}=parseArgs({args,allowPositionals:true,options:{api:{type:'string'},help:{type:'boolean'}}});
+    const {values,positionals}=parseArgs({args,allowPositionals:true,options:{api:{type:'string'},registration:{type:'string'},'installation-id':{type:'string'},help:{type:'boolean'}}});
     if(positionals.length)throw Error('Unexpected MCP argument');
     if(values.help){process.stderr.write('Usage: opencrawl mcp [--api <origin>]\nServes the configured OpenCrawl MCP over stdio, renewing existing credentials.\n');return 0;}
     const explicit=values.api??process.env.OPENCRAWL_API_URL,api=apiOrigin(explicit??readCaptureConfig()?.api??DEFAULT_API_ORIGIN);
     let validateBinding=()=>{};
-    if(hasPluginContext()){
+    const registered=values.registration;
+    if(registered||values['installation-id']){
+      validateBinding=()=>{
+        const config=readCaptureConfig();
+        if(!registered||!values['installation-id']||config?.api!==api||config.owner.userId!==registered||
+          config.installationId!==values['installation-id']||readSession(api)?.registrationId!==registered)
+          throw new CliError('PLUGIN_BINDING_CHANGED','The registered workspace changed. Review setup for this installation.');
+      };
+      validateBinding();
+    }else if(hasPluginContext()){
       if(process.env.OPENCRAWL_PLUGIN_CLIENT==='devin'){
         const {readDevinPlugin}=await import('./setup/devin-plugin.ts'),initial=readDevinPlugin(api);
         validateBinding=()=>{const current=readDevinPlugin(api);if(current.digest!==initial.digest||current.root!==initial.root)throw new CliError('PLUGIN_BINDING_CHANGED','The native plugin changed. Reconnect this plugin.');};
@@ -127,7 +136,7 @@ export async function mcpCommand(args:string[]):Promise<number>{
       process.once('SIGINT',abort);process.once('SIGTERM',abort);
       try{
         await bridgeMcp({input:new StdioServerTransport(process.stdin,process.stdout,{maxBufferSize:65536}),
-          remote:new StreamableHTTPClientTransport(new URL(api+'/mcp'),{fetch:authenticatedMcpFetch(api,{validateBinding}),requestInit:{redirect:'error'},onInsufficientScope:'throw'}),signal:stop.signal});
+          remote:new StreamableHTTPClientTransport(new URL(api+'/mcp'),{fetch:authenticatedMcpFetch(api,{validateBinding,...(registered?{credential:async(rejected?:string,signal?:AbortSignal)=>{validateBinding();const token=await accessToken(api,rejected,fetch,signal);validateBinding();return {token,refreshable:true};}}:{})}),requestInit:{redirect:'error'},onInsufficientScope:'throw'}),signal:stop.signal});
         return 0;
       }finally{process.removeListener('SIGINT',abort);process.removeListener('SIGTERM',abort);}
     });

@@ -7,7 +7,7 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {CliError, refresh, type AuthConfig, type Tokens} from './oauth.ts';
 import {filesystemError, retryWindowsSharing} from './filesystem.ts';
 
-export type Session = Tokens & {auth: AuthConfig; pendingOrganization?: string};
+export type Session = Tokens & {auth: AuthConfig; pendingOrganization?: string; registrationId?: string};
 export const configDir = () => join(process.env.OPENCRAWL_CONFIG_HOME || process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencrawl');
 export const sessionFile = (api: string) => join(configDir(), createHash('sha256').update(api).digest('hex') + '.json');
 
@@ -46,6 +46,7 @@ export function readSession(api: string): Session | null {
       const session = JSON.parse(readFileSync(fd, 'utf8'));
       if (!session?.auth?.clientId || !session.auth.tokenEndpoint || !session.accessToken || !session.refreshToken || !Number.isFinite(session.expiresAt)) throw new Error();
       if (session.pendingOrganization !== undefined && (typeof session.pendingOrganization !== 'string' || !/^org_[A-Za-z0-9]+$/.test(session.pendingOrganization))) throw new Error();
+      if (session.registrationId !== undefined && (typeof session.registrationId !== 'string' || !/^agent_reg_[A-Za-z0-9]+$/.test(session.registrationId))) throw new Error();
       return session;
     } finally { closeSync(fd); }
   } catch (error: any) {
@@ -144,7 +145,7 @@ export async function saveSession(api: string, session: Session) {
 }
 
 export async function logout(api: string) {
-  return withSessionLock(api, async () => { try { unlinkSync(sessionFile(api)); } catch (error: any) { if (error.code !== 'ENOENT') throw error; } });
+  return withSessionLock(api, async () => { for(const file of [sessionFile(api),sessionFile(api)+'.registration'])try { unlinkSync(file); } catch (error: any) { if (error.code !== 'ENOENT') throw error; } });
 }
 
 const rotations = new Set<Promise<void>>();
@@ -183,6 +184,7 @@ export async function selectOrganization<T extends {workspace?: {id: string}}>(a
   return withSessionLock(api, async () => {
     requireRunning();
     const saved = readSession(api);
+    if(saved?.registrationId)throw new CliError('AGENT_WORKSPACE_FIXED','An agent registration is bound to its original workspace.',2);
     if (initialSession && saved) throw new CliError('SESSION_CHANGED', 'Another process saved a sign-in during browser approval. Retry workspace selection using that saved sign-in.', 2);
     const session = saved ?? initialSession;
     if (!session) throw new CliError('AUTH_REQUIRED', 'Run opencrawl login to sign in.', 2);

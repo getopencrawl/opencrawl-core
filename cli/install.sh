@@ -62,6 +62,7 @@ if [ -n "$handoff" ]; then
       echo 'Run opencrawl login and then opencrawl collect install in a terminal to continue.'
     else
       echo 'Run opencrawl setup in a terminal to continue.'
+      echo 'For unattended OpenCrawl Cloud installation, follow https://getopencrawl.com/agents.md and use opencrawl signup --json on a blank profile.'
     fi
   fi
 fi

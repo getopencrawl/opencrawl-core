@@ -1,3 +1,5 @@
+import {registrationMcp} from './registration-mcp.ts';
+import {readSession} from '../session.ts';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {readFileSync} from 'node:fs';
@@ -52,11 +54,14 @@ export function bindPublishedPackage(client:LocalPluginClient,api:string,source:
  const files={...source.files},manifest=client==='claude-code'?'.claude-plugin/plugin.json':client==='codex'?'.codex-plugin/plugin.json':client==='cursor'?'.cursor-plugin/plugin.json':'.antigravity-plugin/plugin.json';
  const json=(value:unknown)=>JSON.stringify(value,null,2)+'\n';
  files[manifest]=json({...JSON.parse(files[manifest]!),name:identity.name});
- const mcp=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:{type:'http',url:origin+'/mcp'}}});
+ const registrationId=owner.userId.startsWith('agent_reg_')?owner.userId:undefined;
+ if(registrationId && readSession(origin)?.registrationId!==registrationId)throw invalid();
+ const transport=registrationId?registrationMcp(command,{api:origin,configHome,installationId,registrationId}):{type:'http',url:origin+'/mcp'};
+ const mcp=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:transport}});
  for(const name of ['.mcp.json','mcp.json','mcp_config.json'])if(name in files)files[name]=mcp;
  files['.opencrawl-binding.json']=json({schemaVersion:1,client,api:origin,configHome:resolve(configHome),installationId,owner:{tenantId:owner.tenantId,userId:owner.userId},captureMode});
  files['.opencrawl-source.json']=json(source.source);
- files['skills/opencrawl-setup/SKILL.md']=setupAgentGuide(client,origin,profileSetupCommand(command,configHome,env),process.platform,client==='codex'?{name:identity.name,url:origin+'/mcp'}:undefined)+`\nVerify the native MCP connection selected by setup for ${origin}/mcp.\n`;
+ files['skills/opencrawl-setup/SKILL.md']=setupAgentGuide(client,origin,profileSetupCommand(command,configHome,env),process.platform,client==='codex'?{name:identity.name,url:origin+'/mcp'}:undefined,Boolean(registrationId))+`\nVerify the native MCP connection selected by setup for ${origin}/mcp.\n`;
  return {...source,files};
 }
 

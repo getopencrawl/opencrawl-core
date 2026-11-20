@@ -1,13 +1,15 @@
 import {formatSetupCommand} from './invocation.ts';
 
-export function setupAgentGuide(client = 'the current client', api?: string, command?:string[], platform=process.platform, mcp?:{name:string;url:string}) {
+export function setupAgentGuide(client = 'the current client', api?: string, command?:string[], platform=process.platform, mcp?:{name:string;url:string}, registered=false) {
   const server=api?['--api',api]:[];
   const invoke=(args:string[])=>formatSetupCommand([...args,...server],command,platform);
   const clientId=client==='the current client'?'<this-client>':client;
   const initialSetup=client==='devin'
     ? 'If startup has never completed, preserve the native startup error and repair its official provider helper or OpenCrawl organization connection. Then resume this same Cloud session so its native startup hook retries. Do not run interactive setup, install a human login, or claim that missing first-turn events were captured.'
     : `Only if setup has never been started, guide the user through \`${invoke(['setup'])}\` once in their terminal.`;
-  const mcpSetup=client==='devin'
+  const mcpSetup=registered
+    ? 'Use this plugin’s workspace-bound stdio MCP connection. It renews the machine identity automatically. Load the plugin, call its native installation_status and verify_installation tools, and match the installation and workspace to local setup status.'
+    : client==='devin'
     ? 'This Cloud plugin uses its native stdio command and renewable workload identity; there is no separate human MCP sign-in. If native tools are missing, inspect this plugin’s connection and the startup error, repair the provider helper or approved organization binding, and resume the same Cloud session. Do not copy tokens or substitute another server.'
     : `For MCP authentication and verification, use the native server selected by setup for this endpoint in this harness. Never ask the user to paste credentials into chat or copy the CLI's tokens into a plugin. Use only the MCP tools actually exposed by the host. CLI login does not prove MCP authentication. If this plugin's tools are missing, finish authentication for this plugin at ${api?`\`${api.replace(/\/+$/,'')}/mcp\``:'its configured MCP endpoint'} and refresh its tools in this harness. Keep verification pending. Use the exact configured endpoint and confirm the saved workspace and installation in installation_status.`;
   const nativeHookNote=client==='cursor'?'Use this deployment’s OpenCrawl plugin in a new Cursor session. Keep existing hook permissions and use its OpenCrawl connection for verification.\n\n':'';
