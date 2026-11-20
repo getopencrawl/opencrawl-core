@@ -350,7 +350,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    optionalFailures!.set(client.id,{client:client.id as LocalPluginClient,status:'pending',message:'A compatible native CLI is required to install this integration.'});
    return {...item,installState:'review' as const};
   }));
-  const selected=await choose({phase:1,title:'Record new sessions',description:'Choose local coding agents to record sessions from',noneLabel:'Do not record any sessions on this machine',items:options.filter(item=>item!==null)});
+  const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.',noneLabel:'Do not record any sessions on this machine',items:options.filter(item=>item!==null)});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
   const selectedIds=new Set(selected.filter(row=>row.selected).map(row=>row.id));
   for(const {id} of candidates){

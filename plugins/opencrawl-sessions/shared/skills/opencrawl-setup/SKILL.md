@@ -27,8 +27,8 @@ Check at most twice, at least 15 seconds apart, then leave pending work visible
 and continue normally. Never request an extra user message merely to trigger a
 hook. Do not reconstruct unrecorded history or change an opt-out.
 
-Context suggestions are optional. `context-suggestions status` reports the saved
-choice. A suggestion's receipt can be assessed with
+Context suggestions default on for clients recording new sessions.
+`context-suggestions status` reports effective choices. A suggestion's receipt can be assessed with
 `context-suggestions feedback --harness CLIENT --check UUID --rating useful --source agent`.
 Other ratings are `irrelevant`, `distracting`, `stale` and `duplicate`; `--result 0`
 labels the first snippet. Send feedback only after assessing it. Do not infer

@@ -4,12 +4,12 @@ import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {setTimeout as pause} from 'node:timers/promises';
 import {checkEvent,checkOutput,hash,checkText,type CheckHarness} from '../src/context-check-events.ts';
-import {CheckStore,saveCheckSettings,checkBinding,type CheckInput} from '../src/context-check-state.ts';
+import {CheckStore,checkSettings,updateCheckSettings,checkBinding,type CheckInput} from '../src/context-check-state.ts';
 import {suggestionEventsSchema} from '../../src/search/suggestion-events.mts';
 import {flushSuggestionEvents} from '../src/context-suggestion-telemetry.ts';
 import {requestCheck,formatCheck} from '../src/context-check.ts';
 import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
-import {sessionFile} from '../src/session.ts';
+import {configDir,sessionFile} from '../src/session.ts';
 import type {CaptureConfig} from '../src/capture/runtime.ts';
 
 const cli=resolve(import.meta.dir,'../src/cli.ts');
@@ -18,7 +18,7 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
   const home=realpathSync(mkdtempSync(join(tmpdir(),'opencrawl-check-'))),configHome=join(home,'profile'),previous=process.env.OPENCRAWL_CONFIG_HOME;
   process.env.OPENCRAWL_CONFIG_HOME=configHome;
   const identity=setupPluginIdentity(api),nativeRoot=join(home,'plugin'),binding={api,client:harness,pluginName:identity.name,configHome,nativeRoot};
-  const config:CaptureConfig={schemaVersion:1,hookOwnership:'plugin',api,installationId:'fixture-install',owner:{tenantId:'tenant-a',userId:'user-a'},harnesses:[],roots:{codex:join(home,'codex'),'claude-code':join(home,'claude'),antigravity:join(home,'gemini')},installedAt:new Date().toISOString(),command:[process.execPath,cli]};
+  const config:CaptureConfig={schemaVersion:1,hookOwnership:'plugin',api,installationId:'fixture-install',owner:{tenantId:'tenant-a',userId:'user-a'},harnesses:[harness],roots:{codex:join(home,'codex'),'claude-code':join(home,'claude'),antigravity:join(home,'gemini')},installedAt:new Date().toISOString(),command:[process.execPath,cli]};
   const write=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,typeof value==='string'?value:json(value));};
   const files=setupPluginFiles(harness,api,{command:[process.execPath,cli],configHome}),digest=hash(json(files));
   for(const [name,text] of Object.entries(files))write(join(nativeRoot,name),text);
@@ -26,7 +26,7 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
   write(join(configHome,'opencrawl/setup-plugins',harness,identity.key,'installed.json'),{schemaVersion:2,...binding,digest});
   const configFile=join(configHome,'opencrawl/capture/config.json');write(configFile,config);
   write(sessionFile(api),{auth:{clientId:'fixture',tokenEndpoint:api+'/token'},accessToken:'fixture-token',refreshToken:'unused-refresh',expiresAt:Date.now()+3600000});
-  const settings=saveCheckSettings(checkBinding(config,api),[harness]);
+  const settings=checkSettings(checkBinding(config,api),config);
   const env:NodeJS.ProcessEnv={...process.env,OPENCRAWL_CONFIG_HOME:configHome,OPENCRAWL_PLUGIN_API:api,OPENCRAWL_PLUGIN_CLIENT:harness,OPENCRAWL_PLUGIN_NAME:identity.name,OPENCRAWL_PLUGIN_ROOT:nativeRoot};
   for(const key of ['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_API_URL'])delete env[key];
   const run=async(event:unknown,native=false)=>{
@@ -38,6 +38,42 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
 }
 const prompt=(harness:CheckHarness,id='prompt-1',message='Fix the deployment retry policy')=>harness==='cursor'?{hook_event_name:'beforeSubmitPrompt',conversation_id:'native-session',generation_id:id,prompt:message}:{hook_event_name:'UserPromptSubmit',session_id:'native-session',turn_id:id,prompt_id:id,prompt:message};
 const sample={outputTokens:30,results:[{id:'sessions:fixture',title:'Retry decision',text:'Retries use the same request ID.',offset:0,provenance:{role:'user'}}]};
+
+test('status and explicit controls follow recording changes and preserve account-scoped opt-outs',async()=>{
+  const f=fixture();
+  const command=async(...args:string[])=>{
+    const child=Bun.spawn([process.execPath,cli,'context-suggestions',...args,'--json'],{env:f.env,stdout:'pipe',stderr:'pipe'});
+    const [code,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
+    expect({code,err}).toEqual({code:0,err:''});return JSON.parse(out).data.harnesses;
+  };
+  try{
+    expect(await command('status')).toEqual(['codex']);
+    expect(await command('disable','--harness','codex')).toEqual([]);
+    const both={...f.config,harnesses:['codex','claude-code']};
+    f.write(f.configFile,both);expect(await command('status')).toEqual(['claude-code']);
+    f.write(f.configFile,{...both,owner:{tenantId:'other',userId:'other'}});
+    expect(await command('status')).toEqual(['codex','claude-code']);
+    expect(await command('disable')).toEqual([]);
+    f.write(f.configFile,both);expect(await command('status')).toEqual(['claude-code']);
+    f.write(f.configFile,{...both,disabled:true});expect(await command('status')).toEqual([]);
+    expect(await command('enable','--harness','codex')).toEqual(['codex']);
+  }finally{f.close();}
+});
+
+test('upgrades preserve the complete previous selection, including an explicit global disable',async()=>{
+  const f=fixture(),config:CaptureConfig={...f.config,harnesses:['codex','cursor']};
+  try{
+    f.write(f.configFile,config);
+    const file=join(configDir(),'context-checks',hash(f.config.api)+'.json'),binding=checkBinding(f.config,f.config.api);
+    const previousSelections:CheckHarness[][]=[[],['cursor']];
+    for(const harnesses of previousSelections){
+      f.write(file,{schemaVersion:1,...binding,revision:'previous',harnesses});
+      expect(checkSettings(binding,config).harnesses).toEqual(harnesses);
+    }
+    await updateCheckSettings(binding,['claude-code'],true);
+    expect(checkSettings(binding,f.config).harnesses).toEqual(['claude-code','cursor']);
+  }finally{f.close();}
+});
 
 test('native human prompt IDs preserve repeated turns, steering, and imported/subagent exclusions',()=>{
   const f=fixture();try{for(const harness of ['codex','claude-code','cursor','devin'] as const){
@@ -122,7 +158,7 @@ test('real native CLI hooks charge once, replay-free locally, and honor opt-out 
     expect(await f.run(prompt(harness))).toBe('');expect(checks).toBe(before+1);
     f.write(f.configFile,{...f.config,exclusions:{sessions:['native-session'],projects:[]}});expect(await f.run(prompt(harness,'prompt-2'))).toBe('');
     f.write(f.configFile,{...f.config,exclusions:{sessions:[],projects:[f.home]}});expect(await f.run(prompt(harness,'prompt-3'))).toBe('');
-    f.write(f.configFile,f.config);saveCheckSettings(checkBinding(f.config,f.config.api),[]);expect(await f.run(prompt(harness,'prompt-4'))).toBe('');expect(checks).toBe(before+1);
+    f.write(f.configFile,f.config);await updateCheckSettings(checkBinding(f.config,f.config.api),[harness],false);expect(await f.run(prompt(harness,'prompt-4'))).toBe('');expect(checks).toBe(before+1);
   }finally{f.close();}}}finally{server.stop(true);}
 },15000);
 

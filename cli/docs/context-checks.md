@@ -1,22 +1,21 @@
 # Context suggestions
 
-Context suggestions are optional. They send a redacted, bounded human prompt and recent
-prompt context to the selected deployment, then offer up to five historical
-snippets to the coding agent. They use that deployment's credit policy. Installing
-or updating OpenCrawl does not enable them or change recording consent.
-
-After installing the native OpenCrawl plugin:
+Context suggestions are on by default in supported clients selected to record new
+sessions. After native plugin installation and trust review, start a fresh session.
+Its prompt hook sends a redacted, bounded human prompt and recent prompt context
+to the selected deployment under its credit policy. When useful, it returns
+historical snippets to the agent.
 
 ```sh
-opencrawl context-suggestions enable --harness codex --harness claude-code
-opencrawl setup
 opencrawl context-suggestions status
+opencrawl context-suggestions disable --harness codex
+opencrawl context-suggestions enable --harness codex
 ```
 
-Complete any native hook trust review and start a fresh session. `enable` records
-the choice; it does not bypass the harness's review or prove that a hook ran.
-`opencrawl context-suggestions disable` stops future work and withholds pending output.
-Pass `--harness NAME` to disable just one client, or `--api ORIGIN` for self-host.
+Run `disable` without a harness to turn off all clients and withhold pending
+results. Repeat `--harness` to select several clients, or pass `--api ORIGIN` for
+self-host. Explicit choices override the recording default for that client,
+installation and account. Upgrades preserve existing saved client selections.
 The self-hosted application uses its own reference judgment adapter and has no
 cloud credit dependency.
 

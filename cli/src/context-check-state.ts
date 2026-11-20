@@ -2,8 +2,8 @@ import type {SuggestionEvent} from '../../src/search/suggestion-events.mts';
 import {Database} from 'bun:sqlite';
 import {randomUUID} from 'node:crypto';
 import {mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
-import {join} from 'node:path';
-import {atomicJson,configDir} from './session.ts';
+import {dirname,join} from 'node:path';
+import {atomicJson,configDir,withFileLock} from './session.ts';
 import {readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
 import {apiOrigin,CliError} from './oauth.ts';
 import {CHECK_HARNESSES,hash,object,checkText,type CheckHarness,type CheckEvent} from './context-check-events.ts';
@@ -19,22 +19,56 @@ export const checkBinding=(config:CaptureConfig|null,api:string):CheckBinding=>{
   return {api:config.api,installationId:config.installationId,owner:{tenantId:config.owner.tenantId,userId:config.owner.userId}};
 };
 const settingsFile=(api:string)=>join(configDir(),'context-checks',hash(api)+'.json');
-export function checkSettings(binding:CheckBinding):CheckSettings|undefined {
+type Choices=Partial<Record<CheckHarness,boolean>>;
+function readChoices(file:string,binding:CheckBinding):{revision:string;choices:Choices}|undefined {
   try{
-    const file=settingsFile(binding.api);if(statSync(file).size>8192)throw invalid();
+    if(statSync(file).size>8192)throw invalid();
     const value:unknown=JSON.parse(readFileSync(file,'utf8'));
     if(!object(value)||value.schemaVersion!==1||typeof value.revision!=='string'||!Array.isArray(value.harnesses)||value.harnesses.length>CHECK_HARNESSES.length||value.harnesses.some(v=>!CHECK_HARNESSES.includes(v as CheckHarness))||!object(value.owner))throw invalid();
     if(value.api!==binding.api||value.installationId!==binding.installationId||value.owner.tenantId!==binding.owner.tenantId||value.owner.userId!==binding.owner.userId)return;
-    return value as CheckSettings;
+    const choices:Choices={};
+    if(value.choices===undefined){
+      // The old allowlist cannot distinguish an omitted client from an explicit opt-out.
+      for(const harness of CHECK_HARNESSES)choices[harness]=value.harnesses.includes(harness);
+    }else{
+      if(!object(value.choices))throw invalid();
+      for(const [harness,enabled] of Object.entries(value.choices)){
+        if(!CHECK_HARNESSES.includes(harness as CheckHarness)||typeof enabled!=='boolean')throw invalid();
+        choices[harness as CheckHarness]=enabled;
+      }
+    }
+    return {revision:value.revision,choices};
   }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
 }
-export function saveCheckSettings(binding:CheckBinding,harnesses:CheckHarness[]):CheckSettings {
-  const settings:CheckSettings={schemaVersion:1,...binding,revision:randomUUID(),harnesses:[...new Set(harnesses)]};
-  atomicJson(settingsFile(binding.api),settings);return settings;
+function preferences(binding:CheckBinding){
+  const legacy=settingsFile(binding.api),saved=readChoices(legacy,binding);
+  if(saved)return {file:legacy,...saved};
+  const file=join(dirname(legacy),hash(JSON.stringify([binding.api,binding.installationId,binding.owner.tenantId,binding.owner.userId]))+'.json');
+  return {file,...(readChoices(file,binding)??{revision:'recording-default-v1',choices:{}})};
+}
+function resolveSettings(binding:CheckBinding,config:CaptureConfig,revision:string,choices:Choices):CheckSettings{
+  const harnesses=CHECK_HARNESSES.filter(h=>config.hookOwnership==='plugin'&&(choices[h]??(!config.disabled&&config.harnesses?.includes(h)===true)));
+  return {schemaVersion:1,...binding,revision,harnesses};
+}
+export function checkSettings(binding:CheckBinding,config:CaptureConfig):CheckSettings {
+  const {revision,choices}=preferences(binding);
+  return resolveSettings(binding,config,revision,choices);
+}
+export async function updateCheckSettings(binding:CheckBinding,selected:readonly CheckHarness[],enabled:boolean):Promise<CheckSettings>{
+  return withFileLock(settingsFile(binding.api)+'.lock',async()=>{
+    const config=readCaptureConfig();
+    if(!config||JSON.stringify(checkBinding(config,binding.api))!==JSON.stringify(binding))throw invalid();
+    const {file,choices}=preferences(binding);
+    for(const harness of selected)choices[harness]=enabled;
+    const settings=resolveSettings(binding,config,randomUUID(),choices);
+    atomicJson(file,{...settings,choices});return settings;
+  });
 }
 export function assertCheckSettings(settings:CheckSettings,harness:CheckHarness):void {
-  const binding=checkBinding(readCaptureConfig(),settings.api),current=checkSettings(binding);
-  if(JSON.stringify(binding)!==JSON.stringify(checkBindingFromSettings(settings))||current?.revision!==settings.revision||!current.harnesses.includes(harness))throw invalid();
+  const config=readCaptureConfig(),binding=checkBinding(config,settings.api);
+  if(!config||JSON.stringify(binding)!==JSON.stringify(checkBindingFromSettings(settings)))throw invalid();
+  const current=checkSettings(binding,config);
+  if(current.revision!==settings.revision||!current.harnesses.includes(harness))throw invalid();
 }
 export const checkBindingFromSettings=(settings:CheckSettings):CheckBinding=>({api:settings.api,installationId:settings.installationId,owner:settings.owner});
 
