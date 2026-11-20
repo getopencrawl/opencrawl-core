@@ -106,6 +106,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
         timestamp:typeof event.timestamp==='string'?event.timestamp:null,receivedAt:batch.receivedAt,
         sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,...participantProjection(event,batch),...(chunk===0?{capturedTokens,captureMode}:{}),text:chunks[chunk]!.text,sourceKey:key,
         passageVersion:PASSAGE_VERSION,textStart:chunks[chunk]!.start,textEnd:chunks[chunk]!.end,chunkCount:chunks.length,
+        ...(batch.harness==='claude-code' && (batch.clientApp==='t3-code'||batch.clientApp==='conductor') ? {clientApp:batch.clientApp} : {}),
         ...(batch.title?{title:batch.title}:{}),
         nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
         toolCallId:projected.data?.call_id??projected.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,

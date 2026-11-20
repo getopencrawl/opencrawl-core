@@ -6,7 +6,7 @@ export interface SearchDocument {
   [field: string]: unknown;
   tenantId: string; id?: string | number; text?: string; title?: string; sourceKey?: string;
   timestamp?: string | number | null; receivedAt?: string; extractedAt?: number;
-  author?: string; authorId?: string; userId?: string; provider?: string; harness?: string; kind?: string;
+  author?: string; authorId?: string; userId?: string; provider?: string; harness?: string; clientApp?: string; kind?: string;
   installationId?: string; sessionId?: string; eventId?: string; role?: string | null;
   sequence?: number; chunk?: number; url?: string; host?: string | null;
   path?: string; project?: string; snapshotId?: string; generation?: number; modifiedAt?: string;
