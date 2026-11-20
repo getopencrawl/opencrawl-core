@@ -12,7 +12,7 @@ const historySchema=z.looseObject({events:z.array(z.unknown()).max(1000),before_
 export type ReplicasHistory=z.infer<typeof historySchema>;
 export type ReplicasOperation='identity'|'catalog'|'history';
 export class ReplicasPageError extends Error {
-  constructor(readonly reason:'page_size'|'invalid_page'|'cursor'|'deleted'|'waking',message:string,readonly observedBytes?:number,readonly limitBytes?:number){super(message);}
+  constructor(readonly reason:'page_size'|'invalid_page'|'cursor'|'deleted'|'waking'|'empty_with_messages'|'empty_unverified',message:string,readonly observedBytes?:number,readonly limitBytes?:number){super(message);}
 }
 export function replicasError(message:string,status=400){return Object.assign(new Error(message),{status,expose:true});}
 

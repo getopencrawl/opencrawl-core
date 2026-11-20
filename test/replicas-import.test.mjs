@@ -232,6 +232,23 @@ test('repeated history 404 samples the workspace inventory once and waking histo
   const done=await advance(f.service,id);assert.equal(done.phase,'complete');assert.equal(done.events,1);
 });
 
+test('empty history cannot complete a chat with recorded messages or an unconfirmed null thread',async t=>{
+  let clock=Date.now(),available=false,readable=false;
+  const empty={...chat,chat_id:randomUUID()};
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[{...chat,senders:[{message_id:'source-message'}]},empty],total:2,next_cursor:null});
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:available?[{id:empty.chat_id}]:[]});
+    if(url.pathname.endsWith('/history'))return Response.json(readable&&url.searchParams.get('chat_id')===chat.chat_id
+      ?{events:[event('restored')],before_cursor:null}:{thread_id:null,events:[],total:0,before_cursor:null});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);const waiting=await advance(f.service,id);
+  assert.equal(waiting.processed,0);assert.equal(waiting.imported,0);assert.equal(waiting.blocked,2);assert.equal(f.handed.length,0);
+  available=true;readable=true;clock+=60_000;
+  await advance(f.service,id);const done=await advance(f.service,id);
+  assert.equal(done.phase,'complete');assert.equal(done.processed,2);assert.equal(done.events,1);
+});
+
 test('workspace diagnostics compare only the requested export scope and never skip the missing chat',async t=>{
   let clock=Date.now();
   const other={...chat,workspace_id:randomUUID()};

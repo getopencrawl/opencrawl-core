@@ -146,6 +146,24 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           }
         }
         const history=await api.history(chat,state.before,state.pageLimit??100);
+        if(!state.before&&!history.before_cursor&&history.has_more!==true&&!history.events.length&&!replicasTurns(history).length){
+          const senderLists=[chat.senders,history.senders];
+          const knownMessages=senderLists.some(list=>Array.isArray(list)&&list.some(row=>row&&typeof row.message_id==='string'&&row.message_id.length>0));
+          if(knownMessages||typeof history.total==='number'&&history.total>0){
+            throw new ReplicasPageError('empty_with_messages','Replicas returned an empty transcript for a chat with recorded messages.');
+          }
+          if(history.thread_id===null){
+            let confirmed=false;
+            try{
+              const inventory=await api.workspaceChats(chat.workspace_id);
+              confirmed=!inventory.waking&&inventory.chats.some(item=>item.id===chat.chat_id);
+            }catch(check){
+              // A catalog outage/rate limit is retried through its normal provider policy.
+              if(!(check instanceof ReplicasProviderError)||check.status!==404)throw check;
+            }
+            if(!confirmed)throw new ReplicasPageError('empty_unverified','Replicas could not confirm this empty chat in its workspace.');
+          }
+        }
         if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString());
         operation='ingest';
         await savePage(principal,state,chat,history);
