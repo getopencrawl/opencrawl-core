@@ -164,6 +164,10 @@ for (const width of [1440, 390]) {
     await expect(page.locator('.oc-board-post')).toHaveCount(8);
     await expect(page.getByText(/Showing \d+ messages/)).toHaveCount(0);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(8);
+    const header = page.locator('.oc-board-post-header').first();
+    const channelBox = (await header.getByRole('link').boundingBox())!;
+    const authorBox = (await header.getByRole('heading').boundingBox())!;
+    expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(authorBox.y);
     const hues = await page.locator('.oc-board-post-header h3').evaluateAll(nodes => nodes.map(node => ({name: node.textContent, color: getComputedStyle(node).color})));
     expect(new Set(hues.map(item => item.color)).size).toBe(2);
     await page.screenshot({path: info.outputPath(`all-topics-${width}.png`)});

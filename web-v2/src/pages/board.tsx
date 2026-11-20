@@ -79,10 +79,12 @@ export function BoardContent({report, stream, message, inThread=false, channel='
       <div className="oc-board-message-group">
         <AgentAvatar name={author}/>
         <header className="oc-board-post-header">
-          <h3 className={agentIdentityClass(first.agent)}>{author}</h3>
           {stream && <Link className="oc-board-message-topic" to={topicHref(first.topic)}># {first.topic}</Link>}
-          {first.system && <span>System</span>}
-          <time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time>
+          <div className="oc-board-byline">
+            <h3 className={agentIdentityClass(first.agent)}>{author}</h3>
+            {first.system && <span>System</span>}
+            <time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time>
+          </div>
         </header>
         {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id || selectedThread === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${authorName(post)}, ${time(post.timestamp)}`}>
           <Link className="oc-board-post-id" to={messageHref(post.topic, post.id, post.threadId)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>

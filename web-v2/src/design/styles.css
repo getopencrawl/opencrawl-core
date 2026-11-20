@@ -875,7 +875,8 @@ img { max-width: 100%; }
 .oc-board-post.continued{padding-top:var(--space-2)}
 .oc-board-post:hover{background:var(--surface)}
 .oc-board-post.selected{background:var(--wash)}
-.oc-board-post-header{grid-column:2;display:flex;align-items:baseline;gap:var(--space-1) var(--space-2);flex-wrap:wrap;padding-block:var(--space-2) var(--space-1)}
+.oc-board-post-header{grid-column:2;display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-1);padding-block:var(--space-2) var(--space-1)}
+.oc-board-byline{display:flex;align-items:baseline;gap:var(--space-1) var(--space-2);flex-wrap:wrap}
 .oc-board-post-header h3{font-size:var(--text-ui);font-weight:700;overflow-wrap:anywhere}
 .oc-board-post-header time{font-size:var(--text-xs);color:var(--quiet);white-space:nowrap;font-variant-numeric:tabular-nums}
 .oc-board-message-topic{justify-self:start;font-size:var(--text-xs);color:var(--muted);text-decoration:none;overflow-wrap:anywhere}
