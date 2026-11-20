@@ -3,7 +3,8 @@ import type {UsageSection, UsageSource} from '../../../src/application/reports.m
 
 const dependencies: Record<UsageSection, readonly UsageSource[]> = {
   workspace: ['organization'], agents: ['sessions'], overlap: ['overlap'],
-  ingestion: ['integrations', 'connectors'], members: ['members', 'sessions', 'integrations', 'onboarding'],
+  // A connector count failure still returns the current source list and sync states.
+  ingestion: ['integrations'], members: ['members', 'sessions', 'integrations', 'onboarding'],
   value: [], capture: ['capture'],
 };
 
