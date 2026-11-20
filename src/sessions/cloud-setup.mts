@@ -3,10 +3,10 @@ import {NATIVE_INSTALL_SH,NPM_INSTALL_COMMAND,nativeInstallCommand,nativePathCom
 // Stable core pins a published CLI; continuous publication updates this pin.
 const CLOUD_CLI_VERSION='0.4.127';
 const REPLICAS_SAFE_INSPECTION="Inspect configuration through supported CLI metadata or an allowlist of non-secret fields. Never dump credential-bearing files such as ~/.codex/config.toml, ~/.claude.json, ~/.replicas/config.json, runtime environment files or the process environment. Do not rely on regex redaction: Authorization headers and unknown credential names can be missed. Do not copy provider credentials into tools, messages or evidence.";
-const REPLICAS_RELEASE='https://github.com/getopencrawl/opencrawl-plugins/releases/download/replicas-v0.2.2';
+const REPLICAS_RELEASE='https://github.com/getopencrawl/opencrawl-plugins/releases/download/replicas-v0.2.4';
 const replicasAssets=[
-  ['opencrawl-local-claude-code-replicas-0.2.2-linux-x64.zip','b8d7892edff36225312551d3965b81be228d74d6507352a1afe8914707d98728'],
-  ['opencrawl-local-codex-replicas-0.2.2-linux-x64.zip','6c8b0e5a08bcd329519e6769708eee714e0270a823fe49965ddb2602d2c61d39'],
+  ['opencrawl-local-claude-code-replicas-0.2.4-linux-x64.zip','b9b6742280840779721d1bdb08db3daa40e24d58cc45ec4005d95bf7e1be3bd2'],
+  ['opencrawl-local-codex-replicas-0.2.4-linux-x64.zip','755e6cd415490bd79267291af263bf1e19d86f06174a98de1d5e17ba866ec4b1'],
   ['replicas-codex-policy.mjs','f360fdc73d91b506e369a325219719fc33fb3a96951b807f2f2ad7bda272bcc5'],
 ] as const;
 function replicasPluginSetup(api:string) {

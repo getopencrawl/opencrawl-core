@@ -1,7 +1,7 @@
 import {existsSync, lstatSync, readFileSync, readdirSync, mkdirSync, rmSync, chmodSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname,join} from 'node:path';
-import {importMemorySkill} from '../../plugins/opencrawl-sessions/assets.ts';
+import {companionSkills} from '../../plugins/opencrawl-sessions/assets.ts';
 import {createHash} from 'node:crypto';
 import {atomicFile, withSessionLock} from './session.ts';
 import {CliError} from './oauth.ts';
@@ -10,7 +10,7 @@ import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
 
-export const skillRevision = 16;
+export const skillRevision = 17;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -111,22 +111,23 @@ function prepareTree(directory: string, files: Record<string, string>, relative 
   }
 }
 
-const companionManifest=JSON.stringify({name:'oc-import-memories',sha256:digest(importMemorySkill)})+'\n';
-function companionState(directory:string) {
-  if(!metadata(directory))return 'missing';
-  if(currentTree(directory,{'SKILL.md':importMemorySkill,[manifestName]:companionManifest}))return 'current';
-  if(!metadata(directory)?.isDirectory()||metadata(directory)?.isSymbolicLink())return 'conflict';
-  const manifest=join(directory,manifestName),skill=join(directory,'SKILL.md');
-  if(!metadata(manifest)?.isFile()||metadata(manifest)?.isSymbolicLink())return 'conflict';
-  if(readdirSync(directory).some(name=>name!==manifestName&&name!=='SKILL.md'))return 'conflict';
-  const receipt=readFileSync(manifest,'utf8');
-  if(!metadata(skill))return receipt===companionManifest?'outdated':'conflict';
-  if(!metadata(skill)?.isFile()||metadata(skill)?.isSymbolicLink())return 'conflict';
-  const contents=readFileSync(skill,'utf8');
-  try{
-    const previous=JSON.parse(receipt);
-    return previous.name==='oc-import-memories'&&(previous.sha256===digest(contents)||contents===importMemorySkill)?'outdated':'conflict';
-  }catch{return 'conflict';}
+function companionState(directory: string, name: string, contents: string, manifest: string) {
+  const root = metadata(directory);
+  if (!root) return 'missing';
+  if (!root.isDirectory() || root.isSymbolicLink()) return 'conflict';
+  if (currentTree(directory, {'SKILL.md': contents, [manifestName]: manifest})) return 'current';
+  const manifestPath = join(directory, manifestName);
+  const skillPath = join(directory, 'SKILL.md');
+  if (!metadata(manifestPath)?.isFile() || readdirSync(directory).some(file => file !== manifestName && file !== 'SKILL.md')) return 'conflict';
+  const receipt = readFileSync(manifestPath, 'utf8');
+  const skill = metadata(skillPath);
+  if (!skill) return receipt === manifest ? 'outdated' : 'conflict';
+  if (!skill.isFile()) return 'conflict';
+  const installed = readFileSync(skillPath, 'utf8');
+  try {
+    const previous = JSON.parse(receipt);
+    return previous.name === name && (previous.sha256 === digest(installed) || installed === contents) ? 'outdated' : 'conflict';
+  } catch { return 'conflict'; }
 }
 
 export async function agentSkills(action: string, api: string, options: Options = {}) {
@@ -150,10 +151,13 @@ export async function agentSkills(action: string, api: string, options: Options 
         const existed = metadata(target.directory) !== null;
         // Background refresh updates an existing installation; first install is explicit.
         if (action === 'refresh' && !existed) return {...target, status: 'skipped'};
-        const importDirectory=join(dirname(target.directory),'oc-import-memories');
-        const importState=companionState(importDirectory);
-        const primaryCurrent=currentTree(target.directory,files);
-        const current=primaryCurrent && importState==='current';
+        const companions = Object.entries(companionSkills).map(([name, contents]) => {
+          const directory = join(dirname(target.directory), name);
+          const manifest = JSON.stringify({name, sha256: digest(contents)}) + '\n';
+          return {directory, contents, manifest, state: companionState(directory, name, contents, manifest)};
+        });
+        const primaryCurrent = currentTree(target.directory, files);
+        const current = primaryCurrent && companions.every(skill => skill.state === 'current');
         const hooks = startupHooks(target.clients.filter(supportsStartup), action === 'status' ? 'status' : 'install', {...options, preserveProfile: action === 'refresh'});
         if (action === 'status') return {...target, startupHooks: hooks, status: current ? 'current' : existed ? 'outdated' : 'missing'};
         if (hooks.some(hook => hook.status === 'error')) return {...target, startupHooks: hooks, status: 'error', message: 'Session startup installation failed; skill fallback remains available.'};
@@ -162,13 +166,19 @@ export async function agentSkills(action: string, api: string, options: Options 
           prepareTree(target.directory, files);
           for (const [name, text] of Object.entries(files)) atomicFile(join(target.directory, name), text);
         }
-        if(importState==='conflict')return {...target,startupHooks:hooks,status:'conflict',message:'Preserved a locally modified oc-import-memories skill at '+importDirectory};
-        if(importState!=='current'){
-          mkdirSync(importDirectory,{recursive:true,mode:0o700});
-          if(importState==='missing')atomicFile(join(importDirectory,manifestName),companionManifest);
-          atomicFile(join(importDirectory,'SKILL.md'),importMemorySkill);
-          atomicFile(join(importDirectory,manifestName),companionManifest);
+        const conflicts = [];
+        for (const skill of companions) {
+          if (skill.state === 'current') continue;
+          if (skill.state === 'conflict') {
+            conflicts.push(skill.directory);
+            continue;
+          }
+          mkdirSync(skill.directory, {recursive: true, mode: 0o700});
+          if (skill.state === 'missing') atomicFile(join(skill.directory, manifestName), skill.manifest);
+          atomicFile(join(skill.directory, 'SKILL.md'), skill.contents);
+          atomicFile(join(skill.directory, manifestName), skill.manifest);
         }
+        if (conflicts.length) return {...target, startupHooks: hooks, status: 'conflict', message: 'Preserved locally modified skills at ' + conflicts.join(', ')};
         return {...target, startupHooks: hooks, status: existed ? 'updated' : 'installed'};
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;

@@ -94,10 +94,10 @@ test('dedicated Replicas prompt keeps shared setup independent from personal log
 
 test('fresh Replicas setup pins the two standalone plugins and binds them to the signed workspace',()=>{
  const api='https://selfhost.example',prompt=replicasSetupPrompt(api);
- const downloads=[...prompt.matchAll(/^([a-f0-9]{64})  https:\/\/github\.com\/getopencrawl\/opencrawl-plugins\/releases\/download\/replicas-v0\.2\.2\/([^\s]+)$/gm)];
+ const downloads=[...prompt.matchAll(/^([a-f0-9]{64})  https:\/\/github\.com\/getopencrawl\/opencrawl-plugins\/releases\/download\/replicas-v0\.2\.4\/([^\s]+)$/gm)];
  assert.deepEqual(downloads.map(([,digest,name])=>[name,digest]),[
-   ['opencrawl-local-claude-code-replicas-0.2.2-linux-x64.zip','b8d7892edff36225312551d3965b81be228d74d6507352a1afe8914707d98728'],
-   ['opencrawl-local-codex-replicas-0.2.2-linux-x64.zip','6c8b0e5a08bcd329519e6769708eee714e0270a823fe49965ddb2602d2c61d39'],
+   ['opencrawl-local-claude-code-replicas-0.2.4-linux-x64.zip','b9b6742280840779721d1bdb08db3daa40e24d58cc45ec4005d95bf7e1be3bd2'],
+   ['opencrawl-local-codex-replicas-0.2.4-linux-x64.zip','755e6cd415490bd79267291af263bf1e19d86f06174a98de1d5e17ba866ec4b1'],
    ['replicas-codex-policy.mjs','f360fdc73d91b506e369a325219719fc33fb3a96951b807f2f2ad7bda272bcc5'],
  ]);
  for(const expected of [api+'/api/sessions/identity','data.principal.tenantId','data.principal.userId','captureMode "hook"','/etc/codex/hooks.json','Incognito is unavailable','Integrations → Replicas → Connect'])assert.ok(prompt.includes(expected),expected);
