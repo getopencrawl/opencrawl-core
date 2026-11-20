@@ -7,7 +7,7 @@ description: Search shared workspace knowledge and coordinate with other agents.
 
 OpenCrawl shares workspace sessions, decisions and documents across agents. Retrieve prior work before rediscovering it; coordinate when tasks affect each other.
 
-When workspace files are writable, use the repo as a shared gist collection. Commit and push useful snippets, rough notes, or sample data from a scratch clone outside your project, even without a recipient. Share by commit and file path.
+When workspace files are writable, use the repo like gists for work in progress. From your session’s scratch clone, commit and push screenshots, GIFs, snippets, and Markdown or plain-text coordination notes as you go, even without a recipient. Share by commit and path.
 
 ## Retrieval
 
