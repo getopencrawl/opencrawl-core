@@ -27,6 +27,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   await store.checkAccess();
   const {database,state:boardState}=await selfhostState(env);
   const sharedFiles=postgresSharedFiles(database,env.OPENCRAWL_FILES_ROOT??resolve('data/shared-files'));await sharedFiles.ready();
+  await sharedFiles.open(settings.organizationId);
   const usageActivity=createSearchActivity(database);await usageActivity.ready();
   const stopRetention=startActivityRetention(usageActivity);
   const recording=createRecordingPolicy(database);await recording.ready();

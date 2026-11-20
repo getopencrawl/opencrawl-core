@@ -5,6 +5,7 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {git, seedRepository} from './git.mjs';
 
 export interface SharedFilesStore {
+  readonly storageRoot: string;
   ready(): Promise<void>;
   open(tenantId: string): Promise<string>;
   syncAudit(tenantId: string, dir: string): Promise<void>;
@@ -131,6 +132,26 @@ async function catchUp(client: Pick<ApplicationDatabase['pool'], 'query'>, scope
   }
 }
 
+function location(root: string, namespace: string, tenant: string) {
+  if (!tenant || !namespace || !isAbsolute(root)) throw new Error('Invalid shared Git storage binding');
+  const key = digest(tenant);
+  return join(root, digest(namespace), key.slice(0, 2), key + '.git');
+}
+
+/** Verify the disk identity against the control plane's independent receipt without creating a repository. */
+export async function matchingExistingRepository(root: string, namespace: string, tenant: string, expectedId: string) {
+  const dir = location(root, namespace, tenant);
+  if (!expectedId || (await repositoryId(dir)) !== expectedId) throw new Error('Restore the registered Git volume before serving this network');
+  return dir;
+}
+
+/** Provision through the same atomic initialization path that first-time Git clients use. */
+export async function provisionRepository(store: SharedFilesStore, tenant: string) {
+  const id = await repositoryId(await store.open(tenant));
+  if (!id) throw new Error('Missing shared Git volume marker');
+  return id;
+}
+
 export function fileRepositories(
   root: string,
   namespace: string,
@@ -139,14 +160,10 @@ export function fileRepositories(
   if (!namespace || !isAbsolute(root))
     throw new Error('Shared Git requires a namespace and an absolute storage root');
   const base = join(root, digest(namespace));
-  function location(tenant: string) {
-    if (!tenant) throw new Error('Missing Git network');
-    const key = digest(tenant);
-    return join(base, key.slice(0, 2), key + '.git');
-  }
+  const directory = (tenant: string) => location(root, namespace, tenant);
   async function syncAudit(tenant: string, dir: string) {
     if (!database) return;
-    if (dir !== location(tenant)) throw new Error('Git audit scope mismatch');
+    if (dir !== directory(tenant)) throw new Error('Git audit scope mismatch');
     const scope = [namespace, tenant];
     const size = (await stat(logPath(dir))).size;
     const state = await database.pool.query(
@@ -164,6 +181,7 @@ export function fileRepositories(
     });
   }
   return {
+    storageRoot: root,
     async ready() {
       await mkdir(base, {recursive: true, mode: 0o700});
       if (database)
@@ -178,7 +196,7 @@ export function fileRepositories(
         });
     },
     async open(tenant) {
-      const dir = location(tenant);
+      const dir = directory(tenant);
       if (!database) {
         if (!(await repositoryId(dir))) await initialize(dir);
         return dir;
