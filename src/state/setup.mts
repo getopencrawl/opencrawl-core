@@ -73,7 +73,11 @@ export function createSetupState(database:ApplicationDatabase):SetupState & {rea
       const result=version===null
         ?await database.pool.query('INSERT INTO opencrawl_setup_status(namespace,tenant_id,user_id,record,revision,agent_last_seen,devin_initial_forward) VALUES($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7::jsonb) ON CONFLICT DO NOTHING',[...args,initial])
         :await database.pool.query(`UPDATE opencrawl_setup_status SET record=$4::jsonb,revision=$5,agent_last_seen=$6::jsonb,
-          devin_initial_forward=COALESCE(devin_initial_forward,CASE WHEN jsonb_path_exists(record,'$.installations[*].clients[*] ? (@.client == "devin")') THEN '{}'::jsonb ELSE $8::jsonb END)
+          devin_initial_forward=CASE
+            WHEN devin_initial_forward IS NOT NULL AND devin_initial_forward IS DISTINCT FROM $8::jsonb THEN '{}'::jsonb
+            WHEN devin_initial_forward IS NOT NULL THEN devin_initial_forward
+            WHEN jsonb_path_exists(record,'$.installations[*].clients[*] ? (@.client == "devin")') THEN '{}'::jsonb
+            ELSE $8::jsonb END
           WHERE namespace=$1 AND tenant_id=$2 AND user_id=$3 AND revision=$7`,[...args,version,initial]);
       return result.rowCount===1;
     },

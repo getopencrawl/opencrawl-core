@@ -150,12 +150,18 @@ async function collectStartupEvents(request: (input: DevinEventRequest) => Promi
     item.second >= opener.second && item.second < nextTurn && item.second <= end);
   ordered.sort((a, b) => a.second - b.second);
   const events = [first];
+  let capturedBytes=Buffer.byteLength(JSON.stringify(first));
+  if(ordered.length>128)fail(502,'Devin startup event count exceeded the read limit');
   for (const item of ordered) {
     const actual = await detail(item);
     const at = Date.parse(actual.timestamp);
     if (at < openedAt || at > end) continue;
     const event = firstTurnDevinEvent(actual);
-    if (event) events.push(event);
+    if (event) {
+      capturedBytes+=Buffer.byteLength(JSON.stringify(event));
+      if(capturedBytes>2*1024*1024)fail(502,'Devin startup events exceeded the read limit');
+      events.push(event);
+    }
   }
   return events;
 }

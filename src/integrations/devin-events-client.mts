@@ -7,38 +7,38 @@ const identityEndpoint = 'https://api.devin.ai/v3/self';
 const maxResponseBytes = 2 * 1024 * 1024;
 
 function authorizedFetch(destination: string, byteLimit: number, key: string, deadline: AbortSignal, fetcher: FetchLike): FetchLike {
-    return async (input, init) => {
-      if (String(input instanceof Request ? input.url : input) !== destination) throw new Error('Invalid Devin destination');
-      const headers = new Headers(init?.headers);
-      headers.set('authorization','Bearer ' + key);
-      const signal = init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline;
-      const response = await fetcher(input,{...init, headers, signal, redirect:'error'});
-      // Discard provider error bodies, which may echo inputs or account details.
-      if (!response.ok || !response.body) {
-        await response.body?.cancel();
-        return new Response(null,{status:response.status, headers:response.headers});
+  return async (input, init) => {
+    if (String(input instanceof Request ? input.url : input) !== destination) throw new Error('Invalid Devin destination');
+    const headers = new Headers(init?.headers);
+    headers.set('authorization','Bearer ' + key);
+    const signal = init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline;
+    const response = await fetcher(input,{...init, headers, signal, redirect:'error'});
+    // Discard provider error bodies, which may echo inputs or account details.
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      return new Response(null,{status:response.status, headers:response.headers});
+    }
+    let bytes = 0;
+    const bounded = response.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
+      transform(chunk, controller) {
+        bytes += chunk.byteLength;
+        if (bytes > byteLimit) throw new Error('Devin response exceeded the byte limit');
+        controller.enqueue(chunk);
       }
-      let bytes = 0;
-      const bounded = response.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({
-        transform(chunk, controller) {
-          bytes += chunk.byteLength;
-          if (bytes > byteLimit) throw new Error('Devin response exceeded the byte limit');
-          controller.enqueue(chunk);
-        }
-      }));
-      return new Response(bounded,{status:response.status, headers:response.headers});
-    };
-  }
+    }));
+    return new Response(bounded,{status:response.status, headers:response.headers});
+  };
+}
 
 export async function verifyDevinEventCredential(key: string, organizationId: string, fetcher: FetchLike = fetch, deadline = AbortSignal.timeout(15000)) {
-    if (!/^cog_[a-zA-Z0-9_-]{1,1024}$/.test(key)) fail(400, 'Invalid Devin service credential');
-    const response = await authorizedFetch(identityEndpoint, 16384, key, deadline, fetcher)(identityEndpoint, {headers: {accept: 'application/json'}});
-    if (!response.ok) fail(response.status===401||response.status===403?403:502,'Could not verify the Devin service user');
-    const identity: unknown = await response.json();
-    if (!identity || typeof identity !== 'object' || !('principal_type' in identity) ||
-        identity.principal_type !== 'service_user' || !('org_id' in identity) || identity.org_id !== organizationId) {
-      fail(403,'The Devin service user does not belong to this organization');
-    }
+  if (!/^cog_[a-zA-Z0-9_-]{1,1024}$/.test(key)) fail(400, 'Invalid Devin service credential');
+  const response = await authorizedFetch(identityEndpoint, 16384, key, deadline, fetcher)(identityEndpoint, {headers: {accept: 'application/json'}});
+  if (!response.ok) fail(response.status===401||response.status===403?403:502,'Could not verify the Devin service user');
+  const identity: unknown = await response.json();
+  if (!identity || typeof identity !== 'object' || !('principal_type' in identity) ||
+      identity.principal_type !== 'service_user' || !('org_id' in identity) || identity.org_id !== organizationId) {
+    fail(403,'The Devin service user does not belong to this organization');
+  }
 }
 
 /** Open on the first admitted request, and close even if permission changes

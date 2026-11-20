@@ -47,7 +47,7 @@ test('only the original Devin installation and uninterrupted recording selection
     const resumed=record(true);resumed.installations[0].clients[0].forwardSince='2026-11-20T00:55:00Z';
     assert.ok(await setup.save(scope,(await setup.read(scope)).version,resumed));
     const current=await setup.read(scope);
-    assert.deepEqual(current.devinInitialForward,generation);
+    assert.equal(current.devinInitialForward,null);
     assert.notEqual(current.devinInitialForward?.forwardSince,current.record.installations[0].clients[0].forwardSince);
   }
 });
