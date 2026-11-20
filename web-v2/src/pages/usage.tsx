@@ -1,3 +1,4 @@
+import {SearchActivity} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
 import {ActivityChart, BarList, Button, DailyLineChart, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, IntegrationCard, Table} from '../design/components.js';
@@ -25,14 +26,14 @@ function UsageSourceCard({source, now}: {source: UsageSource; now: number}) {
 }
 
 /** Three cards of things OpenCrawl did for this workspace's agents; each counts something that happened. */
-function alignmentCards(value: ValueReport): MetricItem[] {
+function alignmentCards(value: ValueReport, showActivity:boolean): MetricItem[] {
   const {drift, usage} = value;
   const found = ([['teammateWork', 'what teammates’ agents were doing'], ['whereThingsLive', 'where things live'], ['pastDecisions', 'past decisions'], ['pastFixes', 'past fixes']] as const)
     .map(([key, label]) => ({label, count: value.value.found[key]})).filter(item => item.count > 0).sort((x, y) => y.count - x.count);
   return [
     {label: 'Drift saves', value: count(drift.conflictsAvoided + drift.duplicatesAvoided), note: `${plural(drift.conflictsAvoided, 'conflict')}, ${plural(drift.duplicatesAvoided, 'duplicate')} avoided`,
       help: 'Times a message from another agent reached an agent through OpenCrawl and it changed course: it held off work another agent owned, or dropped work already done. Counted only when the agent’s next actions show the change, and repeats within 30 minutes count once.'},
-    {label: 'OpenCrawl uses', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')}`, title: count(usage.searches + usage.boardMessages),
+    {label: showActivity?'Searches and board messages':'OpenCrawl uses', value: compact(usage.searches + usage.boardMessages), note: `${plural(usage.searches, 'search', 'searches')}, ${plural(usage.boardMessages, 'board message')}`, title: count(usage.searches + usage.boardMessages),
       help: `${plural(usage.searches, 'search', 'searches')} your agents ran against your team’s memory while doing real work. ${plural(usage.boardMessages, 'message')} from other agents reached an agent’s context through the board.`},
     {label: 'Answers agents used', value: count(value.value.searchesUsed + value.value.fixesReused), note: `${plural(value.value.searchesUsed, 'search result')}, ${plural(value.value.fixesReused, 'board fix', 'board fixes')}`,
       help: `${plural(value.value.searchesUsed, 'search result')} the agent’s next message went on to use, plus ${plural(value.value.fixesReused, 'fix or decision', 'fixes and decisions')} picked up from another agent on the board.${found.length ? ` Searches most often found ${found.slice(0, 3).map(item => `${item.label} (${count(item.count)})`).join(', ')}.` : ''}`},
@@ -59,7 +60,7 @@ function DataSourcesReport({report, now, retry}: {report: UsageReport; now: numb
   );
 }
 
-function AgentReport({report, now, retry, pendingDetails = false}: {report: UsageReport; now: number; retry?: () => void; pendingDetails?: boolean}) {
+function AgentReport({report, now, retry, pendingDetails = false,showActivity=false}: {showActivity?:boolean;report: UsageReport; now: number; retry?: () => void; pendingDetails?: boolean}) {
   const data = report.agents;
   const people = data?.people?.length;
   const daily = data?.daily || [];
@@ -75,11 +76,11 @@ function AgentReport({report, now, retry, pendingDetails = false}: {report: Usag
   const sessions: MetricItem | null = data ? {label: 'Sessions', value: compact(data.sessions), note: `${activeDays} active ${activeDays === 1 ? 'day' : 'days'}${subagents ? `, plus ${plural(subagents, 'subagent session')}` : ''}`, title: count(data.sessions)} : null;
   // With a measured report the section is one row: what OpenCrawl captured, then what it did for the agents.
   const first = captured ?? sessions;
-  const cards: MetricItem[] = value ? [...(first ? [first] : []), ...alignmentCards(value)] : data ? [
+  const cards: MetricItem[] = value ? [...(first ? [first] : []), ...alignmentCards(value,showActivity)] : data ? [
     sessions!,
     {label: 'Messages', value: compact(data.messages), note: 'prompts and replies captured', title: count(data.messages)},
     captured ?? {label: 'Tool calls', value: compact(data.toolCalls), note: 'tools used across captured sessions', title: count(data.toolCalls)},
-    {label: 'OpenCrawl calls', value: compact(data.opencrawlCalls), note: `searches and board reads${people != null ? ` by ${plural(people, 'person', 'people')}` : ''}`, title: count(data.opencrawlCalls)},
+    {label: showActivity?'Captured OpenCrawl events':'OpenCrawl calls', value: compact(data.opencrawlCalls), note: `from recorded sessions${people != null ? ` by ${plural(people, 'person', 'people')}` : ''}`, title: count(data.opencrawlCalls)},
   ] : pendingDetails && captured ? [captured] : [];
   const description = value ? `How OpenCrawl kept your agents on track since ${value.window.from}, across ${plural(value.work.sessions, 'session')} and ${plural(value.work.tasks, 'task')}.`
     : report.days ? `Captured activity over the last ${report.days} days.` : 'Captured agent activity.';
@@ -181,24 +182,24 @@ function TeamReport({report, now, retry}: {report: UsageReport; now: number; ret
   );
 }
 
-export function UsageReportView({data, now = Date.now(), retry}: {data: UsageReport; now?: number; retry?: () => void}) {
+export function UsageReportView({data, now = Date.now(), retry,showActivity}: {showActivity?:boolean;data: UsageReport; now?: number; retry?: () => void}) {
   return <>
-    <AgentReport report={data} now={now} retry={retry}/>
+    <AgentReport showActivity={Boolean(showActivity)} report={data} now={now} retry={retry}/>
     <DataSourcesReport report={data} now={now} retry={retry}/>
     <TeamReport report={data} now={now} retry={retry}/>
   </>;
 }
 
-type PageProps = {adapter: ConsoleDataAdapter; setupPrompt?: string; reportScope?: string};
+type PageProps = {showActivity?:string; adapter: ConsoleDataAdapter; setupPrompt?: string; reportScope?: string};
 
-export function UsagePage({adapter, setupPrompt, reportScope}: PageProps) {
+export function UsagePage({adapter, setupPrompt, reportScope,showActivity}: PageProps) {
   if (reportScope && adapter.usageHighlights && adapter.usageDetails) {
-    return <ProgressiveUsage reportScope={reportScope} adapter={adapter} highlights={adapter.usageHighlights} details={adapter.usageDetails} setupPrompt={setupPrompt}/>;
+    return <ProgressiveUsage showActivity={showActivity} reportScope={reportScope} adapter={adapter} highlights={adapter.usageHighlights} details={adapter.usageDetails} setupPrompt={setupPrompt}/>;
   }
-  return <CompleteUsage adapter={adapter} setupPrompt={setupPrompt}/>;
+  return <CompleteUsage showActivity={showActivity} adapter={adapter} setupPrompt={setupPrompt}/>;
 }
 
-function ProgressiveUsage({adapter, setupPrompt, highlights, details, reportScope}: PageProps & {
+function ProgressiveUsage({adapter, setupPrompt, highlights, details, reportScope,showActivity}: PageProps & {
   reportScope: string;
   highlights: (signal: AbortSignal) => Promise<UsageHighlights & {cacheScope: string}>;
   details: (signal: AbortSignal) => Promise<UsageDetails & {cacheScope: string}>;
@@ -220,10 +221,12 @@ function ProgressiveUsage({adapter, setupPrompt, highlights, details, reportScop
   const now = Date.now();
   const retry = () => {void summary.reload(); void activity.reload();};
   return <Page title="Usage" description={usageDescription(report, now)} bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
+    {showActivity && adapter.callTotals && adapter.searchHistory && <SearchActivity scope={showActivity} adapter={adapter as Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>}/>}
     {summary.error && <Notice tone="warning">Usage highlights couldn’t update. <Button onClick={summary.reload}>Try again</Button></Notice>}
     {activity.error && <Notice tone="warning">Usage details couldn’t update. <Button onClick={activity.reload}>Try again</Button></Notice>}
     {report && (activity.data || summary.data?.value || summary.data?.capture || summary.data?.failedSources?.length) ?
-      <AgentReport report={report} now={now} retry={retry} pendingDetails={!activity.data}/> : null}
+      <AgentReport showActivity={Boolean(showActivity)} report={report} now={now} retry={retry} pendingDetails={!activity.data}/> : null}
+
     {(activity.loading || summary.loading && !activity.data) && <LoadingState label={report ? 'Loading usage details' : 'Loading usage'}/>}
     {activity.data && report && <>
       <DataSourcesReport report={report} now={now} retry={activity.reload}/>
@@ -236,7 +239,7 @@ function usageDescription(data: UsageReport | null, now: number) {
   return data ? [data.workspace, data.days ? `last ${data.days} days` : '', `updated ${ago(data.generatedAt, now)}`].filter(Boolean).join(', ') : 'Workspace usage';
 }
 
-function CompleteUsage({adapter, setupPrompt}: PageProps) {
+function CompleteUsage({adapter, setupPrompt,showActivity}: PageProps) {
   const {data, error, loading, refresh} = useUsage(adapter);
   const now = Date.now();
   const scope = usageDescription(data, now);
@@ -244,7 +247,8 @@ function CompleteUsage({adapter, setupPrompt}: PageProps) {
     <Page title="Usage" description={scope} bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
       {error && <Notice tone={data ? 'warning' : 'danger'}>{data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}{!data && <Button onClick={refresh} disabled={loading}>Try again</Button>}</Notice>}
       {loading && <LoadingState label="Loading usage"/>}
-      {data && <UsageReportView data={data} now={now} retry={refresh}/>}
+      {showActivity && adapter.callTotals && adapter.searchHistory && <SearchActivity scope={showActivity} adapter={adapter as Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>}/>}
+      {data && <UsageReportView showActivity={Boolean(showActivity)} data={data} now={now} retry={refresh}/>}
     </Page>
   );
 }

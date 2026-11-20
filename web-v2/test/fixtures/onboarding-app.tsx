@@ -40,6 +40,8 @@ const adapter: OnboardingAdapter = {
 const never = new AbortController().signal;
 const usageAdapter: ConsoleDataAdapter = {usage: signal => request('/api/console/usage', signal), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
 const progressiveUsageAdapter: ConsoleDataAdapter = {...usageAdapter,
+  callTotals:signal=>request('/api/console/usage/calls',signal),
+  searchHistory:(input,signal)=>request('/api/console/usage/search-history',signal,input),
   usageHighlights: signal => request('/api/console/usage/highlights', signal),
   usageDetails: signal => request('/api/console/usage/details', signal),
 };
@@ -69,7 +71,7 @@ function Fixture() {
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
-  if (location.pathname === '/usage') return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', label: 'Usage', icon: 'usage', element: <UsagePage adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/usage') return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', label: 'Usage', icon: 'usage', element: <UsagePage showActivity={new URLSearchParams(location.search).has('activity')?'usage-fixture':undefined} adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
   if (location.pathname === '/diagnostics' || location.pathname === '/search') {
     const query = new URLSearchParams(location.search), board = location.pathname === '/diagnostics' && query.get('nav') !== 'workspace' && query.get('view') !== 'search';
     const topic = query.get('view') === 'stream' ? '' : query.get('channel') || query.get('topic') || '';

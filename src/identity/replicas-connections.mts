@@ -1,3 +1,4 @@
+import {admitActivity} from '../application/agent-activity.mjs';
 import {createHash, randomBytes} from 'node:crypto';
 import {z} from 'zod';
 import type {Principal, ObjectStore} from '../sessions/types.mjs';
@@ -115,6 +116,7 @@ export function createReplicasConnections({store, prefix = 'capture-v1', verify,
         const setup = challengeSchema.parse(JSON.parse(current.data.toString()));
         checkTenant(setup.tenantId);
         if (setup.expiresAt <= now() || !await isAdmin({tenantId: setup.tenantId, userId: setup.userId})) fail(403, 'This setup approval expired or its administrator no longer has access.');
+        admitActivity({tenantId:setup.tenantId,userId:setup.userId});
         if (setup.claim && Object.keys(claimed).some(key => setup.claim![key as keyof typeof claimed] !== claimed[key as keyof typeof claimed])) fail(409, 'This setup code was already used by another workspace.');
         if (!setup.claim && !await store.compareAndSet(key, current.version, Buffer.from(JSON.stringify({...setup, claim: claimed})))) continue;
         const connection = await saveConnection(workload.organizationId, setup.tenantId, setup.userId, [], setup.issuedAt);

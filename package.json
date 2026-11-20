@@ -78,6 +78,8 @@
     "./application/source-model": "./dist/src/application/source-model.mjs",
     "./integrations/local-registry": "./dist/src/integrations/local-registry.mjs",
     "./application/onboarding": "./dist/src/application/onboarding.mjs",
+    "./application/agent-activity": "./dist/src/application/agent-activity.mjs",
+    "./state/search-activity": "./dist/src/state/search-activity.mjs",
     "./application/usage": "./dist/src/application/usage.mjs",
     "./application/usage-inventory": "./dist/src/application/usage-inventory.mjs",
     "./integrations/credential-vault": "./dist/src/integrations/credential-vault.mjs",
@@ -108,6 +110,7 @@
     "./integrations/linear-access": "./dist/src/integrations/linear-access.mjs",
     "./context/suggestion-events": "./dist/src/search/suggestion-events.mjs",
     "./selfhost/context-suggestions": "./dist/src/selfhost/context-suggestions.mjs",
+    "./search/check-activity": "./dist/src/search/check-activity.mjs",
     "./search/check": "./dist/src/search/check.mjs",
     "./search/check-http": "./dist/src/search/check-http.mjs",
     "./integrations/linear-upstream": "./dist/src/integrations/linear-upstream.mjs"

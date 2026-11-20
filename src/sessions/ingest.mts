@@ -1,3 +1,4 @@
+import {admitActivity} from '../application/agent-activity.mjs';
 import type {Principal, ObjectStore, EventIdentityStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
 import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
@@ -179,6 +180,7 @@ export function createCaptureHandler({ingest, authenticate, recording, search=un
     try {
       if (req.headers.origin) return send(403, {error:{code:'BROWSER_REQUEST_DENIED'}});
       const principal = await authenticate(req);
+      if(principal)admitActivity(principal);
       if (!principal) throw Object.assign(new Error('Authentication required'), {status:401});
       const revalidate=async()=>{
         const current=await authenticate(req);

@@ -1,3 +1,4 @@
+import {historyRequest,type SearchActivityPage,type CallTotals} from './search-activity.mjs';
 import {replicasImportInput} from './replicas-import-http.mjs';
 import type {IncomingMessage} from 'node:http';
 import {initTRPC, TRPCError, type AnyRouter} from '@trpc/server';
@@ -29,6 +30,8 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
       return report;
     }),
     usageHighlights: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageHighlights & {cacheScope: string}>('/api/console/usage/highlights')),
+    callTotals:p.input(empty).query(({ctx})=>ctx.invoke<CallTotals & {cacheScope:string}>('/api/console/usage/calls')),
+    searchHistory:p.input(historyRequest).query(({ctx,input})=>ctx.invoke<SearchActivityPage & {cacheScope:string}>('/api/console/usage/search-history','POST',input)),
     usageDetails: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details')),
     sources: p.input(empty).query(({ctx}) => ctx.invoke<{items: SourceCard[]}>('/api/console/sources')),
     team: p.input(empty).query(({ctx}) => ctx.invoke<T>('/api/console/team')),

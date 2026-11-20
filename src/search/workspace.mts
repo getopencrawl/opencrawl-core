@@ -1,3 +1,4 @@
+import {activityInput,admitActivity} from '../application/agent-activity.mjs';
 import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {SearchAdapter, Passage} from './types.mjs';
@@ -188,10 +189,12 @@ export function createWorkspaceSearchHandler({search, authenticate, operation = 
       if (req.method !== 'POST') return send(405, {error: {code: 'METHOD_NOT_ALLOWED'}});
       if (req.headers.origin) return send(403, {error: {code: 'BROWSER_REQUEST_DENIED'}});
       const principal = await authenticate(req); sessionScope(principal); if (!principal) fail(401, 'Authentication required');
+      admitActivity(principal);
       if (!search) return send(503, {error: {code: 'SEARCH_NOT_CONFIGURED'}});
       const chunks = []; let size = 0;
       for await (const chunk of req) {size += chunk.length; if (size > 16384) return send(413, {error: {code: 'REQUEST_TOO_LARGE'}}); chunks.push(chunk);}
       let input; try {input = parseJson<unknown>(Buffer.concat(chunks));} catch {return send(400, {error: {code: 'INVALID_JSON'}});}
+      activityInput(input);
       return send(200, {data: await search[operation](principal, input)});
     } catch(caught){const error=serviceError(caught);
       const status = [400, 401, 403, 404, 409].includes(error.status ?? 0) ? error.status! : 503;

@@ -1,2 +1,7 @@
 @import './design/styles.css';
 @import './onboarding/onboarding.css';
+
+.report-panel .usage-search-history td, .report-panel .usage-search-history th { text-align: left; }
+.report-panel .usage-search-history td { vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+.usage-search-history td:nth-child(3), .usage-search-history td:nth-child(4) { min-width: 8rem; max-width: 24rem; }
+.usage-search-history td:nth-child(2) { min-width: 10rem; white-space: pre-wrap; }

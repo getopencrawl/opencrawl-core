@@ -1,3 +1,4 @@
+import {admitActivity} from '../application/agent-activity.mjs';
 import type {Authenticate,HttpHandler} from '../sessions/types.mjs';
 import {setupInvitation,type SetupInvitations} from './invitations.mjs';
 import {serviceError} from '../sessions/types.mjs';
@@ -20,6 +21,7 @@ export function createSetupHandler({setup,authenticate,invitations}:{setup:Retur
       if(!operation)return send(405,{error:{code:'METHOD_NOT_ALLOWED'}});
       const principal=await authenticate(req);
       if(!principal)return send(401,{error:{code:'AUTH_REQUIRED'}});
+      admitActivity(principal);
       const revalidate=async()=>{
         const current=await authenticate(req);
         if(!current||current.tenantId!==principal.tenantId||current.userId!==principal.userId||current.captureAccess!==principal.captureAccess)throw Object.assign(new Error('Setup access changed'),{status:403});
