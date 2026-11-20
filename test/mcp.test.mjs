@@ -181,7 +181,7 @@ test('authenticated tool receipts cover each protocol and registered extensions 
   ]).flat());
 });
 
-test('Usage records one invocation per MCP call and selects only search fields',async t=>{
+test('Usage records one invocation per registered MCP call and selects only search fields',async t=>{
   const calls=[],principal={tenantId:'workspace',userId:'member'};
   let handler;
   const server=createServer((req,res)=>handler(req,res));
@@ -195,6 +195,7 @@ test('Usage records one invocation per MCP call and selects only search fields',
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer test'}}}));
   t.after(()=>client.close());
   await client.listTools();
+  await client.callTool({name:'unregistered_fixture',arguments:{}}).catch(()=>{});
   assert.equal(calls.length,0);
   for(const name of ['opencrawl_search_v1','opencrawl_search','search'])await client.callTool({name,arguments:{query:'deploy plan',currentSession:{harness:'codex',sessionId:'native'}}});
   await client.callTool({name:'test_connection',arguments:{}});
