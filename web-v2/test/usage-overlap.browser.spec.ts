@@ -124,3 +124,32 @@ test('captured tokens render while charts are pending, and a changed workspace c
   await expect(page.getByText('42', {exact: true})).toHaveCount(0);
   await expect(page.getByRole('heading', {name: 'Daily agent sessions'})).toHaveCount(0);
 });
+
+for(const width of [1280,390])test(`search history shows the triggering turn and pages independently at ${width}px`,async({page},info)=>{
+  await page.setViewportSize({width,height:900});
+  const now='2026-11-19T12:45:00Z';
+  const row={id:'first',at:now,userId:'user_member',operation:'Workspace',queries:['billing retry'],
+    harness:'codex',sessionId:'abc-123',message:'Why did the retry fail?',messageId:'prompt-24',returned:1,outcome:'complete',delivered:false};
+  await page.route('**/api/console/usage',route=>route.fulfill({json:report()}));
+  await page.route('**/api/console/usage/calls',route=>route.fulfill({json:{cacheScope:'usage-fixture',since:now,calls:112,agentSearches:16,proactiveChecks:9,nonSilent:3,delivered:2}}));
+  const reads:string[]=[];
+  await page.route('**/api/console/usage/search-history',route=>{
+    const {kind,before}=route.request().postDataJSON();reads.push(kind);
+    return route.fulfill({json:{cacheScope:'usage-fixture',rows:[before?{...row,id:'older',queries:['previous query']}:row],next:!before&&kind==='agent'?'next-page':null}});
+  });
+  await page.goto('/usage?activity=1');
+  const agent=page.getByRole('region',{name:'Agent searches',exact:true}).getByRole('table'),proactive=page.getByRole('region',{name:'Proactive searches',exact:true}).getByRole('table');
+  await expect(proactive).toContainText('Why did the retry fail?');
+  await expect(proactive).toContainText('prompt-24');
+  await expect(proactive.getByRole('link')).toHaveAttribute('href','/sessions?user=user_member&harness=codex&id=abc-123');
+  await expect(proactive).toContainText('Non-silent');
+  await expect(agent).toContainText('billing retry');
+  await page.getByRole('button',{name:'Older searches'}).click();
+  await expect(agent).toContainText('previous query');
+  await expect(proactive).toContainText('billing retry');
+  await page.getByRole('button',{name:'Newer searches'}).click();
+  await expect(agent).toContainText('billing retry');
+  expect(reads.filter(kind=>kind==='proactive')).toHaveLength(1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+1);
+  await page.getByRole('region',{name:'OpenCrawl activity'}).screenshot({path:info.outputPath(`searches-${width}.png`)});
+});

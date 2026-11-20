@@ -180,3 +180,27 @@ test('authenticated tool receipts cover each protocol and registered extensions 
     {user:'member',tool:null,outcome:'protocol_error'},
   ]).flat());
 });
+
+test('Usage records one invocation per MCP call and selects only search fields',async t=>{
+  const calls=[],principal={tenantId:'workspace',userId:'member'};
+  let handler;
+  const server=createServer((req,res)=>handler(req,res));
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const origin='http://127.0.0.1:'+server.address().port;
+  handler=createOpenCrawlMcp({origin,authenticate:req=>req.headers.authorization?principal:null,
+    usageActivity:{async agentCall(p,entry){assert.deepEqual(p,principal);calls.push(entry);}},
+    search:{async search(){throw Error('Search temporarily unavailable');}}});
+  t.after(async()=>{await handler.close();server.closeAllConnections();await new Promise(r=>server.close(r));});
+  const client=new Client({name:'usage-test',version:'1'});
+  await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer test'}}}));
+  t.after(()=>client.close());
+  await client.listTools();
+  assert.equal(calls.length,0);
+  for(const name of ['opencrawl_search_v1','opencrawl_search','search'])await client.callTool({name,arguments:{query:'deploy plan',currentSession:{harness:'codex',sessionId:'native'}}});
+  await client.callTool({name:'test_connection',arguments:{}});
+  assert.equal(calls.length,4);
+  assert.ok(calls.slice(0,3).every(entry=>entry.queries[0]==='deploy plan'&&entry.sessionId==='native'&&entry.failed===true));
+  assert.equal(calls[3],undefined);
+  assert.equal((await fetch(origin+'/mcp',{method:'POST'})).status,401);
+  assert.equal(calls.length,4);
+});

@@ -1,3 +1,4 @@
+import {admitActivity} from '../application/agent-activity.mjs';
 import {createHash, randomBytes} from 'node:crypto';
 import type {Principal} from '../sessions/types.mjs';
 import type {DevinState} from '../state/devin.mjs';
@@ -81,6 +82,7 @@ export function createDevinConnections({repository,verify,isAdmin,tenantId,now=D
         const setup = challengeSchema.parse(current.record);
         checkTenant(setup.tenantId);
         if (setup.expiresAt <= now() || !await isAdmin({tenantId: setup.tenantId, userId: setup.userId})) fail(403, 'This setup approval expired or its administrator no longer has access.');
+        admitActivity({tenantId:setup.tenantId,userId:setup.userId});
         if (setup.claim && Object.entries(claimed).some(([key, value]) => (setup.claim as Record<string, string>)[key] !== value)) fail(409, 'This setup code was already used by another workspace.');
         if (!setup.claim && !await repository.saveSetup(key, current.version, challengeSchema.parse({...setup, claim: claimed}))) continue;
         const connection = await saveConnection(workload.organizationId, setup.tenantId, setup.userId, [], setup.issuedAt);

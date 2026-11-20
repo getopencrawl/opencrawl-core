@@ -1,3 +1,4 @@
+import {executedCheckQuery} from './check-activity.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {plainTextTokens} from '../sessions/token-count.mjs';
@@ -78,6 +79,7 @@ export function createContextCheck({search,judge,authorize,now=Date.now}:{search
     const hits:CheckHit[][]=[];let partial=false;
     for(const query of queries){
       signal.throwIfAborted();
+      executedCheckQuery(query.query);
       const page=await search.search(principal,{...query,source:'all',limit:24,excerptChars:CHECK_LIMITS.passageChars,
         currentSession:input.currentSession,includeToolOutputs:false,groupBy:'resource',filters:{before:new Date(at).toISOString()}});
       if(page.results.length>24)throw Error('Invalid check candidate count');

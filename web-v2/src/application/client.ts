@@ -25,6 +25,8 @@ return {
   bootstrap:(signal?:AbortSignal)=>read(()=>webRpc.console.bootstrap.query(undefined,{signal}),signal),
   usage:(signal?:AbortSignal)=>read(()=>webRpc.console.usage.query(undefined,{signal}),signal),
   usageHighlights:(signal?:AbortSignal)=>read(()=>webRpc.console.usageHighlights.query(undefined,{signal}),signal),
+  callTotals:(signal?:AbortSignal)=>read(()=>webRpc.console.callTotals.query(undefined,{signal}),signal),
+  searchHistory:(input:import('../../../src/application/search-activity.mjs').HistoryRequest,signal?:AbortSignal)=>read(()=>webRpc.console.searchHistory.query(input,{signal}),signal),
   usageDetails:(signal?:AbortSignal)=>read(()=>webRpc.console.usageDetails.query(undefined,{signal}),signal),
   sources:(signal?:AbortSignal)=>read(()=>webRpc.console.sources.query(undefined,{signal}),signal),
   team:(signal?:AbortSignal)=>read(()=>webRpc.console.team.query(undefined,{signal}),signal),

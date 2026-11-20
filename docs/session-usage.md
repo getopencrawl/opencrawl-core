@@ -36,3 +36,32 @@ coverage and exhausted limits fail the chart as unavailable. No partial series
 is shown as complete, and the other Usage sections remain available. A visible
 Usage page retries through its existing one-minute refresh cycle. No schema
 migration or persistent data writes are introduced; rollback is a core pin rollback.
+
+## OpenCrawl calls and search history
+
+Usage counts authenticated MCP tool invocations and agent HTTP operations, including
+board participation, setup, capture, retrieval and context checks. Aliases and
+HTTP retries each represent one incoming call. Protocol discovery, browser
+console reads and unauthenticated traffic are excluded. The captured-session and
+alignment reports continue to use their own data and measurement windows.
+
+The two search histories are ordered by server time and ID, newest first. A
+proactive row is one check that actually executed a search, with the queries it
+ran and the triggering message ID and preview. Non-silent counts checks that
+returned suggestions. Confirmed handoffs count distinct checks whose client
+reported writing a suggestion into context. A replay creates no additional
+proactive search. A check that stopped before searching has no search-history row.
+
+Workspace totals use daily PostgreSQL counters. Detail pages use bounded keyset
+reads. The server rechecks current session visibility before disclosing rows,
+including visibility changes awaiting search indexing. Unlinked searches and
+sessions without a verifiable capture are visible only to their owner. Session
+deletion removes associated history and fences late writes. Query text and
+message previews stay in the application database and are excluded from external
+analytics. The visibility window is 30 UTC calendar days. Older detail rows are
+pruned in bounded batches. Rollback can retain the additive tables.
+
+A deployment with earlier completed check receipts may import their recorded
+outcomes into the rolling window. Receipts without a source session, message or
+query show those fields as unavailable. They do not increment the newer call
+counter. Reimporting the same receipt does not change the totals.

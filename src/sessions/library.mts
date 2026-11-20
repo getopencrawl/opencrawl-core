@@ -143,8 +143,8 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
-export function createSessionLibrary({store, prefix, eventIdentities, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
+export interface SessionLibraryOptions extends RealmOptions {store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; forgetSearches?: (p:Principal,key:SessionKey)=>Promise<void>; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
+export function createSessionLibrary({store, prefix, eventIdentities, forgetSearches, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
   const reader = (principal: Principal) => {
     sessionScope(principal);
@@ -265,6 +265,7 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
       deletion: {sessionId: key.sessionId, state: current?.deletion?.state === 'complete' ? 'complete' : 'pending'},
     }));
     rendered.clear(); cachedChars = 0;
+    await forgetSearches?.(principal,key);
     return control;
   }
   async function prepareDeletion(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
@@ -348,6 +349,35 @@ export function createSessionLibrary({store, prefix, eventIdentities, purgeCopie
     return {...key, deleted: true as const, pending: false as const, objects, documents};
   }
   return {
+    async visibleActivity(principal:Principal,rows:import('../application/search-activity.mjs').SearchActivityRow[]){
+      // Session IDs are client-supplied. A teammate's row needs an indexed capture
+      // by the same owner and a fresh, authoritative visibility check.
+      const collection=reader(principal);
+      if(rows.length>25)throw Error('Oversized activity page');
+      const keyOf=(key:SessionKey)=>JSON.stringify([key.userId,key.harness,key.sessionId]);
+      const refs=new Map<string,SessionKey>();
+      for(const row of rows)if(row.sessionId && isSessionHarness(row.harness)){
+        const key={userId:row.userId,harness:row.harness,sessionId:row.sessionId};
+        refs.set(keyOf(key),key);
+      }
+      const candidates=[...refs.values()].filter(key=>key.userId!==principal.userId);
+      const captured=new Set<string>();
+      if(candidates.length){
+        const response=await collection.search(principal,{size:0,query:{bool:{filter:[visibleTo('session',principal),
+          {bool:{minimum_should_match:1,should:candidates.map(key=>({bool:{filter:sessionFilter(key)}}))}}]}},
+          aggs:{captures:{multi_terms:{terms:['userId','harness','sessionId'].map(key=>({field:f(key)})),size:candidates.length}}}});
+        const buckets=response.aggregations?.captures?.buckets;
+        if(!Array.isArray(buckets)||response.timed_out||response._shards?.failed)throw Error('Session visibility unavailable');
+        for(const bucket of buckets)captured.add(JSON.stringify(bucket.key));
+      }
+      const keys=[...refs].filter(([id,key])=>key.userId===principal.userId||captured.has(id));
+      const allowed=new Set<string>();
+      for(let i=0;i<keys.length;i+=6)await Promise.all(keys.slice(i,i+6).map(async([id,key])=>{
+        if(await readable(principal,key))allowed.add(id);
+      }));
+      return rows.filter(row=>row.sessionId&&isSessionHarness(row.harness)
+        ?allowed.has(keyOf({userId:row.userId,harness:row.harness,sessionId:row.sessionId})):row.userId===principal.userId);
+    },
     /** Resolve the same names as the library for one page of already-ranked hits. */
     async resultTitles(principal: Principal, keys: SessionKey[]) {
       sessionScope(principal);
