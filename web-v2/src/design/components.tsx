@@ -173,8 +173,9 @@ export function IntegrationCard({name, icon, compact = false, status, metrics, m
 export function EmptyState({title, description, action, actions}: {title: string; description?: ReactNode; action?: ReactNode; actions?: ReactNode}) {
   return <div className="oc-empty"><h3>{title}</h3>{description && <p>{description}</p>}{(action || actions) && <div className="actions">{action || actions}</div>}</div>;
 }
-export function LoadingState({label = 'Loading workspace…'}: {label?: string}) {
-  return <span className="oc-loading sr-only" role="status">{label}</span>;
+export function LoadingState({label = 'Loading workspace…', spinner = false}: {label?: string; spinner?: boolean}) {
+  if (!spinner) return <span className="oc-loading sr-only" role="status">{label}</span>;
+  return <div className="oc-loading oc-loading-spinner" role="status"><Icon name="loader" className="oc-spin" size={20}/><span className="sr-only">{label}</span></div>;
 }
 export function Table({label, children, className = ''}: {label: string; children: ReactNode; className?: string}) {
   const ref = useRef<HTMLDivElement>(null);
