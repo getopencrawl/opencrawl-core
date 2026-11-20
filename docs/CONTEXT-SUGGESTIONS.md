@@ -73,9 +73,8 @@ there is no default-cloud fallback in the extension.
 the same authentication boundary. `observe` receives observed/skipped/requested/
 received/handoff/dropped events and optional feedback. No prompt, quotation,
 credential or arbitrary log attributes belong in this contract. Without an
-observer, self-host acknowledges and discards reports. The client outbox retains
-at most 512 events for 24 hours and retries on eligible hooks; telemetry is best
-effort. Disabled, excluded, unsupported and untrusted hooks are outside its
+observer, self-host acknowledges and discards reports. The private client outbox retains pending reports across offline periods and
+retries on eligible hooks while their harness remains enabled. Disabled, excluded, unsupported and untrusted hooks are outside its
 observation denominator. A `handoff` means stdout was written for the harness;
 it does not prove model consumption or usefulness. Unreported outcomes are unknown.
 

@@ -1,7 +1,7 @@
 import type {SuggestionEvent} from '../../src/search/suggestion-events.mts';
 import {Database} from 'bun:sqlite';
 import {randomUUID} from 'node:crypto';
-import {mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
+import {existsSync,mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
 import {join} from 'node:path';
 import {atomicJson,configDir} from './session.ts';
 import {readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
@@ -29,40 +29,68 @@ export function checkSettings(binding:CheckBinding):CheckSettings|undefined {
   }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
 }
 export function saveCheckSettings(binding:CheckBinding,harnesses:CheckHarness[]):CheckSettings {
-  const settings:CheckSettings={schemaVersion:1,...binding,revision:randomUUID(),harnesses:[...new Set(harnesses)]};
-  atomicJson(settingsFile(binding.api),settings);return settings;
+  const previous=checkSettings(binding);
+  const selected=[...new Set(harnesses)];
+  if(previous && previous.harnesses.length===selected.length && selected.every(h=>previous.harnesses.includes(h)))return previous;
+  const settings:CheckSettings={schemaVersion:1,...binding,revision:randomUUID(),harnesses:selected};
+  atomicJson(settingsFile(binding.api),settings);
+  if(previous && existsSync(checkDatabaseFile(binding))) {
+    const db=openCheckDatabase(binding);
+    try {db.transaction(()=>{
+      db.query("UPDATE suggestion_outbox SET binding=? WHERE binding=? AND json_extract(payload,'$.harness') IN (SELECT value FROM json_each(?))").run(settings.revision,previous.revision,JSON.stringify(selected));
+      db.query('DELETE FROM suggestion_outbox WHERE binding=?').run(previous.revision);
+    }).immediate();} finally {db.close();}
+  }
+  return settings;
 }
 export function assertCheckSettings(settings:CheckSettings,harness:CheckHarness):void {
   const binding=checkBinding(readCaptureConfig(),settings.api),current=checkSettings(binding);
   if(JSON.stringify(binding)!==JSON.stringify(checkBindingFromSettings(settings))||current?.revision!==settings.revision||!current.harnesses.includes(harness))throw invalid();
 }
-export const checkBindingFromSettings=(settings:CheckSettings):CheckBinding=>({api:settings.api,installationId:settings.installationId,owner:settings.owner});
+export const checkBindingFromSettings=(settings:CheckBinding):CheckBinding=>({api:settings.api,installationId:settings.installationId,owner:settings.owner});
 
-/** Private bounded delivery cache, separate from capture and credentials. Each
+const checkDatabaseFile=(binding:CheckBinding)=>join(configDir(),'context-checks',hash(JSON.stringify(checkBindingFromSettings(binding)))+'.sqlite');
+
+function openCheckDatabase(binding:CheckBinding):Database {
+    const root=join(configDir(),'context-checks');mkdirSync(root,{recursive:true,mode:0o700});
+    const path=checkDatabaseFile(binding);
+    try{const fd=openSync(path,'wx',0o600);closeSync(fd);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+    const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink())throw invalid();
+    chmodSync(path,0o600);const db=new Database(path);
+    db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=100; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS checks(id TEXT PRIMARY KEY,session TEXT NOT NULL,event TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,input TEXT NOT NULL,projects TEXT NOT NULL,binding TEXT NOT NULL); CREATE INDEX IF NOT EXISTS check_session ON checks(session,created); CREATE TABLE IF NOT EXISTS suggestion_outbox(id TEXT PRIMARY KEY,dedup TEXT UNIQUE NOT NULL,binding TEXT NOT NULL,created INTEGER NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS suggestion_outbox_pending ON suggestion_outbox(binding,created); CREATE TABLE IF NOT EXISTS suggestion_outbox_singletons(id TEXT PRIMARY KEY REFERENCES suggestion_outbox(id) ON DELETE CASCADE);');
+    return db;
+}
+
+/** Private delivery cache, separate from capture and credentials. Each
  * row keeps only a redacted request and status, never result text or auth. */
 export class CheckStore {
   readonly db:Database;
   constructor(readonly settings:CheckSettings,readonly harness:CheckHarness){
-    const root=join(configDir(),'context-checks');mkdirSync(root,{recursive:true,mode:0o700});
-    const path=join(root,hash(JSON.stringify(checkBindingFromSettings(settings)))+'.sqlite');
-    try{const fd=openSync(path,'wx',0o600);closeSync(fd);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
-    const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink())throw invalid();
-    chmodSync(path,0o600);this.db=new Database(path);
-    this.db.exec('PRAGMA busy_timeout=100; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS checks(id TEXT PRIMARY KEY,session TEXT NOT NULL,event TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,input TEXT NOT NULL,projects TEXT NOT NULL,binding TEXT NOT NULL); CREATE INDEX IF NOT EXISTS check_session ON checks(session,created); CREATE TABLE IF NOT EXISTS suggestion_outbox(id TEXT PRIMARY KEY,dedup TEXT UNIQUE NOT NULL,binding TEXT NOT NULL,created INTEGER NOT NULL,payload TEXT NOT NULL);');
+    this.db=openCheckDatabase(settings);
   }
   close(){this.db.close();}
   record(task:CheckTask,detail:LifecycleDetail):void {
     try{
+    if(task.binding!==this.settings.revision)return;
     const input=JSON.parse(task.input) as CheckInput;
     const report={id:randomUUID(),at:new Date().toISOString(),harness:input.currentSession.harness,eventKey:hash(JSON.stringify([input.currentSession.harness,input.currentSession.sessionId,input.eventId])),sessionHash:hash(JSON.stringify([input.currentSession.harness,input.currentSession.sessionId])),...detail} as SuggestionEvent;
     this.queue(report,hash(JSON.stringify([task.id,detail])));
     }catch{/* A lost observation must not suppress a usable suggestion. */}
   }
   queue(event:SuggestionEvent,dedup=event.id):void {
-    this.db.query('DELETE FROM suggestion_outbox WHERE created<? OR binding!=? OR id IN (SELECT id FROM suggestion_outbox ORDER BY created DESC LIMIT -1 OFFSET 511)').run(Date.now()-86400000,this.settings.revision);
     this.db.query('INSERT OR IGNORE INTO suggestion_outbox VALUES(?,?,?,?,?)').run(event.id,dedup,this.settings.revision,Date.now(),JSON.stringify(event));
   }
-  pending():SuggestionEvent[]{return this.db.query<{payload:string},[string]>('SELECT payload FROM suggestion_outbox WHERE binding=? ORDER BY created,rowid LIMIT 24').all(this.settings.revision).map(row=>JSON.parse(row.payload) as SuggestionEvent);}
+  pending():SuggestionEvent[]{
+    const rows=this.db.query<{payload:string;isolated:number},[string]>(`SELECT o.payload,s.id IS NOT NULL AS isolated
+      FROM suggestion_outbox o LEFT JOIN suggestion_outbox_singletons s ON s.id=o.id
+      WHERE o.binding=? ORDER BY o.created,o.rowid LIMIT 24`).all(this.settings.revision);
+    const firstIsolated=rows.findIndex(row=>row.isolated);
+    return (firstIsolated<0?rows:rows.slice(0,Math.max(1,firstIsolated))).map(row=>JSON.parse(row.payload) as SuggestionEvent);
+  }
+  isolate(events:SuggestionEvent[]):void {
+    const insert=this.db.query('INSERT OR IGNORE INTO suggestion_outbox_singletons SELECT id FROM suggestion_outbox WHERE binding=? AND id=?');
+    this.db.transaction(()=>{for(const event of events)insert.run(this.settings.revision,event.id);}).immediate();
+  }
   acknowledge(ids:string[]):void {for(const id of ids)this.db.query('DELETE FROM suggestion_outbox WHERE binding=? AND id=?').run(this.settings.revision,id);}
 
   private scope(event:CheckEvent){return hash(JSON.stringify([this.harness,event.sessionId]));}
@@ -86,11 +114,11 @@ export class CheckStore {
     return this.db.transaction(()=>{
       const existing=this.find(event);if(existing)return;
       const now=Date.now(),session=this.scope(event);
-      for(const task of this.db.query<CheckTask,[number,number]>("SELECT * FROM checks WHERE (state IN ('running','working') AND created<?) OR (state IN ('ready','delivering') AND created<?) LIMIT 512").all(now-30000,now-120000))this.record(task,{stage:'dropped',reason:'expired'});
+      for(const task of this.db.query<CheckTask,[number,number]>("SELECT * FROM checks WHERE (state IN ('running','working') AND created<?) OR (state IN ('ready','delivering') AND created<?)").iterate(now-30000,now-120000))this.record(task,{stage:'dropped',reason:'expired'});
       this.db.query("UPDATE checks SET state='failed' WHERE (state IN ('running','working') AND created<?) OR (state IN ('ready','delivering') AND created<?)").run(now-30000,now-120000);
       const previous=this.db.query<CheckTask,[string]>("SELECT * FROM checks WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 1").get(session);
       if(previous&&!['failed','delivered'].includes(previous.state))this.record(previous,{stage:'dropped',reason:'superseded'});
-      this.db.query("DELETE FROM checks WHERE created<? OR id IN (SELECT id FROM checks WHERE state IN ('failed','delivered') ORDER BY created DESC,rowid DESC LIMIT -1 OFFSET 512)").run(now-86400000);
+      this.db.query("DELETE FROM checks WHERE created<?").run(now-86400000);
       const prior=this.db.query<{input:string},[string]>('SELECT input FROM checks WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 4').all(session);
       const inputs=prior.map(row=>JSON.parse(row.input) as CheckInput),message=checkText(event.message!,4000);
       const input:CheckInput={eventId:event.eventId,currentSession:{harness:this.harness,sessionId:event.sessionId},role:'user',message,

@@ -91,7 +91,7 @@ async function execute(store:CheckStore,task:CheckTask,checkPlugin:()=>void,{rep
   const text=formatCheck(response);guard();
   if(!object(response)||!Array.isArray(response.results))throw unavailable();
   const checkId=typeof response.checkId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(response.checkId)?response.checkId:undefined;
-  store.record(task,{stage:'received',checkId,results:response.results.length,outputTokens:Number(response.outputTokens),latencyMs:Math.min(30000,Date.now()-started),replay});
+  store.record(task,{stage:'received',checkId,results:response.results.length,outputTokens:Number(response.outputTokens),latencyMs:Math.max(0,Date.now()-started),replay});
   return {text,checkId,results:response.results.length};
 }
 
@@ -118,7 +118,7 @@ export async function contextCheckCommand(args:string[],input:Readable=process.s
       store=new CheckStore(settings,harness);telemetryGuard=()=>assertCheckSettings(settings,harness);
       const event:SuggestionEvent={id:randomUUID(),at:new Date().toISOString(),harness,stage:'feedback',checkId:values.check!,rating:values.rating as Extract<SuggestionEvent,{stage:'feedback'}>['rating'],source:values.source as 'user'|'agent',...(values.result!==undefined?{resultIndex:Number(values.result)}:{})};
       store.queue(event);const report=await flushSuggestionEvents(store,telemetryGuard);
-      output.write(JSON.stringify({schemaVersion:1,data:{feedbackId:event.id,status:report?.accepted.includes(event.id)?'submitted':report?.rejected?'rejected':'queued'}})+'\n');return report?.rejected?1:0;
+      output.write(JSON.stringify({schemaVersion:1,data:{feedbackId:event.id,status:report?.accepted.includes(event.id)?'submitted':report?.rejected.includes(event.id)?'rejected':'queued'}})+'\n');return report?.rejected.includes(event.id)?1:0;
     }
     if(action!=='hook'&&action!=='run'||values.harness?.length!==1||!CHECK_HARNESSES.includes(values.harness[0] as CheckHarness))throw unavailable();
     const harness=values.harness[0] as CheckHarness,settings=checkSettings(binding);

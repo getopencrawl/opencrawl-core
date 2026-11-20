@@ -198,3 +198,54 @@ test('telemetry covers measured authorization latency but still bounds a stalled
     expect(performance.now()-start).toBeLessThan(2200);expect(calls).toBe(1);expect(store.pending()).toEqual(pending);
   }finally{store.close();f.close();server.stop(true);}
 },5000);
+
+test('pending reports survive offline backlogs, restart, and enabling another harness',async()=>{
+  const f=fixture();let store=new CheckStore(f.settings,'codex');
+  try{
+    store.enqueue(checkEvent('codex',prompt('codex'),f.config)!);
+    const first=store.pending()[0]!;
+    for(let i=0;i<521;i++)store.queue({...first,id:crypto.randomUUID()});
+    store.db.query('UPDATE suggestion_outbox SET created=?').run(Date.now()-3*86400000);
+    store.queue({...first,id:crypto.randomUUID()});
+    store.close();
+    const settings=saveCheckSettings(checkBinding(f.config,f.config.api),['codex','cursor']);
+    store=new CheckStore(settings,'codex');
+    const accepted=new Set<string>();
+    const fetcher=(async(url,init)=>{
+      if(String(url).endsWith('/identity'))return Response.json({data:{principal:settings.owner}});
+      const ids=JSON.parse(String(init?.body)).events.map((e:{id:string})=>e.id);
+      ids.forEach((id:string)=>accepted.add(id));return Response.json({data:{accepted:ids}});
+    }) as typeof fetch;
+    for(let hook=0;store.pending().length&&hook<30;hook++)await flushSuggestionEvents(store,()=>{},fetcher);
+    expect(accepted.size).toBe(523);expect(accepted.has(first.id)).toBe(true);expect(store.pending()).toHaveLength(0);
+    store.queue(first);store.queue({...first,id:crypto.randomUUID(),harness:'cursor'});
+    const cursor=saveCheckSettings(checkBinding(f.config,f.config.api),['cursor']);
+    store.close();store=new CheckStore(cursor,'cursor');
+    expect(store.pending().map(event=>event.harness)).toEqual(['cursor']);
+  }finally{store.close();f.close();}
+});
+
+test('a rejected report is isolated across restarts and revoked access preserves every queued report',async()=>{
+  for(const status of [400,403,409]){
+    const f=fixture();let store=new CheckStore(f.settings,'codex');
+    try{
+      store.enqueue(checkEvent('codex',prompt('codex'),f.config)!);
+      const first=store.pending()[0]!,bad=crypto.randomUUID(),last=crypto.randomUUID();
+      store.queue({...first,id:bad});store.queue({...first,id:last});
+      let revoked=true,disconnect=true;
+      const fetcher=(async(url,init)=>{
+        if(String(url).endsWith('/identity'))return Response.json({data:{principal:f.settings.owner}});
+        if(revoked)return Response.json({error:{code:'CONTEXT_CHECK_UNAVAILABLE'}},{status:403});
+        const ids=JSON.parse(String(init?.body)).events.map((e:{id:string})=>e.id);
+        if(disconnect&&ids.length===1)throw Error('offline');
+        if(ids.includes(bad))return Response.json({error:{code:status===403?'SUGGESTION_RECEIPT_FORBIDDEN':'INVALID'}},{status});
+        return Response.json({data:{accepted:ids}});
+      }) as typeof fetch;
+      await flushSuggestionEvents(store,()=>{},fetcher);expect(store.pending()).toHaveLength(3);
+      revoked=false;await flushSuggestionEvents(store,()=>{},fetcher);store.close();store=new CheckStore(f.settings,'codex');
+      expect(store.pending().map(e=>e.id)).toEqual([first.id]);disconnect=false;
+      expect(await flushSuggestionEvents(store,()=>{},fetcher)).toEqual({accepted:[first.id,last],rejected:[bad]});
+      expect(store.pending()).toEqual([]);
+    }finally{store.close();f.close();}
+  }
+});
