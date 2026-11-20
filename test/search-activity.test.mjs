@@ -38,7 +38,8 @@ test('authenticated call accounting, scoped paging and idempotent proactive outc
   await activity.search(alice,{kind:'proactive',operation:'Context check',queries:['refund'],...ctx,messageId:'prompt-43',returned:1,eventKey:'handoff'});
   await Promise.all([1,2].map(()=>measuredSuggestionEvents(activity)(alice,[{stage:'handoff',eventKey:'handoff'}])));
   const totals=await activity.totals(bob);
-  assert.deepEqual({...totals,since:null},{since:null,calls:32,agentSearches:31,proactiveChecks:2,nonSilent:1,delivered:1});
+  const today=new Date().toISOString().slice(0,10);
+  assert.deepEqual({...totals,since:null},{since:null,calls:32,agentSearches:31,proactiveChecks:2,nonSilent:1,delivered:1,daily:[{date:today,agentSearches:31}]});
   assert.equal((await activity.totals(other)).calls,1);
   const proactive=await activity.page(bob,{kind:'proactive'},identity);
   assert.equal(proactive.rows.length,2);

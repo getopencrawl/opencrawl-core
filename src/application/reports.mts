@@ -44,14 +44,18 @@ interface UsageReportBase {
   value?: ValueReport | null;
   /** Agent-session tokens captured this billing period, when the deployment meters them. */
   capture?: {tokens: number; since: string} | null;
-  members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {shared?: {name: string; observedAt: string}; cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
+  members: Array<{userId?: string; name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {shared?: {name: string; observedAt: string}; cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
 interface AgentUsage {
   events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
   people?: Array<{userId: string}>;
   tools: NamedCount[]; harnesses: NamedCount[]; origins: NamedCount[];
   firstAt: string | null; lastAt: string | null;
-  daily: Array<{date: string; events: number; sessions: number}>;
+  /** tokens: captured tokens of session events that happened that UTC day. */
+  daily: Array<{date: string; events: number; sessions: number; tokens?: number}>;
+  /** Captured tokens of every indexed session event, by the UTC day it happened. */
+  indexedTokens?: number | null;
+  tokenHistory?: Array<{date: string; tokens: number}>;
 }
 /** Independent measurements can fail without discarding the rest of the report. */
 export type UsageReport = UsageReportBase & {agents: AgentUsage | null; overlap: SessionOverlap | null};

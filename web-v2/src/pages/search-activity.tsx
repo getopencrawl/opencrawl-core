@@ -1,60 +1,87 @@
-import {useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {consoleResourceKey,useConsoleResource} from '../data.tsx';
-import {Button,EmptyState,LoadingState,MetricGrid,Notice,Section,Table} from '../design/components.js';
-import {Link} from '../router.js';
+import {Button,DailyBarChart,Dialog,EmptyState,LoadingState,Notice,Section,Table} from '../design/components.js';
 import type {ConsoleDataAdapter} from './types.js';
-import type {HistoryRequest,SearchActivityRow} from '../../../src/application/search-activity.mjs';
-import {count,harnessName} from './usage-model.ts';
+import type {CallTotals,HistoryRequest,SearchActivityRow} from '../../../src/application/search-activity.mjs';
+import {harnessName,plural} from './usage-model.ts';
 
 const refresh={autoRefreshMilliseconds:60_000,staleMilliseconds:60_000};
 const dateFormat=new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'});
-type ActivityAdapter=Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>;
-
-function SearchSession({row}:{row:SearchActivityRow}) {
-  if(!row.sessionId)return <>Unavailable</>;
-  const params=new URLSearchParams({user:row.userId,harness:row.harness??'',id:row.sessionId});
-  return row.harness?<Link to={'/sessions?'+params}>{harnessName(row.harness)} <code>{row.sessionId}</code></Link>:<code>{row.sessionId}</code>;
-}
+export type ActivityAdapter=Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>;
+/** Signed-in names by WorkOS user ID; queries from people outside the list show their agent only. */
+export type MemberNames=ReadonlyMap<string,string>;
+const shown=5;
 
 function scoped<T extends {cacheScope:string}>(scope:string,result:T){
   if(scope!==result.cacheScope)throw Object.assign(new Error('Your workspace changed. Reload this page.'),{status:403});
   return result;
 }
 
-function SearchTable({adapter,kind,scope}:{adapter:ActivityAdapter;scope:string;kind:HistoryRequest['kind']}) {
-  const [cursors,setCursors]=useState<NonNullable<HistoryRequest['before']>[]>([]);
-  const before=cursors.at(-1);
-  const {data,error,loading,reload}=useConsoleResource([...consoleResourceKey(adapter,'search-history'),kind,before],
-    async signal=>scoped(scope,await adapter.searchHistory({kind,...before?{before}:{}},signal)),{...refresh,staleMilliseconds:0});
-  const proactive=kind==='proactive';
-  const title=proactive?'Proactive searches':'Agent searches';
-  return <Section headingLevel={3} className="report-panel" title={title} description="Newest first. Shared sessions and your own searches.">
-    {error&&<Notice tone="warning">Search history couldn’t update. <Button onClick={reload}>Try again</Button></Notice>}
-    {loading&&<LoadingState label={'Loading '+title.toLowerCase()}/>}
-    {data&&!error&&(data.rows.length?<Table label={title} className="usage-search-history"><thead><tr><th scope="col">Time</th><th scope="col">Search</th>
-      <th scope="col">Session</th>{proactive&&<th scope="col">Triggering message</th>}<th scope="col">Outcome</th></tr></thead>
-      <tbody>{data.rows.map(row=><tr key={row.id}>
-        <td><time dateTime={row.at} title={row.at}>{dateFormat.format(new Date(row.at))}</time></td>
-        <td>{!proactive&&<span className="report-email">{row.operation}</span>}{row.queries.length?row.queries.join('\n'):proactive||row.outcome==='unknown'?'Query unavailable in earlier record':'No query text'}</td>
-        <td><SearchSession row={row}/><span className="report-email">{row.userId}</span></td>
-        {proactive&&<td>{row.message}<span className="report-email">{row.messageId??'Message unavailable'}</span></td>}
-        <td>{row.outcome==='unknown'?'Outcome unavailable':row.outcome==='failed'?'Failed':!proactive?'Completed':row.delivered?'Handed to agent':row.returned?'Non-silent':'Silent'}</td>
-      </tr>)}</tbody></Table>:<EmptyState title={data.next||before?'No visible searches on this page.':proactive?'No visible proactive searches in this period.':'No visible agent searches in this period.'}/>)}
-    {cursors.length>0&&<Button onClick={()=>setCursors(previous=>previous.slice(0,-1))}>Newer searches</Button>}
-    {data?.next&&<Button onClick={()=>setCursors(previous=>[...previous,data.next!])}>Older searches</Button>}
-  </Section>;
+export function useCallTotals(adapter:ActivityAdapter,scope:string){
+  return useConsoleResource(consoleResourceKey(adapter,'call-totals'),async signal=>scoped(scope,await adapter.callTotals(signal)),refresh);
 }
 
-export function SearchActivity({adapter,scope}:{adapter:ActivityAdapter;scope:string}){
-  const {data,error,reload}=useConsoleResource(consoleResourceKey(adapter,'call-totals'),async signal=>scoped(scope,await adapter.callTotals(signal)),refresh);
-  return <Section className="report-section" title="OpenCrawl activity" description={data?'Last 30 UTC days. Full call and agent search tracking began '+dateFormat.format(new Date(data.since))+'.'+(data.includesEarlierCalls?' Includes verified earlier calls.':''):undefined}>
-    {error&&<Notice tone="warning">Call totals couldn’t update. <Button onClick={reload}>Try again</Button></Notice>}
-    {data&&<MetricGrid items={[
-      {label:'OpenCrawl calls',value:count(data.calls),note:'Authenticated agent calls across the workspace'},
-      {label:'Agent searches',value:count(data.agentSearches),note:'Search calls from workspace agents'},
-      {label:'Proactive checks',value:count(data.proactiveChecks),note:'Checks that ran a search for workspace agents'},
-      {label:'Non-silent checks',value:count(data.nonSilent),note:count(data.delivered)+' confirmed handoffs',help:'A non-silent check returned a suggestion. A confirmed handoff means the agent’s hook reported writing it into context.'},
-    ]}/>}
-    <SearchTable adapter={adapter} scope={scope} kind="agent"/><SearchTable adapter={adapter} scope={scope} kind="proactive"/>
+function QueryRows({rows,names}:{rows:SearchActivityRow[];names:MemberNames}){
+  return <Table label="Agent queries" className="usage-search-history"><thead><tr><th scope="col">Query</th><th scope="col">From</th><th scope="col">Time</th></tr></thead>
+    <tbody>{rows.map(row=><tr key={row.id}>
+      <td>{row.queries.length?row.queries.join('\n'):<span className="report-email">No query text</span>}</td>
+      <td>{names.get(row.userId)??'Workspace member'}{row.harness&&<span className="report-email">{harnessName(row.harness)}</span>}</td>
+      <td><time dateTime={row.at} title={row.at}>{dateFormat.format(new Date(row.at))}</time></td>
+    </tr>)}</tbody></Table>;
+}
+
+/** Every visible agent query, newest first; older pages load as the end of the list scrolls into view. */
+function QueryHistory({adapter,scope,names,open,onClose}:{adapter:ActivityAdapter;scope:string;names:MemberNames;open:boolean;onClose:()=>void}){
+  const [rows,setRows]=useState<SearchActivityRow[]>([]);
+  const [next,setNext]=useState<HistoryRequest['before']|null|undefined>(undefined);
+  const [state,setState]=useState<'idle'|'loading'|'error'>('idle');
+  const end=useRef<HTMLDivElement>(null);
+  const reading=useRef<AbortController|null>(null);
+  useEffect(()=>{if(!open){reading.current?.abort();setRows([]);setNext(undefined);setState('idle');}},[open]);
+  function load(before?:HistoryRequest['before']){
+    if(reading.current)return;
+    const controller=new AbortController();
+    reading.current=controller;
+    setState('loading');
+    adapter.searchHistory({kind:'agent',...before?{before}:{}},controller.signal).then(page=>{
+      const result=scoped(scope,page);
+      setRows(previous=>[...previous,...result.rows]);
+      setNext(result.next);
+      setState('idle');
+    },()=>{if(!controller.signal.aborted)setState('error');}).finally(()=>{if(reading.current===controller)reading.current=null;});
+  }
+  useEffect(()=>{if(open&&next===undefined)load();},[open,next]);
+  useEffect(()=>{
+    const element=end.current;
+    if(!open||!element||!next)return;
+    const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))load(next);});
+    observer.observe(element);
+    return ()=>observer.disconnect();
+  },[open,next,rows.length]);
+  useEffect(()=>()=>reading.current?.abort(),[]);
+  return <Dialog open={open} onClose={onClose} title="Agent queries" className="usage-query-dialog">
+    {rows.length>0&&<QueryRows rows={rows} names={names}/>}
+    {state==='loading'&&<LoadingState label="Loading agent queries"/>}
+    {state==='error'&&<Notice tone="warning" actions={<Button onClick={()=>load(next??undefined)}>Try again</Button>}>Queries couldn’t load.</Notice>}
+    {next===null&&!rows.length&&<EmptyState title="No visible agent queries."/>}
+    <div ref={end} aria-hidden="true"/>
+  </Dialog>;
+}
+
+/** Agent search tool calls by day on the page's shared date axis, above the newest queries. */
+export function AgentQueries({adapter,scope,names,axis,totals}:{adapter:ActivityAdapter;scope:string;names:MemberNames;axis:string[];totals:CallTotals|undefined}){
+  const [open,setOpen]=useState(false);
+  const {data,error,loading,reload}=useConsoleResource([...consoleResourceKey(adapter,'search-history'),'agent'],
+    async signal=>scoped(scope,await adapter.searchHistory({kind:'agent'},signal)),{...refresh,staleMilliseconds:0});
+  const tracked=totals&&new Map((totals.daily??[]).map(day=>[day.date,day.agentSearches]));
+  const since=totals?.since.slice(0,10);
+  const days=axis.map(date=>({date,value:tracked&&since&&date>=since?tracked.get(date)??0:null}));
+  const more=Boolean(data&&(data.rows.length>shown||data.next));
+  return <Section className="report-panel" headingLevel={3} title="Agent queries" actions={more&&<Button variant="quiet" onClick={()=>setOpen(true)}>View all</Button>}>
+    {tracked&&<DailyBarChart days={days} label="Agent search tool calls per day" unit={value=>plural(value,'query','queries')}/>}
+    {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Queries couldn’t update.</Notice>}
+    {loading&&<LoadingState label="Loading agent queries"/>}
+    {data&&!error&&(data.rows.length?<QueryRows rows={data.rows.slice(0,shown)} names={names}/>:<EmptyState title="No agent queries in the last 30 days."/>)}
+    <QueryHistory adapter={adapter} scope={scope} names={names} open={open} onClose={()=>setOpen(false)}/>
   </Section>;
 }

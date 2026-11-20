@@ -229,6 +229,18 @@ export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sess
   })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
+/** Daily bars on a caller-supplied date axis, so charts on one page line up day for day. */
+export function DailyBarChart({days, label, unit}: {days: ReadonlyArray<{date: string; value: number | null}>; label: string; unit: (value: number) => string}) {
+  if (!days.length) return <p className="report-note">Nothing yet.</p>;
+  const maximum = Math.max(1, ...days.map(day => day.value ?? 0));
+  const width = 100 / days.length;
+  const busiest = days.reduce((best, day) => (day.value ?? 0) > (best.value ?? 0) ? day : best, days[0]!);
+  return <figure className="report-chart"><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`${label}. Highest ${busiest.date} with ${unit(busiest.value ?? 0)}.`}>{days.map((day, index) => {
+    const height = day.value ? Math.max(3, day.value / maximum * 100) : 0;
+    return <rect key={day.date} x={index * width + width * .15} y={100 - height} width={width * .7} height={height} rx=".6"><title>{`${day.date}: ${day.value == null ? 'not tracked' : unit(day.value)}`}</title></rect>;
+  })}</svg><figcaption><span>{days[0]!.date}</span><span>{days.at(-1)!.date}</span></figcaption></figure>;
+}
+
 /** Shared daily line chart with per-day hover details. */
 export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: string; average: number; peak: number; partial: boolean}>; label: string}) {
   const figure = useRef<HTMLElement>(null);

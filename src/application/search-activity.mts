@@ -15,4 +15,6 @@ export interface SearchActivityPage {
 }
 export interface CallTotals {
   since:string; includesEarlierCalls?:boolean; calls:number; agentSearches:number; proactiveChecks:number; nonSilent:number; delivered:number;
+  /** Agent searches per UTC day in the retained window, oldest first. */
+  daily?:Array<{date:string;agentSearches:number}>;
 }

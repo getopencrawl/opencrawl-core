@@ -162,13 +162,15 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
     },
     async totals(p:Principal):Promise<CallTotals>{
       const {rows}=await pool.query(`select greatest(started_at,${windowStart} at time zone 'UTC') as since,
-        c.*,s.* from opencrawl_activity_start cross join lateral (
+        c.*,s.*,d.* from opencrawl_activity_start cross join lateral (
           select coalesce(sum(calls),0) as calls,coalesce(sum(earlier_calls),0) as earlier from opencrawl_call_days
           where namespace=$1 and tenant_id=$2 and day>=${windowStart}) c cross join lateral (select coalesce(sum(agent),0) as agent,coalesce(sum(proactive),0) as proactive,
           coalesce(sum(non_silent),0) as non_silent,coalesce(sum(delivered),0) as delivered from opencrawl_search_days
-          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) s where namespace=$1`,[namespace,readScope(p)[0]]);
+          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) s cross join lateral (select coalesce(jsonb_agg(jsonb_build_array(to_char(day,'YYYY-MM-DD'),agent) order by day),'[]') as daily
+          from opencrawl_search_days where namespace=$1 and tenant_id=$2 and day>=${windowStart} and agent>0) d where namespace=$1`,[namespace,readScope(p)[0]]);
       const r=rows[0];
-      return {since:r.since.toISOString(),...(Number(r.earlier)>0?{includesEarlierCalls:true}:{}),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered)};
+      return {since:r.since.toISOString(),...(Number(r.earlier)>0?{includesEarlierCalls:true}:{}),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered),
+        daily:(r.daily as [string,number|string][]).map(([date,agent])=>({date,agentSearches:Number(agent)}))};
     },
     async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
       const {kind,before}=historyRequest.parse(input);

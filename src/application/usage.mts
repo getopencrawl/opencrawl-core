@@ -17,7 +17,7 @@ export interface UsageOptions {principal: Principal; directory: IdentityDirector
 interface IndexReport {sessionEvents: number | null; connectorDocuments: number | null; connectorKinds: Record<string, number>; sources: Array<{name: string; count: number}>; searchMs: number | null; probes: number[]}
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
-const empty = (): Usage => ({events: 0, lifetimeEvents: 0, sessions: 0, subagentSessions: 0, messages: 0, toolCalls: 0, machines: 0, opencrawlCalls: 0, tools: [], harnesses: [], origins: [], firstAt: null, lastAt: null, daily: [], people: []});
+const empty = (): Usage => ({events: 0, lifetimeEvents: 0, sessions: 0, subagentSessions: 0, messages: 0, toolCalls: 0, machines: 0, opencrawlCalls: 0, tools: [], harnesses: [], origins: [], firstAt: null, lastAt: null, daily: [], indexedTokens: null, tokenHistory: [], people: []});
 const missing = (error: unknown) => errorInfo(error).type === 'index_not_found_exception';
 
 /**
@@ -110,7 +110,7 @@ export async function usageReport({principal, directory, integrations, search, c
       ingestion: cards ? {sources, index} : null, ...sessions,
       members: members.map((user, i) => {
         const a: Partial<Usage['people'][number]> = activity.get(user.id) || {};
-        return {name: displayName(user, null), email: user.email, you: user.id === principal.userId,
+        return {userId: user.id, name: displayName(user, null), email: user.email, you: user.id === principal.userId,
           sources: sources.filter(s => s.connectedById === user.id).length,
           sessions: a.sessions || 0, subagentSessions: a.subagentSessions || 0, messages: a.messages || 0, toolCalls: a.toolCalls || 0, weekEvents: a.weekEvents || 0, lastAt: a.lastAt || null, setup: setup[i]};
       }),

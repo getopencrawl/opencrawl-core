@@ -5,7 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {UsagePage, UsageReportView} from '../src/pages/usage.tsx';
 import type {ConsoleDataAdapter, UsageReport} from '../src/pages/types.ts';
-import {ago, compact, count, harnessName, sortedMembers, speciesLabel} from '../src/pages/usage-model.ts';
+import {ago, compact, count, harnessName, sortedMembers} from '../src/pages/usage-model.ts';
 import {harnessName as libraryHarnessName} from '../src/pages/library-controls.tsx';
 import {SessionsPage, sessionPath} from '../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../src/pages/library-types.ts';
@@ -38,13 +38,14 @@ function report(): UsageReport {
       people: [{userId: 'first'}, {userId: 'second'}], tools: [{name: 'mcp__opencrawl__search', count: 4}],
       harnesses: [{name: 'claude-code', count: 70}, {name: 'codex', count: 30}], origins: [{name: 'cli', count: 90}, {name: 'cloud', count: 10}],
       firstAt: '2026-11-01T10:00:00Z', lastAt: '2026-11-07T19:55:00Z',
-      daily: [{date: '2026-11-06', sessions: 3, events: 40}, {date: '2026-11-07', sessions: 5, events: 60}],
+      daily: [{date: '2026-11-06', sessions: 3, events: 40, tokens: 1_200_000}, {date: '2026-11-07', sessions: 5, events: 60, tokens: 800_000}],
+      indexedTokens: 9_500_000, tokenHistory: [{date: '2026-11-04', tokens: 7_500_000}, {date: '2026-11-05', tokens: 0}, {date: '2026-11-06', tokens: 1_200_000}, {date: '2026-11-07', tokens: 800_000}],
     },
     overlap: {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 8, daily: [{date: '2026-11-07', average: 1, peak: 2, partial: true}]},
     members: [
-      {name: 'Alex', email: 'alex@example.test', you: true, sources: 2, sessions: 3, messages: 10, toolCalls: 20,
+      {userId: 'first', name: 'Alex', email: 'alex@example.test', you: true, sources: 2, sessions: 3, messages: 10, toolCalls: 20,
         weekEvents: 40, lastAt: '2026-11-07T19:55:00Z', setup: {cli: true, mcp: true, session: true, client: 'Codex'}},
-      {name: 'Sam', email: 'sam@example.test', you: false, sources: 1, sessions: 5, messages: 20, toolCalls: 40,
+      {userId: 'second', name: 'Sam', email: 'sam@example.test', you: false, sources: 1, sessions: 5, messages: 20, toolCalls: 40,
         weekEvents: 60, lastAt: '2026-11-07T19:50:00Z', setup: {cli: true, mcp: true}},
     ],
   };
@@ -54,18 +55,6 @@ function render(data = report()) {
   return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(UsageReportView, {data, now})));
 }
 
-function sourceCard(html: string, name: string) {
-  const start = html.indexOf(`aria-label="${name}"`);
-  assert.notEqual(start, -1);
-  return html.slice(start, html.indexOf('</article>', start));
-}
-
-test('first-load overlap failure leaves activity, sources and team visible without a fake chart', () => {
-  const data={...report(),overlap:null,failedSources:['overlap'] as const};
-  const html=render({...data,failedSources:[...data.failedSources]});
-  assert.match(html,/Daily agent sessions/);assert.match(html,/aria-label="Slack"/);assert.match(html,/Member activity/);
-  assert.match(html,/Session overlap.*couldn’t/);assert.doesNotMatch(html,/report-line-chart/);
-});
 
 test('partial refresh preserves only failed sections and their original freshness; recovery clears stale state', () => {
   const initial=report(),later={...report(),generatedAt:'2026-11-07T21:00:00Z',overlap:null,failedSources:['overlap'] as UsageReport['failedSources']};
@@ -81,196 +70,6 @@ test('partial refresh preserves only failed sections and their original freshnes
   assert.equal(reconcileUsage(initial,{...later,failedSources:[]}).overlap,null);
   const missing={...report(),members:[],failedSources:['members'] as UsageReport['failedSources']};
   assert.deepEqual(reconcileUsage(missing,missing).staleSections,{});
-});
-
-test('failed session activity does not invent a zero team ranking or hide healthy overlap', () => {
-  const html=render({...report(),agents:null,failedSources:['sessions']});
-  assert.match(html,/report-line-chart/);assert.match(html,/Team activity.*couldn’t/);
-  assert.doesNotMatch(html,/Ranked by sessions|active this week/);
-});
-
-test('main-session overlap distinguishes measured zero from unavailable and exposes both series with hover details', () => {
-  const data = report();
-  data.overlap = {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 3, daily: [
-    {date: '2026-11-06', average: 1.25, peak: 3, partial: false},
-    {date: '2026-11-07', average: 0, peak: 0, partial: true},
-  ]};
-  const html = render(data);
-  assert.match(html, /Main session overlap/);
-  assert.match(html, /Daily average/); assert.match(html, /Daily peak/);
-  assert.match(html, /2026-11-07 \(partial\)/);
-  assert.match(html, /<title>2026-11-06: average 1.25, peak 3 sessions<\/title>/);
-  assert.match(html, /<title>2026-11-07 \(partial\): average 0, peak 0 sessions<\/title>/);
-  assert.match(html, /Concurrent sessions by day/);
-  assert.doesNotMatch(html, /Each session spans|Subagents excluded|Days use UTC|Captured spans can grow|Daily values|report-line-values/);
-  assert.doesNotMatch(html, /NaN|Infinity|overlap is unavailable/);
-  const unavailable = render({...data, agents: null, overlap: null});
-  assert.doesNotMatch(unavailable, /Session overlap is unavailable/);
-  assert.doesNotMatch(unavailable, /report-line-chart/);
-});
-
-test('one Usage page contains Agent sessions, Data sources and Team in order without tabs or index comparison bars', () => {
-  const html = render();
-  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent sessions', 'Data sources', 'Team']);
-  assert.match(html, /Daily agent sessions/);
-  assert.match(html, /aria-label="Slack"/);
-  assert.match(html, /Member activity/);
-  assert.doesNotMatch(html, /role="tab|What’s in the index|Indexed source records|analytics come next|turns saved/i);
-  const sources = html.slice(html.indexOf('>Data sources</h2>'), html.indexOf('>Team</h2>'));
-  assert.doesNotMatch(sources, /<svg|report-bars|bar-track/);
-  const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
-  const page = renderToStaticMarkup(createElement(MemoryRouter, {initialEntries: ['/?tab=team']}, createElement(UsagePage, {adapter})));
-  assert.doesNotMatch(page, /role="tablist"|role="tab"/);
-});
-
-test('Usage opens on its sections, without a summary sentence about imports or index speed', () => {
-  const html = render();
-  assert.doesNotMatch(html, /report-summary|brought in|documents indexed|Recent index queries/);
-  assert.ok(html.indexOf('>Agent sessions</h2>') < html.indexOf('>Data sources</h2>'));
-});
-
-test('source tiles show only content-type counts without import details or technical labels', () => {
-  const html = render(), slack = sourceCard(html, 'Slack');
-  assert.doesNotMatch(slack, /Example|report-source-header/);
-  assert.match(html, /class="oc-integration-card"/);
-  for (const name of ['Slack', 'Notion', 'GitHub']) {
-    assert.doesNotMatch(sourceCard(html, name), /report-source-count|report-source-label|report-source-imported|Imported|Indexed|indexed documents?/);
-  }
-  const indexed = slack.match(/<ul[^>]+aria-label="Content in Slack"[^>]*>(.*?)<\/ul>/)?.[1];
-  assert.ok(indexed);
-  assert.match(indexed, /<span>Messages<\/span><span>3,550<\/span>/);
-  assert.match(indexed, /<span>Files<\/span><span>0<\/span>/);
-  assert.doesNotMatch(indexed, /Imported channel records|1,910|18/);
-  assert.doesNotMatch(slack, /Imported channel records|1,910/);
-  const github = sourceCard(html, 'GitHub');
-  assert.doesNotMatch(github, /report-source-imported/);
-  assert.match(github, /Pull requests/);
-  assert.match(github, /Issue comments/);
-  assert.equal(speciesLabel('new_document_kind'), 'New document kind');
-  assert.equal(speciesLabel('Already readable'), 'Already readable');
-});
-
-test('a partial index inventory marks only its aggregate unavailable and keeps measured details visible', () => {
-  for (const missing of ['sessionEvents','connectorDocuments'] as const) {
-    const data = report();
-    assert.ok(data.ingestion?.index);
-    data.ingestion.index[missing] = null;
-    const html = render(data);
-    assert.match(sourceCard(html,'Slack'), /<span>Messages<\/span><span>3,550<\/span>/);
-    assert.doesNotMatch(sourceCard(html,'Slack'), /Imported channel records/);
-    assert.match(html, /Daily agent sessions/);
-  }
-});
-
-test('missing species remain unavailable even with an indexed total; empty and measured zero remain distinct', () => {
-  const data = report();
-  assert.ok(data.ingestion);
-  const source = data.ingestion.sources[0];
-  assert.ok(source);
-  delete source.indexedSpecies;
-  let html = sourceCard(render(data), 'Slack');
-  assert.doesNotMatch(html, /report-source-count|indexed documents?/);
-  assert.match(html, /Content breakdown unavailable/);
-  assert.doesNotMatch(html, /oc-integration-metrics/);
-  source.indexed = null;
-  html = sourceCard(render(data), 'Slack');
-  assert.match(html, /Content breakdown unavailable/);
-  assert.doesNotMatch(html, /report-source-count|indexed documents?/);
-  source.indexed = 0;
-  source.indexedSpecies = [{name: 'message', count: 0}];
-  html = sourceCard(render(data), 'Slack');
-  assert.doesNotMatch(html, /report-source-count|indexed documents?/);
-  assert.match(html, /<span>Messages<\/span><span>0<\/span>/);
-  assert.doesNotMatch(html, /Content breakdown unavailable/);
-  source.indexedSpecies = [];
-  assert.match(sourceCard(render(data), 'Slack'), /No content yet/);
-});
-
-test('Agent sessions retains measured activity, breakdowns and contextual facts without treating messages as turns', () => {
-  const html = render();
-  const agents = html.slice(0, html.indexOf('>Data sources</h2>'));
-  for (const label of ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']) {
-    assert.equal((agents.match(new RegExp(`<dt>${label}</dt>`, 'g')) || []).length, 1, label);
-  }
-  for (const text of ['Busiest day: 2026-11-07 with 5 sessions', 'Where agents run', 'Claude Code', 'Terminal', 'opencrawl: search', 'Machines capturing:', '5 minutes ago', '2026-11-01']) {
-    assert.ok(agents.includes(text), text);
-  }
-  assert.match(agents, /Agent sessions per day/);
-  // Every captured agent has a readable name on Usage and in the session library.
-  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['grok-bot', 'Grok Bot'], ['antigravity', 'Antigravity']] as const) {
-    assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
-  }
-  const library: LibraryAdapter = async () => new Promise(() => {});
-  const viewerHtml = renderToStaticMarkup(createElement(ConsoleDataProvider, {
-    scopeKey: 'antigravity-viewer',
-    children: createElement(MemoryRouter, {initialEntries: [sessionPath({userId: 'alice', harness: 'antigravity', sessionId: 'conv-1'})]},
-      createElement(SessionsPage, {adapter: library})),
-  }));
-  assert.match(viewerHtml, /aria-label="Back to sessions"[^>]*href="\/sessions"/);
-  assert.match(viewerHtml, /Loading session(?!s)/);
-  assert.doesNotMatch(agents, /\bturns?\b|analytics come next/i);
-});
-
-test('unavailable reporting does not masquerade as empty and never hides the other report sections', () => {
-  const data = report();
-  data.agents = null;
-  data.ingestion = null;
-  const html = render(data);
-  assert.match(html, /Agent reporting isn’t available/);
-  assert.match(html, /Source reporting isn’t available/);
-  assert.match(html, />Team<\/h2>/);
-  assert.match(html, /Member activity/);
-  assert.doesNotMatch(html, /No agent sessions captured yet/);
-  const empty = report();
-  assert.ok(empty.agents);
-  Object.assign(empty.agents, {events: 0, sessions: 0, messages: 0, toolCalls: 0, machines: 0, opencrawlCalls: 0, daily: [], people: []});
-  assert.match(render(empty), /No agent sessions captured yet/);
-  assert.equal(count(null), 'Unavailable');
-  assert.equal(compact(Number.NaN), 'Unavailable');
-  assert.equal(compact(0), '0');
-});
-
-test('Team leaderboard orders measured sessions then tool calls and retains actual member stats without mutating input', () => {
-  const data = report();
-  const html = render(data);
-  assert.doesNotMatch(html, /Most sources connected/);
-  assert.match(html, /Most sessions/);
-  assert.match(html, /Most tool calls/);
-  assert.match(html, /Ranked by sessions, then tool calls/);
-  assert.match(html, /aria-label="Sessions not set up"/);
-  assert.match(html, /report-email">Codex/);
-  assert.match(html, /Alex<em>you<\/em>/);
-  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
-  assert.deepEqual(data.members.map(member => member.name), ['Alex', 'Sam']);
-  const table = html.slice(html.indexOf('<table'));
-  assert.ok(table.indexOf('Sam') < table.indexOf('Alex'));
-  assert.match(table, /<th scope="col">Messages<\/th>/);
-  assert.doesNotMatch(table, /score/i);
-  const alex = data.members[0];
-  assert.ok(alex);
-  alex.sessions = 5;
-  alex.toolCalls = 50;
-  assert.equal(sortedMembers(data.members)[0]?.name, 'Alex');
-  alex.name = '<script>alert(1)</script>';
-  assert.doesNotMatch(render(data), /<script>/);
-});
-
-test('subagent sessions are reported beside, not inside, the sessions a person started', () => {
-  const data = report();
-  assert.doesNotMatch(render(data), /plus [\d,]+ subagent|\+[\d,]+ subagent/);
-  if (!data.agents) throw new Error('fixture has agents');
-  data.agents.subagentSessions = 2435;
-  const [alex, sam] = data.members;
-  if (!alex || !sam) throw new Error('fixture has members');
-  alex.subagentSessions = 2435;
-  const html = render(data);
-  assert.match(html, /plus 2,435 subagent sessions/);
-  assert.match(html, /Ranked by sessions, then tool calls; subagent sessions are counted separately/);
-  const table = html.slice(html.indexOf('<table'));
-  assert.match(table, /<td>3<span class="report-email">\+2,435 subagent<\/span><\/td>/);
-  // Ranking and highlights still use started sessions only.
-  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
-  assert.match(html, /Most sessions<\/dt><dd><strong>Sam<\/strong><span>5 sessions/);
 });
 
 test('relative date formatting handles recent and invalid values', () => {
@@ -305,14 +104,6 @@ test('Usage ignores historical model judgments and renders captured activity', (
   assert.doesNotMatch(legacy, /Agent alignment|Drift saves|Answers agents used/);
 });
 
-test('Agent sessions shows tokens captured when metered and OpenCrawl calls instead of machines', () => {
-  assert.deepEqual(cards(render({...report(), capture: {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'}}), 'Agent sessions').map(card => card[0]),
-    ['Sessions', 'Messages', 'Tokens captured', 'OpenCrawl calls']);
-  assert.deepEqual(cards(render({...report(), capture: {tokens: 142_500_000, since: '2026-11-01T00:00:00.000Z'}}), 'Agent sessions')[2], ['Tokens captured', '143M', 'since 2026-11-01, from agent sessions']);
-  assert.deepEqual(cards(render(), 'Agent sessions').map(card => card[0]), ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']);
-  assert.match(render().replace(/<[^>]*>/g, ''), /Machines capturing: 2\. Last capture/);
-});
-
 test('Usage offers the onboarding prompt in its header only when the workspace supplies one', () => {
   const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
   const prompt = 'Set up OpenCrawl across all coding agents and environments I use.';
@@ -342,9 +133,82 @@ test('copying writes the exact prompt and reports when the browser cannot copy',
   assert.deepEqual(written, [prompt]);
 });
 
-test('shared setup is labeled once instead of marking personal installations missing',()=>{
- const data=report();
- for(const member of data.members)member.setup={shared:{name:'Replicas',observedAt:'2026-11-13T00:00:00Z'}};
- const html=renderToStaticMarkup(createElement(MemoryRouter,null,createElement(UsageReportView,{data,now})));
- assert.match(html,/Shared Replicas setup/);assert.doesNotMatch(html,/CLI not set up|MCP not set up|Sessions not set up/);
+
+const headings = (html: string) => [...html.matchAll(/<h([23])\b[^>]*>([^<]+)<\/h\1>/g)].map(match => match[2]);
+const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+
+test('Usage leads with consumption, then sources, then team, without billing, setup or tool rankings', () => {
+  const html = render({...report(), capture});
+  assert.deepEqual(headings(html), ['Overview', 'Indexed session tokens', 'Indexed items by source', 'Team', 'Agent sessions per day']);
+  assert.deepEqual(cards(html, 'Overview').map(card => card.slice(0, 2)), [['Session tokens indexed', '2M'], ['Source items indexed', '19.7k']]);
+  // Cards carry a label and a number only.
+  assert.ok(cards(html, 'Overview').every(card => card[2] === undefined));
+  assert.doesNotMatch(html, /Tokens captured|since 2026-11-01|Machines capturing|Where agents run|Most used|Setup|set up|Rank|Main session overlap|report-line-chart|Proactive searches|Most sessions/);
+  const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
+  const page = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(UsagePage, {adapter})));
+  assert.doesNotMatch(page.slice(page.indexOf('<header'), page.indexOf('</header>')), /<p>/);
+});
+
+test('session tokens chart by session day; a 30-day total is unavailable when a day was not measured', () => {
+  const html = render();
+  assert.match(html, /<title>2026-11-06: 1,200,000 tokens<\/title>/);
+  assert.match(html, /title="2,000,000">2M</);
+  const partial = report();
+  delete partial.agents!.daily[0]!.tokens;
+  const unmeasured = render(partial);
+  assert.match(unmeasured, /<title>2026-11-06: not tracked<\/title>/);
+  assert.equal(cards(unmeasured, 'Overview')[0]![1], 'Unavailable');
+});
+
+test('sources list indexed items largest first; failed counts and missing reporting are not shown as zero', () => {
+  const html = render();
+  const sources = text(html.slice(html.indexOf('Indexed items by source'), html.indexOf('>Team</h2>')));
+  assert.match(sources, /GitHub 16,136 Slack 3,550 Notion 12/);
+  assert.match(html, /href="\/integrations"[^>]*>Manage</);
+  const failed = render({...report(), failedSources: ['connectors']});
+  assert.match(failed, /Indexed item counts unavailable/);
+  assert.doesNotMatch(failed, /report-bars/);
+  assert.match(render({...report(), ingestion: {sources: [], index: null}}), /No sources connected/);
+  assert.match(render({...report(), ingestion: null}), /Source reporting isn’t available/);
+});
+
+test('failed session activity shows notices instead of zero tokens or a zero team ranking', () => {
+  const html = render({...report(), agents: null, failedSources: ['sessions']});
+  assert.match(html, /Session activity couldn’t load/);
+  assert.doesNotMatch(html, /Session tokens indexed|Indexed session tokens/);
+  assert.match(html, /Team activity couldn’t load/);
+  assert.doesNotMatch(html, /Team usage/);
+  assert.match(html, /Indexed items by source/);
+});
+
+test('team table orders measured sessions then tool calls and reports subagents beside them', () => {
+  const html = render();
+  const rows = [...html.matchAll(/<th scope="row"><span class="report-member">([^<]+)/g)].map(match => match[1]);
+  assert.deepEqual(rows, ['Sam', 'Alex']);
+  const data = report();
+  data.members[0]!.subagentSessions = 2;
+  assert.match(text(render(data)), /Alex you 3 \+2 subagents 10 20/);
+  assert.deepEqual([...render().matchAll(/<th scope="col">([^<]+)/g)].map(match => match[1]), ['Member', 'Sessions', 'Messages', 'Tool calls', 'Last active']);
+});
+
+test('shared helpers: readable agent names everywhere, unavailable is never zero, ranking does not mutate', () => {
+  for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['grok-bot', 'Grok Bot'], ['antigravity', 'Antigravity']] as const) {
+    assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
+  }
+  const library: LibraryAdapter = async () => new Promise(() => {});
+  const viewerHtml = renderToStaticMarkup(createElement(ConsoleDataProvider, {
+    scopeKey: 'antigravity-viewer',
+    children: createElement(MemoryRouter, {initialEntries: [sessionPath({userId: 'alice', harness: 'antigravity', sessionId: 'conv-1'})]},
+      createElement(SessionsPage, {adapter: library})),
+  }));
+  assert.match(viewerHtml, /aria-label="Back to sessions"[^>]*href="\/sessions"/);
+  assert.equal(count(null), 'Unavailable');
+  assert.equal(compact(Number.NaN), 'Unavailable');
+  assert.equal(compact(0), '0');
+  const data = report();
+  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
+  assert.deepEqual(data.members.map(member => member.name), ['Alex', 'Sam']);
+  const empty = report();
+  Object.assign(empty.agents!, {events: 0, sessions: 0, daily: [], people: []});
+  assert.match(render(empty), /No agent sessions captured yet/);
 });

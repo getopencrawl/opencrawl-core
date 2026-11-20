@@ -44,21 +44,6 @@ export function sourceStatus(state: string): {label: string; tone: 'neutral' | '
   return state in states ? states[state as keyof typeof states] : {label: state, tone: 'neutral'};
 }
 
-/** Species describe indexed documents; importer progress rows are a separate measurement. */
-export function speciesLabel(name: string) {
-  const labels: Record<string, string> = {
-    message: 'Messages', channel: 'Channels', file: 'Files', page: 'Pages', database: 'Databases', database_row: 'Database rows',
-    comment: 'Comments', commit: 'Commits', issue: 'Issues', issue_comment: 'Issue comments',
-    pull_request: 'Pull requests', pull_request_comment: 'Pull request comments', pull_request_review: 'Pull request reviews',
-    pull_request_review_comment: 'Review comments', discussion: 'Discussions', discussion_comment: 'Discussion comments',
-    repository: 'Repositories', branch: 'Branches', release: 'Releases',
-    meeting: 'Meetings', transcript: 'Transcripts', summary: 'Summaries', calendar_event: 'Calendar events',
-  };
-  if (labels[name]) return labels[name];
-  const words = name.replace(/_/g, ' ').trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Other content';
-}
-
 export const memberName = (member: UsageMember) => member.name || member.email;
 const rankValue = (value: number) => measured(value) ? value : -1;
 
@@ -69,15 +54,7 @@ export function sortedMembers(members: UsageMember[]) {
     || memberName(left).localeCompare(memberName(right)));
 }
 
-export function topMember(members: UsageMember[], key: 'sources' | 'sessions' | 'toolCalls') {
-  return members.filter(member => measured(member[key]) && member[key] > 0)
-    .sort((left, right) => right[key] - left[key] || memberName(left).localeCompare(memberName(right)))[0];
-}
-
 export function harnessName(name: string) {
   return ({'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', 'grok-bot': 'Grok Bot', antigravity: 'Antigravity'} as Record<string, string>)[name] || name;
 }
 
-export function originName(name: string) {
-  return ({cli: 'Terminal', desktop: 'Desktop app', cloud: 'Cloud', subagent: 'Subagents', unknown: 'Other'} as Record<string, string>)[name] || name;
-}

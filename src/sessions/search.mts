@@ -6,7 +6,8 @@ import {serviceError} from './types.mjs';
 import type {RealmOptions, DocumentItem, SearchInput, SearchResult, OpenSearchResponse, Passage} from '../search/types.mjs';
 interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
 interface SessionCount {count: {value: number}}
-interface ActivityAggregation {doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; machines: {value: number}; opencrawl: {doc_count: number}; tools: TermsAggregation; harnesses: TermsAggregation; origins: TermsAggregation; first: {value_as_string?: string}; last: {value_as_string?: string}; daily: {buckets: Array<{key_as_string: string; doc_count: number; sessions: SessionCount}>}; people: {buckets: OwnerBucket[]}}
+interface ActivityAggregation {doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; machines: {value: number}; opencrawl: {doc_count: number}; tools: TermsAggregation; harnesses: TermsAggregation; origins: TermsAggregation; first: {value_as_string?: string}; last: {value_as_string?: string}; daily: {buckets: Array<{key_as_string: string; doc_count: number; sessions: SessionCount; tokens: {value: number}}>}; people: {buckets: OwnerBucket[]}}
+interface TokenAggregation {total: {value: number}; history: {buckets: Array<{key_as_string: string; tokens: {value: number}}>}}
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {sessionScope,createSessionIngest} from './ingest.mjs';
 import {digest,sourceBatchIdentity} from './event-identity.mjs';
@@ -134,16 +135,21 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       const window = {range:{[f('timestamp')]:{gte:since+'T00:00:00.000Z',lte:until}}};
       const activityMetrics = {last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:new Date(now-7*86400000).toISOString(),lte:until}}}}};
       const ownerMetrics = {sessions,subagentSessions,messages,toolCalls,...activityMetrics};
+      // Captured tokens live on chunk 0 of each event; dates are when the session event happened.
+      const tokens={sum:{field:f('capturedTokens')}};
       const result = await collection.search(principal,{size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
+        indexedTokens:{filter:{range:{[f('timestamp')]:{lte:until}}},aggs:{total:tokens,
+          history:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0},aggs:{tokens}}}},
         activity:{filter:window,aggs:{
         sessions,subagentSessions,messages,toolCalls,machines:{cardinality:{field:f('installationId')}},
         tools:{terms:{field:f('toolNames'),size:8}},opencrawl:{filter:{wildcard:{[f('toolNames')]:'*opencrawl*'}}},
         harnesses:{terms:{field:f('harness'),size:5}},origins:{terms:{field:f('origin'),size:6}},
         first:{min:{field:f('timestamp')}},last:{max:{field:f('timestamp')}},
-        daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}},
+        daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions,tokens}},
         ...(members ? {} : {people:{terms:{field:f('userId'),size:500},aggs:ownerMetrics}}),
       }}}});
       const a=result?.aggregations?.activity as unknown as ActivityAggregation | undefined;
+      const indexed=result?.aggregations?.indexedTokens as unknown as TokenAggregation | undefined;
       if(!a||!Number.isSafeInteger(a.doc_count)||result.hits.total?.relation!=='eq'||!Number.isSafeInteger(result.hits.total.value))throw new Error('Invalid usage response');
       const people = members ? await memberUsage(collection,principal,members,window,ownerMetrics,activityMetrics) : a.people.buckets.map(ownerUsage);
       if(!team&&people.some(p=>p.userId!==principal.userId))throw new Error('Usage returned an invalid ownership scope');
@@ -151,12 +157,20 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       return {events:a.doc_count,lifetimeEvents:result.hits.total.value,sessions:a.sessions.count.value,subagentSessions:a.subagentSessions.count.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
         machines:a.machines.value,opencrawlCalls:a.opencrawl.doc_count,tools:terms(a.tools),harnesses:terms(a.harnesses),origins:terms(a.origins),
         firstAt:a.first.value_as_string??null,lastAt:a.last.value_as_string??null,
-        daily:a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.count.value})),people};
+        daily:a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.count.value,tokens:tokenValue(b.tokens)})),
+        indexedTokens:indexed?tokenValue(indexed.total):null,
+        tokenHistory:indexed?indexed.history.buckets.map(b=>({date:b.key_as_string,tokens:tokenValue(b.tokens)})):[],people};
     },
     refresh:(principal: Principal)=>resolve(principal).refresh(principal),
     applySessionControl:(principal: Principal,key: {harness: string; sessionId: string},control: ResourceControl)=>
       applySessionControl(resolve(principal).collection('session'),principal,{userId:principal.userId,...key},control),
   };
+}
+/** OpenSearch sums are doubles; a negative or unsafe sum is a bad read, not a count. */
+function tokenValue(agg: {value: number} | undefined) {
+  const value=Math.round(agg?.value ?? 0);
+  if(!Number.isSafeInteger(value)||value<0)throw new Error('Invalid token aggregation');
+  return value;
 }
 export function searchSettings(env=process.env) {
   const endpoint=env.OPENCRAWL_SEARCH_URL||env.OPENCRAWL_OPENSEARCH_URL;

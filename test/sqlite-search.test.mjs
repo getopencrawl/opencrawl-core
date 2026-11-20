@@ -241,7 +241,10 @@ test('SQLite supports library and usage aggregations', async t => {
   const sessions = createSessionSearch({endpoint, store: memorySessionStore(), prefix: 'capture-v1'});
   await sessions.ensureIndex(principal);
   await sessions.putDocuments([{id: 'event', document: {...principal, text: 'hello', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'session', installationId: 'machine', chunk: 0, toolNames: ['mcp__opencrawl__search', 'exec'], timestamp: '2026-11-01T12:00:00Z', receivedAt: '2026-11-01T12:00:00Z'}}], principal);
+  await sessions.putDocuments([{id: 'older', document: {...principal, text: 'earlier', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'old', installationId: 'machine', chunk: 0, capturedTokens: 40, timestamp: '2026-10-20T12:00:00Z', receivedAt: '2026-11-01T12:00:00Z'}}], principal);
   const usage = await sessions.usage(principal, {days: 2, now: Date.parse('2026-11-02T12:00:00Z')});
+  assert.equal(usage.indexedTokens, 40); assert.equal(usage.tokenHistory[0].date, '2026-10-20'); assert.equal(usage.tokenHistory.length, 13);
+  assert.deepEqual(usage.daily.map(day => day.tokens), [0, 0]);
   assert.equal(usage.events, 1); assert.equal(usage.sessions, 1); assert.equal(usage.toolCalls, 2); assert.equal(usage.opencrawlCalls, 1); assert.equal(usage.daily.length, 2);
   const groups = await realm.collection('session').search(principal, {size: 0, aggs: {sessions: {multi_terms: {terms: [{field: 'session.userId'}, {field: 'session.sessionId'}], order: [{last: 'desc'}, {_key: 'asc'}]}, aggs: {last: {max: {field: 'timestamp'}}, records: {top_hits: {size: 1}}}}}});
   assert.deepEqual(groups.aggregations.sessions.buckets[0].key, ['alice', 'session']);
