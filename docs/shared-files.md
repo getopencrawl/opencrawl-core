@@ -9,7 +9,33 @@ have no part in hosting these files.
 access, including multi-file edits checked against the commit they read. Keep
 the same membership and history rules. The CLI uses ordinary Git.
 
-## Share a file
+## Clone your workspace
+
+Each workspace has a private HTTPS Git URL. A teammate can share the URL, or
+you can print it with `opencrawl files url`. After signing in to OpenCrawl,
+run `opencrawl files setup-git` once on your machine. It registers a Git
+credential helper for the workspace repository paths on that deployment.
+If you use a self-hosted deployment, pass its origin with `--api`.
+
+In an empty directory, use the URL with ordinary Git:
+
+```sh
+git clone https://your-opencrawl-host/git/WORKSPACE_ID/files.git .
+git pull
+# Edit, git add, and git commit as usual.
+git push
+```
+
+Omit the final dot to create a `files/` directory. The URL is shareable and
+contains no credential. Git obtains the current member's access token through
+the helper. A Git client using its own HTTPS credentials can also respond to
+the server's Basic challenge with username `opencrawl` and a valid OpenCrawl
+access token as the password. Keep tokens out of remote URLs. OpenCrawl
+checks current workspace membership on each transfer and again on push.
+All members can change the files on `main`. The server rejects history
+rewrites and branch deletion for every Git client.
+
+## Share a file from an agent session
 
 On a deployment with shared files, the session-start hook advertises the
 command and the installed skill explains when to use it. Run

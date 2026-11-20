@@ -48,7 +48,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   workload    Connect a cloud organization with one-time admin approval
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude Code, Codex, Cursor, Antigravity and Grok Bot session capture
-  files       Open this session’s private clone of the network’s shared files
+  files       Show the network Git URL, configure Git sign-in, or open an agent clone
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
@@ -377,8 +377,19 @@ export async function main(args = process.argv.slice(2)) {
     return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
     if(!pluginHookInvocation&&!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
     if (command === 'files') {
-      if (parsed.positionals[1] !== 'open') throw new CliError('INVALID_USAGE', 'Use opencrawl files open --help.', 64);
-      const data = await (await import('./shared-files.ts')).openSharedFiles(api, parsed.values.session);
+      const files = await import('./shared-files.ts');
+      if (parsed.positionals[1] === 'setup-git') {
+        const configured = await files.setupFilesGit(api);
+        emit(configured, 'Git credential helper configured for workspace repositories on '+api);
+        return 0;
+      }
+      if (parsed.positionals[1] === 'url') {
+        const url = await files.sharedFilesUrl(api);
+        emit({url}, url);
+        return 0;
+      }
+      if (parsed.positionals[1] !== 'open') throw new CliError('INVALID_USAGE', 'Use opencrawl files --help.', 64);
+      const data = await files.openSharedFiles(api, parsed.values.session);
       emit(data, data.path);
       return 0;
     }

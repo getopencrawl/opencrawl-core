@@ -1,8 +1,12 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
-  if(command==='files')return `Usage: opencrawl files open [--session NATIVE_ID] [--api URL] [--json]
+  if(command==='files')return `Usage: opencrawl files url [--api URL]
+       opencrawl files setup-git [--api URL]
+       opencrawl files open [--session NATIVE_ID] [--api URL] [--json]
 
-Print the absolute path of your private scratch clone of the network’s shared files.
+Clone a workspace with git clone <url>. The url command prints its HTTPS URL.
+Run setup-git once to let Git use your OpenCrawl sign-in for this deployment.
+For an agent session, open prints the absolute path of a private scratch clone.
 Use the same session ID on resume. The checkout lives outside your working project.
 Edit and commit chosen files there, then git push origin main. Fetch or pull to
 see new handoffs. Share the path within the repo and commit ID with the recipient.

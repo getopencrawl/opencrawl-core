@@ -67,19 +67,24 @@ export function createSharedFilesHandler({
     )
       return reply(403, 'Network membership required');
     const {tenantId, userId} = principal;
-    const remotePath = '/api/files/' + createHash('sha256').update(tenantId).digest('hex') + '.git';
+    const digest = createHash('sha256').update(tenantId).digest('hex');
+    const remotePath = '/api/files/' + digest + '.git';
+    const segment = /^[A-Za-z0-9_-]+$/.test(tenantId) ? tenantId : '~' + digest;
+    const clonePath = '/git/' + segment + '/files.git';
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/api/files') {
       if (req.method !== 'GET') return reply(405, 'Use GET');
       return reply(
         200,
-        JSON.stringify({schemaVersion: 1, data: {remotePath, tenantId, userId}}),
+        JSON.stringify({schemaVersion: 1, data: {remotePath, clonePath, tenantId, userId}}),
         'application/json'
       );
     }
-    const advertise = url.pathname === remotePath + '/info/refs';
+    // Both public names address the same authorized network. Existing clones keep their origin.
+    const base = url.pathname.startsWith('/git/') ? clonePath : remotePath;
+    const advertise = url.pathname === base + '/info/refs';
     const service = services.find((s) =>
-      advertise ? url.searchParams.get('service') === s : url.pathname === remotePath + '/' + s
+      advertise ? url.searchParams.get('service') === s : url.pathname === base + '/' + s
     );
     if (!service) return reply(404, 'Unknown Git endpoint');
     if (req.method !== (advertise ? 'GET' : 'POST')) return reply(405, 'Unsupported Git method');

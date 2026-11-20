@@ -408,13 +408,17 @@ test('admin removal immediately denies existing browser, CLI, Git, MCP and captu
  assert.equal((await f.request('/api/files','bob')).status,401);
  const discovery = await f.request('/api/files',null,{headers:auth});
  assert.equal(discovery.status,200);
- const {remotePath}=(await discovery.json()).data;
+ const {remotePath,clonePath}=(await discovery.json()).data;
+ assert.equal(clonePath,'/git/'+org+'/files.git');
  const refs=remotePath+'/info/refs?service=git-upload-pack';
  assert.equal((await f.request(refs,null,{headers:basic})).status,200);
  assert.equal((await f.request(refs,null,{headers:{...basic,origin:f.origin}})).status,403);
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,200);
  const capture=await (await f.request('/api/sessions/credentials',null,{method:'POST',headers:auth})).json();
  assert.ok(capture.data.token);
+ const namedRefs=await f.request(clonePath+'/info/refs?service=git-upload-pack',null,{headers:basic});
+ assert.equal(namedRefs.headers.get('content-type'),'application/x-git-upload-pack-advertisement');
+ await namedRefs.arrayBuffer();
  const captureAuth={authorization:'Bearer '+capture.data.token};
  assert.equal((await f.request('/api/files',null,{headers:captureAuth})).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,200);
@@ -427,6 +431,7 @@ test('admin removal immediately denies existing browser, CLI, Git, MCP and captu
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,401);
  assert.equal((await f.request('/api/files',null,{headers:auth})).status,401);
  assert.equal((await f.request(refs,null,{headers:basic})).status,401);
+ assert.equal((await f.request(clonePath+'/info/refs?service=git-upload-pack',null,{headers:basic})).status,401);
  assert.equal((await f.request('/mcp',null,mcp)).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
  assert.equal((await f.request('/api/sessions/batches',null,{method:'POST',headers:{...captureAuth,'content-type':'application/json'},body:'{}'})).status,401);

@@ -100,6 +100,37 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     expect(await run(['git','-C',project,'show',':notes'])).toBe('customer WIP');
     expect(await readFile(join(project,'notes'),'utf8')).toBe('customer WIP plus unstaged updates');
 
+    // An ordinary Git client can start in an empty folder, before any clone has local config.
+    const cloneUrl = await run([...entry,'files','url','--api',api]);
+    expect(cloneUrl).toBe(api+'/git/team-a/files.git');
+    for (let i=0;i<2;i++) await run([...entry,'files','setup-git','--api',api]);
+    const includes = await run(['git','config','--global','--get-all','include.path']);
+    expect(includes.split('\n')).toHaveLength(1);
+    const human = join(root,'human');
+    await mkdir(human);
+    await run(['git','-C',human,'clone',cloneUrl,'.']);
+    expect(await run(['git','-C',human,'remote','get-url','origin'])).toBe(cloneUrl);
+    expect(await readFile(join(human,'handoff.txt'),'utf8')).toBe('agent handoff');
+    await writeFile(join(human,'human.txt'),'plain Git');
+    await run(['git','-C',human,'add','human.txt']);
+    await run(['git','-C',human,'-c','user.name=Member','-c','user.email=member@example.invalid','commit','-m','Share with ordinary Git']);
+    await run(['git','-C',human,'push']);
+    await run(['git','-C',b,'pull','--ff-only']);
+    expect(await readFile(join(b,'human.txt'),'utf8')).toBe('plain Git');
+    await writeFile(join(b,'reply.txt'),'from another member');
+    await run(['git','-C',b,'add','reply.txt']);
+    await run(['git','-C',b,'commit','-m','Reply to handoff']);
+    await run(['git','-C',b,'push']);
+    await run(['git','-C',human,'pull','--ff-only']);
+    expect(await readFile(join(human,'reply.txt'),'utf8')).toBe('from another member');
+    // The account and network are verified again when Git later fetches or pushes.
+    await run(['git','-C',human,'fetch'],{token:'fixture-token-other',failure:true});
+    for(const candidate of [cloneUrl.replace('/team-a/','/team-b/'),api+'/not-git',cloneUrl.replace('127.0.0.1','localhost')]){
+      const testUrl=new URL(candidate);
+      const input='protocol='+testUrl.protocol.slice(0,-1)+'\nhost='+testUrl.host+'\npath='+testUrl.pathname.slice(1)+'\n\n';
+      expect(await run([...entry,'files-credential',api,'get'],{input,failure:true})).toBe('');
+    }
+
     // An older CLI could put a clone under a checkout when Git couldn't find its root.
     const record = join(home,'config','opencrawl','files',key+'.json');
     const binding = JSON.parse(await readFile(record,'utf8'));

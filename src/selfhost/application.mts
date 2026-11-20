@@ -232,7 +232,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/context/suggestions/events')return suggestionEvents(req,res);
       if(url.pathname==='/api/context/suggestions')return contextCheck(req,res);
-      if(url.pathname==='/api/files'||url.pathname.startsWith('/api/files/')){
+      if(url.pathname==='/api/files'||url.pathname.startsWith('/api/files/')||url.pathname.startsWith('/git/')){
         if(!filesHandler)return respond(404,'Shared files unavailable');
         if(req.headers.origin)return respond(403,'Browser request denied');
         const authorization=sharedFilesAuthorization(req.headers.authorization);

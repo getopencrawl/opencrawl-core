@@ -15,7 +15,8 @@ import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts
 const git = promisify(execFile);
 const identity = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && s.length <= 512 && !/[\x00-\x1f\x7f]/.test(s);
 const remotePathPattern = /^\/api\/files\/[a-f0-9]{64}\.git$/;
-type Repo = {tenantId: string; userId: string; remotePath: string};
+const clonePathPattern = /^\/git\/(?:[A-Za-z0-9_-]+|~[a-f0-9]{64})\/files\.git$/;
+type Repo = {tenantId: string; userId: string; remotePath: string; clonePath?:string};
 type Binding = Repo & {api: string; session: string; scratch: string};
 
 function bindingKey(api: string, repo: Repo, session: string) {
@@ -35,7 +36,7 @@ function loadBinding(key: string): Binding | null {
     throw new CliError('FILES_SESSION_INVALID', 'Invalid saved file session.');
   return b;
 }
-function checkPrivacy(api: string, session: string) {
+function checkPrivacy(api: string, session?: string) {
   const config = readCaptureConfig();
   const ids = [session, process.env.OPENCRAWL_SESSION_ID, process.env.CODEX_THREAD_ID, process.env.CLAUDE_CODE_SESSION_ID];
   if (config?.api === api && ids.some(id => id && ['codex','claude-code','cursor','antigravity','devin'].some(harness => sessionPrivate(config, {harness, sessionId: id}))))
@@ -53,9 +54,34 @@ async function discoverRepo(api: string) {
   if (!result.response.ok) throw new CliError('FILES_UNAVAILABLE', `Shared files unavailable (HTTP ${result.response.status}). Check this deployment and your sign-in.`, 2);
   const repo = result.body.data as Repo | undefined;
   if (result.body.schemaVersion !== 1 || !repo || !identity(repo.tenantId) || !identity(repo.userId) ||
-      typeof repo.remotePath !== 'string' || !remotePathPattern.test(repo.remotePath))
+      typeof repo.remotePath !== 'string' || !remotePathPattern.test(repo.remotePath) ||
+      (repo.clonePath !== undefined && (typeof repo.clonePath !== 'string' || !clonePathPattern.test(repo.clonePath))))
     throw new CliError('FILES_PROTOCOL_ERROR', 'Invalid shared-files discovery response.', 2);
   return {repo, token};
+}
+export async function sharedFilesUrl(api:string) {
+  const {repo} = await discoverRepo(api);
+  return api + (repo.clonePath ?? repo.remotePath);
+}
+function credentialCommand(target:string) {
+  // Git runs shell credential helpers through sh, including on Windows.
+  const entry = commandForSelf().map(word => process.platform === 'win32' ? word.replaceAll('\\', '/') : word);
+  return '!' + [...entry, 'files-credential', target].map(word => literal(word, false)).join(' ');
+}
+
+export async function setupFilesGit(api:string) {
+  const name = createHash('sha256').update(api).digest('hex') + '.gitconfig';
+  const file = join(configDir(), 'files', name);
+  const helper = JSON.stringify(credentialCommand(api));
+  const config = ['/git/', '/api/files/'].map(prefix => {
+    const scope = JSON.stringify(api + prefix);
+    return ['[credential ' + scope + ']', '  useHttpPath = true', '  helper =', '  helper = ' + helper,
+      '[http ' + scope + ']', '  extraHeader =', '  followRedirects = false'].join('\n');
+  }).join('\n') + '\n';
+  atomicFile(file, config);
+  const include = process.platform === 'win32' ? file.replaceAll('\\','/') : file;
+  await git('git', ['config','--global','--fixed-value','--replace-all','include.path',include,include], {env:gitEnvironment()});
+  return {api,config:file};
 }
 function contains(root: string, path: string) {
   const diff = relative(root, path);
@@ -137,9 +163,7 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
       return {path, remote, session, reused:true};
     }
     const stage = mkdtempSync(join(scratch, 'clone-'));
-    // Git invokes credential helpers with sh on every platform (including Git for Windows).
-    const entry = commandForSelf().map(word => process.platform === 'win32' ? word.replaceAll('\\', '/') : word);
-    const helper = '!' + [...entry, 'files-credential', key].map(word => literal(word, false)).join(' ');
+    const helper = credentialCommand(key);
     const config = ['credential.helper=', 'credential.helper=' + helper, 'credential.useHttpPath=true',
       'http.extraHeader=', 'http.followRedirects=false', 'core.hooksPath=' + hooks, 'core.symlinks=false',
       'user.name=OpenCrawl ' + session, 'user.email=agent-' + key.slice(0,16) + '@opencrawl.invalid'];
@@ -165,8 +189,11 @@ export async function sharedFileCredential(args: string[]) {
   if (args[1] === 'store' || args[1] === 'erase') return 0;
   if (args[1] !== 'get') return 1;
   try {
-    const b = loadBinding(args[0]!);
-    if (!b) return 1;
+    // The origin comes from the installed Git configuration, never from the request on stdin.
+    const target = args[0]!;
+    const binding = /^[a-f0-9]{64}$/.test(target) ? loadBinding(target) : null;
+    const api = binding?.api ?? apiOrigin(target);
+    if (!binding && api !== target) return 1;
     let input = '';
     for await (const bytes of process.stdin) {
       input += bytes.toString();
@@ -182,12 +209,16 @@ export async function sharedFileCredential(args: string[]) {
       if (fields.has(key)) return 1;
       fields.set(key, line.slice(at + 1));
     }
-    const url = new URL(b.api);
+    const url = new URL(api);
+    const path = '/' + (fields.get('path') ?? '');
     if (fields.get('host') !== url.host || fields.get('protocol') !== url.protocol.slice(0,-1) ||
-        fields.get('path') !== b.remotePath.slice(1)) return 1;
-    checkPrivacy(b.api, b.session);
-    const {repo,token} = await discoverRepo(b.api);
-    if (bindingKey(b.api, repo, b.session) !== args[0] || /[\r\n\x00]/.test(token)) return 1;
+        !(remotePathPattern.test(path) || clonePathPattern.test(path)) ||
+        (binding && path !== binding.remotePath)) return 1;
+    checkPrivacy(api, binding?.session);
+    const {repo,token} = await discoverRepo(api);
+    if (path !== repo.remotePath && path !== repo.clonePath) return 1;
+    if (binding && bindingKey(api, repo, binding.session) !== target) return 1;
+    if (/[\r\n\x00]/.test(token)) return 1;
     process.stdout.write('username=opencrawl\npassword=' + token + '\n\n');
     return 0;
   } catch { return 1; }
