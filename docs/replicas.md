@@ -18,7 +18,7 @@ workspace owner ID; migration never rewrites existing owners or captured data.
 
 The prompt configures the supported persistent Replicas environment hooks and
 native MCP identity authentication. Fresh Linux x86_64 workspaces use the
-[released Replicas plugins](https://github.com/getopencrawl/opencrawl-plugins/releases/tag/replicas-v0.2.2).
+[released Replicas plugins](https://github.com/getopencrawl/opencrawl-plugins/releases/tag/replicas-v0.2.4).
 Claude Code loads its packaged callbacks directly. Headless Codex runs its packaged
 callbacks through administrator-managed system hooks. Each package uploads user
 and assistant messages and tool inputs and outputs using signed workspace identity.
