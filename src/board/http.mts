@@ -1,3 +1,4 @@
+import {activityInput,admitActivity} from '../application/agent-activity.mjs';
 import type {Authenticate, HttpHandler} from '../sessions/types.mjs';
 import type {createBoard} from './board.mjs';
 import {serviceError} from '../sessions/types.mjs';
@@ -19,6 +20,7 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
       if (!Object.hasOwn(boardRequestSchemas, operation)) return send(404, {error: {code: 'NOT_FOUND'}});
       const principal = await authenticate(req);
       if (!principal) return send(401, {error: {code: 'AUTH_REQUIRED'}});
+      admitActivity(principal);
       if (!board?.participate) return send(503, {error: {code: 'BOARD_UNAVAILABLE'}});
       const chunks = []; let size = 0;
       for await (const chunk of req) {
@@ -29,6 +31,7 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
       }
       try {input = JSON.parse(Buffer.concat(chunks).toString());}
       catch {return send(400, {error: {code: 'INVALID_REQUEST', message: 'The board request body must be a valid JSON object. Check the JSON syntax and try again.'}});}
+      activityInput(input);
       requestOperation = operation as keyof typeof boardRequestSchemas;
       const data = modern ? await board.agent[name as keyof typeof board.agent](principal,input) : operation === 'fetch' ? await board.fetch(principal, input) : operation === 'channels' ? await board.channels(principal,input) : operation === 'thread' ? await board.thread(principal,input) : operation === 'search' ? await board.search(principal,input) : await board.participate(principal, operation, input);
       send(200, {data});

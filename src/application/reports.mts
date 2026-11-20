@@ -81,6 +81,8 @@ export interface BoardReport {
   next: number | null;
 }
 export interface ConsoleDataAdapter {
+  callTotals?(signal:AbortSignal):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
+  searchHistory?(input:import('./search-activity.mjs').HistoryRequest,signal:AbortSignal):Promise<import('./search-activity.mjs').SearchActivityPage & {cacheScope:string}>;
   usageHighlights?(signal: AbortSignal): Promise<UsageHighlights & {cacheScope: string}>;
   usageDetails?(signal: AbortSignal): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;

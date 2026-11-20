@@ -1,3 +1,5 @@
+import {agentSearchEntry} from '../application/agent-activity.mjs';
+import type {SearchEntry} from '../state/search-activity.mjs';
 import {McpServer} from '@modelcontextprotocol/server';
 
 export type ToolOutcome = 'success' | 'tool_error' | 'protocol_error' | 'disconnected';
@@ -11,24 +13,33 @@ export type ObserveTool = (call: ToolObservation) => (outcome: ToolOutcome) => v
 type Transport = Parameters<McpServer['connect']>[0];
 
 /** Observe the SDK's decoded exchanges on both protocol generations, before
- * validation and before encoding JSON/SSE. Never copy tool arguments or results. */
+ * validation and before encoding JSON/SSE. Analytics receives names/outcomes only.
+ * Product history separately selects the search query and claimed source session. */
 export class ObservableMcpServer extends McpServer {
   observeTool?: ObserveTool;
+  recordUsage?: (entry?:SearchEntry)=>Promise<void>;
 
   override async connect(transport: Transport) {
     await super.connect(transport);
     const observe = this.observeTool;
-    if (!observe) return;
+    const recordUsage=this.recordUsage;
+    if (!observe && !recordUsage) return;
+    const history=new Map<string|number,SearchEntry|undefined>();
     // HTTP dispatch begins after connect. Legacy requests can share a transport.
     const pending = new Map<string | number, ReturnType<ObserveTool>>();
     const receive = transport.onmessage;
     const send = transport.send.bind(transport);
     const close = transport.onclose;
-    const finish = (id: string | number, outcome: ToolOutcome) => {
+    const finish = async (id: string | number, outcome: ToolOutcome) => {
+      const entry=history.get(id);
+      const counted=history.delete(id);
       const done = pending.get(id);
       pending.delete(id);
       try { done?.(outcome); } catch { /* Optional observation cannot affect dispatch. */ }
+      if(counted)await recordUsage?.(entry && {...entry,failed:outcome!=='success'})
+        .catch(()=>console.error(JSON.stringify({event:'usage.write_failed',transport:'mcp'})));
     };
+    const disconnected=(id:string|number,outcome:ToolOutcome)=>{void finish(id,outcome).catch(()=>console.error(JSON.stringify({event:'usage.write_failed'})));};
     transport.onmessage = (message, extra) => {
       if ('method' in message && message.method === 'tools/call' && 'id' in message) {
         try {
@@ -36,20 +47,21 @@ export class ObservableMcpServer extends McpServer {
           const info = message.params?._meta?.['io.modelcontextprotocol/clientInfo'];
           const client = info && typeof info === 'object' && 'name' in info && typeof info.name === 'string' ? info.name.slice(0,100) : null;
           const tool = typeof name === 'string' && this.toolInputSchemaJson(name) ? name : null;
-          if (pending.has(message.id)) finish(message.id, 'protocol_error');
-          pending.set(message.id, observe({tool, client}));
+          if (pending.has(message.id)||history.has(message.id)) disconnected(message.id, 'protocol_error');
+          if(recordUsage)history.set(message.id,agentSearchEntry(tool,message.params?.arguments));
+          if(observe)pending.set(message.id, observe({tool, client}));
         } catch { /* Keep the original request and its authorization path. */ }
       }
       receive?.(message, extra);
     };
-    transport.send = (message, options) => {
+    transport.send = async (message, options) => {
       if ('id' in message && message.id != null && !('method' in message)) {
-        finish(message.id, 'error' in message ? 'protocol_error' : message.result.isError === true ? 'tool_error' : 'success');
+        await finish(message.id, 'error' in message ? 'protocol_error' : message.result.isError === true ? 'tool_error' : 'success');
       }
       return send(message, options);
     };
     transport.onclose = () => {
-      for (const id of pending.keys()) finish(id, 'disconnected');
+      for (const id of new Set([...pending.keys(),...history.keys()])) disconnected(id,'disconnected');
       close?.();
     };
   }

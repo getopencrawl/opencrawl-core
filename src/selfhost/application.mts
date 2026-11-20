@@ -1,3 +1,6 @@
+import {admitActivity,httpTool,observeAgentRequest} from '../application/agent-activity.mjs';
+import type {SearchActivity} from '../state/search-activity.mjs';
+import {measuredCheck,measuredSuggestionEvents} from '../search/check-activity.mjs';
 import type {DevinState} from '../state/devin.mjs';
 import {devinRuntime} from '../identity/devin-runtime.mjs';
 import {isDevinToken} from '../identity/devin.mjs';
@@ -65,6 +68,7 @@ import {errorInfo} from '../errors.mjs';
 import type {Log} from '../integrations/ports.mjs';
 type Store=ObjectStore;
 export interface SelfhostApplicationOptions {
+  usageActivity?:SearchActivity;
   replicasImport?:ReplicasImport;
   log?: Log;
   contextSuggestions?:ContextSuggestionsExtension;
@@ -85,7 +89,7 @@ export interface SelfhostApplicationOptions {
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
 export function selfhostApplication({settings,store,boardState,setupState,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
-  devinState,devinIdentityKey,contextSuggestions={},
+  devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
@@ -110,7 +114,11 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
   const credentials=createCaptureCredentials({store,prefix});
-  const identifyCli=accounts.identifyToken,organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
+  const identifyCli:typeof accounts.identifyToken=async(...args)=>{
+    const result=await accounts.identifyToken(...args);
+    if(result.status===200)admitActivity(result.principal);
+    return result;
+  },organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
   const devin=devinState && devinRuntime({repository:devinState,audience:settings.url,key:devinIdentityKey,tenantId:settings.organizationId,isAdmin:canManageWorkloads,
     authenticateAdmin:async req=>{
       const token=/^Bearer (.+)$/i.exec(req.headers.authorization??'')?.[1];
@@ -146,12 +154,12 @@ export function selfhostApplication({settings,store,boardState,setupState,record
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
-  const sessions=createSessionLibrary({store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
+  const sessions=createSessionLibrary({forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
   const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return identifyWorkload(token)??identifyCli(req.headers.authorization,{capture:true});};
-  const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});return identity.principal;};
-  const contextCheck=createContextCheckHandler({authenticate,check:createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize})});
-  const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:contextSuggestions.observe})});
+  const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
+  const contextCheck=createContextCheckHandler({authenticate,check:measuredCheck(usageActivity,createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize}))});
+  const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:measuredSuggestionEvents(usageActivity,contextSuggestions.observe)})});
   const setup=setupState?createSetupStatus({state:{setup:setupState},search:authorizedSearch}):undefined;
   const setupHandler=setup?createSetupHandler({setup,authenticate,invitations:{
     identifyHuman:authorization=>identifyCli(authorization,{cliOnly:true}),
@@ -161,7 +169,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate});
-  const mcp=createOpenCrawlMcp({origin:settings.url,revision:settings.revision,search:authorizedSearch,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
+  const mcp=createOpenCrawlMcp({usageActivity,origin:settings.url,revision:settings.revision,search:authorizedSearch,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
     const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];
     const workload=identifyWorkload(token);
     if(!workload)return accounts.mcpIdentity(req,res);
@@ -197,7 +205,8 @@ export function selfhostApplication({settings,store,boardState,setupState,record
     ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
     ...['slack','granola','circleback','notion','github','linear','replicas'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
-  return async(req:IncomingMessage,res:ServerResponse)=>{
+  return (req:IncomingMessage,res:ServerResponse)=>observeAgentRequest(usageActivity,httpTool(req.method,(req.url??'').split('?')[0]!),req,res,()=>handle(req,res));
+  async function handle(req:IncomingMessage,res:ServerResponse){
     for(const [key,value] of Object.entries(securityHeaders))if(key!=='Strict-Transport-Security'||settings.url.startsWith('https:'))res.setHeader(key,key==='Content-Security-Policy'?value.replace(" https://api.workos.com https://*.authkit.app",''):value);
     const respond=(status:number,body:string|Buffer,type='text/plain; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type});res.end(body);};
     const json=(status:number,body:unknown)=>respond(status,JSON.stringify(body),'application/json');
@@ -226,6 +235,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
         if(req.headers.origin)return respond(403,'Browser request denied');
         const result=await identifyAgent(req);
         if(result.status!==200)return json(result.status,{schemaVersion:1,error:{code:result.status===403?(result.code||'ACCESS_DENIED'):'AUTH_REQUIRED'}});
+        admitActivity(result.principal);
         const workspace:{id:string;name:string|null}={id:result.principal.tenantId,name:null};
         try{const organization=await directory.organizations.getOrganization(workspace.id);if(organization.id===workspace.id)workspace.name=organization.name;}catch{/* Display failure does not invalidate a verified sign-in. */}
         await observe.cli(result.principal);return json(200,{schemaVersion:1,data:{user:result.user,workspace,index:{available:false},...('workload' in result?{credential:'workspace-identity',workload:result.workload}:{})}});
@@ -249,7 +259,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[]];
-      const consoleApi=createConsoleApi({log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         ...usageServices(principal => ({principal,directory,integrations,search,connectors,onboarding,values,log})),progress:guided.progress,next:guided.next,library,libraryFailure},setup?{bootstrap:async context=>({setup:await setup.read(context.principal)})}:{});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{

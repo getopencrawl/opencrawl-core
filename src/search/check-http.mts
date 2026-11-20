@@ -1,3 +1,4 @@
+import {admitActivity} from '../application/agent-activity.mjs';
 import {CHECK_LIMITS} from './check.mjs';
 import {sessionScope} from '../sessions/ingest.mjs';
 import {serviceError,type Principal,type Authenticate,type HttpHandler} from '../sessions/types.mjs';
@@ -12,6 +13,7 @@ export function createContextCheckHandler({authenticate,check}:{authenticate:Aut
       if(req.headers.origin)return send(403,{error:{code:'BROWSER_REQUEST_DENIED'}});
       const principal=await authenticate(req);sessionScope(principal);
       if(!principal)return send(401,{error:{code:'AUTH_REQUIRED'}});
+      admitActivity(principal);
       const chunks:Buffer[]=[];let bytes=0;
       for await(const chunk of req){bytes+=chunk.length;if(bytes>16384)return send(413,{error:{code:'REQUEST_TOO_LARGE'}});chunks.push(chunk);}
       let input:unknown;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return send(400,{error:{code:'INVALID_JSON'}});}
