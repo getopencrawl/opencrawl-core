@@ -3,9 +3,9 @@
 Hosted OpenCrawl and self-hosted deployments support administrator-approved
 enrollment with Devin's signed workload identity. A fresh production Cloud
 session verified skill activation, native MCP, board access, and indexed
-conversation capture after startup. The first user prompt and first shell action
-were missing from the index. Idle board notifications and cold-boot durability
-remain unverified.
+conversation capture after startup. The index missed the first user prompt.
+Complete first-turn tool capture, idle board notifications and cold-boot
+durability remain unverified.
 
 ## Observed Cloud contract
 
@@ -457,7 +457,9 @@ using native CLI 0.4.139 then loaded the personal plugin exported by CLI
   and assistant reply under the verified session, installation and workload
   owner. It also found call and result evidence for the MCP verification receipt.
   Exact, session-scoped searches returned zero candidates for the first user
-  prompt and first shell marker. All four marker queries had ready coverage.
+  prompt and the marker requested for the first shell action. The run did not
+  establish whether that command executed. All four marker queries had ready
+  coverage.
 - `collect uninstall` stopped background startup and preserved queued data.
   Native MCP search still worked with recording off. Subsequent user and
   assistant markers had zero matches in the same index. After the admin
