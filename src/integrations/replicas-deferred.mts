@@ -24,6 +24,11 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
   const scope=[namespace,tenant];
   const page=(chat:ReplicasConversation,position:HistoryCheckpoint)=>[...scope,chat.workspace_id,chat.chat_id,position.before,position.pageLimit??100];
   return {
+    async onlyAbsent(){
+      const result=await client.query<{only_absent:boolean}>(`SELECT NOT EXISTS(SELECT 1 FROM opencrawl_replicas_deferred
+        WHERE namespace=$1 AND tenant=$2 AND (NOT(issue ? 'workspaceAbsentAt') OR issue ? 'continuation' OR checkpoint->>'before' IS NOT NULL)) AS only_absent`,scope);
+      return result.rows[0].only_absent;
+    },
     async oldest(){
       return (await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
         WHERE namespace=$1 AND tenant=$2 ORDER BY retry_at,id LIMIT 1`,scope)).rows[0];
@@ -56,7 +61,7 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
       return result.rowCount??0;
     },
     async releaseBackoff(chat:ReplicasConversation,position:HistoryCheckpoint,now:string,hasContent:boolean){
-      await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=LEAST(retry_at,$7) WHERE ${samePage} AND retry_at>$7 AND (issue->>'httpStatus'='404' OR ($8::boolean AND issue->>'reason' IN ('empty_with_messages','empty_unverified')))`,
+      await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=LEAST(retry_at,$7),issue=(issue-'workspaceAbsentAt')||jsonb_build_object('retryAt',LEAST(retry_at,$7)) WHERE ${samePage} AND retry_at>$7 AND (issue->>'httpStatus'='404' OR ($8::boolean AND issue->>'reason' IN ('empty_with_messages','empty_unverified')))`,
         [...page(chat,position),now,hasContent]);
     },
   };

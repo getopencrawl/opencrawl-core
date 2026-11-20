@@ -536,3 +536,41 @@ test('canceled messages permit a confirmed empty chat and a workspace access err
   const {rows:[row]}=await f.database.pool.query("SELECT issue FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2",[f.database.namespace,principal.tenantId]);
   assert.equal(row.issue.operation,'workspace_chats');assert.equal(row.issue.identityCheck,'verified');assert.equal(row.issue.httpStatus,403);
 });
+
+test('one retained inventory postpones absent chats across a workspace and releases a chat that reappears',async t=>{
+  let clock=Date.now(),restored=false,inventoryReads=0;
+  const second={...chat,chat_id:randomUUID()};
+  const active={...chat,chat_id:randomUUID()};
+  const chats=[chat,second,active].map(c=>({...c,senders:[{message_id:'retained-message'}]}));
+  const historyReads=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:chats,total:3,next_cursor:null});
+    if(url.pathname.endsWith('/chats')){
+      inventoryReads++;return Response.json({chats:(restored?[active,second]:[active]).map(c=>({id:c.chat_id}))});
+    }
+    if(url.pathname.endsWith('/history')){
+      const requested=url.searchParams.get('chat_id');historyReads.push(requested);
+      const present=requested===active.chat_id||(restored&&requested===second.chat_id);
+      return Response.json({thread_id:present?'native':null,events:present?[event('content')]:[],before_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  for(let i=0;i<3;i++)await advance(f.service,id);
+  assert.equal(historyReads.length,3);assert.equal(inventoryReads,0);
+  clock+=60_000;await advance(f.service,id);
+  const sleep=await f.service.runStep(job(id));
+  assert.equal(inventoryReads,1);assert.equal(historyReads.length,4);assert.equal(sleep.delayMs,30*60_000);
+  const card=await f.service.source(principal);
+  const {sourceStatus}=await import('../dist/src/application/source-model.mjs');
+  assert.equal(card.history.waitingForSource,true);assert.equal(sourceStatus(card).label,'Connected');
+  assert.equal(card.synced,1);assert.equal(card.history.phase,'importing');
+  // The next direct probe is chosen by the durable queue. Arrange for the
+  // absent chat to lead so only the inventory can release its returning peer.
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET retry_at=retry_at+interval '1 hour' WHERE namespace=$1 AND tenant=$2 AND chat->>'chat_id'=$3",[...scope,second.chat_id]);
+  restored=true;clock+=sleep.delayMs;
+  await advance(f.reopen(),id);assert.equal(inventoryReads,2);
+  const next=await advance(f.service,id);assert.equal(historyReads.at(-1),second.chat_id);
+  assert.equal(next.imported,2);assert.equal(next.processed,2);assert.equal(next.blocked,1);assert.notEqual(next.waitingForSource,true);
+  assert.ok(f.handed.length>=2);
+});
