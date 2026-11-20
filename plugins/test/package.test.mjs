@@ -28,8 +28,12 @@ test('reject unexpected files and symlink escapes', async () => {
     await assert.rejects(validate(temp), /Unexpected packaged file/);
     await rm(temp + '/opencrawl/.env');
     await rm(temp + '/opencrawl/README.md');
-    await symlink('/etc/hosts', temp + '/opencrawl/README.md');
-    await assert.rejects(validate(temp), /Symlink/);
+    try {
+      await symlink('/etc/hosts', temp + '/opencrawl/README.md');
+      await assert.rejects(validate(temp), /Symlink/);
+    } catch (err) {
+      if (err.code !== 'EPERM' && err.code !== 'ENOSYS') throw err;
+    }
   } finally {await rm(temp, {recursive: true, force: true});}
 });
 

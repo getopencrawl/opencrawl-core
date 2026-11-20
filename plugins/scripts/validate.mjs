@@ -3,6 +3,7 @@ import {readFile, readdir, lstat} from 'node:fs/promises';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 export const root = fileURLToPath(new URL('../', import.meta.url));
+const readText = async path => (await readFile(path, 'utf8')).replace(/\r\n/g, '\n');
 export const pluginFiles = ['.claude-plugin/plugin.json', '.mcp.json', 'LICENSE', 'README.md', 'assets/icon.png', 'mcp.json', 'mcp_config.json', 'plugin.json', 'skills/oc-incognito/agents/openai.yaml','skills/oc-private/agents/openai.yaml','skills/opencrawl-private/agents/openai.yaml','skills/oc-readonly/agents/openai.yaml', 'skills/oc-continue/SKILL.md','skills/oc-import-memories/SKILL.md','skills/opencrawl/SKILL.md','skills/oc-incognito/SKILL.md','skills/oc-private/SKILL.md','skills/opencrawl-private/SKILL.md','skills/oc-readonly/SKILL.md'].sort();
 const endpoint = 'https://app.getopencrawl.com/mcp';
 export function validateManifests(portable, claude, mcp, claudeMcp, agyMcp) {
@@ -44,8 +45,8 @@ export async function validateCursor(directory = root) {
   assert.equal(manifest.hooks,undefined,'Capture belongs to CLI-managed user hooks');
   const marketplace=JSON.parse(await readFile(resolve(directory,'.cursor-plugin/marketplace.json'),'utf8'));
   assert.equal(marketplace.plugins.length,1);assert.equal(marketplace.plugins[0].source,'./opencrawl-cursor');assert.equal(marketplace.plugins[0].version,manifest.version);
-  assert.equal(await readFile(resolve(base,'LICENSE'),'utf8'),await readFile(resolve(directory,'LICENSE'),'utf8'));
-  assert((await readFile(resolve(base,'skills/opencrawl/SKILL.md'),'utf8')).startsWith('---\nname: opencrawl\n'));
+  assert.equal(await readText(resolve(base,'LICENSE')),await readText(resolve(directory,'LICENSE')));
+  assert((await readText(resolve(base,'skills/opencrawl/SKILL.md'))).startsWith('---\nname: opencrawl\n'));
   return manifest.version;
 }
 export async function validate(directory = root) {
@@ -67,11 +68,11 @@ export async function validate(directory = root) {
   }
   await walk();
   assert.deepEqual(files.sort(), pluginFiles, 'Unexpected packaged file; review the release allowlist');
-  const skill = await readFile(resolve(base, 'skills/opencrawl/SKILL.md'), 'utf8');
+  const skill = await readText(resolve(base, 'skills/opencrawl/SKILL.md'));
   assert(skill.startsWith('---\nname: opencrawl\ndescription: '));
   assert(skill.includes('test_connection'));
   assert((await readFile(resolve(base, 'README.md'), 'utf8')).split(/\s+/).length >= 40);
-  assert.equal(await readFile(resolve(directory, 'LICENSE'), 'utf8'), await readFile(resolve(base, 'LICENSE'), 'utf8'));
+  assert.equal(await readText(resolve(directory, 'LICENSE')), await readText(resolve(base, 'LICENSE')));
   const cm = JSON.parse(await readFile(resolve(directory, '.claude-plugin/marketplace.json')));
   const om = JSON.parse(await readFile(resolve(directory, '.agents/plugins/marketplace.json')));
   assert.equal(cm.plugins.length, 1); assert.equal(om.plugins.length, 1);
