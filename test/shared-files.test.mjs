@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {execFile} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
+import {once} from 'node:events';
 import {promisify} from 'node:util';
 import {randomBytes,createHash} from 'node:crypto';
 import {mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile} from 'node:fs/promises';
@@ -8,7 +9,12 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fixtureToken, startFileServer} from './fixtures/shared-files-http.mjs';
 
+import {fileRepositories} from '../dist/src/files/store.mjs';
+import {admitPush} from '../dist/src/files/capacity.mjs';
+import {sharedFilesLimits} from '../dist/src/files/git-http.mjs';
+
 const exec = promisify(execFile);
+const MiB = 1024 * 1024;
 
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'opencrawl-files-test-'));
@@ -218,4 +224,99 @@ test('configured admission limits reserve capacity for other networks and reject
   await assert.rejects(writer.git('push','origin','main'));
   assert.equal(await writer.git('ls-remote','--refs','origin'),base+'\trefs/heads/main');
   assert.equal(await writer.git('rev-list','--count','origin/main..main'),'1');
+});
+
+test('published history consumes quota; a rejected draft remains local and a different workspace can publish', async t => {
+  const f = await fixture(t);
+  const agent = await f.clone('alice','quota-a');
+  await writeFile(join(agent.dir,'history.bin'),randomBytes(2*MiB));
+  await agent.git('add','history.bin');
+  await agent.git('commit','-m','Share data');
+  await agent.git('push');
+  await agent.git('rm','history.bin');
+  await agent.git('commit','-m','Retain data in history');
+  await agent.git('push');
+  const baseline = await agent.git('rev-parse','main');
+  const repo = await f.store.open('team-a');
+  const before = [...(await storedObjects(repo)).keys()].sort();
+  const limited = await f.start({limits:{...sharedFilesLimits({}), repositoryBytes: 2*MiB}});
+  await agent.git('remote','set-url','origin',await f.remote('alice',limited));
+  await edit(agent,'draft','new measurement');
+  await assert.rejects(agent.git('push'),/507/);
+  assert.equal(await agent.git('ls-remote','--refs','origin'),baseline+'\trefs/heads/main');
+  assert.equal(await agent.git('rev-list','--count','origin/main..main'),'1');
+  assert.deepEqual([...(await storedObjects(repo)).keys()].sort(),before);
+  const other = await f.clone('other','quota-b',limited);
+  const head = await edit(other,'report','independent publication');
+  await other.git('push');
+  assert.equal(await other.git('ls-remote','--refs','origin'),head+'\trefs/heads/main');
+
+  const readOnly = await f.start({limits:{...sharedFilesLimits({}),minFreeBytes:Number.MAX_SAFE_INTEGER}});
+  await agent.git('remote','set-url','origin',await f.remote('alice',readOnly));
+  await assert.rejects(agent.git('push'),/507/);
+  const noNew = fileRepositories(f.store.storageRoot,'files-test',undefined,
+    {...sharedFilesLimits({}),minFreeBytes:Number.MAX_SAFE_INTEGER});
+  await noNew.ready();
+  await assert.rejects(noNew.open('never-initialized'),{status:507});
+  assert.equal(await noNew.open('team-a'),repo);
+  const reader = await f.clone('bob','reader-under-pressure',readOnly);
+  assert.equal(await reader.git('rev-parse','main'),baseline);
+});
+
+test('workspace writer leases survive replica races and an abandoned quarantine is reclaimed after process loss', {timeout:30000}, async t => {
+  const f = await fixture(t);
+  const root = f.store.storageRoot;
+  const [alpha,beta] = await Promise.all([f.store.open('team-a'), f.store.open('team-b')]);
+  const limits = sharedFilesLimits({});
+  // Use a separate OS process: a fatal exit must release both its writer and
+  // its volume reservation without deleting a live peer's lock file.
+  const program = [
+    "import {admitPush} from " + JSON.stringify(new URL('../dist/src/files/capacity.mjs',import.meta.url).href),
+    "import {mkdir,writeFile} from 'node:fs/promises'",
+    "import {join} from 'node:path'",
+    "const [root,dir,limits] = process.argv.slice(1)",
+    "const lease = await admitPush(root,dir,JSON.parse(limits))",
+    "const pending=join(dir,'objects','incoming-abandoned')",
+    "await mkdir(pending)",
+    "await writeFile(join(pending,'fixture'),Buffer.alloc(4096))",
+    "process.send('ready')",
+    "process.on('message', () => {})",
+  ].join(';');
+  const child = spawn(process.execPath,['--input-type=module','-e',program,root,alpha,JSON.stringify(limits)],{stdio:['ignore','ignore','inherit','ipc']});
+  const closed = once(child,'close');
+  t.after(async()=>{if(child.exitCode===null && child.signalCode===null) child.kill('SIGKILL'); await closed;});
+  await Promise.race([once(child,'message'),closed.then(()=>{throw Error('lease holder exited before acquiring the workspace');})]);
+  const abandoned = join(alpha,'objects','incoming-abandoned');
+  await assert.rejects(admitPush(root,alpha,limits),{status:429});
+  assert.equal((await stat(join(abandoned,'fixture'))).size,4096);
+  const other = await admitPush(root,beta,limits);
+  await other.release();
+  const records = () => readdir(join(root,'.receive-capacity')).then(names=>names.filter(name=>name.endsWith('.reserve')));
+  assert.ok((await records()).length>=1);
+  const sentinel = join(alpha,'objects','info','retain');
+  await writeFile(sentinel,'operator metadata');
+  child.kill('SIGKILL');
+  await closed;
+  const recovered = await admitPush(root,alpha,limits);
+  try {
+    assert.equal((await records()).length,1);
+    await assert.rejects(stat(abandoned),{code:'ENOENT'});
+    assert.equal(await readFile(sentinel,'utf8'),'operator metadata');
+  } finally {await recovered.release();}
+});
+
+test('parallel tenants cannot both reserve the same free disk bytes', async t => {
+  const f=await fixture(t);
+  const [alpha,beta]=await Promise.all([f.store.open('team-a'),f.store.open('team-b')]);
+  const root=f.store.storageRoot;
+  const limits={...sharedFilesLimits({}),minFreeBytes:8*MiB,pushBytes:4*MiB};
+  // Model a 32 MiB volume with all bytes free, independent of the CI runner's disk.
+  const free=async()=>32*MiB;
+  const first=await admitPush(root,alpha,limits,free);
+  try {
+    assert.ok(first.maxPack>0 && first.maxPack<limits.pushBytes);
+    await assert.rejects(admitPush(root,beta,limits,free),{status:507});
+  } finally {await first.release();}
+  const second=await admitPush(root,beta,limits,free);
+  try {assert.equal(second.maxPack,first.maxPack);} finally {await second.release();}
 });

@@ -5,5 +5,11 @@ while read -r old new ref; do
     echo "Shared files accepts updates to main only." >&2
     exit 1
   fi
+  # Reject stale and non-fast-forward updates while objects are still in
+  # quarantine. A rejected ref must not leave unreferenced data in the store.
+  if [ "$old" != "$(git rev-parse --verify refs/heads/main)" ] || ! git merge-base --is-ancestor "$old" "$new"; then
+    echo "Shared main has changed. Fetch and integrate before retrying." >&2
+    exit 1
+  fi
 done
 exec "$OPENCRAWL_GIT_NODE" "$OPENCRAWL_GIT_HELPER"

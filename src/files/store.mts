@@ -1,7 +1,8 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {mkdir, mkdtemp, open, readFile, rename, rm, stat, writeFile} from 'node:fs/promises';
-import {dirname, isAbsolute, join} from 'node:path';
+import {mkdir, open, readFile, rm, stat, writeFile} from 'node:fs/promises';
+import {isAbsolute, join} from 'node:path';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
+import {capacityLimits, stageRepository, type Budget} from './capacity.mjs';
 import {git, seedRepository} from './git.mjs';
 
 export interface SharedFilesStore {
@@ -26,11 +27,8 @@ async function repositoryId(dir: string): Promise<string | null> {
 }
 
 // Initialize privately then rename the complete, nonempty directory on the same filesystem.
-async function initialize(dir: string, legacy?: Legacy) {
-  const parent = dirname(dir);
-  await mkdir(parent, {recursive: true, mode: 0o700});
-  const stage = await mkdtemp(join(parent, '.init-'));
-  try {
+async function initialize(root: string, dir: string, limits: Budget, legacy?: Legacy) {
+  await stageRepository(root, dir, legacy?.bundle.byteLength ?? 0, limits, async (stage, nativeLimit) => {
     await git(stage, [
       'init',
       '--quiet',
@@ -46,28 +44,31 @@ async function initialize(dir: string, legacy?: Legacy) {
     if (legacy) {
       const source = join(stage, 'migration.bundle');
       await writeFile(source, legacy.bundle, {mode: 0o600});
-      await git(stage, [
-        'fetch',
-        '--quiet',
-        '--no-tags',
-        '--no-write-fetch-head',
-        source,
-        'refs/heads/main:refs/heads/main'
-      ]);
+      await git(
+        stage,
+        [
+          '-c',
+          'fetch.unpackLimit=0',
+          '-c',
+          'transfer.unpackLimit=0',
+          'fetch',
+          '--quiet',
+          '--no-tags',
+          '--no-auto-maintenance',
+          '--no-write-fetch-head',
+          source,
+          'refs/heads/main:refs/heads/main'
+        ],
+        {},
+        nativeLimit
+      );
       if ((await git(stage, ['rev-parse', 'refs/heads/main'])) !== legacy.head)
         throw new Error('Legacy shared Git head mismatch');
       await git(stage, ['fsck', '--strict', '--no-progress']);
       await rm(source);
     } else await seedRepository(stage);
     await writeFile(join(stage, marker), randomUUID(), {mode: 0o600});
-    try {
-      await rename(stage, dir);
-    } catch (error) {
-      if (!(await repositoryId(dir))) throw error;
-    }
-  } finally {
-    await rm(stage, {force: true, recursive: true});
-  }
+  });
 }
 
 interface AuditEntry {
@@ -78,7 +79,12 @@ interface AuditEntry {
 }
 // Only newline-terminated records belong to completed ref updates. Catch up in
 // bounded batches, even after a long database outage. Never scan Git objects.
-async function catchUp(client: Pick<ApplicationDatabase['pool'], 'query'>, scope: string[], dir: string, start: number) {
+async function catchUp(
+  client: Pick<ApplicationDatabase['pool'], 'query'>,
+  scope: string[],
+  dir: string,
+  start: number
+) {
   const file = await open(logPath(dir), 'r');
   try {
     const end = (await file.stat()).size;
@@ -139,9 +145,15 @@ function location(root: string, namespace: string, tenant: string) {
 }
 
 /** Verify the disk identity against the control plane's independent receipt without creating a repository. */
-export async function matchingExistingRepository(root: string, namespace: string, tenant: string, expectedId: string) {
+export async function matchingExistingRepository(
+  root: string,
+  namespace: string,
+  tenant: string,
+  expectedId: string
+) {
   const dir = location(root, namespace, tenant);
-  if (!expectedId || (await repositoryId(dir)) !== expectedId) throw new Error('Restore the registered Git volume before serving this network');
+  if (!expectedId || (await repositoryId(dir)) !== expectedId)
+    throw new Error('Restore the registered Git volume before serving this network');
   return dir;
 }
 
@@ -155,7 +167,8 @@ export async function provisionRepository(store: SharedFilesStore, tenant: strin
 export function fileRepositories(
   root: string,
   namespace: string,
-  database?: ApplicationDatabase
+  database?: ApplicationDatabase,
+  limits: Budget = capacityLimits(process.env)
 ): SharedFilesStore {
   if (!namespace || !isAbsolute(root))
     throw new Error('Shared Git requires a namespace and an absolute storage root');
@@ -198,11 +211,15 @@ export function fileRepositories(
     async open(tenant) {
       const dir = directory(tenant);
       if (!database) {
-        if (!(await repositoryId(dir))) await initialize(dir);
+        if (!(await repositoryId(dir))) {
+          await initialize(root, dir, limits);
+          if (!(await repositoryId(dir))) throw new Error('Missing shared Git volume marker');
+        }
         return dir;
       }
       const scope = [namespace, tenant];
-      const select = 'SELECT repository_id FROM opencrawl_git_repositories WHERE namespace=$1 AND tenant_id=$2';
+      const select =
+        'SELECT repository_id FROM opencrawl_git_repositories WHERE namespace=$1 AND tenant_id=$2';
       let row = (await database.pool.query(select, scope)).rows[0];
       if (!row)
         row = await database.transaction(async (client) => {
@@ -221,7 +238,7 @@ export function fileRepositories(
                   )
                 ).rows[0]
               : undefined;
-            await initialize(dir, old);
+            await initialize(root, dir, limits, old);
             id = await repositoryId(dir);
           }
           await client.query(

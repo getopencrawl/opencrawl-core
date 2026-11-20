@@ -17,8 +17,10 @@ export async function pushAuthorization(check: () => Promise<void>) {
     try {
       await check();
       res.writeHead(204).end();
-    } catch {
-      res.writeHead(403).end();
+    } catch (error) {
+      if ((error as {status?: number}).status === 507)
+        res.writeHead(507).end('Shared Git storage quota or volume reserve reached.');
+      else res.writeHead(403).end();
     }
   });
   await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));

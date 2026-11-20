@@ -41,9 +41,27 @@ const config = [
   'maintenance.autoDetach=false'
 ];
 
+function nativeGit(args: string[], pushBytes?: number) {
+  const gitArgs = [...config, ...args];
+  // Keep a native index-pack's largest staging file bounded, even for a thin
+  // pack which appends its delta bases. sh uses 512- or 1024-byte blocks.
+  // The volume reserves for the larger size. All arguments are passed as argv.
+  const bounded = pushBytes !== undefined && process.platform !== 'win32';
+  const argv = bounded
+    ? [
+        '-c',
+        'ulimit -c 0 && ulimit -f "$1" || exit 1; shift; exec git "$@"',
+        'opencrawl-git',
+        String(Math.ceil((pushBytes + 128 * 1024) / 512)),
+        ...gitArgs
+      ]
+    : gitArgs;
+  return {file: bounded ? 'sh' : 'git', argv};
+}
 // Only used for small control replies. All pack transfers use the streaming RPC.
-export async function git(dir: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
-  const task = promisify(execFile)('git', [...config, ...args], {
+export async function git(dir: string, args: string[], extra: NodeJS.ProcessEnv = {}, pushBytes?: number) {
+  const {file, argv} = nativeGit(args, pushBytes);
+  const task = promisify(execFile)(file, argv, {
     cwd: dir,
     env: {...environment, ...extra},
     encoding: 'utf8'
@@ -51,8 +69,9 @@ export async function git(dir: string, args: string[], extra: NodeJS.ProcessEnv 
   task.child.stdin?.end();
   return (await task).stdout.trim();
 }
-export function gitRpc(dir: string, args: string[], extra: NodeJS.ProcessEnv) {
-  return spawn('git', [...config, ...args], {
+export function gitRpc(dir: string, args: string[], extra: NodeJS.ProcessEnv, pushBytes?: number) {
+  const {file, argv} = nativeGit(args, pushBytes);
+  return spawn(file, argv, {
     cwd: dir,
     env: {...environment, ...extra},
     stdio: ['pipe', 'pipe', 'ignore'],

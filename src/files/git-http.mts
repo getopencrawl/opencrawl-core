@@ -3,11 +3,13 @@ import {createHash} from 'node:crypto';
 import {availableParallelism} from 'node:os';
 import {once} from 'node:events';
 import {pipeline} from 'node:stream/promises';
+import {Transform} from 'node:stream';
 import {createGunzip} from 'node:zlib';
 import {errorInfo} from '../errors.mjs';
 import type {SharedFilesStore} from './store.mjs';
 import {failure, gitRpc} from './git.mjs';
 import {pushAuthorization} from './push-authorization.mjs';
+import {admitPush, capacityLimits, defaultMinFreeBytes, defaultRepositoryBytes} from './capacity.mjs';
 
 /** Stock Git invokes a credential helper after a Basic challenge. Translate only
  * this service's fixed username at its own route; membership is still verified. */
@@ -31,8 +33,14 @@ export function sharedFilesLimits(env: NodeJS.ProcessEnv) {
   return {
     total,
     network: number('OPENCRAWL_FILES_MAX_NETWORK_TRANSFERS', Math.max(4, Math.ceil(total / 2))),
-    pushBytes: env.OPENCRAWL_FILES_MAX_PUSH_BYTES ? number('OPENCRAWL_FILES_MAX_PUSH_BYTES', 0) : 0
+    ...capacityLimits(env)
   };
+}
+export function sharedFilesRepo({tenantId, userId}: {tenantId: string; userId: string}) {
+  const digest = createHash('sha256').update(tenantId).digest('hex');
+  const remotePath = '/api/files/' + digest + '.git';
+  const segment = /^[A-Za-z0-9_-]+$/.test(tenantId) ? tenantId : '~' + digest;
+  return {tenantId, userId, remotePath, clonePath: '/git/' + segment + '/files.git'};
 }
 const services = ['git-upload-pack', 'git-receive-pack'] as const;
 export function createSharedFilesHandler({
@@ -67,18 +75,12 @@ export function createSharedFilesHandler({
     )
       return reply(403, 'Network membership required');
     const {tenantId, userId} = principal;
-    const digest = createHash('sha256').update(tenantId).digest('hex');
-    const remotePath = '/api/files/' + digest + '.git';
-    const segment = /^[A-Za-z0-9_-]+$/.test(tenantId) ? tenantId : '~' + digest;
-    const clonePath = '/git/' + segment + '/files.git';
+    const repo = sharedFilesRepo({tenantId, userId});
+    const {remotePath, clonePath} = repo;
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/api/files') {
       if (req.method !== 'GET') return reply(405, 'Use GET');
-      return reply(
-        200,
-        JSON.stringify({schemaVersion: 1, data: {remotePath, clonePath, tenantId, userId}}),
-        'application/json'
-      );
+      return reply(200, JSON.stringify({schemaVersion: 1, data: repo}), 'application/json');
     }
     // Both public names address the same authorized network. Existing clones keep their origin.
     const base = url.pathname.startsWith('/git/') ? clonePath : remotePath;
@@ -106,28 +108,53 @@ export function createSharedFilesHandler({
     };
     res.once('close', disconnect);
     try {
-      const dir = await store.open(tenantId);
       const push = !advertise && service === 'git-receive-pack';
       const check = async () => {
         lifecycle.signal.throwIfAborted();
         await revalidate();
         lifecycle.signal.throwIfAborted();
       };
-      const gate = push ? await pushAuthorization(check) : undefined;
+      await check();
+      const dir = await store.open(tenantId);
+      const budget = push
+        ? await admitPush(store.storageRoot, dir, {
+            ...limits,
+            repositoryBytes: limits.repositoryBytes ?? defaultRepositoryBytes,
+            minFreeBytes: limits.minFreeBytes ?? defaultMinFreeBytes
+          })
+        : undefined;
+      let approved = false;
+      let gate: Awaited<ReturnType<typeof pushAuthorization>> | undefined;
       try {
-        await check();
+        if (budget)
+          gate = await pushAuthorization(async () => {
+            await budget.check();
+            await check();
+            approved = true;
+          });
         const env: NodeJS.ProcessEnv = {
           ...gate?.env,
           GIT_COMMITTER_EMAIL: Buffer.from(userId).toString('base64url') + '@opencrawl.invalid'
         };
         const v2 = service === 'git-upload-pack' && req.headers['git-protocol'] === 'version=2';
         if (v2) env.GIT_PROTOCOL = 'version=2';
-        const args = limits.pushBytes ? ['-c', 'receive.maxInputSize=' + limits.pushBytes] : [];
+        const args = budget
+          ? [
+              '-c',
+              'receive.maxInputSize=' + budget.maxPack,
+              '-c',
+              'receive.unpackLimit=0',
+              '-c',
+              'receive.autogc=false'
+            ]
+          : [];
         args.push(service.slice(4), '--stateless-rpc');
         if (advertise) args.push('--advertise-refs');
-        const child = gitRpc(dir, [...args, '.'], env);
+        const child = gitRpc(dir, [...args, '.'], env, budget?.maxPack);
         const stop = () => {
-          if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+          // After approval Git owns the short native ref transaction. Allow it to
+          // finish even if the client goes away; the reflog records its outcome.
+          if (approved || child.exitCode !== null || child.signalCode !== null || !child.pid) return;
           try {
             if (process.platform === 'win32') child.kill('SIGKILL');
             else process.kill(-child.pid, 'SIGKILL');
@@ -141,12 +168,46 @@ export function createSharedFilesHandler({
         // Attach a handler immediately: spawn or input failure can precede the first output chunk.
         void completed.catch(() => {});
         lifecycle.signal.addEventListener('abort', stop, {once: true});
+        let checking: Promise<void> | undefined;
+        let capacityError: unknown;
+        const watch =
+          budget &&
+          setInterval(() => {
+            if (approved || checking) return;
+            checking = budget
+              .check()
+              .catch((error) => {
+                if (!approved) {
+                  capacityError = error;
+                  stop();
+                }
+              })
+              .finally(() => {
+                checking = undefined;
+              });
+          }, 250).unref();
         try {
+          // Bound decoded HTTP bytes too, including Git commands and gzip bodies.
+          let received = 0;
+          const wireLimit =
+            budget &&
+            new Transform({
+              transform(chunk, _, done) {
+                received += chunk.length;
+                done(
+                  received > budget.maxPack + 65536
+                    ? failure(413, 'Git push exceeds the transfer limit')
+                    : null,
+                  chunk
+                );
+              }
+            });
+          const transforms = [];
+          if (encoding === 'gzip') transforms.push(createGunzip());
+          if (wireLimit) transforms.push(wireLimit);
           const input = advertise
             ? Promise.resolve(child.stdin.end())
-            : encoding === 'gzip'
-              ? pipeline(req, createGunzip(), child.stdin)
-              : pipeline(req, child.stdin);
+            : pipeline([req, ...transforms, child.stdin]);
           void input.catch(stop);
           let started = false;
           const begin = async () => {
@@ -167,15 +228,22 @@ export function createSharedFilesHandler({
             if (!res.write(chunk)) await once(res, 'drain', {signal: lifecycle.signal});
           }
           await Promise.all([completed, input]);
+          if (capacityError) throw capacityError;
           if (push) await store.syncAudit(tenantId, dir);
           if (!started) await begin();
           res.end();
+        } catch (error) {
+          throw capacityError ?? error;
         } finally {
+          if (watch) clearInterval(watch);
           lifecycle.signal.removeEventListener('abort', stop);
           stop();
+          await completed.catch(() => {});
+          await checking;
         }
       } finally {
         gate?.close();
+        await budget?.release();
       }
     } catch (error) {
       if (!res.destroyed) {
@@ -183,7 +251,8 @@ export function createSharedFilesHandler({
         else {
           const info = errorInfo(error);
           const status = info.status ?? 503;
-          reply(status, status >= 500 ? 'Shared files service unavailable' : info.message);
+          if (status === 429) res.setHeader('Retry-After', '1');
+          reply(status, status >= 500 && status !== 507 ? 'Shared files service unavailable' : info.message);
         }
       }
     } finally {

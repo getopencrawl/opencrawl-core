@@ -96,16 +96,40 @@ partitioning across machines. Independent local disks on interchangeable app
 replicas would diverge. Placement, replication and failover across storage
 hosts are deployment responsibilities.
 
-**Capacity.** Repository history and file size grow with the backing storage.
-Operators can set `OPENCRAWL_FILES_MAX_PUSH_BYTES` to limit incoming packs.
+**Capacity.** Defaults are 1 GiB per workspace for the entire bare repository,
+64 MiB per incoming Git pack, and 256 MiB of free space reserved on the shared
+volume. Set these in bytes with `OPENCRAWL_FILES_MAX_REPOSITORY_BYTES`,
+`OPENCRAWL_FILES_MAX_PUSH_BYTES`, and `OPENCRAWL_FILES_MIN_FREE_BYTES`.
+Deleted files still count while their objects are in history. Fetch and clone
+from an existing repository remain available at the write limit.
+
+One push at a time can write each workspace across replicas. New repositories,
+legacy imports and concurrent pushes reserve staging space against the same
+volume. Incoming packs stay packed. For a pack allowance of P bytes, the server
+reserves `8 × (P + 128 KiB) + 128 KiB` for the pack, indexes, delta bases
+and ref updates.
+It lowers the effective pack limit as space runs out. A workspace can reach
+its write limit slightly before its nominal quota. Admission at the storage
+limit returns HTTP 507. If a pack exceeds the effective limit after admission,
+Git declines the push. The local commit is available for retry.
+
+The filesystem must support POSIX-style byte-range locks and atomic renames
+across all serving replicas. The Linux distribution also limits how large
+each native Git staging file can grow. Windows source hosts enforce the
+transfer limit and check quarantine sizes during receipt and before publication.
+A killed worker releases its storage leases automatically. The next write to
+the workspace removes abandoned quarantine data. Provision a dedicated volume
+or a filesystem quota when unrelated services also write to the same disk.
+
 `OPENCRAWL_FILES_MAX_TRANSFERS` and `OPENCRAWL_FILES_MAX_NETWORK_TRANSFERS`
-control concurrent transfers per process and per network on that process.
+control concurrent transfers per process and per workspace on that process.
 The defaults allow twice the available CPU count (at least 12) across the
-process and half that total (at least four) per network. Full slots return HTTP
-429 with a retry delay. For slow uploads, adjust the proxy body-size and time
-limits and the self-host server's `OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS` (default
-60000). Apply filesystem quotas or provision more space according to the
-deployment's needs. Use normal Git maintenance for pack compaction.
+process and half that total (at least four) per workspace. A busy workspace
+writer or a full transfer pool returns HTTP 429 with a retry delay.
+For slower transfers, adjust the proxy body-size and time limits and
+`OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS` (default 60000). Automatic compaction
+is disabled on receive. For manual Git maintenance, stop writers and reserve
+temporary space for the replacement packs.
 
 **Backup and upgrade.** The offline Compose backup includes both the application
 volume and PostgreSQL. For Helm and source installs, stop writers and back up

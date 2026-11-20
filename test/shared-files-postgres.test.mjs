@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
-import {mkdir, mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
+import {cp, mkdir, mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {promisify} from 'node:util';
@@ -82,6 +82,17 @@ test('verified legacy history migrates once; native ref and authenticated push a
     {head:legacyHead,previous_head:first,user_id:'previous-member'},
     {head:next,previous_head:legacyHead,user_id:user},
   ].sort((a,b)=>a.head.localeCompare(b.head)));
+
+  // Restore a quiescent volume snapshot to a fresh root against the recorded receipt.
+  const restoreRoot = join(root,'restored-volume');
+  await cp(storage,restoreRoot,{recursive:true});
+  const restore = postgresSharedFiles(db,restoreRoot);
+  await restore.ready();
+  const restored = await restore.open(tenant);
+  assert.equal(await git(restored,['rev-parse','main']),next);
+  assert.equal(await git(restored,['show',legacyHead+':handoff']),'last legacy version');
+  await git(restored,['fsck','--full','--strict']);
+  assert.equal(await git(restored,['reflog','show','--format=%ge','-1','main']),Buffer.from(user).toString('base64url')+'@opencrawl.invalid');
 
   // A removed repository must never get reseeded (or fall back to the old SQL bundle).
   const offline = join(root,'offline-repository');
