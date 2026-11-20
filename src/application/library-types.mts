@@ -10,6 +10,7 @@ export interface SessionRef {userId: string; harness: SessionHarness; sessionId:
 export interface SessionHosts {host?: string | null; hosts?: string[]; hostsTruncated?: boolean}
 export type {SessionParticipant} from '../sessions/participants.mjs';
 export interface SessionSummary extends SessionRef, SessionHosts {
+  historyCapture?:SessionRef;
   participants?: import('../sessions/participants.mjs').SessionParticipant[]; participantsTruncated?: boolean;
   title: string; private: boolean; mine: boolean; origin: string | null; host: string | null;
   firstActivityAt: string | null; lastActivityAt: string | null; events: number; capturedTokens?: number | null;

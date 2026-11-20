@@ -1,3 +1,4 @@
+import {combineThreads,replicasThread,type ThreadEvidence} from './replicas-threads.mjs';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {ReplicasConversation,ReplicasHistory} from './replicas-api.mjs';
 
@@ -6,7 +7,7 @@ type Scope=[namespace:string,tenant:string,importId:string];
 export interface SnapshotCounts {events:number;turns:number;pages:number}
 export interface SnapshotRefresh {revision:string;baseline:SnapshotCounts|null}
 export interface WorkspaceVersion {created?:string;updated:string}
-export interface SnapshotProgress extends SnapshotCounts {through:string}
+export interface SnapshotProgress extends SnapshotCounts {through:string;thread?:ThreadEvidence;evidenceFromStart?:boolean}
 
 function timestamp(value:unknown){
   return typeof value==='string'&&Number.isFinite(Date.parse(value))?Date.parse(value):0;
@@ -27,21 +28,24 @@ export function snapshotProgress(previous:SnapshotProgress|undefined,chat:Replic
     if(event&&typeof event==='object'&&'timestamp' in event)through=Math.max(through,timestamp(event.timestamp));
   }
   if(Array.isArray(history.senders))for(const item of history.senders)through=Math.max(through,timestamp(item?.recorded_at));
-  return {events:(previous?.events??0)+history.events.length,turns:(previous?.turns??0)+turns,
+  return {thread:combineThreads(previous?.thread,replicasThread(history)),evidenceFromStart:previous?previous.evidenceFromStart===true:true,events:(previous?.events??0)+history.events.length,turns:(previous?.turns??0)+turns,
     pages:(previous?.pages??0)+1,through:new Date(through||timestamp(chat.updated_at)).toISOString()};
 }
 export async function prepareSnapshots(client:Client){
   await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_snapshots(
     namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,chat_id text NOT NULL,
     source_version timestamptz NOT NULL,counts jsonb NOT NULL,verify_next boolean NOT NULL DEFAULT false,PRIMARY KEY(namespace,tenant,import_id,workspace,chat_id))`);
+  await client.query(`ALTER TABLE opencrawl_replicas_snapshots ADD COLUMN IF NOT EXISTS evidence_complete boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS evidence_cursor text,ADD COLUMN IF NOT EXISTS evidence_thread jsonb,ADD COLUMN IF NOT EXISTS evidence_retry_at timestamptz`);
+  await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_pending_evidence ON opencrawl_replicas_snapshots(namespace,tenant,import_id,workspace,chat_id) WHERE NOT evidence_complete`);
 }
 export async function saveSnapshot(client:Client,scope:Scope,chat:ReplicasConversation,progress:SnapshotProgress,refresh?:SnapshotRefresh|null){
-  const {through,...counts}=progress;
+  const {through,thread:_thread,evidenceFromStart,...counts}=progress;
   const observed=new Date(Math.max(Date.parse(through),timestamp(refresh?.revision))).toISOString();
-  await client.query(`INSERT INTO opencrawl_replicas_snapshots(namespace,tenant,import_id,workspace,chat_id,source_version,counts)
-    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,tenant,import_id,workspace,chat_id) DO UPDATE
+  await client.query(`INSERT INTO opencrawl_replicas_snapshots(namespace,tenant,import_id,workspace,chat_id,source_version,counts,evidence_complete)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(namespace,tenant,import_id,workspace,chat_id) DO UPDATE
     SET source_version=GREATEST(opencrawl_replicas_snapshots.source_version,EXCLUDED.source_version),counts=EXCLUDED.counts,verify_next=false`,
-    [...scope,chat.workspace_id,chat.chat_id,observed,counts]);
+    [...scope,chat.workspace_id,chat.chat_id,observed,counts,evidenceFromStart===true]);
 }
 export async function snapshotsForPage(client:Client,scope:Scope,workspace:string,ids:string[]){
   if(!ids.length)return new Map<string,{source_version:Date;counts:SnapshotCounts;verify_next:boolean}>();

@@ -16,6 +16,10 @@ type Client=Pick<ApplicationDatabase['pool'],'query'>;
 const samePage=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$3 AND chat->>'chat_id'=$4
   AND (checkpoint->>'before') IS NOT DISTINCT FROM $5 AND COALESCE((checkpoint->>'pageLimit')::int,100)=$6
   AND issue->>'operation'='history' AND NOT (issue ? 'continuation')`;
+// Only repeated negative reads from a verified absent, untouched chat can
+// wait for the daily inventory. A real continuation keeps its own deadline.
+export const settledAbsence=`issue ? 'workspaceAbsentAt' AND NOT (issue ? 'continuation') AND checkpoint->>'before' IS NULL
+  AND COALESCE((issue->>'attempt')::int,0)>=3`;
 const sameMissingPage=`${samePage} AND issue->>'httpStatus'='404'`;
 
 /** The caller holds the tenant import lock for the entire activity. A shared
@@ -30,15 +34,21 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
         WHERE namespace=$1 AND tenant=$2 AND (NOT(issue ? 'workspaceAbsentAt') OR issue ? 'continuation' OR checkpoint->>'before' IS NOT NULL)) AS only_absent`,scope);
       return result.rows[0].only_absent;
     },
-    async oldest(preferContinuation:boolean,now:number){
+    async oldest(preferContinuation:boolean,now:number,nextCatalog?:number){
       if(preferContinuation){
         const due=await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
           WHERE namespace=$1 AND tenant=$2 AND issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL AND retry_at<=$3
           ORDER BY retry_at,id LIMIT 1`,[...scope,new Date(now).toISOString()]);
-        if(due.rows[0])return due.rows[0];
+        if(due.rows[0])return {row:due.rows[0],wake:due.rows[0].retry_at.getTime()};
       }
-      return (await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
-        WHERE namespace=$1 AND tenant=$2 ORDER BY retry_at,id LIMIT 1`,scope)).rows[0];
+      const first=(await client.query<DeferredRecord&{settled:boolean}>(`SELECT id,retry_at,chat,checkpoint,issue,(${settledAbsence}) AS settled
+        FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2 ORDER BY retry_at,id LIMIT 1`,scope)).rows[0];
+      if(!first)return;
+      const wake=first.retry_at.getTime();
+      if(!first.settled||nextCatalog===undefined||wake<=nextCatalog-86_400_000||wake>=nextCatalog)return {row:first,wake};
+      const active=(await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
+        WHERE namespace=$1 AND tenant=$2 AND retry_at<$3 AND NOT (${settledAbsence}) ORDER BY retry_at,id LIMIT 1`,[...scope,new Date(nextCatalog)])).rows[0];
+      return active?{row:active,wake:active.retry_at.getTime()}:{row:first,wake:nextCatalog};
     },
     async remove(row:DeferredRecord){
       await client.query('DELETE FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2 AND retry_at=$3 AND id=$4',[...scope,row.retry_at,row.id]);

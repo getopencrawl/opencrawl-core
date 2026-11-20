@@ -1,3 +1,4 @@
+export interface SessionKey {userId:string;harness:string;sessionId:string}
 /** Presence from an older client may identify a chat without its installation or harness. */
 export type SessionReference = [tenant: string, owner: string, harness: string | null, installation: string | null, session: string];
 const validPart = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);

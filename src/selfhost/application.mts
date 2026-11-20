@@ -148,12 +148,12 @@ export function selfhostApplication({settings,store,boardState,setupState,record
     if(!result)throw Object.assign(new Error('Membership required'),{status:403});
     return result;
   }
-  const workspace=createWorkspaceSearch({sessions:search,connectors});
+  const workspace=createWorkspaceSearch({sessions:search,connectors,capturePairs:replicasImport?.capturePairs});
   const authorizedSearch={
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
-  const sessions=createSessionLibrary({forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
+  const sessions=createSessionLibrary({capturePairs:replicasImport?.capturePairs,forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
   const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return identifyWorkload(token)??identifyCli(req.headers.authorization,{capture:true});};
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
