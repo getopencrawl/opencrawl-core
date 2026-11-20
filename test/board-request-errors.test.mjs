@@ -2,10 +2,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createBoardHandler} from '../dist/src/board/http.mjs';
-import {boardStateFixture} from './fixtures/board-state.mjs';
+import {boardStateFixture,postgresUrl} from './fixtures/board-state.mjs';
 import {z} from 'zod';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
-test('existing board HTTP clients can correct a rejected request using only its message', async t => {
+live('existing board HTTP clients can correct a rejected request using only its message', async t => {
   const {make} = await boardStateFixture(t);
   const board = make();
   const handler = createBoardHandler({board, authenticate: async () => ({tenantId:'team-a', userId:'caller'})});

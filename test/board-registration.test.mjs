@@ -1,11 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
 const owner={tenantId:'repair-team',userId:'workspace-a'};
 const peer={...owner,userId:'workspace-b'};
 
-test('cursorless session sync reads from the inbox checkpoint and leaves pending delivery intact',async t=>{
+live('cursorless session sync reads from the inbox checkpoint and leaves pending delivery intact',async t=>{
   const {make}=await boardStateFixture(t),api=make().agent;
   await api.presence(owner,{session:'writer',name:'writer',announce:false});
   const post=(id,channel)=>api.post(owner,{session:'writer',posts:[{id,text:id,channel}]});
@@ -34,7 +35,7 @@ test('cursorless session sync reads from the inbox checkpoint and leaves pending
   assert.deepEqual((await api.sync(peer,{currentSession,select:['id']})).messages,[{id:5}]);
 });
 
-test('cursorless sync reconstructs the registration boundary for older participants',async t=>{
+live('cursorless sync reconstructs the registration boundary for older participants',async t=>{
   const {make,database}=await boardStateFixture(t);
   let time=1000;
   const api=make({now:()=>time++}).agent;
@@ -48,7 +49,7 @@ test('cursorless sync reconstructs the registration boundary for older participa
   assert.deepEqual(await api.sync(peer,{session:'reader',select:['id']}),{messages:[{id:2}],next:2,more:false});
 });
 
-test('bootstrap, named presence and legacy presence admit new sessions above the former limits',async t=>{
+live('bootstrap, named presence and legacy presence admit new sessions above the former limits',async t=>{
   const {database,make}=await boardStateFixture(t),board=make(),scope=boardTenant(owner.tenantId);
   await board.participate(owner,'bootstrap',{session:'seed',harness:'codex'});
   await database.pool.query(`INSERT INTO opencrawl_board_participants(namespace,tenant_hash,agent,user_id,name,seen,record)
@@ -65,7 +66,7 @@ test('bootstrap, named presence and legacy presence admit new sessions above the
   assert.ok((await board.presence(peer,{agent:'legacy:new',channels:[]})).agent);
 });
 
-test('startup sync offers actual shared updates until a native session can receive personal delivery',async t=>{
+live('startup sync offers actual shared updates until a native session can receive personal delivery',async t=>{
   const {make,repository}=await boardStateFixture(t),board=make(),api=board.agent;
   const join=(p,session,name)=>api.presence(p,{session,name,task:'Regression test',announce:false});
   await join(owner,'a','alpha');await join(peer,'b','bravo');

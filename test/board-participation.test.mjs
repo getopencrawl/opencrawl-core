@@ -6,8 +6,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {request as httpRequest} from 'node:http';
 import {createBoard} from '../dist/src/board/board.mjs';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
 import {standaloneMcp} from '../dist/tools/test-fixtures/mcp.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
 const alice = {tenantId:'a', userId:'alice'}, bob = {tenantId:'a', userId:'bob'}, other = {tenantId:'b', userId:'alice'};
 async function fixture(t){const f=await boardStateFixture(t);let time=1000000;const make=()=>createBoard({state:f.state,now:()=>time});return {...f,make,advance:(ms=60000)=>{time+=ms;},restart:make};}
@@ -16,7 +17,7 @@ const post = (board, id, text='Useful change', topic='build') => board.participa
 const inbox = board => board.participate(alice, 'inbox', {session:'one'});
 const ack = (board, receipt) => board.participate(alice, 'ack', {session:'one', receipt});
 
-test('bootstrap is unnamed and idempotent, then profile preserves identity and delivery on resume', async t => {
+live('bootstrap is unnamed and idempotent, then profile preserves identity and delivery on resume', async t => {
   const f = await fixture(t); let board = f.make();
   const bootstrap = () => board.participate(alice, 'bootstrap', {session:'one', harness:'codex'});
   const [first, concurrent] = await Promise.all([bootstrap(), bootstrap()]);
@@ -48,7 +49,7 @@ test('bootstrap is unnamed and idempotent, then profile preserves identity and d
   assert.deepEqual((await board.post(alice,{workspace:'a',agent:'codex:chosen-by-agent',posts:[publication]})).accepted,published.accepted);
 });
 
-test('bootstrap and profile scope colliding sessions to the authenticated user and tenant', async t => {
+live('bootstrap and profile scope colliding sessions to the authenticated user and tenant', async t => {
   const f=await fixture(t), board=f.make();
   const boot=(p,extra={})=>board.participate(p,'bootstrap',{session:'same',harness:'codex',...extra});
   const a=await boot(alice), b=await boot(bob), c=await boot(other);
@@ -63,7 +64,7 @@ test('bootstrap and profile scope colliding sessions to the authenticated user a
   assert.equal((await board.participate(alice,'profile',{session:'same',name:'codex:my-choice',task:'Updated task'})).agent,a.agent);
 });
 
-test('MCP reuses the account-owned CLI identity, canonical name and retry IDs across restarts', async t => {
+live('MCP reuses the account-owned CLI identity, canonical name and retry IDs across restarts', async t => {
   const f=await fixture(t); let board=f.make();
   const registered=await register(board,alice);
   await board.participate(alice,'subscribe',{session:'one',topics:['build']});
@@ -91,7 +92,7 @@ test('MCP reuses the account-owned CLI identity, canonical name and retry IDs ac
   assert.equal(participant.left,false);
 });
 
-test('existing listeners establish ownership without guessing from names or changing receipts and history', async t => {
+live('existing listeners establish ownership without guessing from names or changing receipts and history', async t => {
   const f=await fixture(t); let board=f.make();
   const registered=await register(board,alice);
   await register(board,bob,'two','claude:two');
@@ -130,7 +131,7 @@ test('existing listeners establish ownership without guessing from names or chan
   await assert.rejects(board.post(alice,{...args,posts:[{...publication,text:'Changed'}]}),{status:409});
 });
 
-test('name resolution stays account- and tenant-scoped and cannot overwrite another registration', async t => {
+live('name resolution stays account- and tenant-scoped and cannot overwrite another registration', async t => {
   const f=await fixture(t), board=f.make();
   const owner=await register(board,alice), tenantOwner=await register(board,other,'different');
   const args={workspace:'a',agent:'codex:one',posts:[{id:'one',topic:'build',text:'Useful update'}]};
@@ -144,14 +145,14 @@ test('name resolution stays account- and tenant-scoped and cannot overwrite anot
   await assert.rejects(board.post(bob,{...args,workspace:'b'}),{status:403});
 });
 
-test('post resolves a registration committed before its transaction',async t=>{
+live('post resolves a registration committed before its transaction',async t=>{
     const f=await fixture(t),registered=await register(f.make(),alice),board=f.make();
     const synced=await board.post(alice,{agent:'codex:one',posts:[{id:'race',topic:'build',text:'Concurrent update'}]});
     assert.equal(synced.agent,registered.agent);assert.deepEqual(synced.accepted,[1]);
     assert.equal((await board.read(alice)).messages[0].agent,registered.agent);
   });
 
-test('MCP-only names retain their separate retry namespaces until registration', async t => {
+live('MCP-only names retain their separate retry namespaces until registration', async t => {
   const board=(await fixture(t)).make();
   const args={workspace:'a',agent:'codex:one',posts:[{id:'same',topic:'build',text:'Lowercase session'}]};
   const lower=await board.post(alice,args);
@@ -160,7 +161,7 @@ test('MCP-only names retain their separate retry namespaces until registration',
   assert.deepEqual(lower.accepted,[1]); assert.deepEqual(upper.accepted,[2]);
 });
 
-test('participation fails closed; same session IDs remain tenant- and user-scoped', async t => {
+live('participation fails closed; same session IDs remain tenant- and user-scoped', async t => {
   const f=await fixture(t), board=f.make();
   for (const principal of [null, {}, {tenantId:'a'}, {...alice,captureAccess:'read'}]) {
     for (const operation of ['register','directory','inbox','publish','ack','subscribe','leave']) await assert.rejects(board.participate(principal,operation,{}), {status:403});
@@ -181,7 +182,7 @@ test('participation fails closed; same session IDs remain tenant- and user-scope
   assert.equal(agents.length,2); assert.ok(agents.some(p=>p.agent===a.agent));
 });
 
-test('only mentions and subscribed topics are delivered, and delivery survives restart until acknowledgment', async t => {
+live('only mentions and subscribed topics are delivered, and delivery survives restart until acknowledgment', async t => {
   const f=await fixture(t); let board=f.make();
   const registration=await register(board,alice); await register(board,bob,'two','claude:two');
   assert.deepEqual(registration.subscriptions,{mentions:true,topics:[],channels:[],announcements:true});
@@ -206,7 +207,7 @@ test('only mentions and subscribed topics are delivered, and delivery survives r
   assert.equal((await board.participate(alice,'directory')).agents.find(a=>a.agent===registration.agent).listening,false);
 });
 
-test('all subscribed messages arrive in bounded batches without losing overlap or echoing own posts', async t => {
+live('all subscribed messages arrive in bounded batches without losing overlap or echoing own posts', async t => {
   const f=await fixture(t), board=f.make();
   await register(board,alice); await register(board,bob,'two','claude:two');
   // Older CLIs still send homepage:true; it is accepted and has no effect.
@@ -228,7 +229,7 @@ test('all subscribed messages arrive in bounded batches without losing overlap o
   assert.equal((await inbox(board)).batch,null);
 });
 
-test('concurrent registration, publishing, polling and ack retries preserve identities and log', async t => {
+live('concurrent registration, publishing, polling and ack retries preserve identities and log', async t => {
   const f=await fixture(t), boards=[f.make(),f.make(),f.make()];
   const registered=await Promise.all(boards.map(board=>register(board,alice)));
   assert.equal(new Set(registered.map(r=>r.agent)).size,1);
@@ -245,7 +246,7 @@ test('concurrent registration, publishing, polling and ack retries preserve iden
   await register(boards[0],alice); assert.equal((await inbox(boards[0])).batch,null);
 });
 
-test('MCP posts resolve registered mentions and only return a write receipt', async t => {
+live('MCP posts resolve registered mentions and only return a write receipt', async t => {
   const f=await fixture(t),board=f.make(); await register(board,alice);
   const result=await board.post(bob,{workspace:'a',agent:'legacy',posts:[{id:'one',topic:'other',text:'@codex:one coordinate here'}]});
   assert.deepEqual(result.accepted,[1]); assert.equal('recentSessions' in result,false);
@@ -253,7 +254,7 @@ test('MCP posts resolve registered mentions and only return a write receipt', as
   assert.equal(batch.messages[0].name,'legacy');
 });
 
-test('MCP and CLI suppress their own cross-transport posts without suppressing peers', async t => {
+live('MCP and CLI suppress their own cross-transport posts without suppressing peers', async t => {
   const f=await fixture(t); let board=f.make();
   await register(board,alice); await register(board,alice,'another','codex:another');
   await board.participate(alice,'subscribe',{session:'one',topics:['build']});
@@ -279,7 +280,7 @@ test('MCP and CLI suppress their own cross-transport posts without suppressing p
   assert.equal((await board.read(alice)).messages.length,4);
 });
 
-test('inline mentions accept sentence punctuation through CLI and MCP without crossing scope', async t => {
+live('inline mentions accept sentence punctuation through CLI and MCP without crossing scope', async t => {
   const f=await fixture(t),board=f.make();
   const target=await register(board,alice); await register(board,bob,'two','claude:two');
   await register(board,other,'foreign','foreign:peer');
@@ -303,7 +304,7 @@ test('inline mentions accept sentence punctuation through CLI and MCP without cr
   await assert.rejects(board.participate(bob,'publish',{session:'two',id:'explicit',topic:'build',text:'Explicit names stay exact',mentions:['codex:one:']}),{status:404});
 });
 
-test('punctuated registered names take precedence and publication retries keep their original recipients', async t => {
+live('punctuated registered names take precedence and publication retries keep their original recipients', async t => {
   const f=await fixture(t);let board=f.make();
   const plain=await register(board,alice); await register(board,bob,'two','claude:two');
   const first=await post(board,'retry','@codex:one: dependency');
@@ -320,7 +321,7 @@ test('punctuated registered names take precedence and publication retries keep t
   assert.deepEqual(batch.messages.map(m=>m.id),[2,3,4]);
 });
 
-test('unknown inline tags warn once per response and retries retain original routing', async t => {
+live('unknown inline tags warn once per response and retries retain original routing', async t => {
   const f=await fixture(t),board=f.make();
   await register(board,alice); await register(board,bob,'two','claude:two');
   const args={session:'one',id:'tag',topic:'build',text:'@missing @missing @claude:two coordinate'};
@@ -342,7 +343,7 @@ test('unknown inline tags warn once per response and retries retain original rou
   assert.ok((await board.read(alice)).messages.every(m=>!('publication' in m)));
 });
 
-test('single-tenant HTTP registration and inbox persist without hosted credentials', async t => {
+live('single-tenant HTTP registration and inbox persist without hosted credentials', async t => {
   const pg=await boardStateFixture(t);
   const dir=await mkdtemp(join(tmpdir(),'board-http-')); const token='local-test-only-token-'.repeat(3);
   let server;

@@ -1,10 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {boardStateFixture} from './fixtures/board-state.mjs';
+import {boardStateFixture,postgresUrl} from './fixtures/board-state.mjs';
 import {fixture,owner,batch} from './session-deletion-fixture.mjs';
 import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
 
-test('incognito fences every publication path and erases only the authenticated capture',async t=>{
+test('incognito fences every publication path and erases only the authenticated capture',{skip:!postgresUrl},async t=>{
   const f=fixture(),storage=await boardStateFixture(t);
   const library=createSessionLibrary({...f.options,scheduleDeletion:async()=>{}});
   const board=storage.make({requestCaptureErasure:(p,s)=>library.requestDeletion(p,s,{beforeFirstCapture:true})});

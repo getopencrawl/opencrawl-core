@@ -5,14 +5,15 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createBoard} from '../dist/src/board/board.mjs';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
+const live = (name, fn) => test(name, {skip: !postgresUrl}, fn);
 
 const a = {tenantId: 'a', userId: 'alice'}, b = {tenantId: 'b', userId: 'bob'};
 async function fixture(t){const f=await boardStateFixture(t);let time=10000000;const make=()=>createBoard({state:f.state,now:()=>time});return {...f,make,later:()=>{time+=16*60*1000;},restart:make};}
 const post = (id, text = 'Taking auth refresh') => ({id, topic: 'auth', text});
 
-test('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
+live('read-only browsing is scoped, paginated newest first and never changes the stored board', async t => {
   const f = await fixture(t), board = f.make();
   assert.deepEqual(await board.read(a), {topics: [], topicSummaries: [], channels:['opencrawl'], channelSummaries:[{channel:'opencrawl',posts:0,latest:{id:0,timestamp:0,name:'opencrawl'},readOnly:true}], messages: [], next: null});
   for (let i = 1; i <= 25; i++) await board.post(a, {workspace: a.tenantId, agent: 'codex', posts: [post(String(i))]});
@@ -53,7 +54,7 @@ test('read-only browsing is scoped, paginated newest first and never changes the
   }
 });
 
-test('durable scope, authenticated authors, retries and presence expiration', async t => {
+live('durable scope, authenticated authors, retries and presence expiration', async t => {
   const f = await fixture(t), board = f.make();
   await assert.rejects(board.sync({}, {workspace: a.tenantId, agent: 'codex'}), /scope/);
   await assert.rejects(board.sync(a, {workspace: a.tenantId, agent: 'codex', tenantId: 'b'}));
@@ -75,7 +76,7 @@ test('durable scope, authenticated authors, retries and presence expiration', as
   assert.deepEqual((await f.make().topics(a)).topics[0].active, []);
 });
 
-test('discovery exposes bounded previews; selected fetch is read-only, scoped and paginated', async t => {
+live('discovery exposes bounded previews; selected fetch is read-only, scoped and paginated', async t => {
   const f = await fixture(t), board = f.make(), text = ('Specific reusable finding. ' + 'detail '.repeat(60)).trimEnd();
   await board.post(a, {workspace: a.tenantId, agent: 'writer', posts: [post('details', text)]});
   const result = await board.sync(a, {workspace: a.tenantId, agent: 'reader', topics: ['auth'], after: 0});
@@ -94,7 +95,7 @@ test('discovery exposes bounded previews; selected fetch is read-only, scoped an
   await assert.rejects(board.fetch(a, {workspace: 'a', id: first.id, offset: 99999}), {status: 400});
 });
 
-test('concurrent clients do not lose writes; bounded deltas eventually deliver each message once', async t => {
+live('concurrent clients do not lose writes; bounded deltas eventually deliver each message once', async t => {
   const f = await fixture(t), boards = Array.from({length: 6}, () => f.make());
   await Promise.all(boards.map((board, i) => board.post(a, {workspace: a.tenantId, agent: 'writer-' + i, posts: [post(String(i), 'x'.repeat(512))]})));
   const board = f.make(); let cursor = 0, found = [];
@@ -127,14 +128,14 @@ test('S3 CAS signs the expected condition, rejects collisions and bounds reads',
   await assert.rejects(store.readVersion('board', {maxBytes: 1}), /read limit/);
 });
 
-test('concurrent transactions allocate contiguous IDs and explicit cursors cannot miss publications',async t=>{
+live('concurrent transactions allocate contiguous IDs and explicit cursors cannot miss publications',async t=>{
     const f=await fixture(t),board=f.make();
     await Promise.all(Array.from({length:20},(_,i)=>board.post({...a,userId:'writer'+i},{agent:'writer',posts:[post(String(i))]})));
     let cursor=0,ids=[];for(;;){const page=await board.sync(a,{agent:'reader',topics:['auth'],after:cursor});ids.push(...page.messages.map(m=>m.id));cursor=page.cursor;if(!page.more)break;}
     assert.deepEqual(ids,Array.from({length:20},(_,i)=>i+1));assert.equal(cursor,20);
   });
 
-test('real MCP clients exchange scoped messages and revoked credentials cannot read', async t => {
+live('real MCP clients exchange scoped messages and revoked credentials cannot read', async t => {
   const {createServer} = await import('node:http');
   const {Client, StreamableHTTPClientTransport} = await import('@modelcontextprotocol/client');
   const {createOpenCrawlMcp} = await import('../dist/src/mcp/server.mjs');
@@ -182,7 +183,7 @@ test('real MCP clients exchange scoped messages and revoked credentials cannot r
 });
 
 
-test('existing boards keep posting, retrying and reading after message 10000', async t => {
+live('existing boards keep posting, retrying and reading after message 10000', async t => {
   const f=await fixture(t), key='test/tenants/'+createHash('sha256').update(a.tenantId).digest('hex')+'.json';
   const messages=Array.from({length:10000},(_,i)=>({id:i+1,timestamp:i,agent:'seed',author:'alice',name:'seed',topic:'auth',text:'retained history',requestId:String(i)}));
   assert.ok(await f.store.compareAndSet(key,null,Buffer.from(JSON.stringify({schema:1,messages,agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}}))));

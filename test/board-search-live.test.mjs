@@ -4,12 +4,13 @@ import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
 import {Client, StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {createBoard} from '../dist/src/board/board.mjs';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
 import {createBoardSearch} from '../dist/src/board/search.mjs';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
 
-test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text and stable pagination', async t => {
+live('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text and stable pagination', async t => {
   const f=await boardStateFixture(t);
   let tick = Date.parse('2026-11-01T00:00:00Z');
   const board = createBoard({state:f.state,now:()=>tick++});
@@ -54,7 +55,7 @@ test('real PostgreSQL and MCP: relevance, phrase boost, facets, scope, full text
 });
 
 
-test('more than 10000 messages remain searchable with exact facets and exhaustive stable pages', async t => {
+live('more than 10000 messages remain searchable with exact facets and exhaustive stable pages', async t => {
   const f=await boardStateFixture(t),principal={tenantId:'large-board',userId:'author'},search=createBoardSearch({state:f.state});
   const messages=Array.from({length:10005},(_,i)=>({id:i+1,timestamp:1700000000000+i,topic:'work',agent:'writer',author:'author',name:'System test',text:i>=10000?'marker priority':'marker',requestId:String(i)}));
   await f.repository.importLegacy(boardTenant(principal.tenantId),{schema:1,messages,agents:{},usage:{calls:0,inputBytes:0,outputBytes:0}});
@@ -73,7 +74,7 @@ test('more than 10000 messages remain searchable with exact facets and exhaustiv
   assert.equal(tail.total,5);assert.deepEqual(tail.messages.map(m=>m.id),[10005,10004,10003,10002,10001]);
 });
 
-test('real PostgreSQL searches long board posts through their tail and pages complete bodies', async t => {
+live('real PostgreSQL searches long board posts through their tail and pages complete bodies', async t => {
   const f=await boardStateFixture(t),principal={tenantId:'long-board',userId:'author'};
   const bodies=['marker short',('詳🧪 detail '.repeat(1800))+' marker uniquetail',('more detail '.repeat(2000))+' marker uniquetail'];
   const messages=bodies.map((text,i)=>({id:i+1,timestamp:1700000000000+i,topic:'work',agent:'writer',author:'author',name:'Writer',text,requestId:String(i)}));

@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {createSearchActivity} from '../dist/src/state/search-activity.mjs';
 import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
@@ -21,7 +21,7 @@ const ctx={harness:'codex',sessionId:'shared'};
 const entry=(query,current=ctx)=>agentSearchEntry('opencrawl_search_v1',{query,currentSession:current});
 const identity=async(_p,rows)=>rows;
 
-test('authenticated call accounting, scoped paging and idempotent proactive outcomes on PostgreSQL',async t=>{
+test('authenticated call accounting, scoped paging and idempotent proactive outcomes on PostgreSQL',{skip:!postgresUrl},async t=>{
   const db=await applicationDatabaseFixture(t);
   const requests=[];
   const activity=createSearchActivity({...db,pool:{async query(sql,args){const result=await db.pool.query(sql,args);requests.push({sql,returned:result.rows.length});return result;}}});
@@ -94,7 +94,7 @@ test('a search page checks captured owners in bulk and rechecks private and dele
   assert.deepEqual(await library.visibleActivity({...bob,tenantId:other.tenantId},rows),[]);
 });
 
-test('history and summary query plans stay bounded with a large workspace and many unlinked searches',async t=>{
+test('history and summary query plans stay bounded with a large workspace and many unlinked searches',{skip:!postgresUrl},async t=>{
   const db=await applicationDatabaseFixture(t);
   const plans=[];
   const activity=createSearchActivity({...db,pool:{async query(sql,args){

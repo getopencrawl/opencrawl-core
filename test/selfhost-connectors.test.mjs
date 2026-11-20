@@ -1,5 +1,6 @@
-import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {test} from 'node:test';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -25,7 +26,7 @@ async function fixture(t,extra={}){
 }
 const principal={tenantId:'org_team',userId:'user_a'};
 
-test('Airbyte opt-out needs no connector credentials and exposes setup guidance without outbound work',async t=>{
+live('Airbyte opt-out needs no connector credentials and exposes setup guidance without outbound work',async t=>{
   const service=await fixture(t,{OPENCRAWL_AIRBYTE_ENABLED:'false',AIRBYTE_WORKSPACE_ID:undefined,AIRBYTE_URL:undefined,AIRBYTE_CLIENT_ID:undefined,AIRBYTE_CLIENT_SECRET:undefined,
     OPENCRAWL_LANDING_S3_ACCESS_KEY_ID:undefined,OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY:undefined,OPENCRAWL_CONNECTOR_KEY:undefined,
     GITHUB_APP:'invalid unused configuration',SLACK_CLIENT_ID:'incomplete-unused-configuration'});
@@ -45,7 +46,7 @@ test('Airbyte is enabled by default and invalid opt-out values fail closed',()=>
   assert.throws(()=>selfhostServices({}, {}, {}, {}),/AIRBYTE_WORKSPACE_ID is required/);
 });
 
-test('fresh OSS exposes every supported connector and explains missing setup without starting a connection',async t=>{
+live('fresh OSS exposes every supported connector and explains missing setup without starting a connection',async t=>{
   const service=await fixture(t);
   const cards=await service.integrations.list(principal);
   assert.deepEqual(cards.map(c=>c.provider).sort(),['circleback','github','granola','linear','notion','slack']);
@@ -55,7 +56,7 @@ test('fresh OSS exposes every supported connector and explains missing setup wit
   assert.equal((await service.registry.listTenant(principal.tenantId)).length,0);
 });
 
-test('operator broker enables OAuth connectors without exposing its key in the catalog',async t=>{
+live('operator broker enables OAuth connectors without exposing its key in the catalog',async t=>{
   const service=await fixture(t,{COMPOSIO_API_KEY:'operator-private-key'});
   const cards=await service.integrations.list(principal);
   for(const id of ['notion','circleback','slack'])assert.equal(cards.find(c=>c.provider===id).state,'disconnected');
@@ -118,7 +119,7 @@ function conforms(id,config,manifest){
     if(declared.minimum!==undefined)assert.ok(value>=declared.minimum&&value<=declared.maximum,`${id} ${key} is out of range`);
   }
 }
-test('every brokered connector receives the configuration its manifest requires, without the operator key',async t=>{
+live('every brokered connector receives the configuration its manifest requires, without the operator key',async t=>{
   const f=await broker(t);
   for(const id of brokered){
     const record=await f.connect(id,'ca_'+id),config=await f.oauth.sourceConfiguration(record,f.providers[id]);
@@ -134,7 +135,7 @@ test('every brokered connector receives the configuration its manifest requires,
   assert.equal(f.calls.length,0);
 });
 
-test('the operator’s own Slack app receives the configuration its registered connector requires',async t=>{
+live('the operator’s own Slack app receives the configuration its registered connector requires',async t=>{
   // What self-host registers in Airbyte once a Slack app is configured, and the provider that builds the source settings.
   const {providers}=await fixture(t,{SLACK_CLIENT_ID:'client-id',SLACK_CLIENT_SECRET:'client-secret'});
   assert.equal(providers.slack.connector.name,'OpenCrawl Slack (operator OAuth)');
@@ -157,7 +158,7 @@ test('the operator’s own Slack app receives the configuration its registered c
   assert.throws(()=>conforms('slack (published)',config,connectorManifest('slack')),/must match/);
 });
 
-test('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{
+live('a brokered source capability reads only its own provider’s listed endpoints while connected',async t=>{
   const f=await broker(t,()=>({status:200,data:{results:[]}}));
   const record=await f.connect('notion','ca_first'),config=await f.oauth.sourceConfiguration(record,f.providers.notion);
   const call=(input,{secret=config.credential_proxy_api_key,id='ca_first',user=config.user_id}={})=>f.oauth.proxyCredential(id,secret,user,input);
@@ -190,7 +191,7 @@ test('a brokered source capability reads only its own provider’s listed endpoi
   const before=f.calls.length;await assert.rejects(call(files),{status:403});assert.equal(f.calls.length,before);
 });
 
-test('brokered Slack keeps the public-channel policy of the direct adapter',async t=>{
+live('brokered Slack keeps the public-channel policy of the direct adapter',async t=>{
   const f=await broker(t,body=>{
     const method=new URL(body.endpoint).pathname.slice('/api/'.length);
     if(method==='conversations.list')return {status:200,data:{ok:true,channels:[{id:'C_PUBLIC',name:'general',is_private:false},{id:'C_PRIVATE',name:'private',is_private:true}]},headers:{}};
@@ -209,7 +210,7 @@ test('brokered Slack keeps the public-channel policy of the direct adapter',asyn
   assert.ok(f.calls.every(c=>c.body.method==='GET'&&c.body.user_id==='selfhost:org_team:user_a'&&c.body.connected_account_id==='ca_slack'));
 });
 
-test('the connector proxy route carries brokered reads, including a request body, and refuses browsers',async t=>{
+live('the connector proxy route carries brokered reads, including a request body, and refuses browsers',async t=>{
   const f=await broker(t,()=>({status:200,data:{results:[{id:'page_1'}]},headers:{}}));
   const config=await f.oauth.sourceConfiguration(await f.connect('notion','ca_notion'),f.providers.notion);
   const server=createServer(connectorProxyHandler(f.oauth));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
@@ -246,7 +247,7 @@ async function installation(t,env={}){
 }
 const states=async service=>Object.fromEntries((await service.integrations.list(principal)).map(card=>[card.provider,card.state]));
 
-test('an admin-entered broker key is checked, stored encrypted, and enables its connectors without a restart',async t=>{
+live('an admin-entered broker key is checked, stored encrypted, and enables its connectors without a restart',async t=>{
   const composio=await brokerService(t),f=await installation(t,{COMPOSIO_BASE_URL:composio.url}),service=f.open();
   const before=await service.integrations.list(principal),notion=before.find(card=>card.provider==='notion');
   assert.equal(notion.state,'setup-required');assert.equal(notion.setup.requirement,'Needs a Composio key');
@@ -273,7 +274,7 @@ test('an admin-entered broker key is checked, stored encrypted, and enables its 
   assert.equal((await states(f.open())).notion,'disconnected');
 });
 
-test('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
+live('a broker key from the server environment cannot be replaced in the product; without a connector key nothing is stored',async t=>{
   const composio=await brokerService(t);
   const managed=(await installation(t,{COMPOSIO_BASE_URL:composio.url,COMPOSIO_API_KEY:'good-project-key'})).open();
   assert.equal((await states(managed)).notion,'disconnected');

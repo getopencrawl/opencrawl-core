@@ -1,4 +1,4 @@
-import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSingleOrganizationRegistry} from '../dist/src/integrations/local-registry.mjs';
@@ -7,7 +7,7 @@ import {selfhostServices} from '../dist/src/selfhost/services.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-test('self-host disconnect removes its connection without uninstalling a shared GitHub installation',async t=>{
+test('self-host disconnect removes its connection without uninstalling a shared GitHub installation',{skip:!postgresUrl},async t=>{
  const database=await applicationDatabaseFixture(t);
  const dir=await mkdtemp(join(tmpdir(),'opencrawl-disconnect-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const registry=createSingleOrganizationRegistry({database,organizationId:'org_team'});t.after(()=>registry.close());
@@ -37,7 +37,7 @@ test('startup recovery skips active, pending consent, removed and nonrecoverable
  current={...record,tenantId:'org_foreign'};await assert.rejects(service.recoverRecord(record),/scope/);
 });
 
-test('OSS continues recovery after one interrupted connection fails',async t=>{
+test('OSS continues recovery after one interrupted connection fails',{skip:!postgresUrl},async t=>{
  const database=await applicationDatabaseFixture(t);
  const dir=await mkdtemp(join(tmpdir(),'opencrawl-recovery-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const services=selfhostServices({organizationId:'org_team',url:'https://self.example',registryPath:join(dir,'registry.sqlite'),search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:'org_team'}},{bucket:'owned'},database,

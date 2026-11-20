@@ -1,6 +1,7 @@
-import {boardStateFixture} from './fixtures/board-state.mjs';
+import {boardStateFixture,postgresUrl} from './fixtures/board-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 import {createServer} from 'node:http';
 import {createBoard} from '../dist/src/board/board.mjs';
 import {authorizedBoard} from '../dist/src/application/board.mjs';
@@ -11,7 +12,7 @@ const alice={tenantId:'team-a',userId:'alice'},bob={tenantId:'team-b',userId:'bo
 const post=text=>({id:'same-retry-id',topic:'work',text});
 async function storeFixture(t){const f=await boardStateFixture(t);let reads=0,writes=0;const repository=f.repository;return {...f,get reads(){return reads;},get writes(){return writes;},state:{...f.state,board:{...repository,async read(...args){reads++;return repository.read(...args);},async transaction(...args){writes++;return repository.transaction(...args);},async search(...args){reads++;return repository.search(...args);}}}};}
 
-test('board operations derive scope from authentication and reject foreign or absent authority',async t=>{
+live('board operations derive scope from authentication and reject foreign or absent authority',async t=>{
   const f=await storeFixture(t),board=createBoard({state:f.state});
   for(const [principal,text]of [[alice,'Team A content'],[bob,'Team B content']]){
     await board.post(principal,{agent:'same-agent',posts:[post(text)]});
@@ -33,7 +34,7 @@ test('board operations derive scope from authentication and reject foreign or ab
   assert.deepEqual({reads:f.reads,writes:f.writes},before);
 });
 
-test('deployment-authorized workspace selection remains available alongside authenticated defaults',async t=>{
+live('deployment-authorized workspace selection remains available alongside authenticated defaults',async t=>{
   const f=await storeFixture(t),memberships=new Set(['team-a','team-b']),finalScopes=[];
   const board=authorizedBoard({state:f.state,
     admit:async(principal,requested)=>{
@@ -61,7 +62,7 @@ test('deployment-authorized workspace selection remains available alongside auth
   assert.deepEqual({reads:f.reads,writes:f.writes},before);
 });
 
-test('omitting workspace still rechecks revocation after reading content',async t=>{
+live('omitting workspace still rechecks revocation after reading content',async t=>{
   const f=await storeFixture(t);let active=true,revokeOnRead=false;
   const board=authorizedBoard({state:{...f.state,board:{...f.state.board,async read(...args){const value=await f.state.board.read(...args);if(revokeOnRead)active=false;return value;}}},
     admit:async principal=>principal,
@@ -72,7 +73,7 @@ test('omitting workspace still rechecks revocation after reading content',async 
   await assert.rejects(board.fetch(alice,{id:'message:1'}),{status:403});
 });
 
-test('real MCP tools omit workspace, isolate identical references and reject revoked tokens',async t=>{
+live('real MCP tools omit workspace, isolate identical references and reject revoked tokens',async t=>{
   const f=await storeFixture(t),board=createBoard({state:f.state});
   let handler,revoked=false;
   const server=createServer((req,res)=>handler(req,res));

@@ -2,10 +2,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createBoard, syncSchema, postSchema, presenceSchema} from '../dist/src/board/board.mjs';
 import {authorizedBoard} from '../dist/src/application/board.mjs';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
 const principal={tenantId:'local',userId:'alice'};
-test('sync rejects mutations and leaves even expired presence, usage and an empty tenant unchanged',async t=>{
+live('sync rejects mutations and leaves even expired presence, usage and an empty tenant unchanged',async t=>{
  const f=await boardStateFixture(t),board=f.make({now:()=>1000});
  await board.presence(principal,{agent:'reader',channels:['work']});
  await board.post({...principal,userId:'bob'},{agent:'writer',posts:[{id:'one',channel:'work',text:'Read this'}]});
@@ -23,7 +24,7 @@ test('sync rejects mutations and leaves even expired presence, usage and an empt
  assert.equal('after' in postSchema.shape,false);assert.equal('posts' in presenceSchema.shape,false);
 });
 
-test('publication only returns receipts, never touches presence or session discovery, and remains atomic',async t=>{
+live('publication only returns receipts, never touches presence or session discovery, and remains atomic',async t=>{
  const f=await boardStateFixture(t),board=f.make({recentSessions:{list(){throw Error('Posting must not discover sessions');}}});
  const registration=await board.participate(principal,'register',{session:'native',name:'codex:writer',task:'Test split tools'});
  const before=await f.repository.exportLegacy(boardTenant('local'));
@@ -36,7 +37,7 @@ test('publication only returns receipts, never touches presence or session disco
  await assert.rejects(board.post(principal,{agent:'codex:writer',posts:[]}));
 });
 
-test('post and presence retain admission and final revocation checks',async t=>{
+live('post and presence retain admission and final revocation checks',async t=>{
  const f=await boardStateFixture(t);let active=true,writes=0;
  const board=authorizedBoard({state:{board:{...f.repository,async transaction(...args){writes++;const result=await f.repository.transaction(...args);active=false;return result;}}},
   admit:async p=>{if(!active)throw Object.assign(Error('Revoked'),{status:403});return p;},
@@ -47,7 +48,7 @@ test('post and presence retain admission and final revocation checks',async t=>{
  }
 });
 
-test('reply totals are scoped bulk reads and include replies outside the displayed page',async t=>{
+live('reply totals are scoped bulk reads and include replies outside the displayed page',async t=>{
  const f=await boardStateFixture(t),board=f.make();
  for(const tenantId of ['local','other']){
   const p={...principal,tenantId};await board.post(p,{agent:'writer',posts:[{id:'root',channel:'work',text:'Root'},{id:'empty',channel:'work',text:'No replies'}]});

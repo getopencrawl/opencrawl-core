@@ -2,11 +2,12 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
 import {createBoardAnnouncementWriter} from '../dist/src/board/announcements.mjs';
 import {createBoardHandler} from '../dist/src/board/http.mjs';
 import {createOpenCrawlMcp} from '../dist/src/mcp/server.mjs';
 import {authorizedBoard} from '../dist/src/application/board.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
 const alice={tenantId:'team-a',userId:'alice'},bob={...alice,userId:'bob'},outsider={tenantId:'team-b',userId:'alice'};
 async function fixture(t){
@@ -16,7 +17,7 @@ async function fixture(t){
 }
 const register=(board,p=alice,session='s',name='codex:client')=>board.participate(p,'register',{session,name,task:'Testing threads',harness:'codex'});
 
-test('empty channels expose reserved identity; only the internal scoped application writer can announce',async t=>{
+live('empty channels expose reserved identity; only the internal scoped application writer can announce',async t=>{
  const f=await fixture(t),{board,writer}=f;
  const channels=await board.channels(alice,{});
  assert.deepEqual(channels.channels.map(c=>c.channel),['opencrawl']);assert.equal(channels.channels[0].readOnly,true);assert.equal(channels.channels[0].repliesAllowed,true);
@@ -41,7 +42,7 @@ test('empty channels expose reserved identity; only the internal scoped applicat
  assert.equal((await f.repository.exportLegacy(boardTenant(alice.tenantId))).messages.length,1);
 });
 
-test('replies stay in a scoped root, preserve retry identity and survive export/import and restart',async t=>{
+live('replies stay in a scoped root, preserve retry identity and survive export/import and restart',async t=>{
  const f=await fixture(t),{board}=f;await register(board);
  const root=await f.announce('root');
  const input={session:'s',id:'reply',channel:'opencrawl',threadId:root.id,text:'I can help.'};
@@ -63,7 +64,7 @@ test('replies stay in a scoped root, preserve retry identity and survive export/
  await assert.rejects(board.post(alice,{agent:'codex:client',posts:[{id:'normal',channel:'engineering',threadId:3,text:'Ordinary root'}]}),{status:409});
 });
 
-test('system announcements reach unsubscribed native and MCP agents; replies do not broadcast',async t=>{
+live('system announcements reach unsubscribed native and MCP agents; replies do not broadcast',async t=>{
  const f=await fixture(t),{board}=f;await register(board);
  await register(board,bob,'b','claude:peer');await board.participate(alice,'subscribe',{session:'s',channels:[]});
  await f.announce('root');
@@ -77,7 +78,7 @@ test('system announcements reach unsubscribed native and MCP agents; replies do 
  const replies=await board.participate(alice,'inbox',{session:'s'});assert.equal(replies.batch.messages[0].id,2);
 });
 
-test('thread pagination keeps roots explicit and replies complete across concurrent publication',async t=>{
+live('thread pagination keeps roots explicit and replies complete across concurrent publication',async t=>{
  const f=await fixture(t),{board}=f;await f.announce('one');
  for(let i=0;i<25;i++)await board.post(bob,{agent:'writer',posts:[{id:String(i),channel:'opencrawl',threadId:1,text:'Reply '+i}]});
  const first=await board.thread(alice,{threadId:1});assert.equal(first.root.id,1);assert.equal(first.replies.length,20);assert.equal(first.next,7);
@@ -87,7 +88,7 @@ test('thread pagination keeps roots explicit and replies complete across concurr
  await assert.rejects(board.sync(alice,{agent:'client',channels:['opencrawl'],topics:['engineering']}),{status:400});
 });
 
-test('single-tenant HTTP and MCP expose threads and channels but never the system writer',async t=>{
+live('single-tenant HTTP and MCP expose threads and channels but never the system writer',async t=>{
  const f=await fixture(t),{board}=f;const root=await f.announce('root');
  const httpHandler=createBoardHandler({board,authenticate:async()=>alice});
  let mcp;const server=createServer((req,res)=>req.url.startsWith('/api/board/')?httpHandler(req,res):mcp(req,res));
@@ -106,7 +107,7 @@ test('single-tenant HTTP and MCP expose threads and channels but never the syste
  assert.equal((await request('publish',{session:'s',id:'http-reply',channel:'opencrawl',threadId:root.id,text:'HTTP reply'})).status,200);
 });
 
-test('thread and channel reads retain final revocation barriers',async t=>{
+live('thread and channel reads retain final revocation barriers',async t=>{
  const f=await fixture(t);await f.announce('root');let active=true;
  const board=authorizedBoard({state:f.state,admit:async p=>p,authorize:async p=>{if(!active)throw Object.assign(Error('revoked'),{status:403});return p;}});
  active=false;await assert.rejects(board.thread(alice,{threadId:1}),{status:403});await assert.rejects(board.channels(alice,{}),{status:403});

@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
-import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
+const live=(name,options,fn)=>typeof options==='function'?test(name,{skip:!postgresUrl},options):test(name,{skip:!postgresUrl||Boolean(options?.skip),...options},fn);
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createReplicasImport} from '../dist/src/integrations/replicas-import.mjs';
@@ -31,7 +32,7 @@ async function fixture(t,{failHandoff=false,answer,schedule=async()=>{},now=Date
 }
 const job=(id,owner=principal)=>({tenantId:owner.tenantId,id});
 async function advance(service,id,owner=principal){await service.advance(job(id,owner));return service.status(owner);}
-test('connect verifies inventory and hands off before returning; checkpoint survives restart',async t=>{
+live('connect verifies inventory and hands off before returning; checkpoint survives restart',async t=>{
   const jobs=[],f=await fixture(t,{schedule:async task=>jobs.push(task)});
   const {id,phase}=await f.service.action(principal,{action:'connect',apiKey:'private-org-key'});
   assert.equal(phase,'importing');assert.deepEqual(jobs,[job(id)]);assert.ok(f.calls.every(call=>!call.pathname.endsWith('/history')));
@@ -42,12 +43,12 @@ test('connect verifies inventory and hands off before returning; checkpoint surv
   const done=await advance(f.reopen(),id);assert.equal(done.phase,'complete');assert.equal(done.events,2);assert.equal(done.imported,1);
   assert.ok((await query()).rows[0].credential,'daily sync retains the sealed organization key');
 });
-test('Temporal rejection rolls back the connection and credential',async t=>{
+live('Temporal rejection rolls back the connection and credential',async t=>{
   const f=await fixture(t,{schedule:async()=>{throw Error('Temporal unavailable');}});
   await assert.rejects(f.service.action(principal,{action:'connect',apiKey:'key'}),/Temporal unavailable/);
   assert.equal(await f.service.status(principal),null);
 });
-test('failed handoff retains its checkpoint; reconnect fences old activities',async t=>{
+live('failed handoff retains its checkpoint; reconnect fences old activities',async t=>{
   let clock=Date.now();
   const f=await fixture(t,{failHandoff:true,now:()=>clock});const connect=()=>f.service.action(principal,{action:'connect',apiKey:'key'});
   const {id}=await connect();const retry=await advance(f.service,id);
@@ -59,7 +60,7 @@ test('failed handoff retains its checkpoint; reconnect fences old activities',as
   const resumed=await connect();assert.notEqual(resumed.id,id);assert.equal(resumed.events,1);
   assert.equal(await f.service.advance(job(id)),true);assert.equal((await advance(f.service,resumed.id)).events,2);
 });
-test('personal keys and upstream bodies never become accepted credentials or exposed error text',async t=>{
+live('personal keys and upstream bodies never become accepted credentials or exposed error text',async t=>{
   const database=await applicationDatabaseFixture(t),key=randomBytes(32);
   const service=createReplicasImport({database,key,ingest:async()=>{throw new Error('not allowed');},request:async()=>Response.json({organization,caller:'personal_api_key'})});
   await assert.rejects(service.action(principal,{action:'connect',apiKey:'secret'}),/organization API key/);assert.equal(await service.status(principal),null);
@@ -98,7 +99,7 @@ test('API schema preserves unknown envelope and event fields without injecting d
   const history={events:[{unexpected:'record',payload:null}],has_more:false,future:{a:1},senders:[{native:'sender'}]};
   assert.deepEqual(await replicasApi('key',async()=>Response.json(history)).history(chat),history);
 });
-test('a blocked first chat keeps its cursor and key, later catalog pages import and restart recovers it',async t=>{
+live('a blocked first chat keeps its cursor and key, later catalog pages import and restart recovers it',async t=>{
   let clock=Date.now(),blocked=true;
   const second={...chat,chat_id:randomUUID(),workspace_id:randomUUID(),provider:'muse'};
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -123,7 +124,7 @@ test('a blocked first chat keeps its cursor and key, later catalog pages import 
   assert.equal(done.phase,'complete');assert.equal(done.processed,2);assert.equal(done.blocked,0);assert.equal(done.events,3);
   assert.equal(f.calls.at(-1).searchParams.get('before_cursor'),'saved');
 });
-test('due missing pages share retries between foreground pages and preserve every catalog checkpoint',async t=>{
+live('due missing pages share retries between foreground pages and preserve every catalog checkpoint',async t=>{
   let clock=Date.now(),missing=true;
   const aliases=[chat,{...chat,title:'Second catalog label'}];
   const long={...chat,chat_id:randomUUID(),workspace_id:randomUUID(),title:'Long foreground chat'};
@@ -169,7 +170,7 @@ test('due missing pages share retries between foreground pages and preserve ever
   assert.deepEqual(new Set(pages.map(p=>p.data.replicasPage.conversation.title)),new Set(aliases.map(a=>a.title)));
 });
 
-test('a cached 404 cannot suppress a different workspace, another tenant or a new credential generation',async t=>{
+live('a cached 404 cannot suppress a different workspace, another tenant or a new credential generation',async t=>{
   const otherWorkspace={...chat,workspace_id:randomUUID()};
   let missing=true;
   const f=await fixture(t,{answer:url=>{
@@ -188,7 +189,7 @@ test('a cached 404 cannot suppress a different workspace, another tenant or a ne
   missing=true;assert.equal((await advance(f.service,resumed.id)).processed,2,'different workspace must actually read');
   assert.equal((await f.service.status(secondTenant)).blockedChats,undefined);
 });
-test('polling the Replicas card reads a bounded summary of a large in-flight checkpoint',async t=>{
+live('polling the Replicas card reads a bounded summary of a large in-flight checkpoint',async t=>{
   const f=await fixture(t);
   await f.service.action(principal,{action:'connect',apiKey:'key'});
   const occurrences=Object.fromEntries(Array.from({length:4096},(_,i)=>[String(i).padStart(64,'0'),1]));
@@ -208,7 +209,7 @@ test('polling the Replicas card reads a bounded summary of a large in-flight che
   }finally{f.database.pool.query=query;}
 });
 
-test('repeated history 404 samples the workspace inventory once and waking history stays pending',async t=>{
+live('repeated history 404 samples the workspace inventory once and waking history stays pending',async t=>{
   let clock=Date.now(),mode='missing';
   const f=await fixture(t,{now:()=>clock,answer:url=>{
     if(url.pathname.endsWith('/chats'))return Response.json({chats:[{id:chat.chat_id,title:'private title'}]});
@@ -233,7 +234,7 @@ test('repeated history 404 samples the workspace inventory once and waking histo
   for(let i=0;i<8&&done.phase!=='complete';i++)done=await advance(f.service,id);assert.equal(done.phase,'complete');assert.equal(done.events,1);
 });
 
-test('empty history cannot complete a chat with recorded messages or an unconfirmed null thread',async t=>{
+live('empty history cannot complete a chat with recorded messages or an unconfirmed null thread',async t=>{
   let clock=Date.now(),available=false,readable=false;
   const empty={...chat,chat_id:randomUUID()};
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -250,7 +251,7 @@ test('empty history cannot complete a chat with recorded messages or an unconfir
   assert.equal(done.phase,'complete');assert.equal(done.processed,2);assert.equal(done.events,1);
 });
 
-test('workspace diagnostics compare only the requested export scope and never skip the missing chat',async t=>{
+live('workspace diagnostics compare only the requested export scope and never skip the missing chat',async t=>{
   let clock=Date.now();
   const other={...chat,workspace_id:randomUUID()};
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -269,12 +270,12 @@ test('workspace diagnostics compare only the requested export scope and never sk
   assert.equal(f.calls.some(url=>url.pathname.includes(other.workspace_id)),false);
 });
 
-test('repeated history cursor defers the exact checkpoint without duplicate handoff',async t=>{
+live('repeated history cursor defers the exact checkpoint without duplicate handoff',async t=>{
   const f=await fixture(t,{answer:url=>url.pathname.endsWith('/history')?Response.json({events:[event('one')],before_cursor:'same'}):null});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});await advance(f.service,id);
   const partial=await advance(f.service,id);assert.equal(partial.blocked,1);assert.equal(partial.events,1);assert.equal(f.handed.length,1);
 });
-test('the same Replicas chat imported into two tenants gets separate immutable paths and owners',async t=>{
+live('the same Replicas chat imported into two tenants gets separate immutable paths and owners',async t=>{
   const f=await fixture(t);
   for(const tenantId of ['org_a','org_b']){
     const owner={...principal,tenantId};let state=await f.service.action(owner,{action:'connect',apiKey:'key'});
@@ -283,7 +284,7 @@ test('the same Replicas chat imported into two tenants gets separate immutable p
   assert.equal(new Set(f.handed).size,4);assert.notEqual(f.handed[0].split('/users/')[0],f.handed[2].split('/users/')[0]);
 });
 
-test('full history round-trips through immutable ingest, search and the session library',async t=>{
+live('full history round-trips through immutable ingest, search and the session library',async t=>{
   const {mkdtemp,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {pathToFileURL}=await import('node:url');
   const {gunzipSync}=await import('node:zlib');
   const {createSessionSearch}=await import('../dist/src/sessions/search.mjs');
@@ -322,7 +323,7 @@ test('full history round-trips through immutable ingest, search and the session 
   assert.equal((await library.list({...principal,tenantId:'outside'},{})).sessions.length,0);
 });
 
-test('a large page splits into durable batches and a partial handoff retries without losing records',async t=>{
+live('a large page splits into durable batches and a partial handoff retries without losing records',async t=>{
   const database=await applicationDatabaseFixture(t),store=memorySessionStore();const payload='x'.repeat(8*1024*1024);
   const history={events:[{type:'future-tool',payload:{output:payload}}],before_cursor:null};
   let calls=0,fail=true,clock=Date.now();const ingest=createSessionIngest({store,prefix:'large/v1',scheduleIndexing:async()=>{calls++;if(calls===2&&fail){fail=false;throw Error('second handoff failed');}}}).putBatch;
@@ -333,7 +334,7 @@ test('a large page splits into durable batches and a partial handoff retries wit
   assert.equal([...store.data.keys()].filter(k=>k.endsWith('.json.gz')).length,2);
 });
 
-test('a single oversized history event survives checkpoints, indexing and authorized readback',async t=>{
+live('a single oversized history event survives checkpoints, indexing and authorized readback',async t=>{
   const {createSessionIngest}=await import('../dist/src/sessions/ingest.mjs');
   const {createSessionPipeline}=await import('../dist/src/sessions/indexer.mjs');
   const {gunzipSync}=await import('node:zlib');
@@ -372,7 +373,7 @@ test('a single oversized history event survives checkpoints, indexing and author
   await assert.rejects(expandReplicasPayload(store,prefix,manifest.owner,key,manifest),/missing or changed/);
 });
 
-test('duplicate catalog entries preserve their metadata while counting one distinct session',async t=>{
+live('duplicate catalog entries preserve their metadata while counting one distinct session',async t=>{
   const f=await fixture(t,{answer:url=>url.pathname.endsWith('conversations')?Response.json({conversations:[chat,{...chat,title:'Another catalog label',provider:'future-agent'}],total:2,next_cursor:null}):url.pathname.endsWith('history')?Response.json({events:[event('same native history')],before_cursor:null}):null});
   let status=await f.service.action(principal,{action:'connect',apiKey:'key'});
   for(let i=0;i<2;i++)status=await advance(f.service,status.id,principal);
@@ -408,7 +409,7 @@ test('backfill resolves each authored message from the catalog or history, inclu
   assert.equal(participantProjection(events[1],batch).participantName,'Person One');assert.equal(participantProjection(events[2],batch).participantName,'two@example.test');
 });
 
-test('history 403 verifies identity: a valid key defers just the chat, an identity denial requires reconnect',async t=>{
+live('history 403 verifies identity: a valid key defers just the chat, an identity denial requires reconnect',async t=>{
   for(const valid of [true,false]){
     let connected=false;
     const f=await fixture(t,{answer:url=>{
@@ -423,7 +424,7 @@ test('history 403 verifies identity: a valid key defers just the chat, an identi
     if(!valid)assert.equal(row.state.recentIssues.at(-1).originalHttpStatus,403);
   }
 });
-test('identity verification outage keeps the original history error and credential until it recovers',async t=>{
+live('identity verification outage keeps the original history error and credential until it recovers',async t=>{
   let clock=Date.now(),identities=0,healthy=false;
   const f=await fixture(t,{now:()=>clock,answer:url=>{
     if(url.pathname.endsWith('whoami')&&++identities>1&&!healthy)return new Response(null,{status:503});
@@ -437,7 +438,7 @@ test('identity verification outage keeps the original history error and credenti
   healthy=true;clock+=wait.delayMs;assert.equal((await advance(f.reopen(),id)).phase,'complete');
 });
 
-test('reconnecting a pre-upgrade failed checkpoint succeeds even when its first chat still returns 404',async t=>{
+live('reconnecting a pre-upgrade failed checkpoint succeeds even when its first chat still returns 404',async t=>{
   const f=await fixture(t,{answer:url=>url.pathname.endsWith('history')?new Response(null,{status:404}):null});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   await f.database.pool.query(`UPDATE opencrawl_replicas_imports SET credential=NULL,state=state||$3::jsonb WHERE namespace=$1 AND tenant=$2`,
@@ -447,7 +448,7 @@ test('reconnecting a pre-upgrade failed checkpoint succeeds even when its first 
   assert.equal(f.calls.filter(call=>call.pathname.endsWith('history')).length,0);
   assert.equal((await advance(f.service,resumed.id)).blocked,1);assert.equal(await f.service.advance(job(id)),true);
 });
-test('temporary failure of the initial catalog schedules the import with its verified key',async t=>{
+live('temporary failure of the initial catalog schedules the import with its verified key',async t=>{
   let clock=Date.now(),unavailable=true;const jobs=[];
   const f=await fixture(t,{now:()=>clock,schedule:async job=>jobs.push(job),answer:url=>{
     if(url.pathname.endsWith('conversations')&&unavailable)return new Response(null,{status:503});
@@ -458,7 +459,7 @@ test('temporary failure of the initial catalog schedules the import with its ver
   assert.equal((await advance(f.reopen(),pending.id)).total,1);
   await advance(f.service,pending.id);assert.equal((await advance(f.service,pending.id)).phase,'complete');
 });
-test('rate limit respects Retry-After; oversized pages shrink in place without losing the key',async t=>{
+live('rate limit respects Retry-After; oversized pages shrink in place without losing the key',async t=>{
   let clock=Date.now(),count=0;
   const f=await fixture(t,{now:()=>clock,answer:url=>{
     if(!url.pathname.endsWith('history'))return;
@@ -473,7 +474,7 @@ test('rate limit respects Retry-After; oversized pages shrink in place without l
   await advance(f.service,id);assert.equal((await advance(f.service,id)).phase,'complete');
 });
 
-test('a real Temporal worker completes a paginated import after the request ends',async t=>{
+live('a real Temporal worker completes a paginated import after the request ends',{skip:!postgresUrl||process.env.OPENCRAWL_TEST_TEMPORAL!=='1'},async t=>{
   const {TestWorkflowEnvironment}=await import('@temporalio/testing'),{Worker}=await import('@temporalio/worker');
   const {replicasActivities}=await import('../dist/src/sessions/temporal/replicas.mjs');
   const {sessionIndexingScheduler}=await import('../dist/src/sessions/temporal/client.mjs');
@@ -501,7 +502,7 @@ test('a real Temporal worker completes a paginated import after the request ends
   }
 });
 
-test('matching empty responses share the retry and retain the provider request identifier',async t=>{
+live('matching empty responses share the retry and retain the provider request identifier',async t=>{
   let clock=Date.now(),restored=false,reads=0;
   const aliases=[{...chat,senders:[{message_id:'a'}]},{...chat,senders:[{sender_user_id:'member',recorded_at:'2026-10-01'}]}];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -526,7 +527,7 @@ test('matching empty responses share the retry and retain the provider request i
   assert.equal(done.phase,'complete');assert.equal(done.imported,1);assert.equal(done.processed,2);
 });
 
-test('canceled messages permit a confirmed empty chat and a workspace access error leaves other imports runnable',async t=>{
+live('canceled messages permit a confirmed empty chat and a workspace access error leaves other imports runnable',async t=>{
   let clock=Date.now();
   const canceled={...chat,chat_id:randomUUID(),senders:[{message_id:'discarded'}]};
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -544,7 +545,7 @@ test('canceled messages permit a confirmed empty chat and a workspace access err
   assert.equal(row.issue.operation,'workspace_chats');assert.equal(row.issue.identityCheck,'verified');assert.equal(row.issue.httpStatus,403);
 });
 
-test('one retained inventory postpones absent chats across a workspace and releases a chat that reappears',async t=>{
+live('one retained inventory postpones absent chats across a workspace and releases a chat that reappears',async t=>{
   let clock=Date.now(),restored=false,inventoryReads=0;
   const second={...chat,chat_id:randomUUID()};
   const active={...chat,chat_id:randomUUID()};
@@ -585,7 +586,7 @@ test('one retained inventory postpones absent chats across a workspace and relea
   assert.ok(f.handed.length>=2);
 });
 
-test('a small successful continuation grows the page size and clears the stale oversized failure',async t=>{
+live('a small successful continuation grows the page size and clears the stale oversized failure',async t=>{
   let clock=Date.now();
   const sizes=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -610,7 +611,7 @@ test('a small successful continuation grows the page size and clears the stale o
   assert.equal(status.phase,'complete');assert.equal(status.processed,1);assert.equal(status.events,5);
 });
 
-test('a recovered long transcript makes progress alongside older unavailable chats',async t=>{
+live('a recovered long transcript makes progress alongside older unavailable chats',async t=>{
   const clock=Date.now(),others=Array.from({length:8},()=>({...chat,chat_id:randomUUID()})),reads=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
     if(url.pathname.endsWith('/history')){
@@ -631,7 +632,7 @@ test('a recovered long transcript makes progress alongside older unavailable cha
   assert.deepEqual(reads.slice(0,4),Array(4).fill(chat.chat_id));assert.ok(others.some(o=>o.chat_id===reads[4]));assert.equal(reads[5],chat.chat_id);
 });
 
-test('a workspace-only chat must reappear in its exact retained organization export before history is read',async t=>{
+live('a workspace-only chat must reappear in its exact retained organization export before history is read',async t=>{
   let clock=Date.now();
   const retained={...chat,chat_id:randomUUID()},listedOnly={...chat,chat_id:randomUUID()},alreadyImported={...chat,chat_id:randomUUID()};
   const reads=[],scopedPages=[];
@@ -659,7 +660,7 @@ test('a workspace-only chat must reappear in its exact retained organization exp
   assert.equal(row.export_check.phase,'complete');assert.equal(row.export_check.added,1);assert.deepEqual(row.export_check.outside,[listedOnly.chat_id]);
 });
 
-test('catalog disagreement also verifies the original workspaces whose first history reads all succeeded',async t=>{
+live('catalog disagreement also verifies the original workspaces whose first history reads all succeeded',async t=>{
   let clock=Date.now();
   const other={...chat,workspace_id:randomUUID(),chat_id:randomUUID()},hidden={...other,chat_id:randomUUID()};
   const fetched=[];
@@ -684,7 +685,7 @@ test('catalog disagreement also verifies the original workspaces whose first his
   const result=await f.service.status(principal);assert.equal(result.imported,2);assert.equal(result.total,3);assert.equal(result.blocked,1);
 });
 
-test('workspace absence cannot keep postponing a direct history check or override provider Retry-After',async t=>{
+live('workspace absence cannot keep postponing a direct history check or override provider Retry-After',async t=>{
   const now=Date.now(),at=new Date(now-25*60*60_000).toISOString();
   const f=await fixture(t);
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
@@ -702,7 +703,7 @@ test('workspace absence cannot keep postponing a direct history check or overrid
   assert.equal(rows.find(r=>r.id===peer.chat_id).retry_at.toISOString(),later);
 });
 
-test('a failed export owns its wakeup, retains scoped rows and restarts from page one when totals change',async t=>{
+live('a failed export owns its wakeup, retains scoped rows and restarts from page one when totals change',async t=>{
   let clock=Date.now(),firstPass=true;
   const extra={...chat,chat_id:randomUUID()},reads=[],cursors=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -737,7 +738,7 @@ test('a failed export owns its wakeup, retains scoped rows and restarts from pag
   assert.equal((await f.service.status(principal)).phase,'complete');
 });
 
-test('an unavailable filtered export resumes its saved cursor after Retry-After',async t=>{
+live('an unavailable filtered export resumes its saved cursor after Retry-After',async t=>{
   let clock=Date.now(),unavailable=true;
   const cursors=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -759,7 +760,7 @@ test('an unavailable filtered export resumes its saved cursor after Retry-After'
   assert.deepEqual(cursors,[null,'later','later']);assert.equal((await f.service.status(principal)).phase,'complete');
 });
 
-test('a short terminal export shifts its next page boundary and compares the rows actually returned',async t=>{
+live('a short terminal export shifts its next page boundary and compares the rows actually returned',async t=>{
   let clock=Date.now(),fixed=false;
   const hidden={...chat,chat_id:randomUUID()},pages=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -789,7 +790,7 @@ test('a short terminal export shifts its next page boundary and compares the row
   assert.deepEqual(pages,[[100,null],[100,'p2'],[99,null],[100,null],[100,'p2']]);
 });
 
-test('a growing native chat is refreshed from the exact retained row and only its source delta is credited',async t=>{
+live('a growing native chat is refreshed from the exact retained row and only its source delta is credited',async t=>{
   let clock=Date.now(),changed=false,allowOlder=false;
   const oldTime='2026-10-01T00:00:00Z',newTime='2026-10-03T00:00:00Z';
   const missing={...chat,chat_id:randomUUID()},wrong={...chat,created_at:'2026-09-01T00:00:00Z'};
@@ -827,7 +828,7 @@ test('a growing native chat is refreshed from the exact retained row and only it
   assert.deepEqual(reads,[null,null,'older','older']);
 });
 
-test('a completed legacy chat can verify a newly observed native revision once without recounting the original import',async t=>{
+live('a completed legacy chat can verify a newly observed native revision once without recounting the original import',async t=>{
   let clock=Date.now();
   const version='2026-10-08T00:00:00Z',missing={...chat,chat_id:randomUUID()},reads=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -846,7 +847,7 @@ test('a completed legacy chat can verify a newly observed native revision once w
   assert.equal(reads.length,2);
 });
 
-test('an explicit snapshot recheck still requires the matching retained native chat and rejects an empty placeholder',async t=>{
+live('an explicit snapshot recheck still requires the matching retained native chat and rejects an empty placeholder',async t=>{
   let clock=Date.now(),placeholder=false;
   const missing={...chat,chat_id:randomUUID()},reads=[];
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -869,7 +870,7 @@ test('an explicit snapshot recheck still requires the matching retained native c
   assert.equal((await f.database.pool.query('SELECT verify_next FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',scope)).rows[0].verify_next,false);
 });
 
-test('a long light transcript resumes from its cursor with fewer history requests',async t=>{
+live('a long light transcript resumes from its cursor with fewer history requests',async t=>{
   const total=1800,records=Array.from({length:total},(_,i)=>event('message '+i));
   const windows=[];
   const f=await fixture(t,{answer:url=>{
@@ -890,7 +891,7 @@ test('a long light transcript resumes from its cursor with fewer history request
   assert.equal(state.pages,6);
 });
 
-test('a rejected larger history window retries the same saved cursor and remembers the supported limit',async t=>{
+live('a rejected larger history window retries the same saved cursor and remembers the supported limit',async t=>{
   const records=Array.from({length:550},(_,i)=>event('record '+i)),windows=[];
   let clock=Date.now();
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -917,7 +918,7 @@ test('a rejected larger history window retries the same saved cursor and remembe
   assert.equal(state.phase,'complete');assert.equal(state.events,550);assert.equal(state.pages,6);
 });
 
-test('a daily catalog scan skips unchanged history, resumes changed chats and disconnects while idle',async t=>{
+live('a daily catalog scan skips unchanged history, resumes changed chats and disconnects while idle',async t=>{
   let clock=Date.parse('2026-11-19T12:00:00Z'),changed=false;
   const day=86_400_000,second={...chat,chat_id:randomUUID()};
   const f=await fixture(t,{now:()=>clock,answer:url=>{
@@ -942,7 +943,7 @@ test('a daily catalog scan skips unchanged history, resumes changed chats and di
   assert.equal((await f.reopen().runStep(job(id))).done,true);assert.equal(f.calls.length,before+5);
 });
 
-test('daily catalog leaves a changed record with its existing deferred checkpoint',async t=>{
+live('daily catalog leaves a changed record with its existing deferred checkpoint',async t=>{
   const {selectCatalogRows}=await import('../dist/src/integrations/replicas-catalog.mjs');
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   await advance(f.service,id);await advance(f.service,id);
@@ -957,7 +958,7 @@ test('daily catalog leaves a changed record with its existing deferred checkpoin
   assert.deepEqual(await selectCatalogRows(db,scope,[revised],true),[revised]);
 });
 
-test('Replicas and native captures group only inside the verified thread and the current reader’s visibility',async t=>{
+live('Replicas and native captures group only inside the verified thread and the current reader’s visibility',async t=>{
   const {mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{pathToFileURL}=await import('node:url');
   const {createSessionSearch}=await import('../dist/src/sessions/search.mjs');
   const {createSessionPipeline}=await import('../dist/src/sessions/indexer.mjs');
@@ -1013,7 +1014,7 @@ test('Replicas and native captures group only inside the verified thread and the
   assert.deepEqual(await service.capturePairs('another-tenant',[rows.sessions[0],rows.sessions[0].historyCapture]),[]);
 });
 
-test('archived thread backfill resumes without Replicas or indexing and withdraws conflicting native identities',async t=>{
+live('archived thread backfill resumes without Replicas or indexing and withdraws conflicting native identities',async t=>{
   const {backfillReplicasEvidence}=await import('../dist/src/integrations/replicas-archive-evidence.mjs');
   const {replicasThread,combineThreads,saveReplicasThread}=await import('../dist/src/integrations/replicas-threads.mjs');
   const thread=randomUUID(),events=[{type:'claude-user',payload:{session_id:thread,message:{role:'user',content:'a'}}}];
@@ -1042,7 +1043,7 @@ test('archived thread backfill resumes without Replicas or indexing and withdraw
   assert.deepEqual(await f.service.capturePairs(principal.tenantId,visible),[]);
 });
 
-test('daily rosters park repeatedly absent chats without rewriting the same retry or overriding Retry-After',async t=>{
+live('daily rosters park repeatedly absent chats without rewriting the same retry or overriding Retry-After',async t=>{
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const scope=[f.database.namespace,principal.tenantId],now=Date.now(),at=new Date(now).toISOString(),day=86_400_000;
   await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
@@ -1059,7 +1060,7 @@ test('daily rosters park repeatedly absent chats without rewriting the same retr
   assert.equal(await retry(),Date.parse(provider));
 });
 
-test('a shared empty-page observation keeps its actual time and attempt count in the weekly backstop',async t=>{
+live('a shared empty-page observation keeps its actual time and attempt count in the weekly backstop',async t=>{
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const now=Date.now(),day=86_400_000,shared=new Date(now-day).toISOString(),old=new Date(now-4*day).toISOString();
   const scope=[f.database.namespace,principal.tenantId];
@@ -1071,7 +1072,7 @@ test('a shared empty-page observation keeps its actual time and attempt count in
   assert.equal(row.retry_at.getTime(),Date.parse(shared)+7*day);
 });
 
-test('confirmed absent chats share the daily wake even with legacy counters while active work keeps its deadline',async t=>{
+live('confirmed absent chats share the daily wake even with legacy counters while active work keeps its deadline',async t=>{
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const {deferredHistory}=await import('../dist/src/integrations/replicas-deferred.mjs');
   const db=f.database.pool,scope=[f.database.namespace,principal.tenantId],queue=deferredHistory(db,...scope);
@@ -1089,7 +1090,7 @@ test('confirmed absent chats share the daily wake even with legacy counters whil
   assert.ok((await queue.oldest(false,next,next+day)).wake<=next);
 });
 
-test('a persistent catalog count mismatch shares the daily wake only with complete roster coverage',async t=>{
+live('a persistent catalog count mismatch shares the daily wake only with complete roster coverage',async t=>{
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   await advance(f.service,id);await advance(f.service,id);
   const {nextWorkspaceExportReview,reviewWorkspaceExport}=await import('../dist/src/integrations/replicas-export-review.mjs');

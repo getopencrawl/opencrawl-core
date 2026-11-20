@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
 import {authorizedBoard} from '../dist/src/application/board.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 const alice={tenantId:'team-a',userId:'alice'},bob={...alice,userId:'bob'},other={tenantId:'team-b',userId:'alice'};
 const user=(principal)=>({session:principal.userId});
 async function fixture(t){const f=await boardStateFixture(t),board=f.make({recentSessions:{list(){throw Error('Board messages must not discover sessions');}}});
@@ -9,7 +10,7 @@ async function fixture(t){const f=await boardStateFixture(t),board=f.make({recen
  return {...f,board,api:board.agent};}
 const post=(api,principal,id,text,extra={})=>api.post(principal,{...user(principal),posts:[{id,text,...extra}]});
 
-test('post receipts omit sender text while read, list, search, thread and sync return the full message',async t=>{
+live('post receipts omit sender text while read, list, search, thread and sync return the full message',async t=>{
  const {api}=await fixture(t),body='First line\n\n'+('complete evidence '.repeat(1600));
  const sent=await post(api,alice,'root',body,{channel:'work'});
  assert.deepEqual(sent,{messages:[{id:1,thread:1}]});
@@ -20,7 +21,7 @@ test('post receipts omit sender text while read, list, search, thread and sync r
  assert.deepEqual((await api.read(bob,{ids:[message.id],select:['text']})).messages,[{id:1,text:body}]);
 });
 
-test('threads accept any message, preserve the reply target, page oldest first and read incrementally',async t=>{
+live('threads accept any message, preserve the reply target, page oldest first and read incrementally',async t=>{
  const {api}=await fixture(t);await post(api,alice,'root','Root',{channel:'work'});
  await post(api,bob,'reply','First reply',{replyTo:1});await post(api,alice,'nested','Reply to first reply',{replyTo:2});
  const first=await api.thread(bob,{threadId:2,limit:2});assert.deepEqual(first.messages.map(m=>[m.id,m.thread,m.replyTo]),[[1,1,null],[2,1,1]]);
@@ -31,7 +32,7 @@ test('threads accept any message, preserve the reply target, page oldest first a
  await assert.rejects(post(api,alice,'wrong-channel','Wrong',{replyTo:2,channel:'elsewhere'}),{status:404});
 });
 
-test('list/search support sender handles, IDs, roots, ordering and stable whole-record pages',async t=>{
+live('list/search support sender handles, IDs, roots, ordering and stable whole-record pages',async t=>{
  const {api}=await fixture(t);await post(api,alice,'one','Needle '.repeat(2200),{channel:'work'});await post(api,bob,'two','Needle two',{channel:'work'});await post(api,alice,'three','Needle three',{replyTo:2});
  const byName=await api.search(bob,{query:'Needle',from:['@CODEX:ALICE'],order:'oldest'});assert.equal(byName.messages.length,1);assert.equal(byName.messages[0].text,'Needle '.repeat(2200));
  const next=await api.search(bob,{query:'Needle',from:['@CODEX:ALICE'],order:'oldest',cursor:byName.next});assert.deepEqual(next.messages.map(m=>m.id),[3]);
@@ -40,7 +41,7 @@ test('list/search support sender handles, IDs, roots, ordering and stable whole-
  await assert.rejects(api.list(other,{cursor:byName.next}),{status:409});
 });
 
-test('explicit mentions resolve handles and reject unknown targets atomically',async t=>{
+live('explicit mentions resolve handles and reject unknown targets atomically',async t=>{
  const {api}=await fixture(t);const message=(await post(api,alice,'tag','Hello',{channel:'work',mentions:['@codex:bob']})).messages[0];assert.deepEqual(message,{id:1,thread:1});
  assert.deepEqual((await api.sync(bob,{...user(bob),after:0})).messages[0].mentions,['codex:bob']);
  await assert.rejects(api.post(alice,{...user(alice),posts:[{id:'rolled-back',text:'One',channel:'work'},{id:'invalid',text:'Two',channel:'work',mentions:['missing']}]}),{status:404});
@@ -50,7 +51,7 @@ test('explicit mentions resolve handles and reject unknown targets atomically',a
  const inline=await post(api,alice,'inline','An unknown @package can be literal text',{channel:'work'});assert.match(inline.warning,/unregistered/);assert.deepEqual(inline.messages,[{id:2,thread:2}]);
 });
 
-test('starting and joining a thread follows its replies through both MCP-style sync and native delivery',async t=>{
+live('starting and joining a thread follows its replies through both MCP-style sync and native delivery',async t=>{
  const {api,board}=await fixture(t);await post(api,alice,'root','Root',{channel:'work'});await post(api,bob,'reply','Reply',{replyTo:1});
  assert.deepEqual((await api.sync(alice,{...user(alice),after:1})).messages.map(m=>m.id),[2]);
  const delivery=await board.participate(alice,'inbox',user(alice));assert.deepEqual(delivery.batch.messages.map(m=>m.id),[2]);
@@ -62,7 +63,7 @@ test('starting and joining a thread follows its replies through both MCP-style s
  await api.follow(alice,{...user(alice),threadId:3,following:true});assert.deepEqual((await api.sync(alice,{...user(alice),after:4})).messages.map(m=>m.id),[5]);
 });
 
-test('session identity, scope, lifecycle and final authorization remain explicit',async t=>{
+live('session identity, scope, lifecycle and final authorization remain explicit',async t=>{
  const {api,state,board}=await fixture(t);await post(api,alice,'root','Private tenant',{channel:'work'});
  for(const method of ['read','thread'])await assert.rejects(api[method](other,method==='read'?{ids:[1]}:{threadId:1}),{status:404});
  await assert.rejects(api.read(bob,{workspace:'team-b',ids:[1]}),{status:403});
@@ -83,7 +84,7 @@ test('session identity, scope, lifecycle and final authorization remain explicit
  await assert.rejects(denied.agent.read(alice,{ids:[1]}),{status:403});
 });
 
-test('reply targets, mention names and following survive backup/restore',async t=>{
+live('reply targets, mention names and following survive backup/restore',async t=>{
  const {api,repository}=await fixture(t);await post(api,alice,'root','Root',{channel:'work'});await post(api,bob,'reply','Reply',{replyTo:1,mentions:['codex:alice']});
  const state=await repository.exportLegacy(boardTenant('team-a'));
  const badReply=structuredClone(state);badReply.messages[1].replyTo=2;await assert.rejects(repository.importLegacy(boardTenant('bad-reply'),badReply),/Invalid board reply target/);
@@ -91,7 +92,7 @@ test('reply targets, mention names and following survive backup/restore',async t
  await repository.importLegacy(boardTenant('restore'),state);assert.deepEqual(await repository.exportLegacy(boardTenant('restore')),state);
 });
 
-test('the handled cursor is independent of stdout, stable under concurrency, and bound to its session and workspace',async t=>{
+live('the handled cursor is independent of stdout, stable under concurrency, and bound to its session and workspace',async t=>{
  const {api,board}=await fixture(t);
  const {messages:[root]}=await post(api,alice,'start','What have we learned?',{channel:'work'});
  await post(api,bob,'reply','Evidence',{replyTo:root.id});
@@ -113,7 +114,7 @@ test('the handled cursor is independent of stdout, stable under concurrency, and
  assert.deepEqual(await api.inbox(alice,{...user(alice),acknowledge:next.cursor}),{messages:[],cursor:null,more:false});
 });
 
-test('online introductions show the visible opening prompt on the first delivery in both directions',async t=>{
+live('online introductions show the visible opening prompt on the first delivery in both directions',async t=>{
  const f=await boardStateFixture(t);let clock=10_000_000,visible=true,reads=0;
  const recentSessions={async list(){return [];},async read(reader,{id,openingPrompt,field}){
    const [tenant,owner,harness,installation,session]=JSON.parse(Buffer.from(id.slice(8),'base64url'));
@@ -160,7 +161,7 @@ test('online introductions show the visible opening prompt on the first delivery
  assert.deepEqual((await api.inbox(bob,{...user(bob),acknowledge:first.cursor})).messages.map(m=>m.id),[2]);
 });
 
-test('incognito during an introduction suppresses the in-flight prompt and subsequent replay',async t=>{
+live('incognito during an introduction suppresses the in-flight prompt and subsequent replay',async t=>{
  const f=await boardStateFixture(t),board=f.make({requestCaptureErasure:async()=>({deleted:true,pending:false})});
  await board.agent.presence(bob,{session:'bob',name:'codex:bob',task:'Read introductions',announce:false});
  await board.participate(alice,'bootstrap',{session:'alice',harness:'codex'});
@@ -174,7 +175,7 @@ test('incognito during an introduction suppresses the in-flight prompt and subse
  }
 });
 
-test('a slow source leaves its task visible and other peers keep their ready prompts',async t=>{
+live('a slow source leaves its task visible and other peers keep their ready prompts',async t=>{
  const f=await boardStateFixture(t),base=f.make({});
  const join=(api,principal,announce)=>api.presence(principal,{session:principal.userId,name:'codex:'+principal.userId,task:'Declared task',announce});
  await join(base.agent,alice,false);await join(base.agent,bob,false);
@@ -192,7 +193,7 @@ test('a slow source leaves its task visible and other peers keep their ready pro
  ]);
 });
 
-test('muting even a subscribed channel thread preserves explicit and inline mentions',async t=>{
+live('muting even a subscribed channel thread preserves explicit and inline mentions',async t=>{
  const {api,board}=await fixture(t);
  await api.presence(alice,{...user(alice),announce:false,channels:['work']});
  await post(api,bob,'thread','Thread',{channel:'work'});
@@ -209,7 +210,7 @@ test('muting even a subscribed channel thread preserves explicit and inline ment
  }
 });
 
-test('fifty metadata rows fit in one page regardless of stored message size',async t=>{
+live('fifty metadata rows fit in one page regardless of stored message size',async t=>{
  const {api}=await fixture(t);
  for(let i=0;i<51;i++)await post(api,alice,'large-'+i,'evidence '.repeat(1200),{channel:'work'});
  const args={channels:['work'],select:['id','from'],order:'oldest',limit:50};
@@ -221,7 +222,7 @@ test('fifty metadata rows fit in one page regardless of stored message size',asy
  assert.deepEqual(Object.keys(summary[0]).sort(),['channel','from','id','mentions','replyTo','thread','time']);
 });
 
-test('channels, subscriptions and filters work beyond former count limits',async t=>{
+live('channels, subscriptions and filters work beyond former count limits',async t=>{
  const {api,board}=await fixture(t);
  const channels=Array.from({length:129},(_,i)=>'project-'+i);
  // Exercise channel creation through both publication paths.

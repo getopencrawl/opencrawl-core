@@ -1,4 +1,4 @@
-import {boardStateFixture} from './fixtures/board-state.mjs';
+import {boardStateFixture,postgresUrl} from './fixtures/board-state.mjs';
 import {memorySessionStore as deletionTestStore} from './session-store-fixture.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,7 +43,7 @@ test('snapshot scope checks precede all reads and reject malformed aggregation i
   await assert.rejects(recent.read({tenantId:'org',userId:'user'}), /Invalid recent/);
 });
 
-test('read-only sync discovers sessions; publication is independent of session outages', async t => {
+test('read-only sync discovers sessions; publication is independent of session outages', {skip:!postgresUrl}, async t => {
   const {state}=await boardStateFixture(t);
   const objects = new Map(); let calls=0, failure=false, hang=false;
   const store={async readVersion(k){return objects.get(k)||{version:null,data:null};},async compareAndSet(k,v,data){objects.set(k,{version:1,data});return true;}};

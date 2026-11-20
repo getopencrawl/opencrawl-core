@@ -1,7 +1,8 @@
 import {createHash} from 'node:crypto';
-import {applicationDatabaseFixture} from './application-database.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './application-database.mjs';
 import {createPostgresBoardState} from '../../dist/src/state/board.mjs';
 import {createBoard} from '../../dist/src/board/board.mjs';
+export {postgresUrl};
 export const boardTenant=tenant=>createHash('sha256').update(tenant).digest('hex');
 export async function boardStateFixture(t){
   const database=await applicationDatabaseFixture(t),repository=createPostgresBoardState(database);await repository.ready();

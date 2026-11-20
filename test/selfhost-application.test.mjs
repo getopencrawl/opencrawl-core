@@ -1,6 +1,7 @@
-import {boardStateFixture} from './fixtures/board-state.mjs';
+import {boardStateFixture,postgresUrl} from './fixtures/board-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 import {createServer} from 'node:http';
 import {promisify} from 'node:util';
 import {execFile} from 'node:child_process';
@@ -49,7 +50,7 @@ async function fixture(t,options={}){
   return {request,post,identity,store,prefix,origin,admin,join:join_};
 }
 
-test('CLI setup leaves authenticated pages and console operations open before any agent receipt',async t=>{
+live('CLI setup leaves authenticated pages and console operations open before any agent receipt',async t=>{
   const f=await fixture(t,{cliSetup:true});await f.admin();
   for(const path of ['/','/setup','/sessions','/sources','/settings/team','/settings/privacy']){
     const page=await f.request(path,'admin');
@@ -68,7 +69,7 @@ test('CLI setup leaves authenticated pages and console operations open before an
   assert.equal((await f.request('/api/console/team')).status,401,'console data still requires membership');
 });
 
-test('OSS first run creates one admin from the setup link; nobody else can sign up without an invitation',async t=>{
+live('OSS first run creates one admin from the setup link; nobody else can sign up without an invitation',async t=>{
   const f=await fixture(t);
   assert.equal((await f.request('/health')).status,200);
   assert.equal((await f.request('/api/console/bootstrap')).status,401);
@@ -97,7 +98,7 @@ test('OSS first run creates one admin from the setup link; nobody else can sign 
   await f.post('/auth/logout','again',{});assert.equal((await f.request('/api/console/bootstrap','again')).status,401);
 });
 
-test('local admission rechecks the persisted invitation expiry inside its transaction',async t=>{
+live('local admission rechecks the persisted invitation expiry inside its transaction',async t=>{
   const f=await fixture(t);await f.admin();
   const [admin]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const email='expired@example.com';
@@ -112,7 +113,7 @@ test('local admission rechecks the persisted invitation expiry inside its transa
   assert.doesNotMatch(login.headers.get('content-security-policy'),/workos|authkit|directory\.com/);
 });
 
-test('OSS invitations admit distinct members once; removing a membership denies access',async t=>{
+live('OSS invitations admit distinct members once; removing a membership denies access',async t=>{
   const f=await fixture(t);await f.admin();
   const invited=await f.join('bob','bob@example.com');
   const a=await (await f.request('/api/console/bootstrap','admin')).json(),b=await (await f.request('/api/console/bootstrap','bob')).json();
@@ -124,7 +125,7 @@ test('OSS invitations admit distinct members once; removing a membership denies 
   assert.equal((await f.request('/api/console/bootstrap','bob')).status,403);
   assert.equal((await f.request('/api/console/team/invite','admin',{method:'POST',headers:{origin:'https://foreign.example'}})).status,403);
 });
-test('OSS onboarding requires agent setup only; the Sources step can be skipped',async t=>{
+live('OSS onboarding requires agent setup only; the Sources step can be skipped',async t=>{
   const f=await fixture(t);await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
@@ -148,7 +149,7 @@ test('OSS onboarding requires agent setup only; the Sources step can be skipped'
   assert.equal((await (await f.request('/api/console/bootstrap','admin')).json()).onboarding.completed,true);
   assert.equal((await finish()).status,200,'completion is idempotent');
 });
-test('only an admin can store a connector credential, from this origin, before or after onboarding',async t=>{
+live('only an admin can store a connector credential, from this origin, before or after onboarding',async t=>{
   const saved=[];let failure=null;
   const f=await fixture(t,{connectorSettings:{save:async(id,value,by)=>{if(failure)throw failure;saved.push({id,value,userId:by.userId});}}});
   await f.admin();await f.join('bob','bob@example.com');
@@ -167,7 +168,7 @@ test('only an admin can store a connector credential, from this origin, before o
   failure=new Error('storage exploded: s3://private-bucket');
   const hidden=await send('admin',{value:'project-key'});assert.equal(hidden.status,503);assert.doesNotMatch(JSON.stringify(await hidden.json()),/private-bucket/);
 });
-test('self-host team integration actions reject members through both HTTP and tRPC',async t=>{
+live('self-host team integration actions reject members through both HTTP and tRPC',async t=>{
   const calls=[];
   const integrations={list:async()=>[],connect:async()=>{calls.push('connect');return {redirectUrl:'https://provider.example'};},retry:async()=>{calls.push('retry');},disconnect:async()=>{calls.push('disconnect');},disconnectAll:async()=>{calls.push('disconnect-all');return 0;}};
   const f=await fixture(t,{integrations,providers:{notion:{id:'notion',name:'Notion',scope:'team',auth:'oauth'}}});
@@ -186,7 +187,7 @@ test('self-host team integration actions reject members through both HTTP and tR
   assert.deepEqual(calls,['connect','retry','disconnect','disconnect-all']);
 });
 
-test('OSS ignores historical judged reports stored for its own and other organizations',async t=>{
+live('OSS ignores historical judged reports stored for its own and other organizations',async t=>{
   const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
@@ -204,7 +205,7 @@ test('OSS ignores historical judged reports stored for its own and other organiz
   const result=await response.json();assert.equal(result.value,null);assert.equal(result.capture,null);
 
 });
-test('OSS withholds a completed tRPC response if membership or admin role changes during its read',async t=>{
+live('OSS withholds a completed tRPC response if membership or admin role changes during its read',async t=>{
   const f=await fixture(t);await f.admin();
   const organizations=f.identity.directory.organizations,read=organizations.getOrganization;let during=null;
   organizations.getOrganization=async id=>{await during?.();return read(id);};
@@ -215,7 +216,7 @@ test('OSS withholds a completed tRPC response if membership or admin role change
   assert.equal(result.status,403);assert.doesNotMatch(await result.text(),/Self-hosted team/);
 });
 
-test('CLI device sign-in requires a member’s approval and yields refreshable tokens for this deployment',async t=>{
+live('CLI device sign-in requires a member’s approval and yields refreshable tokens for this deployment',async t=>{
   const f=await fixture(t);await f.admin();
   const config=await (await f.request('/.well-known/opencrawl-cli')).json();
   assert.deepEqual(config.auth,{clientId:'opencrawl-cli',deviceAuthorizationEndpoint:f.origin+'/api/cli/device',tokenEndpoint:f.origin+'/api/cli/token'});
@@ -252,7 +253,7 @@ test('CLI device sign-in requires a member’s approval and yields refreshable t
   assert.equal((await f.post('/auth/login','recovered',{email:'ada@example.com',password:'recovered long password'})).status,303);
 });
 
-test('password recovery revokes pre-approved device logins without revoking another member',async t=>{
+live('password recovery revokes pre-approved device logins without revoking another member',async t=>{
   const f=await fixture(t);await f.admin();await f.join('bob','bob@example.com');
   const form=fields=>({method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
   const approve=async who=>{
@@ -271,7 +272,7 @@ test('password recovery revokes pre-approved device logins without revoking anot
 });
 
 for(const callback of ['http://127.0.0.1:33418/callback','claude://claude.ai/mcp-auth-callback/sdk'])
-test(`MCP clients complete consent, token exchange and revocation with ${new URL(callback).protocol} callbacks`,async t=>{
+live(`MCP clients complete consent, token exchange and revocation with ${new URL(callback).protocol} callbacks`,async t=>{
   const f=await fixture(t);await f.admin();
   const resource=await (await f.request('/.well-known/oauth-protected-resource/mcp')).json();
   assert.deepEqual(resource.authorization_servers,[f.origin+'/api/auth']);
@@ -327,7 +328,7 @@ test(`MCP clients complete consent, token exchange and revocation with ${new URL
   assert.equal(denial.searchParams.get('error'),'access_denied');assert.equal(denial.searchParams.has('code'),false);
 });
 
-test('delegated capture works for the configured team, remains write-only, and obeys revocation',async t=>{
+live('delegated capture works for the configured team, remains write-only, and obeys revocation',async t=>{
   const f=await fixture(t);await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const p={tenantId:org,userId:member.userId};
@@ -338,7 +339,7 @@ test('delegated capture works for the configured team, remains write-only, and o
   await credentials.revoke(p,issued.id);assert.equal((await request('/api/sessions/identity')).status,401);
 });
 
-test('self-host capture acknowledges only after raw storage and the durable indexing handoff',async t=>{
+live('self-host capture acknowledges only after raw storage and the durable indexing handoff',async t=>{
   let fail=true;const scheduled=[];
   const f=await fixture(t,{scheduleSessionIndexing:async key=>{scheduled.push(key);if(fail)throw Error('Temporal unavailable');}});await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
@@ -351,7 +352,7 @@ test('self-host capture acknowledges only after raw storage and the durable inde
 });
 
 
-test('local auth requires same-origin forms, forbids token shortcuts, and bounds failed sign-in attempts',async t=>{
+live('local auth requires same-origin forms, forbids token shortcuts, and bounds failed sign-in attempts',async t=>{
   const f=await fixture(t);await f.admin();
   assert.equal((await f.request('/auth/login',null,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'email=ada@example.com&password=bad'})).status,403);
   assert.equal((await f.post('/auth/logout','admin',{}, {origin:'https://foreign.example'})).status,403);
@@ -371,7 +372,7 @@ test('local auth requires same-origin forms, forbids token shortcuts, and bounds
   assert.equal((await f.post('/auth/login','wrong',{email:user.email,password:'wrong password'})).status,429);
 });
 
-test('bootstrap is consumed once across racing registrations and never reopens after all memberships are removed',async t=>{
+live('bootstrap is consumed once across racing registrations and never reopens after all memberships are removed',async t=>{
   const f=await fixture(t);
   const responses=await Promise.all(['one','two'].map(who=>f.post('/auth/signup',who,{setup,workspace:who,name:who,email:who+'@example.com',password:'a long account password'})));
   assert.deepEqual(responses.map(r=>r.status).sort(),[303,403]);
@@ -383,7 +384,7 @@ test('bootstrap is consumed once across racing registrations and never reopens a
   assert.equal((await f.post('/auth/signup','third',{setup,workspace:'third',name:'third',email:'third@example.com',password:'a long account password'})).status,403);
 });
 
-test('admin removal immediately denies existing browser, CLI, MCP and capture credentials, preserving other members and stored data',async t=>{
+live('admin removal immediately denies existing browser, CLI, MCP and capture credentials, preserving other members and stored data',async t=>{
  const f=await fixture(t);await f.admin();await f.join('bob','bob@example.com');
  const members=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
  const admin=members.find(m=>m.role.slug==='admin'),bob=members.find(m=>m.role.slug==='member');
@@ -427,7 +428,7 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
 });
 
-test('self-host admin can invite a teammate before agent verification without opening the workspace',async t=>{
+live('self-host admin can invite a teammate before agent verification without opening the workspace',async t=>{
   const f=await fixture(t);await f.admin();
   const invite=(who,email,origin=f.origin)=>f.request('/api/onboarding/invites',who,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({email})});
   assert.equal((await invite(null,'bob@example.com')).status,401);
@@ -446,7 +447,7 @@ test('self-host admin can invite a teammate before agent verification without op
   assert.equal((await f.request('/api/onboarding/finish','admin',{method:'POST',headers:{origin:f.origin,'content-type':'application/json'},body:'{}'})).status,409);
 });
 
-test('MCP registration rejects executable and local-file callback schemes',async t=>{
+live('MCP registration rejects executable and local-file callback schemes',async t=>{
   for(const redirect of ['javascript:alert(1)','data:text/html,hello','file:///etc/passwd','vbscript:alert(1)','claude://secret@claude.ai/mcp-auth-callback/sdk','claude://claude.ai/mcp-auth-callback/sdk#fragment']){
     const f=await fixture(t);
     const response=await f.request('/api/auth/oauth2/register',null,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_name:'Unsafe',redirect_uris:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code'],response_types:['code']})});
@@ -454,7 +455,7 @@ test('MCP registration rejects executable and local-file callback schemes',async
   }
 });
 
-test('shared installation admits real local members without personal setup or hosted credentials',async t=>{
+live('shared installation admits real local members without personal setup or hosted credentials',async t=>{
  const binding={organizationId:'11111111-1111-4111-8111-111111111111',environmentId:'22222222-2222-4222-8222-222222222222',onboardingWorkspaceId:'33333333-3333-4333-8333-333333333333',tenantId:org};
  const {replicasSharedInstallations}=await import('../dist/src/identity/replicas.mjs');
  const f=await fixture(t,{replicasBindings:[binding]});await f.admin();await f.join('member','member@example.com');
@@ -473,7 +474,7 @@ test('shared installation admits real local members without personal setup or ho
  assert.equal((await f.request('/api/console/bootstrap')).status,401);
 });
 
-test('admin connects Replicas through the product before onboarding; native forks work without stored API keys',async t=>{
+live('admin connects Replicas through the product before onboarding; native forks work without stored API keys',async t=>{
  const {generateKeyPair,SignJWT}=await import('jose');
  const {publicKey,privateKey}=await generateKeyPair('RS256');
  const f=await fixture(t,{workloadIdentityKey:async()=>publicKey});
@@ -514,7 +515,7 @@ test('admin connects Replicas through the product before onboarding; native fork
  assert.equal(progress.shared,undefined,'enrollment without actual MCP/capture receipts is not completed setup');
 });
 
-test('ordinary login reuses only a current member session and keeps redirects local',async t=>{
+live('ordinary login reuses only a current member session and keeps redirects local',async t=>{
   const f=await fixture(t);await f.admin();
   assert.equal((await f.request('/auth/login')).status,200);
   for(const [next,expected] of [['/device?user_code=ABCD','/device?user_code=ABCD'],['https://example.com','/'],['//example.com','/'],['/\\example.com','/']]){
@@ -529,7 +530,7 @@ test('ordinary login reuses only a current member session and keeps redirects lo
   assert.equal((await f.request('/api/console/bootstrap','admin')).status,401);
 });
 
-test('self-host members read board and search over HTTP and tRPC while anonymous callers stay denied',async t=>{
+live('self-host members read board and search over HTTP and tRPC while anonymous callers stay denied',async t=>{
   const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();await f.join('bob','bob@example.com');
   assert.equal((await f.request('/api/debug/board','bob')).status,200);
@@ -543,7 +544,7 @@ test('self-host members read board and search over HTTP and tRPC while anonymous
   }
 });
 
-test('self-host context suggestions use the operator extension behind real local authentication',async t=>{
+live('self-host context suggestions use the operator extension behind real local authentication',async t=>{
   const observed=[];let judgments=0;
   const f=await fixture(t,{contextSuggestions:{judgment:()=>{judgments++;return {version:'operator-v1',async plan(){return []},async shortlist(){return []},async rank(){return []}};},observe:async(p,events)=>observed.push({p,events})}});await f.admin();
   const form=fields=>({method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
@@ -561,7 +562,7 @@ test('self-host context suggestions use the operator extension behind real local
   const report=await send('/api/context/suggestions/events',{events:[e]});assert.equal(report.status,200);assert.deepEqual((await report.json()).data.accepted,[e.id]);assert.equal(observed.length,1);assert.equal(observed[0].p.tenantId,org);
 });
 
-test('self-host reload bootstraps the last authorized Team read only for the same signed-in session', async t => {
+live('self-host reload bootstraps the last authorized Team read only for the same signed-in session', async t => {
   const app = await fixture(t, {cliSetup:true});
   await app.admin();
   const rpc = async name => {

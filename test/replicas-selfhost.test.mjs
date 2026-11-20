@@ -1,4 +1,4 @@
-import {boardStateFixture} from './fixtures/board-state.mjs';
+import {boardStateFixture,postgresUrl} from './fixtures/board-state.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -15,7 +15,7 @@ import {createControls} from '../dist/src/sessions/controls.mjs';
 import {singleOrganizationSessionSource} from '../dist/src/selfhost/indexing.mjs';
 import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
 
-test('self-host workspace identity uploads and uses board; cannot mint credentials, forge owners or read private members',async t=>{
+test('self-host workspace identity uploads and uses board; cannot mint credentials, forge owners or read private members',{skip:!postgresUrl},async t=>{
  const dir=await mkdtemp(join(tmpdir(),'replicas-selfhost-')),store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
  const organizationId='org_local',org='11111111-1111-4111-8111-111111111111',env='22222222-2222-4222-8222-222222222222',workspace='33333333-3333-4333-8333-333333333333';
  let app;const server=createServer((req,res)=>app(req,res));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));

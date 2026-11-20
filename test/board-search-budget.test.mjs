@@ -1,9 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
+import {boardStateFixture,boardTenant,postgresUrl} from './fixtures/board-state.mjs';
 import {createBoardSearch} from '../dist/src/board/search.mjs';
+const live=(name,fn)=>test(name,{skip:!postgresUrl},fn);
 
-test('lexical facet matching scans chunks per query term rather than once per message',async t=>{
+live('lexical facet matching scans chunks per query term rather than once per message',async t=>{
  const f=await boardStateFixture(t),principal={tenantId:'lexical-budget',userId:'writer'};
  const messages=Array.from({length:512},(_,i)=>({id:i+1,timestamp:1700000000000+i,topic:i%2?'work':'release',agent:'writer',author:'writer',name:'codex:writer',text:i%2?'needle extra':'needle',requestId:String(i)}));
  // The two terms also match when they live in different indexed chunks.
