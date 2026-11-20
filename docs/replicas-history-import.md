@@ -52,7 +52,7 @@ pass. Unchanged chats require no history downloads or indexing handoffs.
 A new catalog record or a newer native revision queues that chat. Replicas pages
 history backwards and supplies no immutable-prefix guarantee, so a changed chat
 is checked through its terminal cursor. Active page continuations and transient
-failures resume from their checkpoints between daily scans. A chat that repeatedly returns empty or 404 and is absent from its workspace gets a direct history probe once a week. Its reappearance in the daily workspace list releases it earlier, subject to the provider’s Retry-After.
+failures resume from their checkpoints between daily scans. A chat that repeatedly returns empty or 404 and is absent from its workspace gets a weekly direct history probe during the daily inventory run. Its reappearance in the daily workspace list releases it earlier, subject to the provider’s Retry-After.
 
 ### Live capture and history of the same chat
 

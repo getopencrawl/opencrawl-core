@@ -1058,3 +1058,21 @@ test('daily rosters park repeatedly absent chats without rewriting the same retr
   assert.equal((await observe(5,[{id:chat.chat_id}])).released,1);
   assert.equal(await retry(),Date.parse(provider));
 });
+
+test('staggered absent-chat retries share the daily wake while active work keeps its deadline',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const {deferredHistory}=await import('../dist/src/integrations/replicas-deferred.mjs');
+  const db=f.database.pool,scope=[f.database.namespace,principal.tenantId],queue=deferredHistory(db,...scope);
+  const now=Date.now(),day=86_400_000,next=now+day,at=new Date(now).toISOString();
+  const absent={at,attempt:4,workspaceAbsentAt:at,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
+  const add=(when,row,issue)=>queue.save(row,{before:null,historyCursors:[],occurrences:{}},issue,new Date(when).toISOString());
+  await add(now+1000,chat,absent);
+  assert.equal((await queue.oldest(false,now+2000,next)).wake,next);
+  const active={...chat,chat_id:randomUUID()};
+  await add(now+3000,active,{...absent,workspaceAbsentAt:undefined});
+  const result=await queue.oldest(false,now+2000,next);
+  assert.equal(result.row.chat.chat_id,active.chat_id);assert.equal(result.wake,now+3000);
+  await queue.remove(result.row);
+  assert.equal((await queue.oldest(false,next,next+day)).row.chat.chat_id,chat.chat_id);
+  assert.ok((await queue.oldest(false,next,next+day)).wake<=next);
+});

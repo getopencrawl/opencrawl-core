@@ -15,7 +15,7 @@ import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-
 import {prepareSnapshots,saveSnapshot,snapshotProgress,snapshotsForPage,sourceRevision,type WorkspaceVersion} from './replicas-snapshots.mjs';
 import {nextWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
-import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
+import {checkpoint,deferredHistory,emptyCheckpoint,settledAbsence,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
 
 export interface ReplicasImportStatus {
@@ -52,6 +52,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       PRIMARY KEY(namespace,tenant,retry_at,id))`);
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_continuation
       ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL`);
+    await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_active ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE NOT (${settledAbsence})`);
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
@@ -166,6 +167,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         return;
       }
       delete state.rosterCutoff;
+      state.nextCatalogAt=new Date(now()+day).toISOString();
     }
     const review=async()=>{
       const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now(),sweep);
@@ -181,9 +183,10 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       // Once the catalog is drained, let a readable long transcript advance
       // while still servicing the oldest unrelated retry at least every fifth step.
       const preferContinuation=!hasFresh&&(state.continuationSteps??0)<freshStepsPerRetry;
-      const row=await pending.oldest(preferContinuation,now());
-      if(!row)throw new Error('Replicas deferred checkpoint missing');
-      if(row.retry_at.getTime()<=now()){
+      const next=await pending.oldest(preferContinuation,now(),state.nextCatalogAt?Date.parse(state.nextCatalogAt):undefined);
+      if(!next)throw new Error('Replicas deferred checkpoint missing');
+      const {row,wake}=next;
+      if(wake<=now()){
         state.continuationSteps=preferContinuation&&row.issue.continuation&&row.checkpoint.before?(state.continuationSteps??0)+1:0;
         // Run a single deferred page, independently of a possibly mid-chat foreground cursor.
         const foreground={...checkpoint(state),queue:state.queue,next:state.next,initialCatalog:state.initialCatalog};
@@ -204,7 +207,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       if(!hasFresh){
         const nextReview=await nextWorkspaceExportReview(client,reviewScope,sweep);
         if(nextReview!==undefined&&nextReview<=now()){await review();return;}
-        state.retryAt=new Date(Math.min(row.retry_at.getTime(),nextReview??Infinity)).toISOString();
+        state.retryAt=new Date(Math.min(wake,nextReview??Infinity)).toISOString();
         state.waitingForSource=await pending.onlyAbsent();
         return;
       }
