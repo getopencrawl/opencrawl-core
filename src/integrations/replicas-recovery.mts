@@ -9,7 +9,7 @@ export type ImportIssue={
   workspaceId?:string;chatId?:string;cursorHash?:string;pageLimit?:number;
   bytesRead?:number;observedBytes?:number;limitBytes?:number;
   missingResource?:ReplicasProviderError['missingResource'];
-  workspaceAbsentAt?:string;
+  providerRetryAt?:string;workspaceAbsentAt?:string;
   workspaceExport?:{result:'scoped';total:number;hasMore:boolean;onFirstPage:boolean}|{result:'scope_mismatch'|'unavailable'};
   workspaceInventory?:{result:'listed'|'absent'|'waking';chats:number;savedChats?:number}|{result:'unavailable';httpStatus?:number};
 };

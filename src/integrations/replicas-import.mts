@@ -269,6 +269,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       const issue:ImportIssue={...fields,importId:state.id,decision,attempt,identityCheck,elapsedMs:Math.max(0,now()-started),
         ...(error!==cause&&cause instanceof ReplicasProviderError?{originalHttpStatus:cause.status,originalOperation:cause.operation,originalRequestId:cause.requestId}:{}),at:new Date(now()).toISOString(),
         ...(decision==='defer'||decision==='retry'?{retryAt}:{}),
+        ...(error instanceof ReplicasProviderError&&error.retryAfterMs?{providerRetryAt:new Date(now()+error.retryAfterMs).toISOString()}:{}),
         ...(chat?{workspaceId:chat.workspace_id,chatId:chat.chat_id,pageLimit:limit}:{}),
         ...(state.before||(!chat&&state.next)?{cursorHash:replicasDigest((chat?state.before:state.next)!)}:{})};
       const empty=fields.reason==='empty_with_messages'||fields.reason==='empty_unverified';
@@ -281,7 +282,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           if(!listed){
             issue.workspaceAbsentAt=new Date(observation.checkAt).toISOString();
             // Keep one real history probe per workspace at the next inventory refresh.
-            retryAt=new Date(observation.fresh?observation.next:Math.max(Date.parse(retryAt),observation.next)).toISOString();
+            retryAt=new Date(Math.max(issue.providerRetryAt?Date.parse(issue.providerRetryAt):0,observation.fresh?observation.next:Math.max(Date.parse(retryAt),observation.next))).toISOString();
             issue.retryAt=retryAt;
           }
           if(observation.fresh){

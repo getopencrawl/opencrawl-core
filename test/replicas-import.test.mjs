@@ -558,6 +558,7 @@ test('one retained inventory postpones absent chats across a workspace and relea
   for(let i=0;i<3;i++)await advance(f.service,id);
   assert.equal(historyReads.length,3);assert.equal(inventoryReads,0);
   clock+=60_000;await advance(f.service,id);
+  const review=await f.service.runStep(job(id));assert.equal(review.delayMs,0);
   const sleep=await f.service.runStep(job(id));
   assert.equal(inventoryReads,1);assert.equal(historyReads.length,4);assert.equal(sleep.delayMs,30*60_000);
   const card=await f.service.source(principal);
@@ -570,7 +571,9 @@ test('one retained inventory postpones absent chats across a workspace and relea
   await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET retry_at=retry_at+interval '1 hour' WHERE namespace=$1 AND tenant=$2 AND chat->>'chat_id'=$3",[...scope,second.chat_id]);
   restored=true;clock+=sleep.delayMs;
   await advance(f.reopen(),id);assert.equal(inventoryReads,2);
-  const next=await advance(f.service,id);assert.equal(historyReads.at(-1),second.chat_id);
+  let next=await advance(f.service,id);
+  if(next.processed<2)next=await advance(f.service,id); // A newly changed inventory may verify its export first.
+  assert.equal(historyReads.at(-1),second.chat_id);
   assert.equal(next.imported,2);assert.equal(next.processed,2);assert.equal(next.blocked,1);assert.notEqual(next.waitingForSource,true);
   assert.ok(f.handed.length>=2);
 });
@@ -659,7 +662,9 @@ test('catalog disagreement also verifies the original workspaces whose first his
       if(!workspace)return Response.json({conversations:[chat,other],total:2,next_cursor:null});
       const conversations=workspace===other.workspace_id?[hidden,other]:[chat];return Response.json({conversations,total:conversations.length,next_cursor:null});
     }
-    if(url.pathname.endsWith('/chats'))return Response.json({chats:url.pathname.includes(other.workspace_id)?[other,hidden].map(c=>({id:c.chat_id})):[]});
+    // The scoped export can advertise readable history that the native
+    // workspace inventory still omits.
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:url.pathname.includes(other.workspace_id)?[{id:other.chat_id}]:[]});
     if(url.pathname.endsWith('history')){
       const id=url.searchParams.get('chat_id');fetched.push(id);
       return id===chat.chat_id?Response.json({error:'Chat not found'},{status:404}):Response.json({events:[event('available')],before_cursor:null});
@@ -670,4 +675,22 @@ test('catalog disagreement also verifies the original workspaces whose first his
   for(let i=0;i<16;i++)await advance(f.reopen(),id);
   assert.equal(fetched.filter(id=>id===hidden.chat_id).length,1);
   const result=await f.service.status(principal);assert.equal(result.imported,2);assert.equal(result.total,3);assert.equal(result.blocked,1);
+});
+
+test('workspace absence cannot keep postponing a direct history check or override provider Retry-After',async t=>{
+  const now=Date.now(),at=new Date(now-7*60*60_000).toISOString();
+  const f=await fixture(t);
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId],later=new Date(now+8*60*60_000).toISOString();
+  const cp={before:null,historyCursors:[],occurrences:{},pageLimit:100,chatAttempts:6};
+  const issue={at,attempt:6,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
+  const peer={...chat,chat_id:randomUUID()};
+  for(const [c,err] of [[chat,issue],[peer,{...issue,providerRetryAt:later}]]){
+    await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',[...scope,new Date(now),c,cp,err]);
+  }
+  const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
+  await f.database.transaction(client=>observeReplicasWorkspace(client,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now,async()=>({chats:[]})));
+  const {rows}=await f.database.pool.query("SELECT chat->>'chat_id' id,retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2",scope);
+  assert.ok(rows.find(r=>r.id===chat.chat_id).retry_at.getTime()<=now);
+  assert.equal(rows.find(r=>r.id===peer.chat_id).retry_at.toISOString(),later);
 });

@@ -38,8 +38,13 @@ export async function observeReplicasWorkspace(client:Client,scope:{namespace:st
     const scoped=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$4 AND issue->>'importId'=$3 AND checkpoint->>'before' IS NULL
       AND NOT (issue ? 'continuation') AND issue->>'operation'='history'
       AND (issue->>'httpStatus'='404' OR issue->>'reason' IN ('empty_with_messages','empty_unverified'))`;
-    const absent=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=GREATEST(retry_at,$7::timestamptz),
-      issue=issue||jsonb_build_object('workspaceAbsentAt',$6::text,'retryAt',GREATEST(retry_at,$7::timestamptz))
+    // An inventory can stay stale while history itself recovers. A workspace
+    // refresh must never postpone a direct chat probe past its own six-hour
+    // retry horizon. An explicit provider Retry-After remains authoritative.
+    const nextProbe=`GREATEST((issue->>'providerRetryAt')::timestamptz,
+      LEAST(GREATEST(retry_at,$7::timestamptz),COALESCE((issue->>'at')::timestamptz,$6::timestamptz)+interval '6 hours'))`;
+    const absent=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=${nextProbe},
+      issue=issue||jsonb_build_object('workspaceAbsentAt',$6::text,'retryAt',${nextProbe})
       WHERE ${scoped} AND NOT ((chat->>'chat_id')=ANY($5::text[]))`,[...args,ids,at,new Date(next).toISOString()]);
     moved=absent.rowCount??0;
     const present=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=LEAST(retry_at,$6::timestamptz),
