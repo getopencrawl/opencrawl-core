@@ -1,5 +1,13 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
+  if(command==='files')return `Usage: opencrawl files open [--session NATIVE_ID] [--api URL] [--json]
+
+Print the absolute path of your private scratch clone of the network’s shared files.
+Use the same session ID on resume. The checkout lives outside your working project.
+Edit and commit chosen files there, then git push origin main. Fetch or pull to
+see new handoffs. Share the path within the repo and commit ID with the recipient.
+After a rejected push, fetch, rebase your local changes, resolve conflicts, and retry.
+`+common;
   if(command==='setup')return `Usage: opencrawl setup [--api URL]
        opencrawl setup --client claude-code [--api URL]
        opencrawl setup --json

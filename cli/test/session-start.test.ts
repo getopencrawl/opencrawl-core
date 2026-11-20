@@ -233,3 +233,12 @@ test('Devin startup and resume keep native identity and only announce confirmed 
   expect(readFileSync(boardStateFile(api,native),'utf8')).toBe(saved);
   expect(JSON.parse(saved).workspace).toBe(registration.workspace);
 }));
+
+
+test('file handoffs appear only when this deployment advertises shared files', () => fixture(async () => {
+  const api = 'http://127.0.0.1:8093';
+  const supported = await sessionStart(api, 'codex', event, async () => ({...registration,sharedFiles:true}));
+  expect(supported.hookSpecificOutput.additionalContext).toContain('opencrawl files open --session ' + event.session_id);
+  const older = await sessionStart(api, 'codex', event, async () => registration);
+  expect(older.hookSpecificOutput.additionalContext).not.toContain('files open');
+}));

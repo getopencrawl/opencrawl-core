@@ -12,7 +12,7 @@ type StartupHarness='codex'|'claude-code'|'cursor'|'antigravity'|'devin';
 type Binding={api:string;installationId:string;owner:{tenantId:string;userId:string};harness:StartupHarness;sessionId:string};
 type StartupPayload={hook_event_name:'SessionStart';source:string}|{hook_event_name:'sessionStart'}|{hookEventName:'SessionStart'};
 export type SessionStartTask=Binding&{kind:'session-start';id:string;at:number;payload:StartupPayload};
-type Registration={workspace:string;agent:string;session:string;name:string|null;task:string|null};
+type Registration={sharedFiles?:boolean;workspace:string;agent:string;session:string;name:string|null;task:string|null};
 export type StartupObservation={observedAt:number;registration:Registration};
 type State={schemaVersion:1;binding:Binding;pending?:{id:string;at:number};confirmed?:StartupObservation};
 const nativeId=/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/;
@@ -153,7 +153,7 @@ export async function processSessionStartTask(config:CaptureConfig,task:unknown,
   guard();if(!registration(result,binding))throw new CliError('BOARD_PROTOCOL_ERROR','Background startup did not confirm the bound native session.');
   await withSessionLock('startup:'+key(binding),async()=>{
     guard();const state=readState(binding);
-    const confirmed:StartupObservation={observedAt:Date.now(),registration:{workspace:result.workspace,agent:result.agent,session:result.session,name:result.name,task:result.task}};
+    const confirmed:StartupObservation={observedAt:Date.now(),registration:{workspace:result.workspace,agent:result.agent,session:result.session,name:result.name,task:result.task,...(result.sharedFiles===true?{sharedFiles:true}:{})}};
     saveBoardRegistration(task.api,task.sessionId,result);
     atomicJson(stateFile(binding),{schemaVersion:1,binding,...(state.pending&&state.pending.id!==task.id?{pending:state.pending}:{}),confirmed});
   });

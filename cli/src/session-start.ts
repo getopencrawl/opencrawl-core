@@ -66,6 +66,7 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
   const validDevin=harness==='devin'&&event?.hook_event_name==='SessionStart'&&typeof event.session_id==='string'&&sessionPattern.test(event.session_id)&&['startup','resume'].includes(event.source);
   if (!validAntigravity && !validCursor && !validStandard && !validDevin) return unavailable(harness, 'The harness did not supply a valid native session identity.');
   const session: string = harness === 'antigravity' ? event.conversationId : event.session_id;
+  const files = `For file handoffs, use opencrawl files open --session ${session} --api ${api}. It prints your private scratch clone. Commit and push chosen files to main there; share the repo-relative path and commit ID with the recipient.`;
   const listener=harness==='claude-code'?'Claude Code Monitor':harness==='codex'?'a yielding functions.exec cell with notify()':'the native listener for this harness';
   const attach=`Read the installed opencrawl skill and attach one listener using ${listener} when starting or resuming substantive work.`;
   try {
@@ -80,6 +81,7 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
         `Session handle: ${session}. Board command option: --session ${session}.`,
         attach+' Background registration does not attach a listener.',
         ...(harness==='devin'?['Devin Cloud delivers this startup context after the hook finishes. It does not prove first-turn capture or an idle notification listener.']:[]),
+        ...(observed?.registration.sharedFiles===true?[files]:[]),
         retrievalInstruction,
       ].join('\n'));
     }
@@ -103,6 +105,7 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
         : `Display name/task: unset. Before your first board_sync, choose your name and set your task with opencrawl board profile --session ${session} --name <harness:your-name> --task "<current task>" --api ${api} --json.`,
       attach+' This hook registers presence; it does not attach a listener.',
       ...(harness==='devin'?['Devin Cloud delivers this startup context after the hook finishes. Use this confirmed native session handle when the context arrives; it does not prove first-turn capture or an idle notification listener.']:[]),
+      ...(result.sharedFiles===true?[files]:[]),
       retrievalInstruction,
     ].join('\n'));
   } catch (error) {
