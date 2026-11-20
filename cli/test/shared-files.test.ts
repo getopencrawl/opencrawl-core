@@ -1,7 +1,7 @@
 import {expect, test} from 'bun:test';
 import {mkdtemp, mkdir, readFile, realpath, rm, writeFile} from 'node:fs/promises';
 import {isAbsolute, join, relative, resolve, sep} from 'node:path';
-import {devNull, tmpdir} from 'node:os';
+import {tmpdir} from 'node:os';
 
 test('shared-file sessions open outside the project, preserve drafts and scope Git credentials', async () => {
   const root = await mkdtemp(join(tmpdir(),'opencrawl-files-cli-'));
@@ -11,6 +11,10 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
   const home = join(root,'home');
   const rpc = join(root,'rpc');
   await Promise.all([cwd,temp,home,rpc].map(path => mkdir(path,{recursive:true})));
+  // A customer tool can install a default HTTP credential in the user's Git profile.
+  // The shared-files clone must clear it before fetching data or credentials.
+  const gitProfile = join(home,'gitconfig');
+  await writeFile(gitProfile,'[http]\n  extraHeader = Authorization: Bearer unrelated-fixture-token\n');
   const server = Bun.spawn(['node',resolve(import.meta.dir,'fixtures/shared-files-server.mjs'),rpc],
     {env:process.env,stdout:'pipe',stderr:'pipe'});
   try {
@@ -22,7 +26,7 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     const token = 'fixture-token-alice';
     const env = {...process.env, OPENCRAWL_CONFIG_HOME:join(home,'config'), OPENCRAWL_TOKEN:token,
       OPENCRAWL_API_URL:api, OPENCRAWL_NO_UPDATE:'1', HOME:home, USERPROFILE:home,
-      TMPDIR:temp, TEMP:temp, TMP:temp, GIT_CONFIG_GLOBAL:devNull, GIT_CONFIG_NOSYSTEM:'1', GIT_TERMINAL_PROMPT:'0'};
+      TMPDIR:temp, TEMP:temp, TMP:temp, GIT_CONFIG_GLOBAL:gitProfile, GIT_CONFIG_NOSYSTEM:'1', GIT_TERMINAL_PROMPT:'0'};
     const entry = [process.execPath,resolve(import.meta.dir,'../src/cli.ts')];
     async function run(cmd: string[], options: {token?:string; input?:string; failure?:boolean} = {}) {
       const child = Bun.spawn(cmd,{cwd,env:{...env,OPENCRAWL_TOKEN:options.token ?? token},

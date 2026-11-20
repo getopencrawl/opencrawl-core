@@ -66,8 +66,8 @@ function exists(path: string) {
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 function gitEnvironment() {
-  const env = {...process.env, GIT_TERMINAL_PROMPT: '0'};
-  for (const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES']) delete (env as NodeJS.ProcessEnv)[key];
+  const env: NodeJS.ProcessEnv = {...process.env, GIT_TERMINAL_PROMPT: '0'};
+  for (const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_CONFIG_COUNT','GIT_CONFIG_PARAMETERS']) delete env[key];
   return env;
 }
 async function projectRoot() {
@@ -132,13 +132,14 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
     }
     const stage = mkdtempSync(join(scratch, 'clone-'));
     // Git invokes credential helpers with sh on every platform (including Git for Windows).
-    const helper = '!' + [...commandForSelf(), 'files-credential', key].map(word => literal(word, false)).join(' ');
+    const entry = commandForSelf().map(word => process.platform === 'win32' ? word.replaceAll('\\', '/') : word);
+    const helper = '!' + [...entry, 'files-credential', key].map(word => literal(word, false)).join(' ');
     const config = ['credential.helper=', 'credential.helper=' + helper, 'credential.useHttpPath=true',
-      'http.followRedirects=false', 'core.hooksPath=' + hooks, 'core.symlinks=false',
+      'http.extraHeader=', 'http.followRedirects=false', 'core.hooksPath=' + hooks, 'core.symlinks=false',
       'user.name=OpenCrawl ' + session, 'user.email=agent-' + key.slice(0,16) + '@opencrawl.invalid'];
     const env: NodeJS.ProcessEnv = {...gitEnvironment(), OPENCRAWL_API_URL:api};
     try {
-      await git('git', ['clone', ...config.flatMap(value => ['--config', value]), '--quiet',
+      await git('git', ['clone', '--template=', ...config.flatMap(value => ['--config', value]), '--quiet',
         '--no-tags','--single-branch','--branch','main','--no-recurse-submodules','--',remote,stage],
         {cwd:scratch,env,timeout:120000});
       renameSync(stage, path);
