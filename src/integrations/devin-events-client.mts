@@ -41,18 +41,47 @@ export async function verifyDevinEventCredential(key: string, organizationId: st
   }
 }
 
-/** Open on the first admitted request, and close even if permission changes
- * while a page is in flight. Service credentials never leave the provider origin. */
-export async function withDevinEventClient<T>(key: string, organizationId: string,
-  operation: (read: (request: DevinEventRequest) => Promise<string>) => Promise<T>,
-  fetcher: FetchLike = fetch): Promise<T> {
-  if (!/^cog_[a-zA-Z0-9_-]{1,1024}$/.test(key)) fail(400, 'Invalid Devin service credential');
+function devinMcp(key:string,fetcher:FetchLike) {
   const client = new Client({name:'opencrawl-devin-first-turn',version:'1'});
   const deadline = AbortSignal.timeout(30000);
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
     onInsufficientScope:'throw',
     fetch: authorizedFetch(endpoint, maxResponseBytes, key, deadline, fetcher),
   });
+  return {client,transport,deadline};
+}
+
+/** Check that the recording service account can discover the events tool without reading a session. */
+export async function verifyDevinRecording(key:string,organizationId:string,fetcher:FetchLike=fetch) {
+  const {client,transport,deadline} = devinMcp(key,fetcher);
+  try {
+    await verifyDevinEventCredential(key,organizationId,fetcher,deadline);
+    await client.connect(transport);
+    let cursor:string|undefined;
+    const seen=new Set<string>();
+    do {
+      deadline.throwIfAborted();
+      const page = await client.listTools(cursor?{cursor}:{});
+      if (page.tools.some(tool=>tool.name==='devin_session_events')) return true;
+      cursor=page.nextCursor;
+      if (cursor) {
+        if (seen.has(cursor) || seen.size>=20) fail(502,'Could not verify the Devin tool list');
+        seen.add(cursor);
+      }
+    } while (cursor);
+    return false;
+  } finally {
+    await client.close();
+  }
+}
+
+/** Open on the first admitted request, and close even if permission changes
+ * while a page is in flight. Service credentials never leave the provider origin. */
+export async function withDevinEventClient<T>(key: string, organizationId: string,
+  operation: (read: (request: DevinEventRequest) => Promise<string>) => Promise<T>,
+  fetcher: FetchLike = fetch): Promise<T> {
+  if (!/^cog_[a-zA-Z0-9_-]{1,1024}$/.test(key)) fail(400, 'Invalid Devin service credential');
+  const {client,transport,deadline} = devinMcp(key,fetcher);
   async function connect() {
     await verifyDevinEventCredential(key, organizationId, fetcher, deadline);
     await client.connect(transport);

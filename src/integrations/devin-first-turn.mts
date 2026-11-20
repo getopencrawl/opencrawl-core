@@ -71,12 +71,13 @@ export async function readDevinStartupEvents(options: StartupReaderOptions, prin
     const client = installation?.clients.find(item => item.client === 'devin');
     if (!client?.installed || !client.forward || !client.forwardSince || devinInitialForward?.installationId !== installationId ||
         devinInitialForward.forwardSince !== client.forwardSince) return deny();
-    const grant = await options.grant(principal.tenantId, organizationId);
-    if (!grant || !Number.isFinite(Date.parse(grant.enabledAt))) return deny();
-    if (grant.sessionId === null) fail(409,'Waiting for the administrator to select a Devin session');
-    if (grant.sessionId !== undefined && grant.sessionId !== session_id) return deny();
     const policy = await options.recording.read(principal);
     if (policy.paused || !await options.sessionAllowed(principal,session_id)) return deny();
+    const grant = await options.grant(principal.tenantId, organizationId);
+    if (!grant) throw Object.assign(new Error('The Devin recording credential is missing'),{status:403,code:'DEVIN_RECORDING_CREDENTIAL_REQUIRED'});
+    if (!Number.isFinite(Date.parse(grant.enabledAt))) return deny();
+    if (grant.sessionId === null) fail(409,'Waiting for the administrator to select a Devin session');
+    if (grant.sessionId !== undefined && grant.sessionId !== session_id) return deny();
     return {grant, forwardSince: client.forwardSince, revision: policy.revision};
   }
   const start = await authorize();
