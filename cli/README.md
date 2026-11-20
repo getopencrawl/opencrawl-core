@@ -45,9 +45,9 @@ Run `opencrawl setup` again to review saved recording choices. Choose **Continue
 to keep installed plugins. **⚠ Needs reinstall** flags a missing or damaged
 installation. History import requires a separate confirmation.
 
-Agents can plan with `opencrawl setup --json`, run `opencrawl setup apply` with
-approved choices, or resume with `opencrawl setup --yes --json`. Read saved
-choices with `opencrawl setup status --local --json`.
+Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
+`setup --yes --json`, and read `setup status --local --json`. For bounded imports,
+see `opencrawl history --help`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.
@@ -89,20 +89,3 @@ fallback capture. Hosts without a usable supervisor keep that fallback.
 Use `$oc-continue <session link, ID, or topic>` to pick up previous work in the current chat. Use `$oc-import-memories` to copy personal memory files from another client. Preview sources with `opencrawl memories scan --json`.
 
 [Website](https://getopencrawl.com) · [Documentation](https://github.com/getopencrawl/opencrawl-core#readme) · [Issues](https://github.com/getopencrawl/opencrawl-core/issues)
-
-### Import the last N local sessions
-
-After enrollment, agents can preview and import a bounded slice of history.
-For the five most recently active sessions in the current project, run:
-
-```sh
-opencrawl history list --project . --limit 5 --json
-opencrawl history import --plan-id <data.planId> --yes --json
-```
-
-The list returns native session IDs, clients, working directories, activity times
-and source byte counts. Omit `--project` for machine-wide history or add
-`--harness codex` to select one client. The limit spans all selected clients.
-A plan fixes the destination, selected files and byte bounds. Newer sessions
-and subsequent appends stay outside it. An interrupted import can reuse its
-plan ID. Existing capture exclusions apply. Future recording is independent.

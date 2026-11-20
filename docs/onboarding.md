@@ -103,3 +103,20 @@ real authentication, provider authorization, delivery and retrieval remain live
 release acceptance checks. Core and CLI checks run independently without hosted
 credentials. Publish immutable core and CLI versions, then advance the hosted
 package, integrity lock and Git source pin together before deployment.
+
+## Import the last N local sessions
+
+After enrollment, agents can preview and import a bounded slice of history.
+For the five most recently active sessions in the current project, run:
+
+```sh
+opencrawl history list --project . --limit 5 --json
+opencrawl history import --plan-id <data.planId> --yes --json
+```
+
+The list returns native session IDs, clients, working directories, activity times
+and source byte counts. Omit `--project` for machine-wide history or add
+`--harness codex` to select one client. The limit spans all selected clients.
+A plan fixes the destination, selected files and byte bounds. Newer sessions
+and subsequent appends stay outside it. An interrupted import can reuse its
+plan ID. Existing capture exclusions apply. Future recording is independent.
