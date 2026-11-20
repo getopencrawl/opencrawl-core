@@ -12,9 +12,10 @@ export function checkpoint({before,historyCursors,occurrences,pageLimit,chatAtte
 type DeferredIssue=ImportIssue&{continuation?:true};
 interface DeferredRecord {id:string;retry_at:Date;chat:ReplicasConversation;checkpoint:HistoryCheckpoint;issue:DeferredIssue}
 type Client=Pick<ApplicationDatabase['pool'],'query'>;
-const sameMissingPage=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$3 AND chat->>'chat_id'=$4
+const samePage=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$3 AND chat->>'chat_id'=$4
   AND (checkpoint->>'before') IS NOT DISTINCT FROM $5 AND COALESCE((checkpoint->>'pageLimit')::int,100)=$6
-  AND issue->>'operation'='history' AND issue->>'httpStatus'='404' AND NOT (issue ? 'continuation')`;
+  AND issue->>'operation'='history' AND NOT (issue ? 'continuation')`;
+const sameMissingPage=`${samePage} AND issue->>'httpStatus'='404'`;
 
 /** The caller holds the tenant import lock for the entire activity. A shared
  * backoff only suppresses an identical 404 read. Each catalog row retains its
@@ -44,9 +45,19 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
         WHERE ${sameMissingPage}`,[...page(chat,position),retryAt,issue,issue.attempt]);
       return result.rowCount??0;
     },
-    async releaseBackoff(chat:ReplicasConversation,position:HistoryCheckpoint,now:string){
-      await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=LEAST(retry_at,$7) WHERE ${sameMissingPage} AND retry_at>$7`,
-        [...page(chat,position),now]);
+    async shareEmptyPage(chat:ReplicasConversation,position:HistoryCheckpoint,issue:ImportIssue,retryAt:string){
+      // Rows qualify only after independently observing the same empty result
+      // for this generation. An alias with different sender evidence can succeed.
+      const result=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=GREATEST(retry_at,$7::timestamptz),
+        checkpoint=jsonb_set(checkpoint,'{chatAttempts}',to_jsonb(GREATEST(COALESCE((checkpoint->>'chatAttempts')::int,0),$8::int))),
+        issue=issue||jsonb_build_object('sharedAt',$9::text,'sharedRequestId',$10::text,'retryAt',GREATEST(retry_at,$7::timestamptz))
+        WHERE ${samePage} AND issue->>'reason'=$11 AND issue->>'importId'=$12`,
+        [...page(chat,position),retryAt,issue.attempt,issue.at,issue.requestId??null,issue.reason,issue.importId]);
+      return result.rowCount??0;
+    },
+    async releaseBackoff(chat:ReplicasConversation,position:HistoryCheckpoint,now:string,hasContent:boolean){
+      await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=LEAST(retry_at,$7) WHERE ${samePage} AND retry_at>$7 AND (issue->>'httpStatus'='404' OR ($8::boolean AND issue->>'reason' IN ('empty_with_messages','empty_unverified')))`,
+        [...page(chat,position),now,hasContent]);
     },
   };
 }

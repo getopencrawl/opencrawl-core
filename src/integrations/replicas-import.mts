@@ -3,7 +3,7 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {Principal,SessionBatch,SessionEvent} from '../sessions/types.mjs';
 import type {SourceCard} from '../application/types.mjs';
 import {sealedEnvelope} from './credential-vault.mjs';
-import {replicasApi,replicasError,ReplicasProviderError,ReplicasPageError,type ReplicasConversation,type ReplicasHistory} from './replicas-api.mjs';
+import {replicasApi,replicasError,ReplicasProviderError,ReplicasPageError,type ReplicasConversation,type ReplicasHistory,type ReplicasResponseInfo} from './replicas-api.mjs';
 import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
@@ -133,6 +133,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const chat=state.queue[0];
     const started=now(),recoveredAttempt=state.chatAttempts;
     let previousMissingAttempt=0;
+    let historyResponse:ReplicasResponseInfo|undefined;
+    let recoveredPage:{events:number;turns:number;final:boolean}|undefined;
     let operation:ImportOperation=chat?'history':'catalog';
     try{
       if(chat){
@@ -145,14 +147,19 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
             return;
           }
         }
-        const history=await api.history(chat,state.before,state.pageLimit??100);
+        const history=await api.history(chat,state.before,state.pageLimit??100,info=>{historyResponse=info;});
         if(!state.before&&!history.before_cursor&&history.has_more!==true&&!history.events.length&&!replicasTurns(history).length){
           const senderLists=[chat.senders,history.senders];
-          const knownMessages=senderLists.some(list=>Array.isArray(list)&&list.some(row=>row&&typeof row.message_id==='string'&&row.message_id.length>0));
+          const removed=new Set(Array.isArray(history.removed_message_ids)?history.removed_message_ids:[]);
+          const knownMessages=senderLists.some(list=>Array.isArray(list)&&list.some(row=>{
+            if(!row||typeof row!=='object')return false;
+            if(typeof row.message_id==='string'&&row.message_id)return !removed.has(row.message_id);
+            return typeof row.sender_user_id==='string'&&typeof row.recorded_at==='string';
+          }));
           if(knownMessages||typeof history.total==='number'&&history.total>0){
             throw new ReplicasPageError('empty_with_messages','Replicas returned an empty transcript for a chat with recorded messages.');
           }
-          if(history.thread_id===null){
+          if(typeof history.thread_id!=='string'||!history.thread_id){
             let confirmed=false;
             try{
               const inventory=await api.workspaceChats(chat.workspace_id);
@@ -164,9 +171,10 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
             if(!confirmed)throw new ReplicasPageError('empty_unverified','Replicas could not confirm this empty chat in its workspace.');
           }
         }
-        if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString());
+        if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString(),Boolean(history.events.length||replicasTurns(history).length));
         operation='ingest';
         await savePage(principal,state,chat,history);
+        if(recoveredAttempt||state.retryAttempts)recoveredPage={events:history.events.length,turns:replicasTurns(history).length,final:!history.before_cursor};
       }else if(state.initialCatalog||state.next){
         const hash=state.next?replicasDigest(state.next):undefined;
         if(hash&&state.listCursors.includes(hash))throw new ReplicasPageError('cursor','Replicas repeated a catalog cursor.');
@@ -178,7 +186,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       }
       if(state.retryAttempts||recoveredAttempt){
         console.info(JSON.stringify({event:'replicas.import.recovered',tenantId:principal.tenantId,importId:state.id,
-          workspaceId:chat?.workspace_id,chatId:chat?.chat_id,operation,elapsedMs:now()-started}));
+          workspaceId:chat?.workspace_id,chatId:chat?.chat_id,operation,elapsedMs:now()-started,...recoveredPage}));
       }
       state.retryAttempts=0;delete state.error;
       return;
@@ -198,10 +206,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         }
       }
       const fields=issueFor(error,operation);
+      if(error instanceof ReplicasPageError&&operation==='history'&&historyResponse)Object.assign(fields,historyResponse);
       const tooLarge=fields.operation!=='identity'&&(error instanceof ReplicasPageError&&error.reason==='page_size'||(fields.httpStatus===413||fields.internalStatus===413));
       const limit=state.pageLimit??100;
       const localToChat=!!chat&&fields.operation!=='identity'&&(error instanceof ReplicasPageError||tooLarge||fields.reason==='record_rejected'||
-        fields.operation==='history'&&error instanceof ReplicasProviderError&&![408,425,429].includes(error.status));
+        (fields.operation==='history'||fields.operation==='workspace_chats')&&error instanceof ReplicasProviderError&&![408,425,429].includes(error.status));
       const decision=credentialRejected?'reconnect':chat&&tooLarge&&limit>1?'resize':localToChat?'defer':'retry';
       const missing=fields.operation==='history'&&fields.httpStatus===404;
       const priorChatAttempts=Math.max(state.chatAttempts??0,missing?previousMissingAttempt:0);
@@ -251,6 +260,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           const shared=await pending.shareFailure(chat,position,issue,retryAt);
           if(shared)console.info(JSON.stringify({event:'replicas.import.shared_backoff',tenantId:principal.tenantId,
             importId:state.id,workspaceId:chat.workspace_id,chatId:chat.chat_id,additionalRecords:shared,attempt,retryAt}));
+        }
+        if(retry&&state.blocked&&(fields.reason==='empty_with_messages'||fields.reason==='empty_unverified')){
+          const shared=await pending.shareEmptyPage(chat,position,issue,retryAt);
+          if(shared)console.info(JSON.stringify({event:'replicas.import.shared_backoff',tenantId:principal.tenantId,
+            importId:state.id,workspaceId:chat.workspace_id,chatId:chat.chat_id,reason:fields.reason,additionalRecords:shared,attempt,retryAt}));
         }
         await pending.save(chat,position,issue,retryAt);
         state.blocked=(state.blocked??0)+1;state.queue.shift();Object.assign(state,emptyCheckpoint());

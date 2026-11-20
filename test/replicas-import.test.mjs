@@ -174,7 +174,7 @@ test('a cached 404 cannot suppress a different workspace, another tenant or a ne
   let missing=true;
   const f=await fixture(t,{answer:url=>{
     if(url.pathname.endsWith('conversations'))return Response.json({conversations:[chat,chat,otherWorkspace],total:3,next_cursor:null});
-    if(url.pathname.endsWith('history'))return missing&&url.pathname.includes(chat.workspace_id)?new Response(null,{status:404}):Response.json({events:[],before_cursor:null});
+    if(url.pathname.endsWith('history'))return missing&&url.pathname.includes(chat.workspace_id)?new Response(null,{status:404}):Response.json({thread_id:'confirmed',events:[],before_cursor:null});
   }});
   const first=await f.service.action(principal,{action:'connect',apiKey:'key'});
   await advance(f.service,first.id);
@@ -426,7 +426,7 @@ test('identity verification outage keeps the original history error and credenti
   let clock=Date.now(),identities=0,healthy=false;
   const f=await fixture(t,{now:()=>clock,answer:url=>{
     if(url.pathname.endsWith('whoami')&&++identities>1&&!healthy)return new Response(null,{status:503});
-    if(url.pathname.endsWith('history'))return healthy?Response.json({events:[],before_cursor:null}):new Response(null,{status:403});
+    if(url.pathname.endsWith('history'))return healthy?Response.json({thread_id:'confirmed',events:[],before_cursor:null}):new Response(null,{status:403});
   }});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const wait=await f.service.runStep(job(id));assert.ok(wait.delayMs>0);assert.equal(wait.done,false);
@@ -464,7 +464,7 @@ test('rate limit respects Retry-After; oversized pages shrink in place without l
     count++;
     if(count===1)return new Response(null,{status:429,headers:{'retry-after':'120'}});
     if(count===2)return new Response(null,{status:413});
-    assert.equal(url.searchParams.get('limit'),'50');return Response.json({events:[],before_cursor:null});
+    assert.equal(url.searchParams.get('limit'),'50');return Response.json({thread_id:'confirmed',events:[],before_cursor:null});
   }});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   assert.deepEqual(await f.service.runStep(job(id)),{done:false,delayMs:120000});
@@ -492,4 +492,47 @@ test('a real Temporal worker completes a paginated import after the request ends
       assert.deepEqual(JSON.parse(Buffer.from(payload.data).toString()),job(id));
     }
   }
+});
+
+test('matching empty responses share the retry and retain the provider request identifier',async t=>{
+  let clock=Date.now(),restored=false,reads=0;
+  const aliases=[{...chat,senders:[{message_id:'a'}]},{...chat,senders:[{sender_user_id:'member',recorded_at:'2026-10-01'}]}];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:aliases,total:2,next_cursor:null});
+    if(url.pathname.endsWith('history')){
+      reads++;
+      return Response.json({thread_id:'known',events:restored?[event('returned')]:[],before_cursor:null},
+        {headers:{'x-request-id':'req_123456789abcdef'}});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);
+  const scope=[f.database.namespace,principal.tenantId];
+  clock+=60_000;
+  await advance(f.service,id);
+  const {rows}=await f.database.pool.query("SELECT issue,checkpoint,retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2",scope);
+  assert.equal(rows.length,2);assert.equal(new Set(rows.map(row=>row.retry_at.getTime())).size,1);
+  for(const row of rows){assert.equal(row.checkpoint.chatAttempts,2);assert.equal(row.issue.httpStatus,200);assert.equal(row.issue.requestId,'req_123456789abcdef');}
+  await advance(f.service,id);assert.equal(reads,3);
+  restored=true;clock+=120_000;
+  await advance(f.service,id);const done=await advance(f.service,id);
+  assert.equal(done.phase,'complete');assert.equal(done.imported,1);assert.equal(done.processed,2);
+});
+
+test('canceled messages permit a confirmed empty chat and a workspace access error leaves other imports runnable',async t=>{
+  let clock=Date.now();
+  const canceled={...chat,chat_id:randomUUID(),senders:[{message_id:'discarded'}]};
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations'))return Response.json({conversations:[chat,canceled],total:2,next_cursor:null});
+    if(url.pathname.endsWith('history')){
+      if(url.searchParams.get('chat_id')===canceled.chat_id)return Response.json({thread_id:'confirmed',events:[],removed_message_ids:['discarded'],before_cursor:null});
+      return Response.json({events:[],has_more:false});
+    }
+    if(url.pathname.endsWith('/chats'))return new Response(null,{status:403});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const inaccessible=await advance(f.service,id);assert.equal(inaccessible.blocked,1);assert.equal(inaccessible.imported,0);
+  const progress=await advance(f.service,id);assert.equal(progress.processed,1);assert.equal(progress.imported,1);
+  const {rows:[row]}=await f.database.pool.query("SELECT issue FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2",[f.database.namespace,principal.tenantId]);
+  assert.equal(row.issue.operation,'workspace_chats');assert.equal(row.issue.identityCheck,'verified');assert.equal(row.issue.httpStatus,403);
 });
