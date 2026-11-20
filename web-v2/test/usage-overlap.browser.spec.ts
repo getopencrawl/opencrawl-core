@@ -94,6 +94,54 @@ test('partial refresh updates healthy metrics, retains the failed chart with its
   await expect(chart).toHaveCount(0);
 });
 
+for (const width of [1440, 390]) test(`source counts fail locally, keep live connections and recover at ${width}px`, async ({page}, info) => {
+  await page.setViewportSize({width, height: 900});
+  await page.clock.install();
+  const source = {name: 'Slack', icon: '/assets/integrations/slack.svg', state: 'synced', records: 25, indexed: null, lastSyncedAt: null};
+  let data: UsageReport = {...report(), ingestion: {sources: [source], index: null}, failedSources: ['connectors']};
+  await page.route('**/api/console/usage', route => route.fulfill({json: data}));
+  await page.goto('/usage');
+  const section = page.getByRole('region', {name: 'Data sources', exact: true});
+  const card = section.getByRole('article', {name: 'Slack'});
+  const retry = section.getByRole('button', {name: 'Retry counts'});
+  await expect(card).toContainText('Indexed item counts unavailable.');
+  await expect(card).toContainText('Synced');
+  await expect(section.getByRole('status')).toHaveCount(0);
+  await retry.focus();
+  await expect(retry).toBeFocused();
+  await section.screenshot({path: info.outputPath(`count-unavailable-${width}.png`)});
+
+  data = {...report(), ingestion: {sources: [{...source, indexed: 7, indexedSpecies: [{name: 'message', count: 7}]}], index: null}};
+  await retry.press('Enter');
+  await expect(card.getByRole('list')).toHaveText('Messages7');
+  await expect(retry).toHaveCount(0);
+  // A fresh list can drop an old connection and change sync state even while counts fail.
+  data = {...report(), ingestion: {sources: [{...source, name: 'GitHub', state: 'syncing'}], index: null}, failedSources: ['connectors']};
+  await page.clock.runFor(60_001);
+  await expect(card).toHaveCount(0);
+  const github = section.getByRole('article', {name: 'GitHub'});
+  await expect(github).toContainText('Indexed item counts unavailable.');
+  await expect(github).toContainText('Syncing');
+
+  data = {...report(), ingestion: null, failedSources: ['integrations', 'connectors']};
+  await page.clock.runFor(60_001);
+  const notice = section.getByRole('status');
+  await expect(notice).toContainText('Connected sources couldn’t update.');
+  await expect(notice).toContainText('Showing data updated');
+  await expect(github).toBeVisible();
+  await expect(retry).toHaveCount(0);
+  const message = await notice.getByText('Connected sources couldn’t update.', {exact: false}).boundingBox();
+  const action = await notice.getByRole('button', {name: 'Try again'}).boundingBox();
+  expect(message && action && (action.x >= message.x + message.width + 8 || action.y >= message.y + message.height + 4)).toBeTruthy();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
+  await section.screenshot({path: info.outputPath(`list-unavailable-${width}.png`)});
+
+  data = {...report(), ingestion: {sources: [{...source, indexed: 0, indexedSpecies: []}], index: null}};
+  await page.clock.runFor(60_001);
+  await expect(card).toContainText('No content yet.');
+  await expect(notice).toHaveCount(0);
+});
+
 test('captured tokens render while charts are pending, and a changed workspace clears both', async ({page}) => {
   const data = report();
   const {workspace, value, capture, ...details} = data;

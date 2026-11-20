@@ -17,28 +17,32 @@ export function useUsage(adapter: ConsoleDataAdapter) {
   return {...resource, refresh: resource.reload};
 }
 
-function UsageSourceCard({source, now}: {source: UsageSource; now: number}) {
+function UsageSourceCard({source, now, countsUnavailable}: {source: UsageSource; now: number; countsUnavailable: boolean}) {
   const status = sourceStatus(source.state);
   return <IntegrationCard name={source.name} icon={source.icon} status={status}
     metrics={source.indexedSpecies?.map(item => ({label: speciesLabel(item.name), count: item.count}))}
-    emptyMessage={source.indexedSpecies ? 'No content yet.' : 'Content breakdown unavailable.'}
+    emptyMessage={source.indexedSpecies ? 'No content yet.' : countsUnavailable ? 'Indexed item counts unavailable.' : 'Content breakdown unavailable.'}
     metadata={<span>{source.state === 'synced' && source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : status.label}</span>}/>;
 }
 
 function MeasurementStatus({report, section, label, now, retry}: {report: UsageReport; section: UsageSection; label: string; now: number; retry?: () => void}) {
   if (!usageSectionFailed(report, section)) return null;
   const previous = report.staleSections?.[section];
-  return <Notice tone="warning">{label} couldn’t {previous ? 'update' : 'load'}.{previous && ` Showing data updated ${ago(previous, now)}.`} We’ll retry automatically.{retry && <Button onClick={retry}>Try again</Button>}</Notice>;
+  return <Notice tone="warning" actions={retry && <Button onClick={retry}>Try again</Button>}>
+    {label} couldn’t {previous ? 'update' : 'load'}.{previous && ` Showing data updated ${ago(previous, now)}.`} We’ll retry automatically.
+  </Notice>;
 }
 
 function DataSourcesReport({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
   const data = report.ingestion;
+  const countsUnavailable = report.failedSources?.includes('connectors') === true;
+  const retryCounts = countsUnavailable && !usageSectionFailed(report, 'ingestion') && Boolean(data?.sources.length) && retry;
   return (
-    <Section className="report-section" title="Data sources">
-      <MeasurementStatus report={report} section="ingestion" label="Source counts" now={now} retry={retry}/>
+    <Section className="report-section" title="Data sources" actions={retryCounts && <Button variant="quiet" onClick={retryCounts}>Retry counts</Button>}>
+      <MeasurementStatus report={report} section="ingestion" label="Connected sources" now={now} retry={retry}/>
       {!data ? (usageSectionFailed(report, 'ingestion') ? null : <EmptyState title="Source reporting isn’t available on this deployment."/>) : data.sources.length ? (
         <div className="oc-integration-grid">
-          {data.sources.map((source, index) => <UsageSourceCard key={`${source.name}:${source.account || index}`} source={source} now={now}/>)}
+          {data.sources.map((source, index) => <UsageSourceCard key={`${source.name}:${source.account || index}`} source={source} now={now} countsUnavailable={countsUnavailable}/>)}
         </div>
       ) : <EmptyState title="No sources connected" actions={<Link to="/sources">Connect a source to start ingesting.</Link>}/>}
     </Section>
@@ -201,8 +205,8 @@ function ProgressiveUsage({adapter, setupPrompt, highlights, details, reportScop
   const retry = () => {void summary.reload(); void activity.reload();};
   return <Page title="Usage" description={usageDescription(report, now)} bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
     {showActivity && adapter.callTotals && adapter.searchHistory && <SearchActivity scope={showActivity} adapter={adapter as Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>}/>}
-    {summary.error && <Notice tone="warning">Usage highlights couldn’t update. <Button onClick={summary.reload}>Try again</Button></Notice>}
-    {activity.error && <Notice tone="warning">Usage details couldn’t update. <Button onClick={activity.reload}>Try again</Button></Notice>}
+    {summary.error && <Notice tone="warning" actions={<Button onClick={summary.reload}>Try again</Button>}>Usage highlights couldn’t update.</Notice>}
+    {activity.error && <Notice tone="warning" actions={<Button onClick={activity.reload}>Try again</Button>}>Usage details couldn’t update.</Notice>}
     {report && (activity.data || summary.data?.capture || summary.data?.failedSources?.length) ?
       <AgentReport showActivity={Boolean(showActivity)} report={report} now={now} retry={retry} pendingDetails={!activity.data}/> : null}
 
@@ -224,7 +228,7 @@ function CompleteUsage({adapter, setupPrompt,showActivity}: PageProps) {
   const scope = usageDescription(data, now);
   return (
     <Page title="Usage" description={scope} bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
-      {error && <Notice tone={data ? 'warning' : 'danger'}>{data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}{!data && <Button onClick={refresh} disabled={loading}>Try again</Button>}</Notice>}
+      {error && <Notice tone={data ? 'warning' : 'danger'} actions={!data && <Button onClick={refresh} disabled={loading}>Try again</Button>}>{data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : error}</Notice>}
       {loading && <LoadingState label="Loading usage"/>}
       {showActivity && adapter.callTotals && adapter.searchHistory && <SearchActivity scope={showActivity} adapter={adapter as Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>}/>}
       {data && <UsageReportView showActivity={Boolean(showActivity)} data={data} now={now} retry={refresh}/>}
