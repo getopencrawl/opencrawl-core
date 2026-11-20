@@ -77,6 +77,10 @@ dry run, uses bounded pages and a resumable cursor, verifies immutable sources,
 and writes only missing participant metadata. It preserves text, token counts,
 ownership, visibility and raw captures, and never recreates a deleted document.
 Legacy human captures remain filterable by their owner during migration.
+Usage also includes the latest shared Replicas human message whose reported email
+matches one verified active workspace member. The lookup uses a tenant-scoped hash.
+To add this measurement to already indexed Replicas senders, run the same migration
+with `replicasActivityOnly: true`. Each page can be retried from its last successful cursor.
 
 Visibility is stored as an owner control object beside the owner's capture
 objects (`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`) and
