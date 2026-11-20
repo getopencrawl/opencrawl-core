@@ -48,7 +48,7 @@ export class ObservableMcpServer extends McpServer {
           const client = info && typeof info === 'object' && 'name' in info && typeof info.name === 'string' ? info.name.slice(0,100) : null;
           const tool = typeof name === 'string' && this.toolInputSchemaJson(name) ? name : null;
           if (pending.has(message.id)||history.has(message.id)) disconnected(message.id, 'protocol_error');
-          if(recordUsage)history.set(message.id,agentSearchEntry(tool,message.params?.arguments));
+          if(recordUsage && tool !== null)history.set(message.id,agentSearchEntry(tool,message.params?.arguments));
           if(observe)pending.set(message.id, observe({tool, client}));
         } catch { /* Keep the original request and its authorization path. */ }
       }
