@@ -16,6 +16,7 @@ import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
+import {claudeClientAppResolver} from './claude-client-app.ts';
 import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {devinEvents,devinOverflow,devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
@@ -442,6 +443,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     if(agyPath&&(!meta.origin||meta.origin==='unknown'))meta={...meta,origin:agyPath.origin,originEvidence:agyPath.originEvidence};
     const expectedSession=scoped?(scoped.agentId?scoped.sessionId+':'+scoped.agentId:scoped.sessionId):null;
     let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
+    const resolveClientApp = claudeClientAppResolver();
     function metadata(r:any) {
         if(harness==='antigravity')return;
         const p=r.payload??r;
@@ -465,7 +467,14 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           return;
         } else if(harness==='claude-code' && r.sessionId) {
           if(scoped&&(r.sessionId!==scoped.sessionId||(r.agentId??undefined)!==scoped.agentId))throw new CliError('CAPTURE_SESSION_MISMATCH','Native message differs from the registered parent or child session');
-          meta.sessionId=r.agentId ? r.sessionId+':'+r.agentId : r.sessionId;
+          const sessionId=r.agentId ? r.sessionId+':'+r.agentId : r.sessionId;
+          if(meta.sessionId!==sessionId)delete meta.clientApp;
+          meta.sessionId=sessionId;
+          if(typeof r.entrypoint==='string' && !(r.entrypoint==='sdk-ts' && meta.clientApp==='conductor')){
+            const clientApp=resolveClientApp(r.sessionId,r.entrypoint);
+            if(clientApp)meta.clientApp=clientApp;
+            else delete meta.clientApp;
+          }
           if(r.agentId)meta.parentSessionId=r.sessionId;
         }
         const origin=detectOrigin(harness,r);
@@ -537,7 +546,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             if(desktopAudit&&auditMessage&&(!record.session_id||typeof record.session_id!=='string'))throw new CliError('CAPTURE_SESSION_UNKNOWN','Desktop audit message has no session identity');
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
-            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
+            if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd || meta.clientApp!==priorMeta.clientApp)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
             const parsed=auditMessage?parseRecord(harness,record,position):null;
             if(parsed?.kind==='session_title') {
               const platform=await platformTitle(config,meta);
