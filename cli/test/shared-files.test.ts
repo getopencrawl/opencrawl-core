@@ -1,0 +1,94 @@
+import {expect, test} from 'bun:test';
+import {mkdtemp, mkdir, readFile, realpath, rm, writeFile} from 'node:fs/promises';
+import {isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {devNull, tmpdir} from 'node:os';
+
+test('shared-file sessions open outside the project, preserve drafts and scope Git credentials', async () => {
+  const root = await mkdtemp(join(tmpdir(),'opencrawl-files-cli-'));
+  const project = join(root,'working-project');
+  const cwd = join(project,'nested');
+  const temp = join(project,'scratch');
+  const home = join(root,'home');
+  const rpc = join(root,'rpc');
+  await Promise.all([cwd,temp,home,rpc].map(path => mkdir(path,{recursive:true})));
+  const server = Bun.spawn(['node',resolve(import.meta.dir,'fixtures/shared-files-server.mjs'),rpc],
+    {env:process.env,stdout:'pipe',stderr:'pipe'});
+  try {
+    const startup = server.stdout.getReader();
+    const first = await startup.read();
+    if (first.done) throw new Error(await new Response(server.stderr).text());
+    startup.releaseLock();
+    const api = new TextDecoder().decode(first.value).trim();
+    const token = 'fixture-token-alice';
+    const env = {...process.env, OPENCRAWL_CONFIG_HOME:join(home,'config'), OPENCRAWL_TOKEN:token,
+      OPENCRAWL_API_URL:api, OPENCRAWL_NO_UPDATE:'1', HOME:home, USERPROFILE:home,
+      TMPDIR:temp, TEMP:temp, TMP:temp, GIT_CONFIG_GLOBAL:devNull, GIT_CONFIG_NOSYSTEM:'1', GIT_TERMINAL_PROMPT:'0'};
+    const entry = [process.execPath,resolve(import.meta.dir,'../src/cli.ts')];
+    async function run(cmd: string[], options: {token?:string; input?:string; failure?:boolean} = {}) {
+      const child = Bun.spawn(cmd,{cwd,env:{...env,OPENCRAWL_TOKEN:options.token ?? token},
+        stdin:new Blob([options.input ?? '']),stdout:'pipe',stderr:'pipe'});
+      const [out,err,code] = await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
+      if (options.failure) expect(code).not.toBe(0);
+      else if (code !== 0) throw new Error('Command failed: ' + err + out);
+      return out.trim();
+    }
+    const open = (session:string) => [...entry,'files','open','--api',api,'--session',session];
+    await run(['git','-C',project,'init','--initial-branch=customer-draft']);
+    await writeFile(join(project,'notes'),'customer WIP');
+    await run(['git','-C',project,'add','notes']);
+    await writeFile(join(project,'notes'),'customer WIP plus unstaged updates');
+    const customerStatus = () => run(['git','-C',project,'status','--porcelain=v1']);
+    const before = await customerStatus();
+    expect(before).toContain('AM notes');
+
+    // Two callers can resume the same session while a separate session has its own clone.
+    const [a,resume,b] = await Promise.all([run(open('alpha')),run(open('alpha')),run(open('beta'))]);
+    expect(a).toBe(resume);
+    expect(a).not.toBe(b);
+    for (const path of [a,b]) {
+      expect(isAbsolute(path)).toBe(true);
+      const diff = relative(await realpath(project),await realpath(path));
+      expect(diff === '..' || diff.startsWith('..'+sep) || isAbsolute(diff)).toBe(true);
+    }
+    const config = await readFile(join(a,'.git','config'),'utf8');
+    expect(config).not.toContain(token);
+    const remote = await run(['git','-C',a,'remote','get-url','origin']);
+    expect(remote).toStartWith(api+'/api/files/');
+    expect(remote).not.toContain(token);
+
+    await writeFile(join(a,'handoff.txt'),'agent handoff');
+    await run(['git','-C',a,'add','handoff.txt']);
+    await run(['git','-C',a,'commit','-m','Share agent handoff']);
+    await writeFile(join(a,'unsent.txt'),'uncommitted draft');
+    expect(await run(open('alpha'))).toBe(a);
+    expect(await readFile(join(a,'unsent.txt'),'utf8')).toBe('uncommitted draft');
+    expect(await run(['git','-C',a,'rev-list','--count','origin/main..HEAD'])).toBe('1');
+    await run(['git','-C',a,'push']);
+    await run(['git','-C',b,'pull','--ff-only']);
+    expect(await readFile(join(b,'handoff.txt'),'utf8')).toBe('agent handoff');
+
+    // A login switch against the same API cannot use the old session's helper.
+    await run(['git','-C',a,'fetch'],{token:'fixture-token-other',failure:true});
+    const other = await run(open('alpha'),{token:'fixture-token-other'});
+    expect(other).not.toBe(a);
+    expect(await run(['git','-C',other,'ls-tree','--name-only','HEAD'])).toBe('');
+    const savedHelpers = await run(['git','-C',a,'config','--get-all','credential.helper']);
+    const key = savedHelpers.match(/\b([a-f0-9]{64})\b/)?.[1];
+    expect(key).toBeDefined();
+    const url = new URL(remote);
+    for (const input of [
+      'protocol=https\nhost=unrelated.invalid\npath='+url.pathname.slice(1)+'\n\n',
+      'protocol=http\nhost='+url.host+'\npath=another-workspace.git\n\n',
+    ]) {
+      expect(await run([...entry,'files-credential',key!,'get'],{input,failure:true})).toBe('');
+    }
+    expect(await customerStatus()).toBe(before);
+    expect(await run(['git','-C',project,'branch','--show-current'])).toBe('customer-draft');
+    expect(await run(['git','-C',project,'show',':notes'])).toBe('customer WIP');
+    expect(await readFile(join(project,'notes'),'utf8')).toBe('customer WIP plus unstaged updates');
+  } finally {
+    server.kill('SIGTERM');
+    await server.exited;
+    await rm(root,{recursive:true,force:true});
+  }
+}, 60000);
