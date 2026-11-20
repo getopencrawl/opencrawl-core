@@ -8,6 +8,7 @@ import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
+import {hasWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
@@ -22,7 +23,7 @@ export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
   workspaceChecks?:{id:string;at:number}[];
-  initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
+  initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;exportReviewSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 // Reserve one activity in five for due pages while catalog work remains.
 const freshStepsPerRetry=4;
@@ -46,6 +47,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
+    await client.query('ALTER TABLE opencrawl_replicas_workspace_inventories ADD COLUMN IF NOT EXISTS export_check jsonb');
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_chat
       ON opencrawl_replicas_deferred(namespace,tenant,(chat->>'workspace_id'),(chat->>'chat_id'))`);
   }).catch(error=>{prepared=undefined;throw error;});
@@ -112,6 +114,16 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     delete state.retryAt;
     const pending=deferredHistory(client,namespace,principal.tenantId);
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
+    const reviewScope:[string,string,string]=[namespace,principal.tenantId,state.id];
+    const review=async()=>{
+      const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now());
+      if(result.added){state.total+=result.added;state.blocked=(state.blocked??0)+result.added;delete state.waitingForSource;}
+      return result.requested;
+    };
+    if(!hasFresh){
+      state.exportReviewSteps=(state.exportReviewSteps??0)+1;
+      if(!state.blocked||state.exportReviewSteps>=5){state.exportReviewSteps=0;if(await review())return;}
+    }
     if(state.blocked&&(!hasFresh||(state.freshSteps??freshStepsPerRetry)>=freshStepsPerRetry)){
       state.freshSteps=0;
       // Once the catalog is drained, let a readable long transcript advance
@@ -138,6 +150,9 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         return;
       }
       if(!hasFresh){
+        if(await hasWorkspaceExportReview(client,reviewScope)){
+          if(await review()||await hasWorkspaceExportReview(client,reviewScope))return;
+        }
         state.retryAt=row.retry_at.toISOString();
         state.waitingForSource=await pending.onlyAbsent();
         return;
@@ -252,7 +267,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         ...(chat?{workspaceId:chat.workspace_id,chatId:chat.chat_id,pageLimit:limit}:{}),
         ...(state.before||(!chat&&state.next)?{cursorHash:replicasDigest((chat?state.before:state.next)!)}:{})};
       const empty=fields.reason==='empty_with_messages'||fields.reason==='empty_unverified';
-      if(chat&&retry&&!state.before&&(empty||missing&&attempt>=3)){
+      if(chat&&retry&&!state.before&&(empty||missing)){
         const observation=await observeReplicasWorkspace(client,{namespace,tenant:principal.tenantId,importId:state.id,workspace:chat.workspace_id},
           now(),()=>observedInventory?Promise.resolve(observedInventory):api.workspaceChats(chat.workspace_id));
         const ids=observation.ids;
@@ -351,7 +366,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           await step(client,principal,state,replicasApi(envelope.open(path,credential).toString(),request));
         }
       }
-      if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked)state.phase='complete';
+      if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked&&
+        !await hasWorkspaceExportReview(client,[namespace,principal.tenantId,state.id]))state.phase='complete';
       if(state.phase!=='importing')credential=null;
       state.updatedAt=new Date(now()).toISOString();
       await client.query('INSERT INTO opencrawl_replicas_imports(namespace,tenant,state,credential) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(namespace,tenant) DO UPDATE SET state=EXCLUDED.state,credential=EXCLUDED.credential',[namespace,principal.tenantId,JSON.stringify(state),credential]);

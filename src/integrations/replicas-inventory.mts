@@ -22,13 +22,17 @@ export async function observeReplicasWorkspace(client:Client,scope:{namespace:st
     const inventory=await read();
     if(inventory.waking)result='waking';
     else if(inventory.chats.length<=10_000&&inventory.chats.every(chat=>chat.id.length>0&&chat.id.length<=256)){
-      ids=[...new Set(inventory.chats.map(chat=>chat.id))];result='ready';
+      ids=[...new Set(inventory.chats.map(chat=>chat.id))].sort();result='ready';
     }
   }catch(error){if(error instanceof ReplicasProviderError)httpStatus=error.status;}
   const at=new Date(now).toISOString(),next=now+interval;
   await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,chat_ids,result)
     VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,tenant,import_id,workspace) DO UPDATE
-    SET checked_at=EXCLUDED.checked_at,chat_ids=EXCLUDED.chat_ids,result=EXCLUDED.result`,[...args,at,ids,result]);
+    SET checked_at=EXCLUDED.checked_at,chat_ids=EXCLUDED.chat_ids,result=EXCLUDED.result,
+      export_check=CASE WHEN opencrawl_replicas_workspace_inventories.chat_ids IS DISTINCT FROM EXCLUDED.chat_ids
+        OR opencrawl_replicas_workspace_inventories.export_check->>'phase' IN ('unavailable','inconsistent_catalog','scope_mismatch')
+        OR jsonb_array_length(COALESCE(opencrawl_replicas_workspace_inventories.export_check->'outside','[]'::jsonb))>0
+        THEN NULL ELSE opencrawl_replicas_workspace_inventories.export_check END`,[...args,at,ids,result]);
   let moved=0,released=0;
   if(ids){
     const scoped=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$4 AND issue->>'importId'=$3 AND checkpoint->>'before' IS NULL

@@ -263,7 +263,7 @@ test('workspace diagnostics compare only the requested export scope and never sk
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   for(let i=0;i<3;i++){await advance(f.service,id);clock+=10*60_000;}
   const {rows:[row]}=await f.database.pool.query('SELECT state FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
-  assert.deepEqual(row.state.recentIssues.at(-1).workspaceExport,{result:'scope_mismatch'});
+  assert.ok(row.state.recentIssues.some(issue=>issue.workspaceExport?.result==='scope_mismatch'));
   assert.equal(row.state.blocked,1);assert.equal(row.state.processed,0);
   assert.equal(f.calls.some(url=>url.pathname.includes(other.workspace_id)),false);
 });
@@ -619,4 +619,32 @@ test('a recovered long transcript makes progress alongside older unavailable cha
   await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',[...scope,new Date(clock),chat,{...cp,before:'1'},{...issue,continuation:true}]);
   for(let i=0;i<6;i++)await advance(f.reopen(),id);
   assert.deepEqual(reads.slice(0,4),Array(4).fill(chat.chat_id));assert.ok(others.some(o=>o.chat_id===reads[4]));assert.equal(reads[5],chat.chat_id);
+});
+
+test('a workspace-only chat must reappear in its exact retained organization export before history is read',async t=>{
+  let clock=Date.now();
+  const retained={...chat,chat_id:randomUUID()},listedOnly={...chat,chat_id:randomUUID()},alreadyImported={...chat,chat_id:randomUUID()};
+  const reads=[],scopedPages=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('/conversations')){
+      if(!url.searchParams.has('workspace_id'))return Response.json({conversations:[chat,alreadyImported],total:2,next_cursor:null});
+      assert.equal(url.searchParams.get('workspace_id'),chat.workspace_id);
+      const cursor=url.searchParams.get('cursor');scopedPages.push(cursor);
+      return Response.json(cursor?{conversations:[retained,chat],total:3,next_cursor:null}:{conversations:[alreadyImported],total:3,next_cursor:'next-page'});
+    }
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:[retained,listedOnly,alreadyImported].map(c=>({id:c.chat_id}))});
+    if(url.pathname.endsWith('/history')){
+      const id=url.searchParams.get('chat_id');reads.push(id);
+      if(id===chat.chat_id)return Response.json({error:'Chat not found'},{status:404});
+      assert.ok([retained.chat_id,alreadyImported.chat_id].includes(id));
+      return Response.json({events:[event('retained transcript')],before_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);clock+=60_000;
+  for(let i=0;i<12;i++)await advance(f.reopen(),id);
+  const status=await f.service.status(principal);assert.equal(status.imported,2);assert.equal(status.processed,2);assert.equal(status.total,3);assert.equal(status.blocked,1);
+  assert.ok(scopedPages.includes('next-page'));assert.equal(reads.filter(id=>id===retained.chat_id).length,1);assert.ok(!reads.includes(listedOnly.chat_id));
+  const {rows:[row]}=await f.database.pool.query('SELECT export_check FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
+  assert.equal(row.export_check.phase,'complete');assert.equal(row.export_check.added,1);assert.deepEqual(row.export_check.outside,[listedOnly.chat_id]);
 });
