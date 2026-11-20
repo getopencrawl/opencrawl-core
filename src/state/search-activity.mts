@@ -11,6 +11,10 @@ const scope=(p:Principal)=>{
   if(!p?.tenantId || !p.userId) throw Error('Verified activity scope required');
   return [p.tenantId,p.userId];
 };
+function readScope(p:Principal){
+  if(p?.captureAccess!==undefined)throw Object.assign(Error('Workspace membership required'),{status:403});
+  return scope(p);
+}
 const record=(v:unknown):Record<string,unknown> => v && typeof v==='object' ? v as Record<string,unknown> : {};
 const text=(s:unknown,limit:number)=>typeof s==='string'?maskPatterns(s.replaceAll('\0','')).slice(0,limit):null;
 export function searchDetail(input:unknown){
@@ -127,13 +131,13 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
         (select coalesce(sum(calls),0) from opencrawl_call_days where namespace=$1 and tenant_id=$2 and day>=${windowStart}) as calls,
         s.* from opencrawl_activity_start cross join lateral (select coalesce(sum(agent),0) as agent,coalesce(sum(proactive),0) as proactive,
           coalesce(sum(non_silent),0) as non_silent,coalesce(sum(delivered),0) as delivered from opencrawl_search_days
-          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) s where namespace=$1`,[namespace,scope(p)[0]]);
+          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) s where namespace=$1`,[namespace,readScope(p)[0]]);
       const r=rows[0];
       return {since:r.since.toISOString(),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered)};
     },
     async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
       const {kind,before}=historyRequest.parse(input);
-      const owner=scope(p);
+      const owner=readScope(p);
       const audience=JSON.stringify([namespace,...owner,kind]);
       const window=`namespace=$1 and tenant_id=$2 and kind=$4 and at>=${windowStart} at time zone 'UTC'
         ${before?'and (at,id)<($5::timestamptz,$6::uuid)':''}`;
