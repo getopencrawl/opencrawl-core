@@ -65,3 +65,10 @@ A deployment with earlier completed check receipts may import their recorded
 outcomes into the rolling window. Receipts without a source session, message or
 query show those fields as unavailable. They do not increment the newer call
 counter. Reimporting the same receipt does not change the totals.
+
+A deployment can also restore authenticated tool calls recorded before detailed
+tracking began. The importer accepts stable source receipt IDs, server timestamps,
+owners and an optional search operation. It deduplicates within each workspace
+and accepts only the pre-tracking portion of the visible window. Search details
+from these records are visible only to their owner. The report identifies missing
+queries, sessions and outcomes, and distinguishes earlier calls from full tracking.

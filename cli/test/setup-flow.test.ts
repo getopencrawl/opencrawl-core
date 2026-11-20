@@ -1123,7 +1123,7 @@ test('eligible setup offers the utility by default and preserves a declined inst
  const dependencies={modeEligibility:()=>({eligible:true,reason:'Fixture local supervisor'}),installPlugins:async(_api:string,_clients:string[],options?:Parameters<typeof installSetupPlugins>[2])=>{expect(options?.captureMode).toBe('hook');return {results:[{client:'codex' as const,status:'installed' as const,captureAvailable:true,daemonHandoff:true}],humanTasks:[]};},installDaemon:async()=>{installs++;throw Error('Declined service must not install');},launchHistory:()=>({state:'not_started'})};
  const declineService=(expectedDefault:boolean)=>async(screen:SelectionScreen)=>{
   phases.push(screen.phase);
-  if(screen.phase===1)expect(screen.description).toBe('Choose local coding agents to record sessions from');
+  if(screen.phase===1)expect(screen.description).toContain('check prompts for useful prior context under your deployment’s credit policy');
   if(screen.phase===3){
    expect(screen.description).toBe('Install background utility for more reliable session capture?');
    expect(screen.items.find(item=>item.id==='daemon')?.selected).toBe(expectedDefault);

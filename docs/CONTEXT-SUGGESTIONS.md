@@ -61,13 +61,13 @@ core's input/output bounds alone do not cap a provider's internal spend.
 Core retains current-chat exclusion, source visibility checks, exact-quote
 validation and final authorization. An adapter cannot grant access to sources.
 
-## Enable and study suggestions
+## Configure and study suggestions
 
-Install the selected harness plugin, finish its native trust review, then run
-`opencrawl context-suggestions enable --harness claude-code --api https://your-host`.
-Use `status` or `disable` with the same endpoint. Suggestions remain opt-in and
-preserve existing capture choices. Native hooks call the selected deployment;
-there is no default-cloud fallback in the extension.
+Supported clients selected to record new sessions run the trusted plugin's
+suggestion hook by default. Run `opencrawl context-suggestions status --api https://your-host`
+to inspect the effective clients. Use `disable --harness claude-code` or
+`enable --harness claude-code` on the same command and endpoint to override that
+client. Existing saved selections survive the upgrade.
 
 `POST /api/context/suggestions/events` accepts bounded metadata batches through
 the same authentication boundary. `observe` receives observed/skipped/requested/

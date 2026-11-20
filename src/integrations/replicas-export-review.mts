@@ -16,21 +16,30 @@ const eligible=`((chat_ids IS NOT NULL AND (
   ($4::boolean AND export_check->>'phase'='complete' AND NOT COALESCE((export_check->>'fullCatalog')::boolean,false))
 )) OR ($4::boolean AND result='unobserved'))`;
 
-const dueAt="COALESCE((export_check->>'retryAt')::timestamptz,'epoch'::timestamptz)";
-export async function nextWorkspaceExportReview(client:Client,scope:Scope,sweep:boolean){
-  const {rows:[row]}=await client.query<{next:Date|null}>(`SELECT MIN(${dueAt}) AS next FROM opencrawl_replicas_workspace_inventories
-    WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}`,[...scope,sweep]);
+const retryAt="COALESCE((export_check->>'retryAt')::timestamptz,'epoch'::timestamptz)";
+// A repeatedly inconsistent total is an inventory concern once the native
+// roster is fully saved. Missing roster entries and transport failures stay
+// on their own deadlines. The previous daily boundary keeps due work eligible.
+const dueAt=`CASE WHEN ${retryAt}>$5::timestamptz-interval '24 hours' AND ${retryAt}<$5
+  AND i.result='ready' AND i.chat_ids IS NOT NULL AND i.export_check->>'phase'='inconsistent_catalog'
+  AND i.export_check->'lastFailure'->>'reason'='terminal_count' AND (i.export_check->>'attempt')::int>=3
+  AND NOT EXISTS(SELECT 1 FROM unnest(i.chat_ids) AS roster(chat_id) WHERE NOT EXISTS(
+    SELECT 1 FROM opencrawl_replicas_snapshots s WHERE (s.namespace,s.tenant,s.import_id,s.workspace,s.chat_id)
+    =(i.namespace,i.tenant,i.import_id,i.workspace,roster.chat_id))) THEN $5 ELSE ${retryAt} END`;
+export async function nextWorkspaceExportReview(client:Client,scope:Scope,sweep:boolean,nextCatalogAt?:string){
+  const {rows:[row]}=await client.query<{next:Date|null}>(`SELECT MIN(${dueAt}) AS next FROM opencrawl_replicas_workspace_inventories i
+    WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}`,[...scope,sweep,nextCatalogAt??null]);
   return row.next?.getTime();
 }
 
 /** The original catalog can omit a workspace-listed chat. Only a matching row
  * from the organization's retained export may enroll that chat. Check one
  * export page per activity, under the same tenant lock as the ordinary queue. */
-export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:readonly string[],api:ReturnType<typeof replicasApi>,now:number,sweep:boolean){
+export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:readonly string[],api:ReturnType<typeof replicasApi>,now:number,sweep:boolean,nextCatalogAt?:string){
   const [namespace,tenant,importId]=scope;
   const result=await client.query<{workspace:string;result:string;chat_ids:string[]|null;chat_versions:Record<string,WorkspaceVersion>;export_check:Review|null}>(`SELECT workspace,result,chat_ids,chat_versions,export_check
-    FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible} AND ${dueAt}<=$5
-    ORDER BY checked_at,workspace LIMIT 1`,[...scope,sweep,new Date(now)]);
+    FROM opencrawl_replicas_workspace_inventories i WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible} AND ${dueAt}<=$6
+    ORDER BY checked_at,workspace LIMIT 1`,[...scope,sweep,nextCatalogAt??null,new Date(now)]);
   const row=result.rows[0];
   if(!row)return {requested:false,added:0};
   const workspace=row.workspace,args=[...scope,workspace],at=new Date(now).toISOString();
@@ -61,7 +70,7 @@ export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:
     const attempt=(saved?.attempt??0)+1;
     const sameTerminal=details.reason==='terminal_count'&&details.catalogHash!==undefined&&details.catalogHash===previousFailure?.catalogHash&&
       previousFailure.reportedTotal===details.reportedTotal&&previousFailure.pageLimit!==pageLimit;
-    const delay=retryDelay(attempt,60_000,Math.max(providerDelay,sameTerminal?30*60_000:0));
+    const delay=retryDelay(attempt,60_000,Math.max(providerDelay,sameTerminal?86_400_000:0));
     const retryAt=new Date(now+delay).toISOString();
     const lastFailure={at,pageLimit,httpStatus:response?.httpStatus,requestId:response?.requestId,
       cursorHash:previous.cursor?replicasDigest(previous.cursor):undefined,...details};

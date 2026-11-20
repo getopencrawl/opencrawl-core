@@ -143,7 +143,7 @@ test('Codex fork history preserves the leading session identity and origin acros
   atomicJson(join(captureDir(),'config.json'),config);
   const path=join(config.roots.codex,'sessions','fork.jsonl');mkdirSync(join(path,'..'),{recursive:true});
   const records=[
-   {type:'session_meta',payload:{id:'fork',source:'vscode',originator:'Codex Desktop',forked_from_id:'parent'}},
+   {type:'session_meta',payload:{id:'fork',source:'vscode',originator:'T3 Code',forked_from_id:'parent'}},
    {type:'session_meta',payload:{id:'parent',source:'cli',originator:'codex_cli_rs'}},
    ...Array.from({length:205},(_,i)=>({type:'response_item',payload:{type:'message',role:'user',content:'history '+i}})),
   ];
@@ -152,12 +152,14 @@ test('Codex fork history preserves the leading session identity and origin acros
   const queue=join(captureDir(),'queue');
   const batches=readdirSync(queue).map(p=>JSON.parse(readFileSync(join(queue,p),'utf8')));
   expect(batches).toHaveLength(2);
-  expect(batches.every(b=>b.sessionId==='fork'&&b.parentSessionId==='parent'&&b.origin==='desktop')).toBe(true);
+  expect(batches.every(b=>b.sessionId==='fork'&&b.parentSessionId==='parent'&&b.origin==='unknown'&&b.clientApp==='t3-code')).toBe(true);
   expect(batches.reduce((n,b)=>n+b.events.length,0)).toBe(207);
+  const cursor=join(captureDir(),'state',hash('codex'+realpathSync(path))+'.json');
+  const beforeUpgrade=JSON.parse(readFileSync(cursor,'utf8'));delete beforeUpgrade.meta.clientApp;atomicJson(cursor,beforeUpgrade);
   const resumed=[...records,{type:'response_item',payload:{type:'message',role:'assistant',content:'resumed'}}];
   writeFileSync(path,resumed.map(r=>JSON.stringify(r)+'\n').join(''));
   await captureTranscript(config,'codex',path);
-  expect(readdirSync(queue).map(p=>JSON.parse(readFileSync(join(queue,p),'utf8'))).every(b=>b.sessionId==='fork'&&b.origin==='desktop')).toBe(true);
+  expect(readdirSync(queue).map(p=>JSON.parse(readFileSync(join(queue,p),'utf8'))).every(b=>b.sessionId==='fork'&&b.origin==='unknown'&&b.clientApp==='t3-code')).toBe(true);
   const archive=join(config.roots.codex,'sessions','fork-archive.jsonl.zst');writeFileSync(archive,Bun.zstdCompressSync(resumed.map(r=>JSON.stringify(r)+'\n').join('')));
   expect((await captureTranscript(config,'codex',archive)).sessionId).toBe('fork');
  } finally {if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;rmSync(dir,{recursive:true,force:true});}

@@ -1,9 +1,9 @@
 import type {SuggestionEvent} from '../../src/search/suggestion-events.mts';
 import {Database} from 'bun:sqlite';
 import {randomUUID} from 'node:crypto';
-import {mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
-import {join} from 'node:path';
-import {atomicJson,configDir} from './session.ts';
+import {mkdirSync,readFileSync,statSync,existsSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
+import {dirname,join} from 'node:path';
+import {atomicJson,configDir,withFileLock} from './session.ts';
 import {readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
 import {apiOrigin,CliError} from './oauth.ts';
 import {CHECK_HARNESSES,hash,object,checkText,type CheckHarness,type CheckEvent} from './context-check-events.ts';
@@ -19,29 +19,64 @@ export const checkBinding=(config:CaptureConfig|null,api:string):CheckBinding=>{
   return {api:config.api,installationId:config.installationId,owner:{tenantId:config.owner.tenantId,userId:config.owner.userId}};
 };
 const settingsFile=(api:string)=>join(configDir(),'context-checks',hash(api)+'.json');
-export function checkSettings(binding:CheckBinding):CheckSettings|undefined {
+type Choices=Partial<Record<CheckHarness,boolean>>;
+type Preference={revision:string;previousRevision?:string;choices:Choices};
+function readChoices(file:string,binding:CheckBinding):Preference|undefined {
   try{
-    const file=settingsFile(binding.api);if(statSync(file).size>8192)throw invalid();
+    if(statSync(file).size>8192)throw invalid();
     const value:unknown=JSON.parse(readFileSync(file,'utf8'));
     if(!object(value)||value.schemaVersion!==1||typeof value.revision!=='string'||!Array.isArray(value.harnesses)||value.harnesses.length>CHECK_HARNESSES.length||value.harnesses.some(v=>!CHECK_HARNESSES.includes(v as CheckHarness))||!object(value.owner))throw invalid();
     if(value.api!==binding.api||value.installationId!==binding.installationId||value.owner.tenantId!==binding.owner.tenantId||value.owner.userId!==binding.owner.userId)return;
-    return value as CheckSettings;
+    const choices:Choices={};
+    if(value.choices===undefined){
+      // The old allowlist cannot distinguish an omitted client from an explicit opt-out.
+      for(const harness of CHECK_HARNESSES)choices[harness]=value.harnesses.includes(harness);
+    }else{
+      if(!object(value.choices))throw invalid();
+      for(const [harness,enabled] of Object.entries(value.choices)){
+        if(!CHECK_HARNESSES.includes(harness as CheckHarness)||typeof enabled!=='boolean')throw invalid();
+        choices[harness as CheckHarness]=enabled;
+      }
+    }
+    if(value.previousRevision!==undefined&&typeof value.previousRevision!=='string')throw invalid();
+    return {revision:value.revision,previousRevision:value.previousRevision,choices};
   }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
 }
-export function saveCheckSettings(binding:CheckBinding,harnesses:CheckHarness[]):CheckSettings {
-  const db=openCheckDatabase(binding);
-  try {return db.transaction(()=>{
-    const previous=checkSettings(binding);
-    if(previous)applyOutboxSettings(db,previous);
-    const selected=[...new Set(harnesses)];
-    if(previous && previous.harnesses.length===selected.length && selected.every(h=>previous.harnesses.includes(h)))return previous;
-    const settings:CheckSettings={schemaVersion:1,...binding,revision:randomUUID(),harnesses:selected,...previous?{previousRevision:previous.revision}:{}};
-    applyOutboxSettings(db,settings);
-    // The file also records the predecessor. The next opener can finish the
-    // queue transition if the process exits between the rename and commit.
-    atomicJson(settingsFile(binding.api),settings);
-    return settings;
-  }).immediate();} finally {db.close();}
+function preferences(binding:CheckBinding):Preference&{file:string}{
+  const legacy=settingsFile(binding.api),saved=readChoices(legacy,binding);
+  if(saved)return {file:legacy,...saved};
+  const file=join(dirname(legacy),hash(JSON.stringify([binding.api,binding.installationId,binding.owner.tenantId,binding.owner.userId]))+'.json');
+  return {file,...(readChoices(file,binding)??{revision:'recording-default-v1',choices:{}})};
+}
+function resolveSettings(binding:CheckBinding,config:CaptureConfig,pref:Preference):CheckSettings{
+  const harnesses=CHECK_HARNESSES.filter(h=>config.hookOwnership==='plugin'&&(pref.choices[h]??(!config.disabled&&config.harnesses?.includes(h)===true)));
+  return {schemaVersion:1,...checkBindingFromSettings(binding),revision:pref.revision,previousRevision:pref.previousRevision,harnesses};
+}
+export function checkSettings(binding:CheckBinding,config:CaptureConfig):CheckSettings {
+  return resolveSettings(binding,config,preferences(binding));
+}
+export async function updateCheckSettings(binding:CheckBinding,selected:readonly CheckHarness[],enabled:boolean):Promise<CheckSettings>{
+  return withFileLock(settingsFile(binding.api)+'.lock',async()=>{
+    const config=readCaptureConfig();
+    if(!config||JSON.stringify(checkBinding(config,binding.api))!==JSON.stringify(checkBindingFromSettings(binding)))throw invalid();
+    const db=openCheckDatabase(binding);
+    try{return db.transaction(()=>{
+      const saved=preferences(binding),previous=resolveSettings(binding,config,saved);
+      applyOutboxSettings(db,previous);
+      if(selected.every(h=>saved.choices[h]===enabled))return previous;
+      const choices={...saved.choices};
+      for(const harness of selected)choices[harness]=enabled;
+      const settings=resolveSettings(binding,config,{revision:randomUUID(),previousRevision:previous.revision,choices});
+      applyOutboxSettings(db,settings);
+      // Record the predecessor so a later opener can finish the outbox
+      // transition after a crash. Old plugins can read explicit selections.
+      const legacy=settingsFile(binding.api);
+      const destination=existsSync(legacy)?saved.file:legacy;
+      const explicit=CHECK_HARNESSES.filter(h=>choices[h]===true);
+      atomicJson(destination,{...settings,harnesses:explicit,choices});
+      return settings;
+    }).immediate();}finally{db.close();}
+  });
 }
 function applyOutboxSettings(db:Database,settings:CheckSettings):void {
   if(!settings.previousRevision || db.query('SELECT 1 FROM suggestion_outbox_revision WHERE revision=?').get(settings.revision))return;
@@ -50,8 +85,10 @@ function applyOutboxSettings(db:Database,settings:CheckSettings):void {
   db.query('INSERT OR REPLACE INTO suggestion_outbox_revision(slot,revision) VALUES(1,?)').run(settings.revision);
 }
 export function assertCheckSettings(settings:CheckSettings,harness:CheckHarness):void {
-  const binding=checkBinding(readCaptureConfig(),settings.api),current=checkSettings(binding);
-  if(JSON.stringify(binding)!==JSON.stringify(checkBindingFromSettings(settings))||current?.revision!==settings.revision||!current.harnesses.includes(harness))throw invalid();
+  const config=readCaptureConfig(),binding=checkBinding(config,settings.api);
+  if(!config||JSON.stringify(binding)!==JSON.stringify(checkBindingFromSettings(settings)))throw invalid();
+  const current=checkSettings(binding,config);
+  if(current.revision!==settings.revision||!current.harnesses.includes(harness))throw invalid();
 }
 export const checkBindingFromSettings=(settings:CheckBinding):CheckBinding=>({api:settings.api,installationId:settings.installationId,owner:settings.owner});
 
@@ -74,7 +111,11 @@ export class CheckStore {
   constructor(readonly settings:CheckSettings,readonly harness:CheckHarness){
     this.db=openCheckDatabase(settings);
     if(settings.previousRevision)this.db.transaction(()=>{
-      if(checkSettings(settings)?.revision===settings.revision)applyOutboxSettings(this.db,settings);
+      const config=readCaptureConfig();
+      if(config&&JSON.stringify(checkBinding(config,settings.api))===JSON.stringify(checkBindingFromSettings(settings))){
+        const current=checkSettings(settings,config);
+        if(current.revision===settings.revision)applyOutboxSettings(this.db,current);
+      }
     }).immediate();
   }
   close(){this.db.close();}

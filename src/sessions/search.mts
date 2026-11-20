@@ -8,7 +8,9 @@ interface TermsAggregation {buckets: Array<{key: string; doc_count: number}>}
 interface SessionCount {count: {value: number}}
 interface ActivityAggregation {doc_count: number; sessions: SessionCount; subagentSessions: SessionCount; messages: {doc_count: number}; toolCalls: {value: number}; machines: {value: number}; opencrawl: {doc_count: number}; tools: TermsAggregation; harnesses: TermsAggregation; origins: TermsAggregation; first: {value_as_string?: string}; last: {value_as_string?: string}; daily: {buckets: Array<{key_as_string: string; doc_count: number; sessions: SessionCount}>}; people: {buckets: OwnerBucket[]}}
 import {createRealmResolver,realmField} from '../search/realm.mjs';
-import {sessionScope} from './ingest.mjs';
+import {sessionScope,createSessionIngest} from './ingest.mjs';
+import {digest,sourceBatchIdentity} from './event-identity.mjs';
+import {messageFingerprint,type CaptureFingerprints} from './capture-matches.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
 import {visibleTo, createControls} from './controls.mjs';
 import type {ResourceControl} from './controls.mjs';
@@ -25,6 +27,47 @@ export {sessionIndexMapping};
 export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
   const controls=options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null;
+  const original=options.store&&options.prefix?createSessionIngest({store:options.store,prefix:options.prefix}):undefined;
+  const captureFingerprints:CaptureFingerprints=async(principal,hits)=>{
+    const hashes=new Map<string,string>(),batches=new Map<string,Passage[]>();
+    if(!original||!options.prefix)return hashes;
+    for(const hit of hits){
+      const key=hit.sourceKey,scope=key&&sourceBatchIdentity(options.prefix,key);
+      if(!scope||hit.tenantId!==principal.tenantId||scope.tenantHash!==digest(principal.tenantId)||scope.harness!==hit.harness||
+        scope.userHash!==digest(hit.userId??'')||scope.sessionHash!==digest(hit.sessionId??'')||scope.installationHash!==digest(hit.installationId??''))continue;
+      const same=batches.get(key!)??[];same.push(hit);batches.set(key!,same);
+    }
+    const entries=[...batches];
+    for(let i=0;i<entries.length;i+=4)await Promise.all(entries.slice(i,i+4).map(async([key,rows])=>{
+      const hit=rows[0]!,batch=await original.getBatch(principal,{userId:hit.userId,sessionId:hit.sessionId,harness:hit.harness,
+        installationId:hit.installationId,batchId:sourceBatchIdentity(options.prefix!,key)!.batchId});
+      if(!batch)return;
+      const events=new Map(batch.events.map(event=>[event.id,event]));
+      for(const row of rows){
+        const event=events.get(row.eventId??''),hash=event&&messageFingerprint(event);
+        if(hash)hashes.set(row.id,hash);
+      }
+    }));
+    return hashes;
+  };
+  async function readableHits(principal:Principal,docs:Passage[]){
+    sessionScope(principal);
+    if(principal.captureAccess!==undefined||!controls)fail(403,'Session read access required');
+    const resources=new Map<string,Passage>(),allowedByResource=new Map<string,boolean>();
+    const resourceKey=(doc:Passage)=>JSON.stringify([doc.userId,doc.harness,doc.sessionId]);
+    for(const doc of docs){
+      if(doc.tenantId!==principal.tenantId||!doc.userId||typeof doc.harness!=='string'||typeof doc.sessionId!=='string')throw new Error('Invalid session search identity');
+      resources.set(resourceKey(doc),doc);
+    }
+    const entries=[...resources];
+    // One authoritative read per resource per request, with bounded fanout.
+    // Never retain this permission result across requests or fetches.
+    for(let start=0;start<entries.length;start+=8)await Promise.all(entries.slice(start,start+8).map(async([key,doc])=>{
+      const control=await controls.read({...principal,userId:doc.userId!},'sessions',doc.harness!,doc.sessionId!);
+      allowedByResource.set(key,!control?.deletedAt&&(control?.visibility!=='private'||doc.userId===principal.userId));
+    }));
+    return docs.map(doc=>allowedByResource.get(resourceKey(doc))===true);
+  }
   function search(principal: Principal, input: SearchInput & {raw: true}): Promise<OpenSearchResponse>;
   function search(principal: Principal, input?: SearchInput & {raw?: false}): Promise<SearchResult>;
   function search(principal: Principal, input: SearchInput): Promise<SearchResult | OpenSearchResponse>;
@@ -42,20 +85,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
       // The index is a projection, never the authority for deletion/privacy.
       // Recheck after retrieval, including fetch-by-ID and raw diagnostics.
-      const resources=new Map<string,Passage>(),allowedByResource=new Map<string,boolean>();
-      const resourceKey=(doc:Passage)=>JSON.stringify([doc.userId,doc.harness,doc.sessionId]);
-      for(const hit of hits){const doc=hit._source as Passage;
-        if(typeof doc.harness!=='string'||typeof doc.sessionId!=='string')throw new Error('Invalid session search identity');
-        resources.set(resourceKey(doc),doc);
-      }
-      const entries=[...resources];
-      // One authoritative read per resource per request, with bounded fanout.
-      // Never retain this permission result across requests or fetches.
-      for(let start=0;start<entries.length;start+=8)await Promise.all(entries.slice(start,start+8).map(async([key,doc])=>{
-        const control=await controls.read({...principal,userId:doc.userId!},'sessions',doc.harness!,doc.sessionId!);
-        allowedByResource.set(key,!control?.deletedAt&&(control?.visibility!=='private'||doc.userId===principal.userId));
-      }));
-      const allowed=hits.map(hit=>allowedByResource.get(resourceKey(hit._source as Passage))===true);
+      const allowed=await readableHits(principal,hits.map(hit=>hit._source as Passage));
       result.hits.hits=hits.filter((_,i)=>allowed[i]);
       const filtered=result.hits.hits.length!==hits.length;
       if(filtered)result.hits.total={value:result.hits.hits.length,relation:'gte'};
@@ -78,7 +108,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       });
       await collection.bulk(principal,prepared);
     },
-    search,
+    search,captureFingerprints,readableHits,
     context: (principal: Principal, anchor: Passage, input: SessionContextInput) => sessionContext(resolve(principal).collection('session'), controls, principal, anchor, input),
     async overlap(principal: Principal, window?: {days?: number; now?: number}) {
       sessionScope(principal);

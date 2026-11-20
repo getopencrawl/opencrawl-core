@@ -2,7 +2,7 @@
 
 Capture coding-agent sessions and search workspace knowledge.
 
-See [optional prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md).
+See [automatic prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md).
 
 ## Install
 
@@ -45,9 +45,9 @@ Run `opencrawl setup` again to review saved recording choices. Choose **Continue
 to keep installed plugins. **⚠ Needs reinstall** flags a missing or damaged
 installation. History import requires a separate confirmation.
 
-Agents can plan with `opencrawl setup --json`, run `opencrawl setup apply` with
-approved choices, or resume with `opencrawl setup --yes --json`. Read saved
-choices with `opencrawl setup status --local --json`.
+Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
+`setup --yes --json`, and read `setup status --local --json`. For bounded imports,
+see `opencrawl history --help`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.

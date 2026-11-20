@@ -73,7 +73,7 @@ test('Cursor offers use the same native version requirement as the archive insta
 test('Cursor selection installs the pinned archive offline, binds both MCP files and resumes on current capture',()=>fixture(async f=>{
  const inventory=setupInventory({...f.options,api,platform:'darwin'});
  expect(inventory.find(row=>row.id==='cursor')).toMatchObject({detected:true,plugin:true,forward:true});
- expect(entry.version).toBe('0.2.4');
+ expect(entry.version).toBe('0.2.6');
  const first=await f.install(),row=first.results[0]!;
  expect(row).toMatchObject({client:'cursor',status:'prepared',captureAvailable:true,daemonHandoff:true,source:{ref:entry.ref,version:entry.version}});
  expect(first.humanTasks.map(task=>task.kind)).toEqual(['restart','mcp_auth']);

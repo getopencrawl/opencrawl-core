@@ -179,11 +179,11 @@ for(const width of [1280,390])test(`search history shows the triggering turn and
   const row={id:'first',at:now,userId:'user_member',operation:'Workspace',queries:['billing retry'],
     harness:'codex',sessionId:'abc-123',message:'Why did the retry fail?',messageId:'prompt-24',returned:1,outcome:'complete',delivered:false};
   await page.route('**/api/console/usage',route=>route.fulfill({json:report()}));
-  await page.route('**/api/console/usage/calls',route=>route.fulfill({json:{cacheScope:'usage-fixture',since:now,calls:112,agentSearches:16,proactiveChecks:9,nonSilent:3,delivered:2}}));
+  await page.route('**/api/console/usage/calls',route=>route.fulfill({json:{cacheScope:'usage-fixture',since:now,includesEarlierCalls:true,calls:112,agentSearches:16,proactiveChecks:9,nonSilent:3,delivered:2}}));
   const reads:string[]=[];
   await page.route('**/api/console/usage/search-history',route=>{
     const {kind,before}=route.request().postDataJSON();reads.push(kind);
-    return route.fulfill({json:{cacheScope:'usage-fixture',rows:[before?{...row,id:'older',queries:['previous query']}:row],next:!before&&kind==='agent'?'next-page':null}});
+    return route.fulfill({json:{cacheScope:'usage-fixture',rows:[before?{...row,id:'older',queries:[],sessionId:null,outcome:'unknown'}:row],next:!before&&kind==='agent'?'next-page':null}});
   });
   await page.goto('/usage?activity=1');
   const agent=page.getByRole('region',{name:'Agent searches',exact:true}).getByRole('table'),proactive=page.getByRole('region',{name:'Proactive searches',exact:true}).getByRole('table');
@@ -193,7 +193,9 @@ for(const width of [1280,390])test(`search history shows the triggering turn and
   await expect(proactive).toContainText('Non-silent');
   await expect(agent).toContainText('billing retry');
   await page.getByRole('button',{name:'Older searches'}).click();
-  await expect(agent).toContainText('previous query');
+  await expect(agent).toContainText('Query unavailable in earlier record');
+  await expect(agent).toContainText('Outcome unavailable');
+  await expect(page.getByText(/Includes verified earlier calls/)).toBeVisible();
   await expect(proactive).toContainText('billing retry');
   await page.getByRole('button',{name:'Newer searches'}).click();
   await expect(agent).toContainText('billing retry');

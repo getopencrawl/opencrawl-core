@@ -40,7 +40,7 @@ test('connect verifies inventory and hands off before returning; checkpoint surv
   assert.equal(await f.service.advance(job(id,{tenantId:'other'})),true);
   assert.equal((await advance(f.service,id)).events,1);
   const done=await advance(f.reopen(),id);assert.equal(done.phase,'complete');assert.equal(done.events,2);assert.equal(done.imported,1);
-  assert.equal((await query()).rows[0].credential,null);
+  assert.ok((await query()).rows[0].credential,'daily sync retains the sealed organization key');
 });
 test('Temporal rejection rolls back the connection and credential',async t=>{
   const f=await fixture(t,{schedule:async()=>{throw Error('Temporal unavailable');}});
@@ -229,7 +229,8 @@ test('repeated history 404 samples the workspace inventory once and waking histo
   mode='waking';
   const waking=await advance(f.service,id);assert.equal(waking.processed,0);assert.equal(waking.phase,'importing');assert.equal(f.handed.length,0);
   mode='ready';clock+=24*60*60_000;
-  const done=await advance(f.service,id);assert.equal(done.phase,'complete');assert.equal(done.events,1);
+  let done=await advance(f.service,id);
+  for(let i=0;i<8&&done.phase!=='complete';i++)done=await advance(f.service,id);assert.equal(done.phase,'complete');assert.equal(done.events,1);
 });
 
 test('empty history cannot complete a chat with recorded messages or an unconfirmed null thread',async t=>{
@@ -485,7 +486,13 @@ test('a real Temporal worker completes a paginated import after the request ends
   const worker=await Worker.create({connection:env.nativeConnection,namespace:env.namespace??'default',taskQueue,
     workflowsPath:new URL('../dist/src/sessions/temporal/workflows.cjs',import.meta.url).pathname,activities:replicasActivities(f.reopen())});
   const handle=env.client.workflow.getHandle('replicas-history-'+id);
-  await worker.runUntil(()=>handle.result());
+  await worker.runUntil(async()=>{
+    for(let i=0;i<200;i++){
+      if((await f.service.status(principal)).phase==='complete'&&(await handle.fetchHistory()).events.some(e=>e.timerStartedEventAttributes?.startToFireTimeout?.seconds?.toNumber()>=86395))return;
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assert.fail('workflow did not reach its durable daily timer');
+  });
   const state=await f.service.status(principal);assert.equal(state.phase,'complete');assert.equal(state.events,2);assert.equal(state.pages,2);
   for(const event of (await handle.fetchHistory()).events){
     for(const payload of event.workflowExecutionStartedEventAttributes?.input?.payloads??event.activityTaskScheduledEventAttributes?.input?.payloads??[]){
@@ -560,7 +567,7 @@ test('one retained inventory postpones absent chats across a workspace and relea
   clock+=60_000;await advance(f.service,id);
   const review=await f.service.runStep(job(id));assert.equal(review.delayMs,0);
   const sleep=await f.service.runStep(job(id));
-  assert.equal(inventoryReads,1);assert.equal(historyReads.length,4);assert.equal(sleep.delayMs,30*60_000);
+  assert.equal(inventoryReads,1);assert.equal(historyReads.length,4);assert.ok(sleep.delayMs>=86_400_000-60_000&&sleep.delayMs<=86_400_000);
   const card=await f.service.source(principal);
   const {sourceStatus}=await import('../dist/src/application/source-model.mjs');
   assert.equal(card.history.waitingForSource,true);assert.equal(sourceStatus(card).label,'Connected');
@@ -569,8 +576,8 @@ test('one retained inventory postpones absent chats across a workspace and relea
   // absent chat to lead so only the inventory can release its returning peer.
   const scope=[f.database.namespace,principal.tenantId];
   await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET retry_at=retry_at+interval '1 hour' WHERE namespace=$1 AND tenant=$2 AND chat->>'chat_id'=$3",[...scope,second.chat_id]);
-  restored=true;clock+=sleep.delayMs;
-  await advance(f.reopen(),id);assert.equal(inventoryReads,2);
+  restored=true;clock+=86_400_000;
+  for(let i=0;i<5&&inventoryReads===1;i++)await advance(f.reopen(),id);assert.equal(inventoryReads,2);
   let next=await advance(f.service,id);
   if(next.processed<2)next=await advance(f.service,id); // A newly changed inventory may verify its export first.
   assert.equal(historyReads.at(-1),second.chat_id);
@@ -678,7 +685,7 @@ test('catalog disagreement also verifies the original workspaces whose first his
 });
 
 test('workspace absence cannot keep postponing a direct history check or override provider Retry-After',async t=>{
-  const now=Date.now(),at=new Date(now-7*60*60_000).toISOString();
+  const now=Date.now(),at=new Date(now-25*60*60_000).toISOString();
   const f=await fixture(t);
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const scope=[f.database.namespace,principal.tenantId],later=new Date(now+8*60*60_000).toISOString();
@@ -775,9 +782,9 @@ test('a short terminal export shifts its next page boundary and compares the row
   const first=await failure();assert.equal(first.reason,'terminal_count');assert.equal(first.pageLimit,100);
   clock+=60_000;await advance(f.reopen(),id);
   const second=await failure();assert.equal(second.pageLimit,99);assert.equal(second.catalogHash,first.catalogHash);
-  const pause=await f.reopen().runStep(job(id));assert.equal(pause.delayMs,30*60_000);
-  fixed=true;clock+=pause.delayMs;
-  for(let i=0;i<5;i++)await advance(f.reopen(),id);
+  const pause=await f.reopen().runStep(job(id));assert.equal(pause.delayMs,86_400_000-60_000);
+  fixed=true;clock+=86_400_000;
+  for(let i=0;i<10;i++)await advance(f.reopen(),id);
   const status=await f.service.status(principal);assert.equal(status.phase,'complete');assert.equal(status.imported,2);
   assert.deepEqual(pages,[[100,null],[100,'p2'],[99,null],[100,null],[100,'p2']]);
 });
@@ -805,7 +812,7 @@ test('a growing native chat is refreshed from the exact retained row and only it
   for(let i=0;i<4;i++)await advance(f.reopen(),id);
   clock+=60_000;for(let i=0;i<9;i++)await advance(f.reopen(),id);
   assert.deepEqual(reads,[null]);assert.equal((await f.service.status(principal)).events,1);
-  changed=true;clock+=31*60_000;
+  changed=true;clock+=86_400_000;
   for(let i=0;i<15;i++)await advance(f.reopen(),id);
   assert.deepEqual(reads,[null,null,'older']);
   assert.equal((await f.service.status(principal)).events,1);
@@ -816,7 +823,7 @@ test('a growing native chat is refreshed from the exact retained row and only it
   assert.equal(status.total,3);assert.equal(status.processed,2);assert.equal(status.blocked,1);
   const {rows:[snap]}=await f.database.pool.query('SELECT source_version,counts FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
   assert.equal(snap.source_version.toISOString(),new Date(newTime).toISOString());assert.deepEqual(snap.counts,{events:2,turns:0,pages:2});
-  clock+=31*60_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
+  clock+=86_400_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
   assert.deepEqual(reads,[null,null,'older','older']);
 });
 
@@ -835,7 +842,7 @@ test('a completed legacy chat can verify a newly observed native revision once w
   await f.database.pool.query('DELETE FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
   clock+=60_000;for(let i=0;i<12;i++)await advance(f.reopen(),id);
   assert.equal(reads.length,2);assert.equal((await f.service.status(principal)).imported,1);assert.equal((await f.service.status(principal)).events,1);
-  clock+=31*60_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
+  clock+=86_400_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
   assert.equal(reads.length,2);
 });
 
@@ -898,6 +905,7 @@ test('a rejected larger history window retries the same saved cursor and remembe
   let state;
   for(let i=0;i<10;i++){
     state=await advance(f.reopen(),id);
+    if(state.phase==='complete')break;
     if(state.retryAt){
       assert.equal(Date.parse(state.retryAt)-clock,3000);
       const reads=windows.length;await advance(f.reopen(),id);assert.equal(windows.length,reads);
@@ -907,4 +915,189 @@ test('a rejected larger history window retries the same saved cursor and remembe
   }
   assert.deepEqual(windows,[[550,100],[450,400],[450,100],[350,100],[250,100],[150,100],[50,100]]);
   assert.equal(state.phase,'complete');assert.equal(state.events,550);assert.equal(state.pages,6);
+});
+
+test('a daily catalog scan skips unchanged history, resumes changed chats and disconnects while idle',async t=>{
+  let clock=Date.parse('2026-11-19T12:00:00Z'),changed=false;
+  const day=86_400_000,second={...chat,chat_id:randomUUID()};
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:[chat,second].map(c=>({id:c.chat_id,updated_at:c.updated_at,created_at:c.created_at}))});
+    if(url.pathname.endsWith('/conversations'))return Response.json({total:2,next_cursor:null,conversations:[chat,changed?{...second,updated_at:new Date(clock).toISOString()}:second]});
+    if(url.pathname.endsWith('/history'))return Response.json({events:[event('first'),...(changed?[event('new',new Date(clock).toISOString())]:[])],before_cursor:null});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);
+  const before=f.calls.length,handoffs=f.handed.length;
+  assert.deepEqual(await f.reopen().runStep(job(id)),{done:false,delayMs:day});
+  assert.equal(f.calls.length,before);
+  clock+=day;
+  assert.deepEqual(await f.reopen().runStep(job(id)),{done:false,delayMs:0});
+  assert.deepEqual(await f.reopen().runStep(job(id)),{done:false,delayMs:day});
+  assert.equal(f.calls.length,before+2);assert.equal(f.handed.length,handoffs);
+  changed=true;clock+=day;
+  await f.service.runStep(job(id));await f.reopen().runStep(job(id));await f.service.runStep(job(id));
+  assert.deepEqual(f.calls.slice(before+2).map(url=>[url.pathname.split('/').at(-1),url.searchParams.get('chat_id')]),[['chats',null],['conversations',null],['history',second.chat_id]]);
+  const state=await f.service.status(principal);assert.equal(state.imported,2);assert.equal(state.events,3);
+  await f.service.action(principal,{action:'stop',id});clock+=day;
+  assert.equal((await f.reopen().runStep(job(id))).done,true);assert.equal(f.calls.length,before+5);
+});
+
+test('daily catalog leaves a changed record with its existing deferred checkpoint',async t=>{
+  const {selectCatalogRows}=await import('../dist/src/integrations/replicas-catalog.mjs');
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);
+  const db=f.database.pool,scope=[f.database.namespace,principal.tenantId,id];
+  await db.query('UPDATE opencrawl_replicas_workspace_inventories SET chat_versions=$5 WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND workspace=$4',
+    [...scope,chat.workspace_id,JSON.stringify({[chat.chat_id]:{created:chat.created_at,updated:'2026-11-19T12:00:00Z'}})]);
+  assert.deepEqual(await selectCatalogRows(db,scope,[chat],true),[chat]);
+  await db.query("INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,now(),$3,'{}','{}')",
+    [...scope.slice(0,2),JSON.stringify(chat)]);
+  assert.deepEqual(await selectCatalogRows(db,scope,[chat],true),[]);
+  const revised={...chat,title:'Revised catalog record'};
+  assert.deepEqual(await selectCatalogRows(db,scope,[revised],true),[revised]);
+});
+
+test('Replicas and native captures group only inside the verified thread and the current reader’s visibility',async t=>{
+  const {mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{pathToFileURL}=await import('node:url');
+  const {createSessionSearch}=await import('../dist/src/sessions/search.mjs');
+  const {createSessionPipeline}=await import('../dist/src/sessions/indexer.mjs');
+  const {createSessionLibrary}=await import('../dist/src/sessions/library.mjs');
+  const {createWorkspaceSearch}=await import('../dist/src/search/workspace.mjs');
+  const dir=await mkdtemp(join(tmpdir(),'replicas-capture-pair-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const database=await applicationDatabaseFixture(t),store=memorySessionStore(),prefix='capture/v1';
+  const options={endpoint:pathToFileURL(join(dir,'search.sqlite')).href.replace('file:','sqlite:'),store,prefix};
+  const search=createSessionSearch(options),pipeline=createSessionPipeline({...options,search,resolvePrincipal:async({batch})=>batch.owner});
+  const ingest=createSessionIngest({store,prefix,scheduleIndexing:key=>pipeline.processObject({key})}).putBatch;
+  const thread=randomUUID(),nativeId=randomUUID(),timestamp='2026-11-19T14:00:00.000Z';
+  const message={role:'user',content:[{type:'text',text:'overlap_needle'}]};
+  const history={events:[{type:'claude-user',timestamp,payload:{uuid:nativeId,session_id:thread,message}},
+    event('historyonlyneedle')],before_cursor:null};
+  const request=async url=>Response.json(String(url).endsWith('/whoami')?{organization,caller:'organization_api_key'}:String(url).includes('/conversations')?{total:1,conversations:[chat],next_cursor:null}:history);
+  const service=createReplicasImport({database,schedule:async()=>{},key:randomBytes(32),request,ingest});
+  const library=createSessionLibrary({...options,capturePairs:service.capturePairs});
+  const workspace=createWorkspaceSearch({sessions:search,capturePairs:service.capturePairs});
+  const owner={...principal,userId:'native-owner'};
+  const uploaded={owner,schemaVersion:1,harness:'claude-code',installationId:'native',sessionId:thread,origin:'desktop',events:[{id:'live1',kind:'message',nativeId,timestamp,data:message}],attachments:[]};
+  const {id}=await service.action(principal,{action:'connect',apiKey:'key'});await advance(service,id);
+  assert.equal((await library.list(principal)).sessions.length,1);
+  await ingest(owner,uploaded);
+  const rows=await library.list(principal);
+  assert.equal(rows.sessions.length,1);assert.equal(rows.sessions[0].sessionId,thread);
+  assert.equal(rows.sessions[0].historyCapture.sessionId,'replicas-chat:'+chat.chat_id);
+  const other=await library.read(principal,rows.sessions[0].historyCapture);
+  assert.ok(other.events.some(e=>e.entries.some(item=>item.text==='historyonlyneedle')));
+  const input={query:'overlap_needle',source:'sessions',groupBy:'none'};
+  const normalized=await workspace.search(principal,input);
+  assert.equal(normalized.results.filter(h=>h.provenance.kind==='message').length,1);
+  const raw=await workspace.search(principal,{...input,dedupe:false});
+  assert.equal(raw.results.filter(h=>h.provenance.kind==='message').length,2);
+  const legacyReads=[];
+  const legacy=createWorkspaceSearch({capturePairs:service.capturePairs,sessions:{...search,
+    search:async(...args)=>{const result=await search.search(...args);for(const hit of result.hits)delete hit.captureHash;return result;},
+    captureFingerprints:async(p,hits)=>{legacyReads.push(hits.length);return search.captureFingerprints(p,hits);}
+  }});
+  assert.equal((await legacy.search(principal,input)).results.filter(h=>h.provenance.kind==='message').length,1);
+  assert.deepEqual(legacyReads,[2]);
+  await ingest(owner,{...uploaded,sessionId:randomUUID()});
+  assert.equal((await library.list(principal)).sessions.length,2);
+  assert.equal((await workspace.search(principal,input)).results.filter(h=>h.provenance.kind==='message').length,2);
+  const racing=createWorkspaceSearch({sessions:search,capturePairs:async(tenant,keys)=>{
+    const pairs=await service.capturePairs(tenant,keys);
+    await library.setVisibility(owner,{harness:'claude-code',sessionId:thread,visibility:'private'});
+    return pairs;
+  }});
+  const raced=await racing.search(principal,input);
+  assert.ok(raced.results.every(r=>r.provenance.sessionId!==thread&&!r.duplicateIds?.some(id=>raw.results.some(h=>h.id===id&&h.provenance.sessionId===thread))));
+  assert.equal((await library.list(principal)).sessions.some(s=>s.historyCapture||s.sessionId===thread),false);
+  assert.ok((await library.list(owner)).sessions.some(s=>s.historyCapture));
+  assert.deepEqual(await service.capturePairs('another-tenant',[rows.sessions[0],rows.sessions[0].historyCapture]),[]);
+});
+
+test('archived thread backfill resumes without Replicas or indexing and withdraws conflicting native identities',async t=>{
+  const {backfillReplicasEvidence}=await import('../dist/src/integrations/replicas-archive-evidence.mjs');
+  const {replicasThread,combineThreads,saveReplicasThread}=await import('../dist/src/integrations/replicas-threads.mjs');
+  const thread=randomUUID(),events=[{type:'claude-user',payload:{session_id:thread,message:{role:'user',content:'a'}}}];
+  const f=await fixture(t,{answer:url=>url.pathname.endsWith('/history')?Response.json({events,before_cursor:null}):undefined});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);
+  const scope=[f.database.namespace,principal.tenantId,id],calls=f.calls.length,handed=f.handed.length;
+  await f.database.pool.query('UPDATE opencrawl_replicas_snapshots SET evidence_complete=false WHERE namespace=$1 AND tenant=$2 AND import_id=$3',scope);
+  const original=(await f.database.pool.query('SELECT owner_id,session_id FROM opencrawl_replicas_threads WHERE namespace=$1 AND tenant=$2',scope.slice(0,2))).rows[0];
+  await f.database.pool.query('DELETE FROM opencrawl_replicas_threads WHERE namespace=$1 AND tenant=$2',scope.slice(0,2));
+  const visible=[{userId:original.owner_id,harness:'replicas',sessionId:original.session_id},{userId:'u',harness:'claude-code',sessionId:thread}];
+  let reads=0;
+  const store={...f.store,listPage:async(root,options)=>{reads++;return f.store.listPage(root,{...options,maxKeys:1});}};
+  const repair=()=>f.database.transaction(c=>backfillReplicasEvidence(c,{store,prefix:'history/v1'},scope,organization.id,Date.now()));
+  for(let i=0;i<20&&await repair();i++);
+  const completeReads=reads;
+  assert.ok(completeReads>0);assert.equal(await repair(),false);assert.equal(reads,completeReads);
+  assert.equal((await f.service.capturePairs(principal.tenantId,visible)).length,1);
+  assert.equal(f.calls.length,calls);assert.equal(f.handed.length,handed);
+  assert.equal(replicasThread({events,thread_id:randomUUID(),coding_agent:'claude'}),'conflict');
+  assert.equal(replicasThread({events:[{type:'future',payload:{session_id:thread}}]}),undefined);
+  const ambiguous=combineThreads(replicasThread({events}),{harness:'codex',id:thread});
+  assert.equal(ambiguous,'conflict');
+  await saveReplicasThread(f.database.pool,...scope.slice(0,2),original.owner_id,original.session_id,ambiguous);
+  await saveReplicasThread(f.database.pool,...scope.slice(0,2),original.owner_id,original.session_id,{harness:'claude-code',id:thread});
+  assert.deepEqual(await f.service.capturePairs(principal.tenantId,visible),[]);
+});
+
+test('daily rosters park repeatedly absent chats without rewriting the same retry or overriding Retry-After',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const scope=[f.database.namespace,principal.tenantId],now=Date.now(),at=new Date(now).toISOString(),day=86_400_000;
+  await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
+    [...scope,at,chat,{before:null},{at,importId:id,operation:'history',httpStatus:404,attempt:3,workspaceAbsentAt:at}]);
+  const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
+  const observe=(n,chats)=>f.database.transaction(c=>observeReplicasWorkspace(c,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now+n*day,async()=>({chats})));
+  assert.equal((await observe(0,[])).moved,1);
+  for(let i=1;i<5;i++)assert.equal((await observe(i,[])).moved,0);
+  const retry=async()=>(await f.database.pool.query('SELECT retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',scope)).rows[0].retry_at.getTime();
+  assert.equal(await retry(),now+7*day);
+  const provider=new Date(now+6*day).toISOString();
+  await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET issue=issue||jsonb_build_object('providerRetryAt',$3::text) WHERE namespace=$1 AND tenant=$2",[...scope,provider]);
+  assert.equal((await observe(5,[{id:chat.chat_id}])).released,1);
+  assert.equal(await retry(),Date.parse(provider));
+});
+
+test('a shared empty-page observation keeps its actual time and attempt count in the weekly backstop',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const now=Date.now(),day=86_400_000,shared=new Date(now-day).toISOString(),old=new Date(now-4*day).toISOString();
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
+    [...scope,old,chat,{before:null,chatAttempts:4},{at:old,attempt:1,sharedAt:shared,workspaceAbsentAt:old,importId:id,operation:'history',reason:'empty_with_messages'}]);
+  const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
+  await f.database.transaction(db=>observeReplicasWorkspace(db,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now,async()=>({chats:[]})));
+  const row=(await f.database.pool.query('SELECT retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',scope)).rows[0];
+  assert.equal(row.retry_at.getTime(),Date.parse(shared)+7*day);
+});
+
+test('confirmed absent chats share the daily wake even with legacy counters while active work keeps its deadline',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const {deferredHistory}=await import('../dist/src/integrations/replicas-deferred.mjs');
+  const db=f.database.pool,scope=[f.database.namespace,principal.tenantId],queue=deferredHistory(db,...scope);
+  const now=Date.now(),day=86_400_000,next=now+day,at=new Date(now).toISOString();
+  const absent={at,attempt:0,workspaceAbsentAt:at,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
+  const add=(when,row,issue)=>queue.save(row,{before:null,historyCursors:[],occurrences:{}},issue,new Date(when).toISOString());
+  await add(now+1000,chat,absent);
+  assert.equal((await queue.oldest(false,now+2000,next)).wake,next);
+  const active={...chat,chat_id:randomUUID()};
+  await add(now+3000,active,{...absent,workspaceAbsentAt:undefined});
+  const result=await queue.oldest(false,now+2000,next);
+  assert.equal(result.row.chat.chat_id,active.chat_id);assert.equal(result.wake,now+3000);
+  await queue.remove(result.row);
+  assert.equal((await queue.oldest(false,next,next+day)).row.chat.chat_id,chat.chat_id);
+  assert.ok((await queue.oldest(false,next,next+day)).wake<=next);
+});
+
+test('a persistent catalog count mismatch shares the daily wake only with complete roster coverage',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);
+  const {nextWorkspaceExportReview,reviewWorkspaceExport}=await import('../dist/src/integrations/replicas-export-review.mjs');
+  const db=f.database.pool,scope=[f.database.namespace,principal.tenantId,id],now=Date.now(),day=86_400_000,next=new Date(now+day).toISOString();
+  const due=new Date(now+1000).toISOString(),issue={phase:'inconsistent_catalog',attempt:3,retryAt:due,lastFailure:{reason:'terminal_count'}};
+  const update=ids=>db.query("UPDATE opencrawl_replicas_workspace_inventories SET result='ready',chat_ids=$4,export_check=$5 WHERE namespace=$1 AND tenant=$2 AND import_id=$3",[...scope,ids,issue]);
+  await update([chat.chat_id]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(next));
+  assert.equal((await reviewWorkspaceExport(db,scope,[],{},now+2000,true,next)).requested,false);
+  assert.equal(await nextWorkspaceExportReview(db,scope,true,new Date(now+2*day).toISOString()),Date.parse(due));
+  await update([chat.chat_id,randomUUID()]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(due));
 });

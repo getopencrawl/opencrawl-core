@@ -1,3 +1,4 @@
+import {messageFingerprint} from './capture-matches.mjs';
 import {expandReplicasPayload} from './replicas-payload.mjs';
 import type {Principal, SourceOptions, SessionBatch, Attachment, SessionEvent} from './types.mjs';
 import {parseJson} from './types.mjs';
@@ -100,15 +101,16 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
     if(['tool_call','replicas_tool'].includes(projected.kind)&&typeof projected.data?.name==='string')names.add(projected.data.name);
     const text=texts.join('\n');
     const chunks=passages(text),capturedTokens=capturedEventTokens(batch.harness,event),hasToolOutput=containsToolOutput(event);
+    const captureHash=['replicas','claude-code','codex'].includes(batch.harness)?messageFingerprint(event):undefined;
     for(let chunk=0;chunk<chunks.length;chunk++){
       const document={tenantId:principal.tenantId,userId:principal.userId,installationId:batch.installationId,sessionId:batch.sessionId,
         harness:batch.harness,origin:batch.origin,eventId:event.id,kind:event.kind,containsToolOutput:hasToolOutput,role:projected.data?.role??(event.kind==='agent_message'&&event.data?.author==='assistant'?'assistant':null),
         timestamp:typeof event.timestamp==='string'?event.timestamp:null,receivedAt:batch.receivedAt,
         sequence:Number.isSafeInteger(event.sequence)?event.sequence:0,chunk,...participantProjection(event,batch),...(chunk===0?{capturedTokens,captureMode}:{}),text:chunks[chunk]!.text,sourceKey:key,
         passageVersion:PASSAGE_VERSION,textStart:chunks[chunk]!.start,textEnd:chunks[chunk]!.end,chunkCount:chunks.length,
-        ...(batch.harness==='claude-code' && (batch.clientApp==='t3-code'||batch.clientApp==='conductor') ? {clientApp:batch.clientApp} : {}),
+        ...((batch.harness==='claude-code'||batch.harness==='codex') && (batch.clientApp==='t3-code'||batch.clientApp==='conductor') ? {clientApp:batch.clientApp} : {}),
         ...(batch.title?{title:batch.title}:{}),
-        nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
+        ...(captureHash?{captureHash}:{}),nativeId:typeof event.nativeId==='string'?event.nativeId:null,parentId:event.parentId??null,turnId:event.turnId??null,
         toolCallId:projected.data?.call_id??projected.data?.tool_use_id??null,toolNames:[...names],host:batch.host??null,
         attachments:attachments.map(a=>({sha256:a.sha256,size:a.size,mimeType:a.mimeType,path:a.path,
           objectKey:/^[a-f0-9]{64}$/.test(a.sha256??'')?(batch.attachments?.find(item=>item.sha256===a.sha256)?.objectKey===`${prefix}/${scope}/${batch.harness}/${digest(batch.installationId)}/${digest(batch.sessionId)}/attachments/${a.sha256}`

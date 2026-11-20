@@ -217,3 +217,17 @@ test('a network failure clears the transcript and retry refetches its initial pa
   await expect(page.getByRole('status')).toContainText('Showing 1 of 1 captured events.');
   expect(starts).toBe(2);
 });
+
+for(const width of [390,1440])test(`linked history opens independently of live capture at ${width}px`,async({page,request})=>{
+  await request.post('/__test/reset',{data:{}});
+  await page.setViewportSize({width,height:900});
+  const history={userId:'workload_replicas_test',harness:'replicas' as const,sessionId:'replicas-chat:test'};
+  await page.route('**/api/library/**',r=>r.fulfill({json:{sessions:[{...base,historyCapture:history}],authors:{alice:'Alice'},limit:50}}));
+  await page.goto('/sessions');
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(1);
+  const live=page.getByRole('link',{name:/Single machine/}),archive=page.getByRole('link',{name:'Replicas history',exact:true});
+  await expect(live).toHaveAttribute('href',/harness=codex/);
+  await expect(archive).toHaveAttribute('href',/harness=replicas/);
+  await archive.click();
+  await expect(page).toHaveURL(/harness=replicas/);
+});

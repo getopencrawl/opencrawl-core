@@ -53,6 +53,10 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
         await db.query("select pg_advisory_xact_lock(hashtextextended('oc:search-activity-schema',0))");
         await db.query(`create table if not exists opencrawl_activity_start(namespace text primary key,cursor_key bytea not null,started_at timestamptz not null default now());
           create table if not exists opencrawl_call_days(namespace text not null,tenant_id text not null,day date not null,calls bigint not null,primary key(namespace,tenant_id,day));
+          alter table opencrawl_call_days add column if not exists earlier_calls bigint not null default 0;
+          create table if not exists opencrawl_prior_call_receipts(namespace text not null,tenant_id text not null,id uuid not null,at timestamptz not null,
+            primary key(namespace,tenant_id,id));
+          create index if not exists opencrawl_prior_call_expiry on opencrawl_prior_call_receipts(namespace,at);
           create table if not exists opencrawl_activity_session_gates(namespace text not null,tenant_id text not null,user_id text not null,
             session_hash text not null,erased boolean not null default false,primary key(namespace,tenant_id,user_id,session_hash));
           create table if not exists opencrawl_search_history(namespace text not null,tenant_id text not null,user_id text not null,
@@ -60,6 +64,7 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
             operation text not null, queries text[] not null, harness text, session_id text, event_key text, message_id text, message text,
             returned integer, failed boolean not null, delivered boolean not null default false,
             unique(namespace,tenant_id,user_id,event_key));
+          alter table opencrawl_search_history alter column failed drop not null;
           create index if not exists opencrawl_search_history_linked on opencrawl_search_history(namespace,tenant_id,kind,at desc,id desc) where session_id is not null and harness is not null;
           create index if not exists opencrawl_search_history_personal on opencrawl_search_history(namespace,tenant_id,user_id,kind,at desc,id desc) where session_id is null or harness is null;
           create index if not exists opencrawl_search_history_expiry on opencrawl_search_history(namespace,at);
@@ -101,6 +106,35 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
       const result=await pool.query('select started_at from opencrawl_activity_start where namespace=$1',[namespace]);
       return result.rows[0].started_at.toISOString();
     },
+    /** Import source receipts from before live tracking. Old tool requests have
+     * no verified session, query text or outcome. Their rows are owner-only. */
+    async importAgentCalls(tenantId:string,calls:PriorAgentCall[]){
+      if(!tenantId||calls.length>256)throw Error('Invalid prior call batch');
+      if(!calls.length)return;
+      await pool.query(`with inputs as materialized (
+        select distinct on (id) id,at,owner,operation from jsonb_to_recordset($3::jsonb)
+          as r(id uuid,at timestamptz,owner text,operation text)
+        where owner<>'' and at>=${windowStart} at time zone 'UTC'
+          and at<(select started_at from opencrawl_activity_start where namespace=$1)
+      ), accepted as (
+        insert into opencrawl_prior_call_receipts(namespace,tenant_id,id,at)
+        select $1,$2,id,at from inputs order by id on conflict do nothing returning id
+      ), receipts as materialized (
+        select inputs.*,(at at time zone 'UTC')::date as day from inputs join accepted using(id)
+      ), counted as (
+        insert into opencrawl_call_days(namespace,tenant_id,day,calls,earlier_calls)
+        select $1,$2,day,count(*),count(*) from receipts group by day order by day
+        on conflict(namespace,tenant_id,day) do update set calls=opencrawl_call_days.calls+excluded.calls,
+          earlier_calls=opencrawl_call_days.earlier_calls+excluded.earlier_calls
+      ), searches as (
+        insert into opencrawl_search_history(namespace,tenant_id,user_id,kind,id,at,operation,queries,failed)
+        select $1,$2,owner,'agent',gen_random_uuid(),at,operation,array[]::text[],null from receipts where operation is not null
+        returning at
+      )
+      insert into opencrawl_search_days(namespace,tenant_id,day,agent)
+        select $1,$2,(at at time zone 'UTC')::date,count(*) from searches group by 3 order by 3
+        on conflict(namespace,tenant_id,day) do update set agent=opencrawl_search_days.agent+excluded.agent`,[namespace,tenantId,JSON.stringify(calls)]);
+    },
     /** Old completed checks may only retain counts and the native-event digest.
      * Without a verified source session these receipts are readable only by the owner. */
     async importChecks(tenantId:string,checks:PriorCheck[]){
@@ -128,12 +162,13 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
     },
     async totals(p:Principal):Promise<CallTotals>{
       const {rows}=await pool.query(`select greatest(started_at,${windowStart} at time zone 'UTC') as since,
-        (select coalesce(sum(calls),0) from opencrawl_call_days where namespace=$1 and tenant_id=$2 and day>=${windowStart}) as calls,
-        s.* from opencrawl_activity_start cross join lateral (select coalesce(sum(agent),0) as agent,coalesce(sum(proactive),0) as proactive,
+        c.*,s.* from opencrawl_activity_start cross join lateral (
+          select coalesce(sum(calls),0) as calls,coalesce(sum(earlier_calls),0) as earlier from opencrawl_call_days
+          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) c cross join lateral (select coalesce(sum(agent),0) as agent,coalesce(sum(proactive),0) as proactive,
           coalesce(sum(non_silent),0) as non_silent,coalesce(sum(delivered),0) as delivered from opencrawl_search_days
           where namespace=$1 and tenant_id=$2 and day>=${windowStart}) s where namespace=$1`,[namespace,readScope(p)[0]]);
       const r=rows[0];
-      return {since:r.since.toISOString(),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered)};
+      return {since:r.since.toISOString(),...(Number(r.earlier)>0?{includesEarlierCalls:true}:{}),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered)};
     },
     async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
       const {kind,before}=historyRequest.parse(input);
@@ -145,7 +180,7 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
       // Two disjoint index seeks. A workspace's unlinked searches cannot force a
       // scan through someone else's private history to reach the caller's next page.
       const {rows}=await pool.query<SearchActivityRow>(`select id,at,user_id as "userId",operation,queries,harness,session_id as "sessionId",
-        message_id as "messageId",message,returned,case when failed then 'failed' else 'complete' end as outcome, delivered
+        message_id as "messageId",message,returned,case when failed is null then 'unknown' when failed then 'failed' else 'complete' end as outcome, delivered
         from ((select * from opencrawl_search_history where ${window} and session_id is not null and harness is not null ${end})
           union all (select * from opencrawl_search_history where ${window} and user_id=$3 and (session_id is null or harness is null) ${end})) candidates
         ${end}`,[namespace,...owner,kind,...before?position(before,audience):[]]);
@@ -162,11 +197,15 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
       });
     },
     async prune(){
+      await pool.query(`delete from opencrawl_prior_call_receipts where namespace=$1 and (tenant_id,id) in
+        (select tenant_id,id from opencrawl_prior_call_receipts where namespace=$1 and at<${windowStart} at time zone 'UTC'
+          order by at limit 2000 for update skip locked)`,[namespace]);
       await pool.query(`delete from opencrawl_search_history where id in (select id from opencrawl_search_history where namespace=$1 and at<${windowStart} at time zone 'UTC' order by at limit 2000 for update skip locked)`,[namespace]);
     },
   };
   return activity;
 }
+export interface PriorAgentCall {owner:string;id:string;at:string;operation:string|null}
 export interface PriorCheck {owner:string;id:string;at:string;key:string;returned:number}
 export type SearchActivity=ReturnType<typeof createSearchActivity>;
 

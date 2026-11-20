@@ -144,3 +144,24 @@ test('only foreground HTTP operations count as agent tool calls',async()=>{
   }
   assert.equal(calls,4);
 });
+
+test('restored calls count once in their original tenant and day and expose only known facts to their owner',async t=>{
+  const db=await applicationDatabaseFixture(t),activity=createSearchActivity(db);
+  await activity.ready();
+  const id='00000000-0000-4000-8000-000000000101',cutoff=await activity.trackingStart();
+  const yesterday=new Date(Date.parse(cutoff)-86400000).toISOString();
+  const search={id,at:yesterday,owner:alice.userId,operation:'Board'};
+  const call={...search,id:id.slice(0,-1)+'2',operation:null};
+  const input=[search,search,call,{...search,id:id.slice(0,-1)+'3',at:new Date(Date.parse(cutoff)+1000).toISOString()},
+    {...search,id:id.slice(0,-1)+'4',at:new Date(Date.parse(cutoff)-31*86400000).toISOString()}];
+  await Promise.all([1,2].map(()=>activity.importAgentCalls(alice.tenantId,input)));
+  await activity.importAgentCalls(other.tenantId,[{...search,owner:other.userId}]);
+  await activity.agentCall(alice);
+  const totals=await activity.totals(bob);
+  assert.deepEqual([totals.calls,totals.agentSearches,totals.proactiveChecks,totals.includesEarlierCalls],[3,1,0,true]);
+  assert.equal((await activity.totals(other)).calls,1);
+  const {rows}=await activity.page(alice,{kind:'agent'},identity);
+  assert.equal(rows.length,1);
+  assert.deepEqual([rows[0].at,rows[0].operation,rows[0].queries,rows[0].sessionId,rows[0].outcome],[yesterday,'Board',[],null,'unknown']);
+  assert.deepEqual((await activity.page(bob,{kind:'agent'},identity)).rows,[]);
+});

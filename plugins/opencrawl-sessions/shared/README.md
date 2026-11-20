@@ -9,8 +9,8 @@ endpoint. Native plugin loading and trust remain authoritative.
 
 Run `opencrawl setup` in your terminal to select the endpoint/profile and harness.
 A bundle without an explicit binding stays inactive. No default cloud endpoint
-or ambient credential can activate it. Context suggestions remain separately
-opt-in with `opencrawl context-suggestions enable --harness NAME --api ORIGIN`.
+or ambient credential can activate it. Context suggestions run by default for clients recording new sessions.
+Use `opencrawl context-suggestions disable --harness NAME --api ORIGIN` to turn them off.
 
 Existing account, recording and history choices are preserved. The local capture
 daemon continues to own capture work; the plugin owns lifecycle hook residency.

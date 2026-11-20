@@ -703,6 +703,8 @@ img { max-width: 100%; }
 /* Host metadata remains visible when secondary row columns collapse. */
 .oc-row-with-host { position: relative; grid-template-columns: minmax(0, 1fr) minmax(5rem, 8rem) 6rem minmax(6rem, 10rem) 6.5rem 6rem; }
 .oc-row-with-host > a.oc-row-title::after { content: ''; position: absolute; inset: 0; }
+.oc-session-captures { min-width: 0; }
+.oc-session-captures > a + a { font-size: var(--text-xs); }
 .oc-row-tokens { text-align: right; font-variant-numeric: tabular-nums; }
 .oc-row-tokens-label { display: none; }
 .oc-row-heading { border-bottom: 0; }
