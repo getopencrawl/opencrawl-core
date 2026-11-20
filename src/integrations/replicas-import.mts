@@ -8,6 +8,7 @@ import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
 import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
+import {prepareSnapshots,saveSnapshot,snapshotProgress} from './replicas-snapshots.mjs';
 import {nextWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
@@ -47,7 +48,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
-    await client.query('ALTER TABLE opencrawl_replicas_workspace_inventories ADD COLUMN IF NOT EXISTS export_check jsonb');
+    await client.query("ALTER TABLE opencrawl_replicas_workspace_inventories ADD COLUMN IF NOT EXISTS export_check jsonb, ADD COLUMN IF NOT EXISTS chat_versions jsonb NOT NULL DEFAULT '{}'::jsonb");
+    await prepareSnapshots(client);
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_chat
       ON opencrawl_replicas_deferred(namespace,tenant,(chat->>'workspace_id'),(chat->>'chat_id'))`);
   }).catch(error=>{prepared=undefined;throw error;});
@@ -70,7 +72,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       WHERE i.namespace=$1 AND i.tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
     return row?{...visible(row.state as State),blockedChats:row.blocked_chats??undefined}:null;
   }
-  async function savePage(principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
+  async function savePage(client:Pick<ApplicationDatabase['pool'],'query'>,principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
     const next=history.before_cursor??null;
     if(next&&(next===state.before||state.historyCursors.includes(replicasDigest(next))))throw new ReplicasPageError('cursor','Replicas repeated a history cursor.');
     if(history.has_more===true&&!next)throw new ReplicasPageError('cursor','Replicas omitted a history cursor.');
@@ -99,9 +101,26 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       }else{batch.push(event);bytes+=size;}
     }
     await flush();
-    state.events+=history.events.length;state.turns+=replicasTurns(history).length;state.pages++;
+    const turns=replicasTurns(history).length;
+    if(!state.before||state.progress)state.progress=snapshotProgress(state.progress??undefined,chat,history,turns);
+    if(!state.refresh){state.events+=history.events.length;state.turns+=turns;state.pages++;}
     state.occurrences=occurrences;state.chatAttempts=0;
     if(next){state.before=next;state.historyCursors.push(replicasDigest(next));return;}
+    if(state.progress){
+      const progress=state.progress;
+      await saveSnapshot(client,[namespace,principal.tenantId,state.id],chat,progress,state.refresh);
+      if(state.refresh){
+        const baseline=state.refresh.baseline;
+        // Existing progress represents the original scan. Replace its known
+        // snapshot counts exactly once after a whole revised transcript lands.
+        if(baseline){
+          state.events+=progress.events-baseline.events;state.turns+=progress.turns-baseline.turns;state.pages+=progress.pages-baseline.pages;
+        }
+        console.info(JSON.stringify({event:'replicas.import.snapshot_refreshed',tenantId:principal.tenantId,importId:state.id,
+          workspaceId:chat.workspace_id,chatId:chat.chat_id,revision:state.refresh.revision,baseline,
+          captured:{events:progress.events,turns:progress.turns,pages:progress.pages}}));
+      }
+    }
     state.processed++;
     const session=replicasDigest(chat.workspace_id+':'+chat.chat_id);
     if(!state.completedSessions.includes(session))state.completedSessions.push(session);
@@ -137,7 +156,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         // Run a single deferred page, independently of a possibly mid-chat foreground cursor.
         const foreground={...checkpoint(state),queue:state.queue,next:state.next,initialCatalog:state.initialCatalog};
         await pending.remove(row);state.blocked--;
-        Object.assign(state,row.checkpoint,{queue:[row.chat],next:null,initialCatalog:false});
+        Object.assign(state,emptyCheckpoint(),row.checkpoint,{queue:[row.chat],next:null,initialCatalog:false});
         await processPage(principal,state,api,pending,true,client);
         if(state.queue.length){
           const resumed=state.before&&state.before!==row.checkpoint.before;
@@ -190,7 +209,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
             if(typeof row.message_id==='string'&&row.message_id)return !removed.has(row.message_id);
             return typeof row.sender_user_id==='string'&&typeof row.recorded_at==='string';
           }));
-          if(knownMessages||typeof history.total==='number'&&history.total>0){
+          const prior=state.refresh?.baseline;
+          if(knownMessages||prior&&prior.events+prior.turns>0||typeof history.total==='number'&&history.total>0){
             throw new ReplicasPageError('empty_with_messages','Replicas returned an empty transcript for a chat with recorded messages.');
           }
           if(typeof history.thread_id!=='string'||!history.thread_id){
@@ -209,7 +229,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString(),Boolean(history.events.length||replicasTurns(history).length));
         delete state.waitingForSource;
         operation='ingest';
-        await savePage(principal,state,chat,history);
+        await savePage(client,principal,state,chat,history);
         const limit=state.pageLimit??100;
         if(history.before_cursor&&limit<100&&historyResponse?.bytesRead!==undefined&&historyResponse.bytesRead<3*1024*1024){
           // A large event affects its own page. Grow after a small successful
@@ -360,6 +380,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           SELECT namespace,tenant,$4,workspace,'epoch'::timestamptz,'unobserved' FROM opencrawl_replicas_workspace_inventories
           WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
         await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
+        if(resume?.id)await client.query(`UPDATE opencrawl_replicas_snapshots SET import_id=$4 WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
+        await client.query('DELETE FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
         delete state.waitingForSource;
         state.id=generation;state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
         state.phase=state.queue.length||state.initialCatalog||state.next||state.blocked?'importing':'complete';
