@@ -1,29 +1,34 @@
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {ReplicasProviderError,type replicasApi} from './replicas-api.mjs';
 import {deferredHistory,emptyCheckpoint} from './replicas-deferred.mjs';
+import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {replicasDigest} from './replicas-events.mjs';
 
 type Client=Pick<ApplicationDatabase['pool'],'query'>;
 type Scope=[namespace:string,tenant:string,importId:string];
 interface Review {phase:string;cursor?:string|null;cursors?:string[];examined?:number;total?:number;added?:number;outside?:string[]}
-const eligible="chat_ids IS NOT NULL AND (export_check IS NULL OR export_check->>'phase'='checking')";
+const eligible="((chat_ids IS NOT NULL AND (export_check IS NULL OR export_check->>'phase'='checking')) OR ($4::boolean AND result='unobserved'))";
 
-export async function hasWorkspaceExportReview(client:Client,scope:Scope){
+export async function hasWorkspaceExportReview(client:Client,scope:Scope,sweep:boolean){
   return (await client.query<{pending:boolean}>(`SELECT EXISTS(SELECT 1 FROM opencrawl_replicas_workspace_inventories
-    WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}) AS pending`,scope)).rows[0].pending;
+    WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}) AS pending`,[...scope,sweep])).rows[0].pending;
 }
 
 /** The original catalog can omit a workspace-listed chat. Only a matching row
  * from the organization's retained export may enroll that chat. Check one
  * export page per activity, under the same tenant lock as the ordinary queue. */
-export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:readonly string[],api:ReturnType<typeof replicasApi>,now:number){
+export async function reviewWorkspaceExport(client:Client,scope:Scope,completed:readonly string[],api:ReturnType<typeof replicasApi>,now:number,sweep:boolean){
   const [namespace,tenant,importId]=scope;
-  const result=await client.query<{workspace:string;chat_ids:string[];export_check:Review|null}>(`SELECT workspace,chat_ids,export_check
+  const result=await client.query<{workspace:string;chat_ids:string[]|null;export_check:Review|null}>(`SELECT workspace,chat_ids,export_check
     FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}
-    ORDER BY checked_at,workspace LIMIT 1`,scope);
+    ORDER BY checked_at,workspace LIMIT 1`,[...scope,sweep]);
   const row=result.rows[0];
   if(!row)return {requested:false,added:0};
   const workspace=row.workspace,args=[...scope,workspace],at=new Date(now).toISOString();
+  if(!row.chat_ids){
+    await observeReplicasWorkspace(client,{namespace,tenant,importId,workspace},now,()=>api.workspaceChats(workspace));
+    return {requested:true,added:0};
+  }
   const save=(value:Review)=>client.query(`UPDATE opencrawl_replicas_workspace_inventories SET export_check=$5
     WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND workspace=$4`,[...args,value]);
   const done=new Set(completed);

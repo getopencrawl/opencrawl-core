@@ -648,3 +648,26 @@ test('a workspace-only chat must reappear in its exact retained organization exp
   const {rows:[row]}=await f.database.pool.query('SELECT export_check FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
   assert.equal(row.export_check.phase,'complete');assert.equal(row.export_check.added,1);assert.deepEqual(row.export_check.outside,[listedOnly.chat_id]);
 });
+
+test('catalog disagreement also verifies the original workspaces whose first history reads all succeeded',async t=>{
+  let clock=Date.now();
+  const other={...chat,workspace_id:randomUUID(),chat_id:randomUUID()},hidden={...other,chat_id:randomUUID()};
+  const fetched=[];
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('conversations')){
+      const workspace=url.searchParams.get('workspace_id');
+      if(!workspace)return Response.json({conversations:[chat,other],total:2,next_cursor:null});
+      const conversations=workspace===other.workspace_id?[hidden,other]:[chat];return Response.json({conversations,total:conversations.length,next_cursor:null});
+    }
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:url.pathname.includes(other.workspace_id)?[other,hidden].map(c=>({id:c.chat_id})):[]});
+    if(url.pathname.endsWith('history')){
+      const id=url.searchParams.get('chat_id');fetched.push(id);
+      return id===chat.chat_id?Response.json({error:'Chat not found'},{status:404}):Response.json({events:[event('available')],before_cursor:null});
+    }
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);clock+=60_000;
+  for(let i=0;i<16;i++)await advance(f.reopen(),id);
+  assert.equal(fetched.filter(id=>id===hidden.chat_id).length,1);
+  const result=await f.service.status(principal);assert.equal(result.imported,2);assert.equal(result.total,3);assert.equal(result.blocked,1);
+});

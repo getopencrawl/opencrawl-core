@@ -115,8 +115,9 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const pending=deferredHistory(client,namespace,principal.tenantId);
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
     const reviewScope:[string,string,string]=[namespace,principal.tenantId,state.id];
+    const sweep=Boolean(state.workspaceChecks?.length);
     const review=async()=>{
-      const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now());
+      const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now(),sweep);
       if(result.added){state.total+=result.added;state.blocked=(state.blocked??0)+result.added;delete state.waitingForSource;}
       return result.requested;
     };
@@ -150,8 +151,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         return;
       }
       if(!hasFresh){
-        if(await hasWorkspaceExportReview(client,reviewScope)){
-          if(await review()||await hasWorkspaceExportReview(client,reviewScope))return;
+        if(await hasWorkspaceExportReview(client,reviewScope,sweep)){
+          if(await review()||await hasWorkspaceExportReview(client,reviewScope,sweep))return;
         }
         state.retryAt=row.retry_at.toISOString();
         state.waitingForSource=await pending.onlyAbsent();
@@ -223,6 +224,10 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         const hash=state.next?replicasDigest(state.next):undefined;
         if(hash&&state.listCursors.includes(hash))throw new ReplicasPageError('cursor','Replicas repeated a catalog cursor.');
         const page=await api.conversations(state.next);
+        const workspaces=[...new Set(page.conversations.map(item=>item.workspace_id))];
+        if(workspaces.length)await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,result)
+          SELECT $1,$2,$3,id,'epoch'::timestamptz,'unobserved' FROM unnest($4::text[]) AS ids(id)
+          ON CONFLICT(namespace,tenant,import_id,workspace) DO NOTHING`,[namespace,principal.tenantId,state.id,workspaces]);
         if(state.initialCatalog)state.total=page.total;
         delete state.initialCatalog;
         state.queue=page.conversations;state.next=page.next_cursor;
@@ -350,9 +355,13 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(resume&&resume.organization.id!==identity.organization.id)throw replicasError('Use the Replicas organization that owns the saved import.',409);
         state=resume??{id:'',organization:identity.organization,phase:'importing',total:0,processed:0,imported:0,events:0,turns:0,pages:0,
           updatedAt:'',queue:[],initialCatalog:true,next:null,listCursors:[],completedSessions:[],...emptyCheckpoint()};
-        await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',[namespace,principal.tenantId]);
+        const generation=randomUUID();
+        if(resume?.id)await client.query(`INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,result)
+          SELECT namespace,tenant,$4,workspace,'epoch'::timestamptz,'unobserved' FROM opencrawl_replicas_workspace_inventories
+          WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
+        await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
         delete state.waitingForSource;
-        state.id=randomUUID();state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
+        state.id=generation;state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
         state.phase=state.queue.length||state.initialCatalog||state.next||state.blocked?'importing':'complete';
         if(!resume)await step(client,principal,state,api);
         credential=envelope.seal(path,Buffer.from(apiKey));
@@ -367,7 +376,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         }
       }
       if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked&&
-        !await hasWorkspaceExportReview(client,[namespace,principal.tenantId,state.id]))state.phase='complete';
+        !await hasWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length)))state.phase='complete';
       if(state.phase!=='importing')credential=null;
       state.updatedAt=new Date(now()).toISOString();
       await client.query('INSERT INTO opencrawl_replicas_imports(namespace,tenant,state,credential) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(namespace,tenant) DO UPDATE SET state=EXCLUDED.state,credential=EXCLUDED.credential',[namespace,principal.tenantId,JSON.stringify(state),credential]);
