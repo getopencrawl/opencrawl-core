@@ -7,6 +7,33 @@ conversation capture after startup. The index missed the first user prompt.
 Complete first-turn tool capture, idle board notifications and cold-boot
 durability remain unverified.
 
+## Administrator setup
+
+1. Prepare the Devin Cloud blueprint your team uses. Install the OpenCrawl CLI
+   and Devin’s official OIDC helper, build the snapshot, and activate it.
+2. Sign in to the target OpenCrawl workspace as an administrator. Run
+   `opencrawl workload approve --provider devin` with the deployment URL and a
+   private code file. Give the code to one Devin session through its encrypted
+   **This session** secret and run `opencrawl workload connect --code-stdin` there.
+   This binds the Devin organization to that workspace.
+3. Generate the deployment’s plugin with `opencrawl workload bundle`. Select
+   `--recording off` for search and board access or `--recording on` to also
+   capture new sessions. In Devin, open **Customize → Plugins**, choose **Myself**
+   for a pilot or the organization for team rollout, upload the ZIP, and connect
+   its OpenCrawl MCP server.
+4. For deployments with first-turn recovery, create a dedicated organization
+   service user in Devin. Provide its key on stdin to
+   `opencrawl workload events --api ORIGIN --organization DEVIN_ORG --key-stdin`
+   while signed in as the OpenCrawl admin. The receiver verifies the service
+   user’s organization and encrypts the key. The plugin contains no key.
+   For a single-session pilot add `--one-session` before starting the session,
+   then bind its ID with `--select-session devin-SESSION`. The grant reads no
+   session until the administrator selects it. Use `--off` to erase the grant.
+5. Start a **fresh** Devin session. Verify workspace search. For recording, run
+   a first command with an unpredictable output, then search from another
+   OpenCrawl session for the original prompt, command and output under that
+   Devin session ID. Include tool outputs when searching for the result.
+
 ## Observed Cloud contract
 
 On 2026-11-15, a personal plugin containing command hooks and one synthetic
