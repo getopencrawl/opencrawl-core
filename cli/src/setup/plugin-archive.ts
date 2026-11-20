@@ -21,7 +21,7 @@ export function validateArtifact(value:unknown,entry:PackageRelease,platform:str
  const sourceFiles=incognito?[...runtimeFiles,'runtime/privacy.mjs']:runtimeFiles;
  if(!data||!manifest||!['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'].includes(platform)||
   data.schemaVersion!==1||data.harness!==entry.harness||data.name!==entry.name||data.version!==entry.version||data.platform!==platform||
-  data.filename!==`${entry.name}-${entry.version}-${platform}.zip`||data.sha256!==pin.sha256||data.executable!==executable||
+  data.filename!==`${entry.name==='opencrawl'?'opencrawl-'+entry.harness:entry.name}-${entry.version}-${platform}.zip`||data.sha256!==pin.sha256||data.executable!==executable||
   !Array.isArray(data.source)||JSON.stringify([...data.source].sort())!==JSON.stringify([...sourceFiles].sort()))throw invalid();
  const nativeFiles=entry.harness==='antigravity'?['hooks.json','mcp_config.json']:['hooks/hooks.json'];
  return {executable,manifest,allowed:new Set([manifest,...baseFiles,...(entry.listingIcon?['assets/icon.svg']:[]),...(entry.memoryImportSkill?['skills/oc-import-memories/SKILL.md']:[]),...(entry.continueSkill?['skills/oc-continue/SKILL.md']:[]),...nativeFiles,...sourceFiles,...(incognito?privateSkills:[]),...(incognito&&entry.harness==='codex'?privateSkills.map(path=>path.replace('SKILL.md','agents/openai.yaml')):[]),executable])};

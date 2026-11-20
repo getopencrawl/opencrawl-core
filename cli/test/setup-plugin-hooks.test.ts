@@ -3,7 +3,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,realpathSync,sta
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {pluginHookFiles,type PluginHookBinding} from '../src/setup/plugin-hooks.ts';
+import {pluginHookFiles,type PluginHookBinding} from './fixtures/legacy-plugins/prepare.ts';
 import type {PluginClient} from '../src/setup/plugins.ts';
 
 const clients:PluginClient[]=['codex','claude-code','cursor','antigravity'];
@@ -24,7 +24,7 @@ test('installation preserves canonical hook bytes across endpoints and profiles'
   const selected=platform==='win32'?{...binding,command:['C:\\CLI\\opencrawl.exe'],configHome:'C:\\profile'}:binding;
   const files=pluginHookFiles(client,selected,platform),other=pluginHookFiles(client,{...selected,api:'https://other.example',pluginName:'opencrawl-fedcba654321'},platform);
   const path=client==='antigravity'?'hooks.json':'hooks/hooks.json';
-  expect(files[path]).toBe(readFileSync(join(import.meta.dir,'../../plugins/opencrawl-sessions',client,platform==='win32'?'windows':'posix',path),'utf8'));
+  expect(files[path]).toBe(readFileSync(join(import.meta.dir,'fixtures/legacy-plugins',client,platform==='win32'?'windows':'posix',path),'utf8'));
   expect(files[path]).toBe(other[path]);expect(files['scripts/opencrawl-hook.sh']).toBe(other['scripts/opencrawl-hook.sh']);
   expect(files[path]).not.toContain(selected.api);expect(files['.opencrawl-binding.json']).toContain(selected.api);
   const hooks=entries(client,files),start=hooks[client==='cursor'?'sessionStart':'SessionStart'];

@@ -4,7 +4,8 @@ import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {pluginHookContext,recordPluginActivation,pluginActivationMatches} from '../src/setup/plugin-context.ts';
-import {pluginCommand,pluginInventory,recordingInstallState,setupPluginFiles,setupPluginIdentity,installSetupPlugins,type PluginOptions} from '../src/setup/plugins.ts';
+import {setupPluginFiles,installSetupPlugins} from './fixtures/legacy-plugins/prepare.ts';
+import {pluginCommand,pluginInventory,recordingInstallState,setupPluginIdentity,type PluginOptions} from '../src/setup/plugins.ts';
 import {scopedPluginIdentity} from '../src/setup/plugin-identity.ts';
 
 const origin='https://selfhost.example',identity=setupPluginIdentity(origin);

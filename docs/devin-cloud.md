@@ -1,5 +1,7 @@
 # Devin Cloud adapter status
 
+For member search, skills and CLI access, install the [Devin Cloud plugin](https://github.com/getopencrawl/opencrawl-plugins/tree/main/plugins/devin) from `plugins/devin`. The administrator setup below configures a workspace workload identity and optional organization recording.
+
 An administrator can connect a Devin Cloud organization to an OpenCrawl
 workspace using Devin's signed workload identity. Production checks verified
 workspace search, board access and recording. With CLI 0.4.143 and a Devin

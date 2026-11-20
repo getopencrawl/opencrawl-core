@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "opencrawl": {
-      "type": "http",
-      "url": "https://app.getopencrawl.com/mcp"
-    }
-  }
-}

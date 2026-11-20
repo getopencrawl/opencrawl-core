@@ -5,14 +5,9 @@ permissions:
 jobs:
   validate:
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    defaults:
-      run:
-        working-directory: plugins
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.2
-      - run: node scripts/validate.mjs
-      - run: node --test test/*.test.mjs
-      - run: node scripts/package.mts
+      - run: node cli/scripts/check-plugin-release.ts

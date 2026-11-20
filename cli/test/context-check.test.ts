@@ -8,7 +8,8 @@ import {CheckStore,checkSettings,updateCheckSettings,checkBinding,type CheckInpu
 import {suggestionEventsSchema} from '../../src/search/suggestion-events.mts';
 import {flushSuggestionEvents} from '../src/context-suggestion-telemetry.ts';
 import {requestCheck,formatCheck} from '../src/context-check.ts';
-import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
+import {setupPluginFiles} from './fixtures/legacy-plugins/prepare.ts';
+import {setupPluginIdentity} from '../src/setup/plugins.ts';
 import {configDir,sessionFile} from '../src/session.ts';
 import type {CaptureConfig} from '../src/capture/runtime.ts';
 
