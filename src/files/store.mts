@@ -1,7 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {mkdir, mkdtemp, open, readFile, rename, rm, stat, writeFile} from 'node:fs/promises';
 import {dirname, isAbsolute, join} from 'node:path';
-import type {PoolClient} from 'pg';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {git, seedRepository} from './git.mjs';
 
@@ -78,7 +77,7 @@ interface AuditEntry {
 }
 // Only newline-terminated records belong to completed ref updates. Catch up in
 // bounded batches, even after a long database outage. Never scan Git objects.
-async function catchUp(client: PoolClient, scope: string[], dir: string, start: number) {
+async function catchUp(client: Pick<ApplicationDatabase['pool'], 'query'>, scope: string[], dir: string, start: number) {
   const file = await open(logPath(dir), 'r');
   try {
     const end = (await file.stat()).size;
