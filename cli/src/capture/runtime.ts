@@ -16,7 +16,7 @@ import {retryWindowsSharing} from '../filesystem.ts';
 import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
-import {claudeClientAppResolver} from './claude-client-app.ts';
+import {clientAppResolver} from './client-app.ts';
 import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {devinEvents,devinOverflow,devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
@@ -377,6 +377,26 @@ function readCaptureAttachment(sha256:string) {
   if(hash(bytes)!==sha256)throw new CliError('CAPTURE_ATTACHMENT_INVALID','Queued attachment does not match its digest');
   return bytes;
 }
+function leadingCodexRecord(fd: number, size: number, required: boolean) {
+  const limit = Math.min(size, 1024 * 1024);
+  let header = Buffer.alloc(Math.min(limit, 4096));
+  let start = 0;
+  while (header.length) {
+    const bytes = readSync(fd, header, start, header.length - start, start);
+    const end = header.subarray(start, start + bytes).indexOf(10);
+    if (end >= 0) {
+      try { return JSON.parse(header.subarray(0, start + end).toString('utf8')); }
+      catch (error) { if (required) throw error; return; }
+    }
+    if (start + bytes < header.length || header.length === limit) break;
+    start = header.length;
+    const larger = Buffer.alloc(Math.min(limit, start * 2));
+    header.copy(larger);
+    header = larger;
+  }
+  if (required) throw new CliError('CAPTURE_SESSION_UNKNOWN', 'The native session header is incomplete');
+}
+
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
 export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:{bytes:number;ino:number;mtimeMs:number},{sessionScoped=false,sessionPath}:{sessionScoped?:boolean,sessionPath?:string}={}) {
   return withSessionLock('capture:spool',async()=>{
@@ -443,7 +463,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     if(agyPath&&(!meta.origin||meta.origin==='unknown'))meta={...meta,origin:agyPath.origin,originEvidence:agyPath.originEvidence};
     const expectedSession=scoped?(scoped.agentId?scoped.sessionId+':'+scoped.agentId:scoped.sessionId):null;
     let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
-    const resolveClientApp = claudeClientAppResolver();
+    const resolveClientApp = clientAppResolver();
     function metadata(r:any) {
         if(harness==='antigravity')return;
         const p=r.payload??r;
@@ -460,6 +480,8 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           meta.sessionId=p.id;meta.parentSessionId=p.forked_from_id??p.source?.subagent?.thread_spawn?.parent_thread_id??null;
           const origin=detectOrigin(harness,r);
           meta.origin=origin.origin;meta.originEvidence=origin.evidence;
+          const app=resolveClientApp('codex',p.id,p.originator);
+          if(app)meta.clientApp=app;
           meta.cwd=p.cwd;meta.harnessVersion=p.cli_version;
           return;
         } else if(harness==='codex') {
@@ -471,7 +493,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
           if(meta.sessionId!==sessionId)delete meta.clientApp;
           meta.sessionId=sessionId;
           if(typeof r.entrypoint==='string' && !(r.entrypoint==='sdk-ts' && meta.clientApp==='conductor')){
-            const clientApp=resolveClientApp(r.sessionId,r.entrypoint);
+            const clientApp=resolveClientApp('claude-code',r.sessionId,r.entrypoint);
             if(clientApp)meta.clientApp=clientApp;
             else delete meta.clientApp;
           }
@@ -516,20 +538,19 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
     if(scoped&&meta.sessionId&&meta.sessionId!==expectedSession&&!(scoped.agentId&&meta.sessionId===scoped.sessionId))throw new CliError('CAPTURE_SESSION_MISMATCH','Saved transcript identity differs from the registered native session');
       if(scoped&&fd!==undefined){
         if(fstatSync(fd).ino!==source.ino||assertSessionTranscriptPath(config,harness,scoped.sessionId,harness==='antigravity'?resolveAntigravityTranscript(file):file,sessionPath??file).path!==path)throw new CliError('CAPTURE_SESSION_PATH_REJECTED','Native transcript changed before reading');
-        if(harness==='codex'){
-          const limit=Math.min(st.size,1024*1024);let header=Buffer.alloc(Math.min(limit,4096));readSync(fd,header,0,header.length,0);let end=header.indexOf(10);
-          while(end<0&&header.length<limit){const before=header.length,larger=Buffer.alloc(Math.min(limit,before*2));header.copy(larger);readSync(fd,larger,before,larger.length-before,before);header=larger;end=header.indexOf(10);}
-          if(end<0)throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header is incomplete');
-          const native=JSON.parse(header.subarray(0,end).toString('utf8'));
-          if(native.type!=='session_meta'||native.payload?.id!==scoped.sessionId)throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
-        }
       }
-      // A future-only enrollment starts at its saved byte boundary. Read only
-      // the native header to recover identity, never enqueue earlier messages.
-      if(old.forwardBoundary&&!reconcileHistory&&offset>0&&harness==='codex'&&!meta.sessionId&&fd!==undefined){
-        const header=Buffer.alloc(Math.min(st.size,1024*1024));readSync(fd,header,0,header.length,0);const end=header.indexOf(10);
-        if(end<0)throw new CliError('CAPTURE_SESSION_UNKNOWN','The native session header is incomplete. Start a new session.');
-        metadata(JSON.parse(header.subarray(0,end).toString('utf8')));
+      // Only the leading header owns the rollout. Read it on resume to enrich
+      // old cursors or retry a Conductor binding committed after the first scan.
+      const recoverIdentity=old.forwardBoundary&&!reconcileHistory&&offset>0&&!meta.sessionId;
+      const retryApp=offset>0&&offset<st.size&&meta.sessionId&&!meta.clientApp;
+      if(harness==='codex'&&fd!==undefined&&(scoped||recoverIdentity||retryApp)){
+        const native=leadingCodexRecord(fd,st.size,Boolean(scoped||recoverIdentity));
+        if(scoped&&(native?.type!=='session_meta'||native.payload?.id!==scoped.sessionId))throw new CliError('CAPTURE_SESSION_MISMATCH','Native header differs from the registered session');
+        if(recoverIdentity)metadata(native);
+        else if(retryApp&&native?.type==='session_meta'&&native.payload?.id===meta.sessionId){
+          const app=resolveClientApp('codex',meta.sessionId,native.payload.originator);
+          if(app)meta.clientApp=app;
+        }
       }
       let skipPartial=old.forwardBoundary&&!reconcileHistory&&old.skipPartial;
       // Apply metadata in record order. Looking ahead at a later working
