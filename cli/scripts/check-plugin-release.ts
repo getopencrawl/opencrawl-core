@@ -28,7 +28,7 @@ for (const pkg of packages) {
   assert(caps.callbacks.length > 0);
   assert.deepEqual(Object.keys(pkg.archives ?? {}).sort(), platforms);
   for (const [platform, archive] of Object.entries(pkg.archives ?? {})) {
-    const url = 'https://github.com/'+repository+'/releases/download/v'+version+'/opencrawl-'+harness+'-'+version+'-'+platform;
+    const url: string = 'https://github.com/'+repository+'/releases/download/v'+version+'/opencrawl-'+harness+'-'+version+'-'+platform;
     assert.equal(archive.url, url+'.zip');
     assert.equal(archive.metadataUrl, url+'.json');
     assert.match(archive.sha256, /^[a-f0-9]{64}$/);
