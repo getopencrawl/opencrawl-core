@@ -111,8 +111,11 @@ export function Section({title, description, actions, children, className = '', 
   const Heading = headingLevel === 3 ? 'h3' : 'h2';
   return <section {...props} className={`oc-section ${className}`} aria-labelledby={title ? id : props['aria-labelledby']}>{(title || description || actions) && <div className="oc-section-heading"><div>{title && <Heading id={id}>{title}</Heading>}{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>}{children}</section>;
 }
-export function Notice({tone = 'info', title, children, className = ''}: {tone?: 'info' | 'success' | 'warning' | 'danger'; title?: string; children: ReactNode; className?: string}) {
-  return <div className={`oc-notice oc-notice-${tone} ${className}`} role={tone === 'danger' ? 'alert' : 'status'}>{title && <strong>{title}</strong>}<div>{children}</div></div>;
+export function Notice({tone = 'info', title, children, actions, className = ''}: {tone?: 'info' | 'success' | 'warning' | 'danger'; title?: string; children: ReactNode; actions?: ReactNode; className?: string}) {
+  return <div className={`oc-notice oc-notice-${tone} ${className}`} role={tone === 'danger' ? 'alert' : 'status'}>
+    {title && <strong>{title}</strong>}
+    {actions ? <div className="oc-notice-actions"><div>{children}</div>{actions}</div> : <div>{children}</div>}
+  </div>;
 }
 export function StatusBadge({tone = 'neutral', children, className = '', variant = 'default'}: {tone?: 'neutral' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string; variant?: 'default' | 'pill'}) {
   return <span className={`oc-badge oc-badge-${tone}${variant === 'pill' ? ' oc-status-pill' : ''} ${className}`}>{children}</span>;
