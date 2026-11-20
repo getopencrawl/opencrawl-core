@@ -66,7 +66,7 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
   const validDevin=harness==='devin'&&event?.hook_event_name==='SessionStart'&&typeof event.session_id==='string'&&sessionPattern.test(event.session_id)&&['startup','resume'].includes(event.source);
   if (!validAntigravity && !validCursor && !validStandard && !validDevin) return unavailable(harness, 'The harness did not supply a valid native session identity.');
   const session: string = harness === 'antigravity' ? event.conversationId : event.session_id;
-  const files = `For file handoffs, use opencrawl files open --session ${session} --api ${api}. It prints your private scratch clone. Commit and push chosen files to main there; share the repo-relative path and commit ID with the recipient.`;
+  const files = `For file handoffs, use opencrawl files open --session ${session} --api ${api}. It prints a directory outside your project. Put the handoff file in that directory, commit it there, and run git -C <printed-dir> push origin main. After the push succeeds, send the commit ID and file path to your teammate. To read a handoff, fetch origin and read the file at that commit.`;
   const listener=harness==='claude-code'?'Claude Code Monitor':harness==='codex'?'a yielding functions.exec cell with notify()':'the native listener for this harness';
   const attach=`Read the installed opencrawl skill and attach one listener using ${listener} when starting or resuming substantive work.`;
   try {
