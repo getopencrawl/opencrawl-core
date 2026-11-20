@@ -10,6 +10,7 @@ export function disconnectDescription(source: SourceCard): string {
 
 export function sourceStatus(source: SourceCard): {label: string; tone: 'neutral' | 'success' | 'warning' | 'danger'} {
   if (source.statusUnavailable) return {label:'Status unavailable',tone:'warning'};
+  if(source.provider==='replicas'&&source.state==='syncing'&&source.history?.waitingForSource)return {label:'Connected',tone:'success'};
   switch (source.state) {
     case 'synced': case 'connected': return {label: 'Connected', tone: 'success'};
     case 'syncing': return {label: initialImport(source) ? 'Importing' : 'Syncing', tone: 'warning'};

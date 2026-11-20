@@ -2,6 +2,7 @@ import type {TenantPrincipal,JsonValue,ObjectStore,SessionBatch} from './types.m
 import type {DocumentItem,IndexHit,SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
 import {gunzipSync} from 'node:zlib';
+import {expandReplicasPayload} from './replicas-payload.mjs';
 import {MAX_BATCH_BYTES,digest} from './ingest.mjs';
 import {batchDocuments,sourceBatchIdentity} from './indexer.mjs';
 import {withSessionDocumentWrites} from './write-barrier.mjs';
@@ -75,7 +76,8 @@ export async function migrateSessionPassages({realm,principal,store,prefix,backu
         const group=sources.slice(start,start+4),reads=await Promise.allSettled(group.map(([key])=>store.get(key,{maxBytes:MAX_BATCH_BYTES+1024*1024})));
         for(let i=0;i<reads.length;i++){
           const read=reads[i]!;if(read.status==='rejected')throw read.reason;if(!read.value)throw new Error('Missing immutable source; projection preserved');
-          const [key,ids]=group[i]!,batch=JSON.parse(gunzipSync(read.value,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}).toString('utf8')) as SessionBatch;
+          const [key,ids]=group[i]!,raw=JSON.parse(gunzipSync(read.value,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}).toString('utf8')) as SessionBatch;
+          const batch=await expandReplicasPayload(store,prefix,owner,key,raw);
           const docs=batchDocuments({prefix,key,batch,principal:owner,eventIds:ids});
           if(batch.sessionId!==sample.sessionId||batch.harness!==sample.harness||ids.some(id=>!batch.events.some(e=>e.id===id&&e.kind===events.get(id)!._source.kind)))throw new Error('Capture does not contain indexed event');
           replacements.push(...docs);

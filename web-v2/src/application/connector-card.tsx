@@ -20,8 +20,9 @@ export function ProviderIcon({source}: {source: SourceCard}) {
 }
 function streamStatus(source: SourceCard, row: NonNullable<SourceCard['rows']>[number]) {
   const done = !source.statusUnavailable && Boolean(row.done || source.state === 'synced');
-  const pending = !source.statusUnavailable && source.state === 'syncing' && !done;
-  const hint = source.statusUnavailable ? 'Last measured' : done ? 'Up to date' : pending ? sourceStatus(source).label : 'Import incomplete';
+  const waiting = source.provider === 'replicas' && source.state === 'syncing' && source.history?.waitingForSource;
+  const pending = !waiting && !source.statusUnavailable && source.state === 'syncing' && !done;
+  const hint = source.statusUnavailable ? 'Last measured' : waiting ? 'Imported' : done ? 'Up to date' : pending ? sourceStatus(source).label : 'Import incomplete';
   return {done, pending, hint};
 }
 export function SourceStats({source}: {source: SourceCard}) {

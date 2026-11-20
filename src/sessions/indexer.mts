@@ -1,3 +1,4 @@
+import {expandReplicasPayload} from './replicas-payload.mjs';
 import type {Principal, SourceOptions, SessionBatch, Attachment, SessionEvent} from './types.mjs';
 import {parseJson} from './types.mjs';
 import type {DocumentItem} from '../search/types.mjs';
@@ -216,7 +217,8 @@ export function createSessionPipeline({store,privacy,eventIdentities,prefix,sear
         if(control?.deletedAt)return {records:0,skipped:true};
         await writes.put(key+'.privacy-cleared',Buffer.from('1'),'text/plain');
       }
-      const docs=batchDocuments({prefix,key,batch,principal:scope,visibility:control?.visibility});
+      const expanded=await expandReplicasPayload(store,prefix,scope,key,batch);
+      const docs=batchDocuments({prefix,key,batch:expanded,principal:scope,visibility:control?.visibility});
       // Check the whole event before any chunk write. Receipt order, shorter
       // payloads and concurrent activities must never assemble mixed revisions.
       try {

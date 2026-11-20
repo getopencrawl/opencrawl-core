@@ -3,24 +3,26 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {Principal,SessionBatch,SessionEvent} from '../sessions/types.mjs';
 import type {SourceCard} from '../application/types.mjs';
 import {sealedEnvelope} from './credential-vault.mjs';
-import {replicasApi,replicasError,ReplicasProviderError,ReplicasPageError,type ReplicasConversation,type ReplicasHistory} from './replicas-api.mjs';
+import {replicasApi,replicasError,ReplicasProviderError,ReplicasPageError,type ReplicasConversation,type ReplicasHistory,type ReplicasResponseInfo} from './replicas-api.mjs';
+import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
-import {replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
+import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
 
+import {observeReplicasWorkspace} from './replicas-inventory.mjs';
 import {checkpoint,deferredHistory,emptyCheckpoint,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
 
 export interface ReplicasImportStatus {
   id:string;organization:{id:string;name:string};phase:'preview'|'importing'|'complete'|'disconnected'|'failed';
   total:number;processed:number;imported:number;events:number;turns:number;pages:number;updatedAt:string;
-  error?:string;blocked?:number;blockedChats?:number;retryAt?:string;
+  error?:string;waitingForSource?:boolean;blocked?:number;blockedChats?:number;retryAt?:string;
 }
 export type ReplicasImportInput={action:'connect';apiKey:string}|{action:'stop';id:string};
 export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
   workspaceChecks?:{id:string;at:number}[];
-  initialCatalog?:boolean;freshSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
+  initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 // Reserve one activity in five for due pages while catalog work remains.
 const freshStepsPerRetry=4;
@@ -29,7 +31,7 @@ export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 /** One explicit step reads one complete API page. Checkpoint only after the
  * original response and every projected record reach durable ingest/indexing.
  * Missing access and unknown pagination fail closed; no conversation is skipped. */
-export function createReplicasImport({database,key,ingest,schedule,request=fetch,now=Date.now}:{database:ApplicationDatabase;key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
+export function createReplicasImport({database,key,ingest,schedule,request=fetch,now=Date.now}:{database:ApplicationDatabase;key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch,gate?:undefined,blobs?:ReadonlyMap<string,Uint8Array>)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
@@ -39,21 +41,31 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       namespace text NOT NULL, tenant text NOT NULL, id bigint GENERATED ALWAYS AS IDENTITY,
       retry_at timestamptz NOT NULL, chat jsonb NOT NULL, checkpoint jsonb NOT NULL, issue jsonb NOT NULL,
       PRIMARY KEY(namespace,tenant,retry_at,id))`);
+    await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_continuation
+      ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL`);
+    await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
+      namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
+      chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_chat
       ON opencrawl_replicas_deferred(namespace,tenant,(chat->>'workspace_id'),(chat->>'chat_id'))`);
   }).catch(error=>{prepared=undefined;throw error;});
   function visible(state:State):ReplicasImportStatus{
-    const {id,organization,phase,total,processed,imported,events,turns,pages,updatedAt,blocked,retryAt}=state;
+    const {id,organization,phase,total,processed,imported,events,turns,pages,updatedAt,blocked,retryAt,waitingForSource}=state;
     const error=state.error?.startsWith('Replicas could not read all retained history. Check the organization key')?
       'The previous import stopped before recording the provider status. Reconnect to resume from the saved page.':state.error;
-    return {id,organization,phase:phase==='importing'&&!state.background?'preview':phase,total,processed,imported,events,turns,pages,updatedAt,error,blocked,retryAt};
+    return {id,organization,phase:phase==='importing'&&!state.background?'preview':phase,total,processed,imported,events,turns,pages,updatedAt,error,blocked,retryAt,waitingForSource};
   }
   async function status(principal:Principal,includeBlockedChats=true){
     await ready();
-    const row=(await database.pool.query(`SELECT state, CASE WHEN $3 AND (state->>'blocked')::int>0 THEN
-      (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int FROM opencrawl_replicas_deferred
-       WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
-      FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
+    const row=(await database.pool.query(`SELECT jsonb_strip_nulls(to_jsonb(summary)) AS state,
+      CASE WHEN $3 AND summary.blocked>0 THEN
+        (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int
+           FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
+      FROM opencrawl_replicas_imports AS i
+      CROSS JOIN LATERAL jsonb_to_record(i.state) AS summary(id text,organization jsonb,phase text,background boolean,
+        total bigint,processed bigint,imported bigint,events bigint,turns bigint,pages bigint,"updatedAt" text,
+        error text,blocked bigint,"retryAt" text,"waitingForSource" boolean)
+      WHERE i.namespace=$1 AND i.tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
     return row?{...visible(row.state as State),blockedChats:row.blocked_chats??undefined}:null;
   }
   async function savePage(principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
@@ -67,9 +79,23 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const base={schemaVersion:1,installationId:'replicas-history-v2:'+state.organization.id,sessionId:'replicas-chat:'+chat.chat_id,harness:'replicas',origin:'cloud',captureMode:'history',owner,title:'[Replicas history] '+(chat.title??chat.workspace_name),attachments:[]};
     // A full response archive and its searchable records can together
     // exceed one ingest batch. Split without truncating any record.
-    let batch:SessionEvent[]=[],bytes=Buffer.byteLength(JSON.stringify(base))+32;
-    const flush=async()=>{if(!batch.length)return;const result=await ingest(owner,{...base,...chunkSenderEvidence(batch,evidence.replicasSenders),events:batch});if(result&&typeof result==='object'&&'discarded' in result)throw new ReplicasPageError('deleted','The session was deleted in OpenCrawl.');batch=[];bytes=Buffer.byteLength(JSON.stringify(base))+32;};
-    for(const event of events){const size=Buffer.byteLength(JSON.stringify(event))+1;if(size>15*1024*1024)throw new ReplicasPageError('page_size','A history record exceeds the ingest limit.');if(batch.length&&(batch.length===1000||bytes+size>15*1024*1024))await flush();batch.push(event);bytes+=size;}
+    const baseBytes=Buffer.byteLength(JSON.stringify(base))+32,limit=15*1024*1024;
+    let batch:SessionEvent[]=[],bytes=baseBytes;
+    const put=async(events:SessionEvent[],evidenceEvents:SessionEvent[],attachments:SessionBatch['attachments']=[],blobs?:ReadonlyMap<string,Uint8Array>)=>{
+      const result=await ingest(owner,{...base,...chunkSenderEvidence(evidenceEvents,evidence.replicasSenders),attachments,events},undefined,blobs);
+      if(result&&typeof result==='object'&&'discarded' in result)throw new ReplicasPageError('deleted','The session was deleted in OpenCrawl.');
+    };
+    const flush=async()=>{if(batch.length)await put(batch,batch);batch=[];bytes=baseBytes;};
+    for(const event of events){
+      const size=Buffer.byteLength(JSON.stringify(event))+1;
+      if(bytes+size>limit||batch.length===1000)await flush();
+      if(baseBytes+size>limit){
+        const packed=packReplicasPayload(event,canonical(event.data));
+        await put([packed.event],[event],packed.attachments,packed.blobs);
+        console.info(JSON.stringify({event:'replicas.import.large_record',tenantId:principal.tenantId,importId:state.id,
+          workspaceId:chat.workspace_id,chatId:chat.chat_id,bytes:size,parts:packed.attachments.length}));
+      }else{batch.push(event);bytes+=size;}
+    }
     await flush();
     state.events+=history.events.length;state.turns+=replicasTurns(history).length;state.pages++;
     state.occurrences=occurrences;state.chatAttempts=0;
@@ -88,31 +114,46 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
     if(state.blocked&&(!hasFresh||(state.freshSteps??freshStepsPerRetry)>=freshStepsPerRetry)){
       state.freshSteps=0;
-      const row=await pending.oldest();
+      // Once the catalog is drained, let a readable long transcript advance
+      // while still servicing the oldest unrelated retry at least every fifth step.
+      const preferContinuation=!hasFresh&&(state.continuationSteps??0)<freshStepsPerRetry;
+      const row=await pending.oldest(preferContinuation,now());
       if(!row)throw new Error('Replicas deferred checkpoint missing');
       if(row.retry_at.getTime()<=now()){
+        state.continuationSteps=preferContinuation&&row.issue.continuation&&row.checkpoint.before?(state.continuationSteps??0)+1:0;
         // Run a single deferred page, independently of a possibly mid-chat foreground cursor.
         const foreground={...checkpoint(state),queue:state.queue,next:state.next,initialCatalog:state.initialCatalog};
         await pending.remove(row);state.blocked--;
         Object.assign(state,row.checkpoint,{queue:[row.chat],next:null,initialCatalog:false});
-        await processPage(principal,state,api,pending,true);
+        await processPage(principal,state,api,pending,true,client);
         if(state.queue.length){
-          await pending.save(row.chat,state,{...row.issue,continuation:true},state.retryAt??new Date(now()).toISOString());
+          const resumed=state.before&&state.before!==row.checkpoint.before;
+          const issue:ImportIssue=resumed?{at:new Date(now()).toISOString(),importId:state.id,operation:'history',reason:'page_saved',
+            decision:'continue',attempt:0,elapsedMs:0,workspaceId:row.chat.workspace_id,chatId:row.chat.chat_id,
+            pageLimit:state.pageLimit,cursorHash:replicasDigest(state.before!)}:(state.recentIssues?.at(-1)??row.issue);
+          await pending.save(row.chat,state,{...issue,continuation:true},state.retryAt??new Date(now()).toISOString());
           state.blocked++;
         }
         Object.assign(state,foreground);
         return;
       }
-      if(!hasFresh){state.retryAt=row.retry_at.toISOString();return;}
+      if(!hasFresh){
+        state.retryAt=row.retry_at.toISOString();
+        state.waitingForSource=await pending.onlyAbsent();
+        return;
+      }
     }
     state.freshSteps=Math.min(freshStepsPerRetry,(state.freshSteps??0)+1);
-    await processPage(principal,state,api,pending,false);
+    await processPage(principal,state,api,pending,false,client);
   }
 
-  async function processPage(principal:Principal,state:State,api:ReturnType<typeof replicasApi>,pending:ReturnType<typeof deferredHistory>,retry:boolean){
+  async function processPage(principal:Principal,state:State,api:ReturnType<typeof replicasApi>,pending:ReturnType<typeof deferredHistory>,retry:boolean,client:Pick<ApplicationDatabase['pool'],'query'>){
     const chat=state.queue[0];
     const started=now(),recoveredAttempt=state.chatAttempts;
     let previousMissingAttempt=0;
+    let historyResponse:ReplicasResponseInfo|undefined;
+    let observedInventory:Awaited<ReturnType<typeof api.workspaceChats>>|undefined;
+    let recoveredPage:{events:number;turns:number;final:boolean}|undefined;
     let operation:ImportOperation=chat?'history':'catalog';
     try{
       if(chat){
@@ -125,10 +166,44 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
             return;
           }
         }
-        const history=await api.history(chat,state.before,state.pageLimit??100);
-        if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString());
+        const history=await api.history(chat,state.before,state.pageLimit??100,info=>{historyResponse=info;});
+        if(!state.before&&!history.before_cursor&&history.has_more!==true&&!history.events.length&&!replicasTurns(history).length){
+          const senderLists=[chat.senders,history.senders];
+          const removed=new Set(Array.isArray(history.removed_message_ids)?history.removed_message_ids:[]);
+          const knownMessages=senderLists.some(list=>Array.isArray(list)&&list.some(row=>{
+            if(!row||typeof row!=='object')return false;
+            if(typeof row.message_id==='string'&&row.message_id)return !removed.has(row.message_id);
+            return typeof row.sender_user_id==='string'&&typeof row.recorded_at==='string';
+          }));
+          if(knownMessages||typeof history.total==='number'&&history.total>0){
+            throw new ReplicasPageError('empty_with_messages','Replicas returned an empty transcript for a chat with recorded messages.');
+          }
+          if(typeof history.thread_id!=='string'||!history.thread_id){
+            let confirmed=false;
+            try{
+              const inventory=await api.workspaceChats(chat.workspace_id);
+              observedInventory=inventory;
+              confirmed=!inventory.waking&&inventory.chats.some(item=>item.id===chat.chat_id);
+            }catch(check){
+              // A catalog outage/rate limit is retried through its normal provider policy.
+              if(!(check instanceof ReplicasProviderError)||check.status!==404)throw check;
+            }
+            if(!confirmed)throw new ReplicasPageError('empty_unverified','Replicas could not confirm this empty chat in its workspace.');
+          }
+        }
+        if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString(),Boolean(history.events.length||replicasTurns(history).length));
+        delete state.waitingForSource;
         operation='ingest';
         await savePage(principal,state,chat,history);
+        const limit=state.pageLimit??100;
+        if(history.before_cursor&&limit<100&&historyResponse?.bytesRead!==undefined&&historyResponse.bytesRead<3*1024*1024){
+          // A large event affects its own page. Grow after a small successful
+          // page so thousands of subsequent events do not take one request each.
+          state.pageLimit=Math.min(100,limit*4);
+          console.info(JSON.stringify({event:'replicas.import.page_limit',tenantId:principal.tenantId,importId:state.id,
+            workspaceId:chat.workspace_id,chatId:chat.chat_id,previous:limit,next:state.pageLimit,bytesRead:historyResponse.bytesRead}));
+        }
+        if(recoveredAttempt||state.retryAttempts)recoveredPage={events:history.events.length,turns:replicasTurns(history).length,final:!history.before_cursor};
       }else if(state.initialCatalog||state.next){
         const hash=state.next?replicasDigest(state.next):undefined;
         if(hash&&state.listCursors.includes(hash))throw new ReplicasPageError('cursor','Replicas repeated a catalog cursor.');
@@ -140,7 +215,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       }
       if(state.retryAttempts||recoveredAttempt){
         console.info(JSON.stringify({event:'replicas.import.recovered',tenantId:principal.tenantId,importId:state.id,
-          workspaceId:chat?.workspace_id,chatId:chat?.chat_id,operation,elapsedMs:now()-started}));
+          workspaceId:chat?.workspace_id,chatId:chat?.chat_id,operation,elapsedMs:now()-started,...recoveredPage}));
       }
       state.retryAttempts=0;delete state.error;
       return;
@@ -160,35 +235,55 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         }
       }
       const fields=issueFor(error,operation);
+      if(error instanceof ReplicasPageError&&operation==='history'&&historyResponse)Object.assign(fields,historyResponse);
       const tooLarge=fields.operation!=='identity'&&(error instanceof ReplicasPageError&&error.reason==='page_size'||(fields.httpStatus===413||fields.internalStatus===413));
       const limit=state.pageLimit??100;
       const localToChat=!!chat&&fields.operation!=='identity'&&(error instanceof ReplicasPageError||tooLarge||fields.reason==='record_rejected'||
-        fields.operation==='history'&&error instanceof ReplicasProviderError&&![408,425,429].includes(error.status));
+        (fields.operation==='history'||fields.operation==='workspace_chats')&&error instanceof ReplicasProviderError&&![408,425,429].includes(error.status));
       const decision=credentialRejected?'reconnect':chat&&tooLarge&&limit>1?'resize':localToChat?'defer':'retry';
       const missing=fields.operation==='history'&&fields.httpStatus===404;
       const priorChatAttempts=Math.max(state.chatAttempts??0,missing?previousMissingAttempt:0);
       const attempt=(decision==='defer'?priorChatAttempts:state.retryAttempts??0)+1;
       const wait=retryDelay(attempt,decision==='defer'?60_000:2_000,error instanceof ReplicasProviderError?error.retryAfterMs:0);
-      const retryAt=new Date(now()+wait).toISOString();
+      let retryAt=new Date(now()+wait).toISOString();
       const issue:ImportIssue={...fields,importId:state.id,decision,attempt,identityCheck,elapsedMs:Math.max(0,now()-started),
         ...(error!==cause&&cause instanceof ReplicasProviderError?{originalHttpStatus:cause.status,originalOperation:cause.operation,originalRequestId:cause.requestId}:{}),at:new Date(now()).toISOString(),
         ...(decision==='defer'||decision==='retry'?{retryAt}:{}),
         ...(chat?{workspaceId:chat.workspace_id,chatId:chat.chat_id,pageLimit:limit}:{}),
         ...(state.before||(!chat&&state.next)?{cursorHash:replicasDigest((chat?state.before:state.next)!)}:{})};
-      if(missing&&chat&&retry&&attempt>=3){
-        // A sample from the workspace's own inventory distinguishes inconsistent
-        // listings from a missing history page. Diagnostics never decide import eligibility.
-        const recent=(state.workspaceChecks??[]).filter(check=>check.at>now()-30*60_000);
-        if(recent.length<32&&!recent.some(check=>check.id===chat.workspace_id)){
-          state.workspaceChecks=[...recent,{id:chat.workspace_id,at:now()}];
-          try{
-            const inventory=await api.workspaceChats(chat.workspace_id);
-            issue.workspaceInventory={result:inventory.waking?'waking':inventory.chats.some(item=>item.id===chat.chat_id)?'listed':'absent',chats:inventory.chats.length};
-          }catch(check){
-            issue.workspaceInventory={result:'unavailable',httpStatus:check instanceof ReplicasProviderError?check.status:undefined};
+      const empty=fields.reason==='empty_with_messages'||fields.reason==='empty_unverified';
+      if(chat&&retry&&!state.before&&(empty||missing&&attempt>=3)){
+        const observation=await observeReplicasWorkspace(client,{namespace,tenant:principal.tenantId,importId:state.id,workspace:chat.workspace_id},
+          now(),()=>observedInventory?Promise.resolve(observedInventory):api.workspaceChats(chat.workspace_id));
+        const ids=observation.ids;
+        if(ids){
+          const listed=ids.has(chat.chat_id);
+          if(!listed){
+            issue.workspaceAbsentAt=new Date(observation.checkAt).toISOString();
+            // Keep one real history probe per workspace at the next inventory refresh.
+            retryAt=new Date(observation.fresh?observation.next:Math.max(Date.parse(retryAt),observation.next)).toISOString();
+            issue.retryAt=retryAt;
           }
-        }
+          if(observation.fresh){
+            const saved=new Set(state.completedSessions);
+            issue.workspaceInventory={result:listed?'listed':'absent',chats:ids.size,
+              savedChats:[...ids].filter(id=>saved.has(replicasDigest(chat.workspace_id+':'+id))).length};
+            console.info(JSON.stringify({event:'replicas.import.workspace_inventory',tenantId:principal.tenantId,importId:state.id,workspaceId:chat.workspace_id,
+              retainedChats:ids.size,savedChats:issue.workspaceInventory.savedChats,postponed:observation.moved,released:observation.released}));
+            const recent=(state.workspaceChecks??[]).filter(check=>check.at>now()-30*60_000);
+            if(!listed&&recent.length<32&&!recent.some(check=>check.id===chat.workspace_id)){
+              state.workspaceChecks=[...recent,{id:chat.workspace_id,at:now()}];
+              try{
+                const page=await api.conversations(null,chat.workspace_id);
+                issue.workspaceExport=page.conversations.every(item=>item.workspace_id===chat.workspace_id)
+                  ?{result:'scoped',total:page.total,hasMore:Boolean(page.next_cursor),onFirstPage:page.conversations.some(item=>item.chat_id===chat.chat_id)}
+                  :{result:'scope_mismatch'};
+              }catch{issue.workspaceExport={result:'unavailable'};}
+            }
+          }
+        }else if(observation.fresh)issue.workspaceInventory=observation.result==='waking'?{result:'waking',chats:0}:{result:'unavailable',httpStatus:observation.httpStatus};
       }
+      if(!issue.workspaceAbsentAt)delete state.waitingForSource;
       state.recentIssues=[...(state.recentIssues??[]).slice(-31),issue];
       console.warn(JSON.stringify({event:'replicas.import.issue',tenantId:principal.tenantId,importId:state.id,
         organizationId:state.organization.id,processed:state.processed,pages:state.pages,...issue}));
@@ -202,6 +297,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
           const shared=await pending.shareFailure(chat,position,issue,retryAt);
           if(shared)console.info(JSON.stringify({event:'replicas.import.shared_backoff',tenantId:principal.tenantId,
             importId:state.id,workspaceId:chat.workspace_id,chatId:chat.chat_id,additionalRecords:shared,attempt,retryAt}));
+        }
+        if(retry&&state.blocked&&(fields.reason==='empty_with_messages'||fields.reason==='empty_unverified')){
+          const shared=await pending.shareEmptyPage(chat,position,issue,retryAt);
+          if(shared)console.info(JSON.stringify({event:'replicas.import.shared_backoff',tenantId:principal.tenantId,
+            importId:state.id,workspaceId:chat.workspace_id,chatId:chat.chat_id,reason:fields.reason,additionalRecords:shared,attempt,retryAt}));
         }
         await pending.save(chat,position,issue,retryAt);
         state.blocked=(state.blocked??0)+1;state.queue.shift();Object.assign(state,emptyCheckpoint());
@@ -235,6 +335,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         if(resume&&resume.organization.id!==identity.organization.id)throw replicasError('Use the Replicas organization that owns the saved import.',409);
         state=resume??{id:'',organization:identity.organization,phase:'importing',total:0,processed:0,imported:0,events:0,turns:0,pages:0,
           updatedAt:'',queue:[],initialCatalog:true,next:null,listCursors:[],completedSessions:[],...emptyCheckpoint()};
+        await client.query('DELETE FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',[namespace,principal.tenantId]);
+        delete state.waitingForSource;
         state.id=randomUUID();state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
         state.phase=state.queue.length||state.initialCatalog||state.next||state.blocked?'importing':'complete';
         if(!resume)await step(client,principal,state,api);
