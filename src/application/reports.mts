@@ -40,7 +40,7 @@ interface UsageReportBase {
     sources: Array<{name: string; icon: string; account?: string | null; state: string; records: number | null; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string | null; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
     index: null | {sessionEvents: number | null; connectorDocuments: number | null; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
   };
-  /** Measured value; absent until the workspace has been measured. */
+  /** Legacy compatibility field. Current reports return null. */
   value?: ValueReport | null;
   /** Agent-session tokens captured this billing period, when the deployment meters them. */
   capture?: {tokens: number; since: string} | null;

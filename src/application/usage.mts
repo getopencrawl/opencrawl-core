@@ -27,7 +27,7 @@ const missing = (error: unknown) => errorInfo(error).type === 'index_not_found_e
 export function usageReport(options: UsageOptions & {part: 'highlights'}): Promise<UsageHighlights>;
 export function usageReport(options: UsageOptions & {part: 'details'}): Promise<UsageDetails>;
 export function usageReport(options: UsageOptions): Promise<UsageReport>;
-export async function usageReport({principal, directory, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}, part}: UsageOptions & {part?: 'highlights' | 'details'}): Promise<UsageHighlights | UsageDetails | UsageReport> {
+export async function usageReport({principal, directory, integrations, search, connectors, onboarding, captured, tab, days = 30, log = () => {}, part}: UsageOptions & {part?: 'highlights' | 'details'}): Promise<UsageHighlights | UsageDetails | UsageReport> {
   const team = principal.tenantId.startsWith('org_');
   const memberScope = (userId: string) => ({tenantId: principal.tenantId, userId});
   const failedSources = new Set<UsageSource>();
@@ -45,12 +45,11 @@ export async function usageReport({principal, directory, integrations, search, c
   }
 
   async function highlights() {
-    const [organization, value, capture] = await Promise.all([
+    const [organization, capture] = await Promise.all([
       team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
-      values ? soft('value', () => values.read(principal.tenantId)) : null,
       team && captured ? soft('capture', () => captured(principal)) : null,
     ]);
-    return {workspace: organization?.name || (team ? null : 'Personal workspace'), value,
+    return {workspace: organization?.name || (team ? null : 'Personal workspace'), value: null,
       capture: capture ? {tokens: capture.tokens, since: capture.since} : null};
   }
 
