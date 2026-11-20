@@ -173,6 +173,10 @@ cloudRuntimeTest('pre-install Devin events use the normal redacted wire queue, r
  expect(copies).toHaveLength(1);expect(copies[0].data.role).toBe('user');expect(JSON.stringify(copies)).toContain('early marker');
  expect(JSON.stringify(copies)).not.toContain(fixtureSecret);
  expect(calls).toEqual(['/api/cli/workloads/devin/startup-events','/api/cli/workloads/devin/startup-events']);
+ await captureDevinStartup(config,nativeSession,async()=>{
+   throw Object.assign(new Error('denied'),{httpStatus:403,responseCode:'DEVIN_RECORDING_CREDENTIAL_REQUIRED'});
+ });
+ expect(JSON.parse(readFileSync(join(captureDir(),'last-error.json'),'utf8')).code).toBe('DEVIN_RECORDING_CREDENTIAL_REQUIRED');
  atomicJson(file,{...config,disabled:true});
  await captureDevinStartup(config,nativeSession,read);expect(calls).toHaveLength(2);
 }));
