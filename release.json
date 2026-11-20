@@ -1,11 +1,11 @@
 {
-  "version": "0.4.149",
-  "revision": "d56b7d9cb8aa8a6db7bed489d8d9f56fac12b569",
+  "version": "0.4.150",
+  "revision": "0375c9267cd5e786b4e6c68f91a039c07036308b",
   "checksums": {
-    "opencrawl-darwin-arm64.tgz": "f00127c6337091e971ecd7ee38914ded2cc7a4b9e88eb744ee58e00acaf99249",
-    "opencrawl-darwin-x64.tgz": "6c2fb37da2ba939978bcb12e97f3a1f5778b3458ae6a1b856f7ef1d40dcfce89",
-    "opencrawl-linux-arm64.tgz": "adc32aac86e395250cef3bd1f2ed6a32b20e362b4fbe8c8fed0f0d89d4467e89",
-    "opencrawl-linux-x64.tgz": "63d91d48576ae5d5c2e264cb5a9cf9ba18467987afd44f545689f3d164797df5",
-    "opencrawl-win32-x64.tgz": "efb0edff72381e9e387d7d25d6d4873c8afc6cc6cebe6ca4f73a283d6da7872f"
+    "opencrawl-darwin-arm64.tgz": "44eac6bf166d1e6f658104e97456c0552e2e4b81534c771946a61b49c7398d9c",
+    "opencrawl-darwin-x64.tgz": "90e820825ba9fdf385238810fcf90a5536ef1c6550a2bda0f41c0411d3e73f27",
+    "opencrawl-linux-arm64.tgz": "e1b4dbc11c23e20c5445051841caf0973298c1ce6fe7cd5c58504d3392799ad9",
+    "opencrawl-linux-x64.tgz": "c37ad3db8cf90629a3bcc2e29511f720b5c713ec861269b68a897a3830fd9f79",
+    "opencrawl-win32-x64.tgz": "52207e513eda53fb09ac9a36e4c5687e99d09da87b6ae0ac29ccf4e304b1f1b8"
   }
 }
