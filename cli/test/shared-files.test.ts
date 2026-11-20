@@ -39,6 +39,17 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
       return (options.stderr ? err : out).trim();
     }
     const open = (session:string) => [...entry,'files','open','--api',api,'--session',session];
+    // Setup may predate the workspace rollout. Stock Git is the first client
+    // command after enablement: no new setup, startup hook or files command.
+    const setup = JSON.parse(await run([...entry,'setup','apply','--plugins','none','--forward','none','--history','none','--yes','--json','--api',api]));
+    expect(setup.data).toMatchObject({status:'recording_off'});
+    expect(setup.data).not.toHaveProperty('gitCredentials');
+    expect(JSON.stringify(setup)).not.toContain('/files.git');
+    await writeFile(join(rpc,'enabled'),'on');
+    const firstClone=join(root,'first-plain-clone');
+    await mkdir(firstClone);
+    await run(['git','-C',firstClone,'clone',api+'/git/team-a/files.git','.']);
+    expect(await run(['git','-C',firstClone,'branch','--show-current'])).toBe('main');
     await run(['git','-C',project,'init','--initial-branch=customer-draft']);
     await writeFile(join(project,'notes'),'customer WIP');
     await run(['git','-C',project,'add','notes']);

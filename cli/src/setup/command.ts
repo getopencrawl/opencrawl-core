@@ -211,7 +211,7 @@ export function setupCommand(action:string,api:string,values:Values,deps:Depende
   if(action!=='run'&&action!=='apply')return result;
   // Committed setup results carry installationId, even when recording is off.
   if(!result||!('installationId' in result))return result;
-  if(!await availableFiles(api,undefined,result.scope,AbortSignal.timeout(10_000)))return result;
+  const enabled=await availableFiles(api,undefined,result.scope,AbortSignal.timeout(10_000));
   let warning:string|undefined;
   if(!Bun.which('git',{PATH:process.env.PATH})){
    warning='Install Git and rerun setup to enable workspace Git authentication.';
@@ -219,6 +219,10 @@ export function setupCommand(action:string,api:string,values:Values,deps:Depende
    try{await setupFilesGit(api,deps.command);}
    catch{warning='Could not register workspace Git authentication. Check that your OpenCrawl and global Git configurations are writable, then rerun setup.';}
   }
+  // Setup already verified its deployment and principal. Installing this
+  // path-scoped helper is safe before rollout: Git must still discover and
+  // authenticate the exact workspace before the helper returns a credential.
+  if(!enabled)return result;
   if(warning&&!values.json)process.stderr.write(warning+'\n');
   return {...result,gitCredentials:warning?{status:'unavailable',message:warning}:{status:'configured'}};
  };
