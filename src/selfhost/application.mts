@@ -76,6 +76,7 @@ export interface SelfhostApplicationOptions {
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   setupState?:SetupState;
   sharedFiles?:SharedFilesStore;
+  filesLimits?:Parameters<typeof createSharedFilesHandler>[0]['limits'];
   recording?:import('../sessions/recording.mjs').RecordingPolicy;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
@@ -90,7 +91,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -159,7 +160,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   const sessions=createSessionLibrary({forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
   const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage,authorization=req.headers.authorization)=>{const token=/^Bearer (.+)$/i.exec(authorization||'')?.[1];return identifyWorkload(token)??identifyCli(authorization,{capture:true});};
-  const filesHandler=sharedFiles && createSharedFilesHandler({store:sharedFiles});
+  const filesHandler=sharedFiles && createSharedFilesHandler({store:sharedFiles,limits:filesLimits});
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
   const contextCheck=createContextCheckHandler({authenticate,check:measuredCheck(usageActivity,createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize}))});
   const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:measuredSuggestionEvents(usageActivity,contextSuggestions.observe)})});

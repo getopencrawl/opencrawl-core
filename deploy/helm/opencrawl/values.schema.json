@@ -25,6 +25,14 @@
         }
       }
     },
+    "sharedFiles": {
+      "type": "object",
+      "required": ["size", "existingClaim"],
+      "properties": {
+        "size": {"type": "string", "minLength": 1},
+        "existingClaim": {"type": "string"}
+      }
+    },
     "runtime": {
       "type": "object",
       "properties": {

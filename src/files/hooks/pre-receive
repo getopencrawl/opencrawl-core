@@ -6,3 +6,4 @@ while read -r old new ref; do
     exit 1
   fi
 done
+exec "$OPENCRAWL_GIT_NODE" "$OPENCRAWL_GIT_HELPER"

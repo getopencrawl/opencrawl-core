@@ -3,6 +3,7 @@ FROM node:24.22.2-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 ARG REVISION=development
 ENV REVISION=$REVISION
+ENV OPENCRAWL_FILES_ROOT=/data/shared-files
 WORKDIR /opencrawl
 COPY --chown=node:node package.json package-lock.json ./
 # Full install: the Temporal worker uses the pinned optional peers from devDependencies.

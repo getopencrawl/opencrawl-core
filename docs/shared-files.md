@@ -7,7 +7,7 @@ have no part in hosting these files.
 
 **Roadmap for agents without a CLI.** Give MCP clients the same read and write
 access, including multi-file edits checked against the commit they read. Keep
-the same membership and history rules. The v0 client uses ordinary Git.
+the same membership and history rules. The CLI uses ordinary Git.
 
 ## Share a file
 
@@ -44,17 +44,50 @@ and push require an authorized network identity. The receive hook belongs to
 the service and permits only the main branch. History rewrites are rejected.
 Shared files are data. The server never checks them out or runs their contents.
 
-Each accepted push saves a complete Git bundle, its head and the authenticated
-pusher in the existing application PostgreSQL database. The first push creates
-the workspace's row. Concurrent application instances can serve one network.
-Publication is conditional on the previous head, so a stale result cannot
-overwrite another agent's work. Application database backups include the
-shared history. A network needs no machine, bucket or persistent disk of its own.
+Each network has a persistent bare repository. Clone, fetch and push stream through
+stock Git over HTTP with backpressure. Git stores incoming objects and uses its
+native ref lock to advance `main`. The receive hook checks membership again
+after unpacking the push into quarantine. An authenticated push records the
+actor in the server's private main reflog as part of the ref update. PostgreSQL
+indexes that log incrementally. A restart or temporary indexing failure catches
+up on the next access. Keep the server-owned reflogs and repo configuration when
+backing up or moving a repository.
 
-The v0 is for small handoffs. A request, a file and a stored bundle are each
-limited to 8 MiB. Expanded object data is limited to 32 MiB per repository.
-Git works in a private temporary directory per request. The handler admits four
-simultaneous transfers per network and twelve per process. Every transfer
-reconstructs the bare repo from its bundle. For larger histories, incrementally
-stored packs would reduce database writes and Git CPU. Clients using private
-sessions should keep their work local.
+**Storage.** Compose uses the existing application volume at
+`/data/shared-files`. Helm mounts one retained PVC for the app. Set
+`sharedFiles.size` or supply `sharedFiles.existingClaim` when installing. For
+source installs the default root is `data/shared-files` under the server's
+working directory. Set `OPENCRAWL_FILES_ROOT` to an absolute persistent path.
+The service hashes the installation and network IDs into directory names.
+PostgreSQL records each directory's identity and refuses a missing or different
+volume for an existing network.
+
+Many networks share one volume. Multiple API processes may serve the same
+network if they reach the same repository on a filesystem with native Git lock
+and atomic rename semantics. Route each network to its owning storage host when
+partitioning across machines. Independent local disks on interchangeable app
+replicas would diverge. Placement, replication and failover across storage
+hosts are deployment responsibilities.
+
+**Capacity.** Repository history and file size grow with the backing storage.
+Operators can set `OPENCRAWL_FILES_MAX_PUSH_BYTES` to limit incoming packs.
+`OPENCRAWL_FILES_MAX_TRANSFERS` and `OPENCRAWL_FILES_MAX_NETWORK_TRANSFERS`
+control concurrent transfers per process and per network on that process.
+The defaults allow twice the available CPU count (at least 12) across the
+process and half that total (at least four) per network. Full slots return HTTP
+429 with a retry delay. For slow uploads, adjust the proxy body-size and time
+limits and the self-host server's `OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS` (default
+60000). Apply filesystem quotas or provision more space according to the
+deployment's needs. Use normal Git maintenance for pack compaction.
+
+**Backup and upgrade.** The offline Compose backup includes both the application
+volume and PostgreSQL. For Helm and source installs, stop writers and back up
+both stores together. Restore the pair before restarting. A Git mirror alone
+omits the private push audit and installation metadata.
+
+For installations that ran the v0 feature branch, stop all v0 writers, back up
+PostgreSQL, and start v1 with its persistent volume. On a network's first access,
+v1 imports the old bundle, verifies its recorded head and Git objects, and
+atomically installs the bare repo. Existing clones and commit IDs continue to
+work. The v0 database row stays at its cutover point. Once v1 accepts a push,
+rolling back to the old server would serve stale history.

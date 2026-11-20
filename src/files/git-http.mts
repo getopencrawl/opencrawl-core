@@ -1,18 +1,13 @@
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import {createHash} from 'node:crypto';
-import {mkdtemp, rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {gunzip} from 'node:zlib';
-import {promisify} from 'node:util';
+import {availableParallelism} from 'node:os';
+import {once} from 'node:events';
+import {pipeline} from 'node:stream/promises';
+import {createGunzip} from 'node:zlib';
 import {errorInfo} from '../errors.mjs';
-import {bundleLimit, type SharedFilesStore} from './store.mjs';
-import {exportHistory, failure, git, prepareRepository} from './git.mjs';
-
-const decompress = promisify(gunzip);
-const hooks = fileURLToPath(new URL('./hooks/', import.meta.url));
-const services = ['git-upload-pack','git-receive-pack'] as const;
+import type {SharedFilesStore} from './store.mjs';
+import {failure, gitRpc} from './git.mjs';
+import {pushAuthorization} from './push-authorization.mjs';
 
 /** Stock Git invokes a credential helper after a Basic challenge. Translate only
  * this service's fixed username at its own route; membership is still verified. */
@@ -20,105 +15,178 @@ export function sharedFilesAuthorization(header?: string): string | undefined {
   if (header?.startsWith('Bearer ')) return header;
   const match = /^Basic ([A-Za-z0-9+/=]+)$/i.exec(header ?? '');
   if (!match || match[1].length > 24000) return undefined;
-  const decoded = Buffer.from(match[1],'base64').toString('utf8');
+  const decoded = Buffer.from(match[1], 'base64').toString('utf8');
   const token = /^opencrawl:([A-Za-z0-9_.-]{1,16384})$/.exec(decoded)?.[1];
-  return token ? 'Bearer '+token : undefined;
+  return token ? 'Bearer ' + token : undefined;
 }
 
-async function body(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > bundleLimit) throw failure(413,'Git request exceeds the transfer limit');
-    chunks.push(chunk);
-  }
-  const data = Buffer.concat(chunks);
-  if (req.headers['content-encoding'] === 'gzip') {
-    try {return await decompress(data,{maxOutputLength:bundleLimit});}
-    catch {throw failure(400,'Invalid or oversized compressed Git request');}
-  }
-  if (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity') {
-    throw failure(415,'Unsupported content encoding');
-  }
-  return data;
+export function sharedFilesLimits(env: NodeJS.ProcessEnv) {
+  const number = (key: string, fallback: number) => {
+    if (env[key] === undefined) return fallback;
+    const value = Number(env[key]);
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error('Expected a positive integer for ' + key);
+    return value;
+  };
+  const total = number('OPENCRAWL_FILES_MAX_TRANSFERS', Math.max(12, availableParallelism() * 2));
+  return {
+    total,
+    network: number('OPENCRAWL_FILES_MAX_NETWORK_TRANSFERS', Math.max(4, Math.ceil(total / 2))),
+    pushBytes: env.OPENCRAWL_FILES_MAX_PUSH_BYTES ? number('OPENCRAWL_FILES_MAX_PUSH_BYTES', 0) : 0
+  };
 }
-
-/** The caller authenticates and authorizes every discovery, fetch and push.
- * No filesystem path is derived from a request. Snapshots are private to an
- * individual RPC and a durable compare-and-swap publishes an accepted push. */
-export function createSharedFilesHandler({store,root = tmpdir()}: {store: SharedFilesStore; root?: string}) {
+const services = ['git-upload-pack', 'git-receive-pack'] as const;
+export function createSharedFilesHandler({
+  store,
+  limits = sharedFilesLimits(process.env)
+}: {
+  store: SharedFilesStore;
+  limits?: ReturnType<typeof sharedFilesLimits>;
+}) {
   const active = new Map<string, number>();
   let running = 0;
-  return async (req: IncomingMessage, res: ServerResponse, principal: {tenantId: string; userId: string; captureAccess?:unknown},
-    revalidate: () => Promise<void> = async () => {}) => {
-    const reply = (status: number, data: string | Buffer, type = 'text/plain; charset=utf-8') => {
-      res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
-      res.end(data);
+  return async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    principal: {tenantId: string; userId: string; captureAccess?: unknown},
+    revalidate: () => Promise<void> = async () => {}
+  ) => {
+    const reply = (status: number, data: string, type = 'text/plain; charset=utf-8') => {
+      res
+        .writeHead(status, {
+          'Content-Type': type,
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff'
+        })
+        .end(data);
     };
-    if (!principal?.tenantId || !principal.userId || principal.captureAccess !== undefined || req.headers.origin) {
-      return reply(403,'Network membership required');
-    }
-    const {tenantId,userId} = principal;
-    const seal = createHash('sha256').update(tenantId).digest('hex');
-    const remotePath = '/api/files/'+seal+'.git';
+    if (
+      !principal?.tenantId ||
+      !principal.userId ||
+      principal.captureAccess !== undefined ||
+      req.headers.origin
+    )
+      return reply(403, 'Network membership required');
+    const {tenantId, userId} = principal;
+    const remotePath = '/api/files/' + createHash('sha256').update(tenantId).digest('hex') + '.git';
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/api/files') {
-      if (req.method !== 'GET') return reply(405,'Use GET');
-      return reply(200,JSON.stringify({schemaVersion:1,data:{remotePath,tenantId,userId}}),'application/json');
+      if (req.method !== 'GET') return reply(405, 'Use GET');
+      return reply(
+        200,
+        JSON.stringify({schemaVersion: 1, data: {remotePath, tenantId, userId}}),
+        'application/json'
+      );
     }
-    const advertise = url.pathname === remotePath+'/info/refs';
-    const service = services.find(name => advertise ? url.searchParams.get('service') === name : url.pathname === remotePath+'/'+name);
-    if (!service) return reply(404,'Unknown Git endpoint');
-    if (req.method !== (advertise ? 'GET' : 'POST')) return reply(405,'Unsupported Git method');
-    if (!advertise && req.headers['content-type'] !== 'application/x-'+service+'-request') return reply(415,'Expected a Git request');
+    const advertise = url.pathname === remotePath + '/info/refs';
+    const service = services.find((s) =>
+      advertise ? url.searchParams.get('service') === s : url.pathname === remotePath + '/' + s
+    );
+    if (!service) return reply(404, 'Unknown Git endpoint');
+    if (req.method !== (advertise ? 'GET' : 'POST')) return reply(405, 'Unsupported Git method');
+    if (!advertise && req.headers['content-type'] !== 'application/x-' + service + '-request')
+      return reply(415, 'Expected a Git request');
+    const encoding = req.headers['content-encoding'];
+    if (encoding && encoding !== 'identity' && encoding !== 'gzip')
+      return reply(415, 'Unsupported content encoding');
     const count = active.get(tenantId) ?? 0;
-    if (running >= 12 || count >= 4) {
-      res.setHeader('Retry-After','1');
-      return reply(429,'Git server busy; retry shortly');
+    if (running >= limits.total || count >= limits.network) {
+      res.setHeader('Retry-After', '1');
+      return reply(429, 'Git server busy; retry shortly');
     }
-    active.set(tenantId,count+1);
     running++;
-    let dir: string | undefined;
+    active.set(tenantId, count + 1);
+    const lifecycle = new AbortController();
+    const disconnect = () => {
+      if (!res.writableFinished) lifecycle.abort();
+    };
+    res.once('close', disconnect);
     try {
-      const input = advertise ? undefined : await body(req);
-      if (req.aborted || res.destroyed) return;
-      dir = await mkdtemp(join(root,'opencrawl-files-rpc-'));
-      const snapshot = await store.read(tenantId);
-      const previous = await prepareRepository(dir,snapshot);
-      const operation = service === 'git-receive-pack' ? 'receive-pack' : 'upload-pack';
-      const args = ['-c','core.hooksPath='+hooks,operation,'--stateless-rpc'];
-      if (advertise) args.push('--advertise-refs');
-      const wire = await git(dir,[...args,'.'],input);
-      if (advertise) {
-        const preamble = '# service='+service+'\n';
-        const length = (Buffer.byteLength(preamble)+4).toString(16).padStart(4,'0');
+      const dir = await store.open(tenantId);
+      const push = !advertise && service === 'git-receive-pack';
+      const check = async () => {
+        lifecycle.signal.throwIfAborted();
         await revalidate();
-        return reply(200,Buffer.concat([Buffer.from(length+preamble+'0000'),wire]),'application/x-'+service+'-advertisement');
-      }
-      if (operation === 'receive-pack') {
-        const head = (await git(dir,['rev-parse','refs/heads/main'])).toString().trim();
-        if (head !== previous) {
-          const next = await exportHistory(dir,head);
-          await revalidate();
-          if (!await store.publish(tenantId,snapshot?.head ?? null,next,userId)) {
-            return reply(409,'Another agent advanced main. Fetch, integrate your changes, and push again.');
+        lifecycle.signal.throwIfAborted();
+      };
+      const gate = push ? await pushAuthorization(check) : undefined;
+      try {
+        await check();
+        const env: NodeJS.ProcessEnv = {
+          ...gate?.env,
+          GIT_COMMITTER_EMAIL: Buffer.from(userId).toString('base64url') + '@opencrawl.invalid'
+        };
+        const v2 = service === 'git-upload-pack' && req.headers['git-protocol'] === 'version=2';
+        if (v2) env.GIT_PROTOCOL = 'version=2';
+        const args = limits.pushBytes ? ['-c', 'receive.maxInputSize=' + limits.pushBytes] : [];
+        args.push(service.slice(4), '--stateless-rpc');
+        if (advertise) args.push('--advertise-refs');
+        const child = gitRpc(dir, [...args, '.'], env);
+        const stop = () => {
+          if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+          try {
+            if (process.platform === 'win32') child.kill('SIGKILL');
+            else process.kill(-child.pid, 'SIGKILL');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
           }
+        };
+        const completed = once(child, 'close').then(([code]) => {
+          if (code !== 0) throw failure(400, 'Git rejected the transfer');
+        });
+        // Attach a handler immediately: spawn or input failure can precede the first output chunk.
+        void completed.catch(() => {});
+        lifecycle.signal.addEventListener('abort', stop, {once: true});
+        try {
+          const input = advertise
+            ? Promise.resolve(child.stdin.end())
+            : encoding === 'gzip'
+              ? pipeline(req, createGunzip(), child.stdin)
+              : pipeline(req, child.stdin);
+          void input.catch(stop);
+          let started = false;
+          const begin = async () => {
+            await check();
+            res.writeHead(200, {
+              'Content-Type': 'application/x-' + service + (advertise ? '-advertisement' : '-result'),
+              'Cache-Control': 'no-store',
+              'X-Content-Type-Options': 'nosniff'
+            });
+            if (advertise && !v2) {
+              const line = '# service=' + service + '\n';
+              res.write((Buffer.byteLength(line) + 4).toString(16).padStart(4, '0') + line + '0000');
+            }
+            started = true;
+          };
+          for await (const chunk of child.stdout) {
+            if (!started) await begin();
+            if (!res.write(chunk)) await once(res, 'drain', {signal: lifecycle.signal});
+          }
+          await Promise.all([completed, input]);
+          if (push) await store.syncAudit(tenantId, dir);
+          if (!started) await begin();
+          res.end();
+        } finally {
+          lifecycle.signal.removeEventListener('abort', stop);
+          stop();
+        }
+      } finally {
+        gate?.close();
+      }
+    } catch (error) {
+      if (!res.destroyed) {
+        if (res.headersSent) res.destroy();
+        else {
+          const info = errorInfo(error);
+          const status = info.status ?? 503;
+          reply(status, status >= 500 ? 'Shared files service unavailable' : info.message);
         }
       }
-      await revalidate();
-      return reply(200,wire,'application/x-'+service+'-result');
-    } catch (error) {
-      const info = errorInfo(error);
-      const status = info.status ?? 503;
-      return reply(status,status >= 500 ? 'Shared files service unavailable' : info.message);
     } finally {
-      try {if (dir) await rm(dir,{recursive:true,force:true});}
-      finally {
-        running--;
-        const remaining = active.get(tenantId)!-1;
-        if (remaining) active.set(tenantId,remaining); else active.delete(tenantId);
-      }
+      res.off('close', disconnect);
+      running--;
+      const remaining = active.get(tenantId)! - 1;
+      if (remaining) active.set(tenantId, remaining);
+      else active.delete(tenantId);
     }
   };
 }

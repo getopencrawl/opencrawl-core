@@ -147,7 +147,7 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
     try {
       await git('git', ['clone', '--template=', ...config.flatMap(value => ['--config', value]), '--quiet',
         '--no-tags','--single-branch','--branch','main','--no-recurse-submodules','--',remote,stage],
-        {cwd:scratch,env,timeout:120000});
+        {cwd:scratch,env});
       renameSync(stage, path);
     } catch (error) {
       const unavailable = (error as NodeJS.ErrnoException).code === 'ENOENT';

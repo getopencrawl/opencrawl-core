@@ -1,5 +1,21 @@
 {{- if .Values.runtime.enabled }}
 {{- $name := include "opencrawl.name" . }}
+{{- if not .Values.sharedFiles.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-git
+  labels: {{ include "opencrawl.labels" . | nindent 4 }}
+  annotations: {helm.sh/resource-policy: keep}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests: {storage: {{ .Values.sharedFiles.size | quote }}}
+---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -90,6 +106,7 @@ spec:
           {{- include "opencrawl.runtimeEnv" $ | nindent 10 }}
           {{- include "opencrawl.runtimeMounts" $ | nindent 10 }}
           {{- if eq $component "app" }}
+            - {name: shared-files, mountPath: /data/shared-files}
           ports: [{name: http, containerPort: 8092}]
           startupProbe: {httpGet: {path: /health, port: http}, periodSeconds: 5, failureThreshold: 120}
           readinessProbe: {httpGet: {path: /health, port: http}, periodSeconds: 5}
@@ -105,6 +122,11 @@ spec:
           resources: {{ toYaml $.Values.runtime.workerResources | nindent 12 }}
           {{- end }}
       {{- include "opencrawl.runtimeVolumes" $ | nindent 6 }}
+      {{- if eq $component "app" }}
+        - name: shared-files
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-git" $name) $.Values.sharedFiles.existingClaim }}
+      {{- end }}
 ---
 {{- end }}
 apiVersion: v1

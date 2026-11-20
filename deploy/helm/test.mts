@@ -130,6 +130,16 @@ test('application-only release renders with secret references and prevents SQL i
   assert.match(p.stdout,/name: sample-app\n/);assert.match(p.stdout,/name: sample-worker\n/);assert.ok(!p.stdout.includes('POSTGRES_PASSWORD'));
   assert.ok(p.stdout.includes('command: ["node","deploy/application-state-init.mjs"]'));
   assert.ok(p.stdout.includes("import './deploy/wait-storage.mjs'"));
+  const manifests=p.stdout.split(/^---$/m);
+  const app=manifests.find(doc=>doc.includes('kind: Deployment')&&doc.includes('name: app\n'));
+  const worker=manifests.find(doc=>doc.includes('kind: Deployment')&&doc.includes('name: worker\n'));
+  assert.ok(app?.includes('mountPath: /data/shared-files'));
+  assert.ok(worker&&!worker.includes('mountPath: /data/shared-files'));
+  assert.ok(manifests.some(doc=>doc.includes('kind: PersistentVolumeClaim')&&doc.includes('helm.sh/resource-policy: keep')));
+  const reuse=spawnSync(process.env.HELM||'helm',[...args,'--set','sharedFiles.existingClaim=existing-git'],{encoding:'utf8'});
+  assert.equal(reuse.status,0,reuse.stderr);
+  assert.ok(reuse.stdout.includes('claimName: existing-git'));
+  assert.ok(!reuse.stdout.includes('helm.sh/resource-policy: keep'));
   const customInit=spawnSync(process.env.HELM||'helm',[...args,'--set-json','runtime.migrationCommand=["/custom-init"]'],{encoding:'utf8'});
   assert.equal(customInit.status,0,customInit.stderr);
   assert.ok(customInit.stdout.includes('command: ["/custom-init"]'));

@@ -189,7 +189,10 @@ PostgreSQL, raw objects, credentials, and the installation journal together.
 Keep the organization, storage prefix, index and Temporal binding stable. Moving
 data between backends is a separate migration, not an endpoint edit.
 
-The chart retains StatefulSet PVCs on uninstall. Removing a Helm release is not a
+The app stores shared Git repositories on a retained PVC. Configure its capacity with
+`sharedFiles.size` or supply `sharedFiles.existingClaim`. Stop writers and back up
+this claim together with PostgreSQL. In the installer config, nest these chart
+values under `application.sharedFiles`. The chart also retains StatefulSet PVCs on uninstall. Removing a Helm release is not a
 data wipe. Deleting the namespace can delete its claims and underlying volumes:
 never use namespace deletion as an ordinary uninstall or backup strategy. Restore
 and verify backups before retiring external databases or buckets. The default

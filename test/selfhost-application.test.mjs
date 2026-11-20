@@ -29,7 +29,7 @@ async function fixture(t,options={}){
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
   const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
-  const sharedFiles=files?postgresSharedFiles(database):undefined;await sharedFiles?.ready();
+  const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
   app=selfhostApplication({settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
