@@ -39,7 +39,13 @@ export function recordKey(data: Record<string, unknown> | undefined, key?: strin
 
 export function createRecordCounts({buckets, legacyBucket, log = () => {}, now = () => Date.now(), fresh = 60_000}: {buckets: TeamBuckets; legacyBucket: string; log?: Log; now?: () => number; fresh?: number}) {
   const states = new Map<string, CountEntry>();
-  const running = new Map<string, Promise<Record<string, number> | null>>();
+  const running = new Map<string, {generation: number; promise: Promise<Record<string, number> | null>}>();
+  // A disconnect invalidates the cache while a large recount is often still
+  // streaming. Generations fence those in-flight refreshes so a late completion
+  // cannot republish counts for a connection that has already been forgotten.
+  const generations = new Map<string, number>();
+  const generationOf = (key: string) => generations.get(key) ?? 0;
+  const integrationOf = (key: string) => (JSON.parse(key) as string[])[0];
 
   const cacheKey = (record: IntegrationRecord) => JSON.stringify([record.integrationId, record.environment, record.tenantId, record.userId, record.s3Bucket || legacyBucket, record.s3Prefix]);
   const countsOf = (state: CountState) => Object.fromEntries([...Object.entries(state.ids).map(([s, ids]) => [s, ids.size]), ...Object.entries(state.full).map(([s, full]) => [s, full.count])]);
@@ -72,13 +78,18 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
     }
   }
 
-  async function refresh(record: IntegrationRecord, provider: Provider, succeeded: Set<number>) {
+  async function refresh(record: IntegrationRecord, provider: Provider, succeeded: Set<number>, generation: number) {
     const bucket = record.s3Bucket || legacyBucket;
-    const entry = states.get(cacheKey(record));
+    const key = cacheKey(record);
+    const current = () => generationOf(key) === generation;
+    // Every write is fenced: an invalidated refresh must not resurrect either the
+    // in-memory measurement or its durable checkpoint.
+    const publish = (entry: CountEntry) => { if (current()) states.set(key, entry); };
+    const entry = states.get(key);
     const saved = entry?.state || await load(bucket, record);
     const state: CountState = saved || {read: new Set(), ids: {}, full: {}};
     // Publish the last durable measurement before scanning any newly landed data.
-    if (!entry && saved) states.set(cacheKey(record), {state, counts: countsOf(state), at: 0, succeeded: ''});
+    if (!entry && saved) publish({state, counts: countsOf(state), at: 0, succeeded: ''});
     const keys = keysFor(provider);
     const fullRefresh = new Set(provider.streams.filter(s => s.syncMode.startsWith('full_refresh')).map(s => s.name));
     const objects = (await buckets.list(bucket, `${record.s3Prefix}/`))
@@ -108,10 +119,10 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
       changed = true;
     }
 
-    if (changed) await save(bucket, record, state).catch(error => log('integration.counts.save_failed', {integrationId: record.integrationId, message: errorInfo(error).message}));
+    if (changed && current()) await save(bucket, record, state).catch(error => log('integration.counts.save_failed', {integrationId: record.integrationId, message: errorInfo(error).message}));
     const counts = countsOf(state);
-    states.set(cacheKey(record), {state, counts, at: now(), succeeded: [...succeeded].sort().join(',')});
-    return counts;
+    publish({state, counts, at: now(), succeeded: [...succeeded].sort().join(',')});
+    return current() ? counts : null;
   }
 
   return {
@@ -121,23 +132,39 @@ export function createRecordCounts({buckets, legacyBucket, log = () => {}, now =
      */
     async get(record: IntegrationRecord, provider: Provider, succeeded: Set<number>, {wait = 3000} = {}) {
       if (!record.s3Prefix) return null;
-      const cached = states.get(cacheKey(record));
+      const storageKey = cacheKey(record);
+      const generation = generationOf(storageKey);
+      const cached = states.get(storageKey);
       const key = [...succeeded].sort().join(',');
       if (cached && cached.succeeded === key && now() - cached.at < fresh) return cached.counts;
-      if (!running.has(cacheKey(record))) {
-        running.set(cacheKey(record), refresh(record, provider, succeeded)
-          .catch(error => { log('integration.counts.failed', {integrationId: record.integrationId, message: errorInfo(error).message}); return null; })
-          .finally(() => running.delete(cacheKey(record))));
+      let inflight = running.get(storageKey);
+      if (!inflight || inflight.generation !== generation) {
+        const promise = refresh(record, provider, succeeded, generation)
+          .catch(error => { log('integration.counts.failed', {integrationId: record.integrationId, message: errorInfo(error).message}); return null; });
+        inflight = {generation, promise};
+        running.set(storageKey, inflight);
+        // Only the owner may clear the slot; a discarded refresh must not remove
+        // a newer one that started after an invalidation.
+        void promise.finally(() => { if (running.get(storageKey) === inflight) running.delete(storageKey); });
       }
       // A previous measurement remains usable while its refresh runs independently.
       if (cached) return cached.counts;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<undefined>(resolve => {timer = setTimeout(resolve, wait, undefined); timer.unref?.();});
       try {
-        const counts = await Promise.race([running.get(cacheKey(record)), timeout]);
-        return counts ?? states.get(cacheKey(record))?.counts ?? null;
+        const counts = await Promise.race([inflight.promise, timeout]);
+        return counts ?? states.get(storageKey)?.counts ?? null;
       } finally {clearTimeout(timer);}
     },
-    forget: (integrationId: string) => {for (const key of states.keys()) if ((JSON.parse(key) as string[])[0] === integrationId) states.delete(key);},
+    forget: (integrationId: string) => {
+      const affected = new Set<string>();
+      for (const key of states.keys()) if (integrationOf(key) === integrationId) affected.add(key);
+      for (const key of running.keys()) if (integrationOf(key) === integrationId) affected.add(key);
+      for (const key of affected) {
+        generations.set(key, generationOf(key) + 1);
+        states.delete(key);
+        running.delete(key);
+      }
+    },
   };
 }
