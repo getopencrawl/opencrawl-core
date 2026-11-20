@@ -1,13 +1,11 @@
-The self-host server supports administrator approval and signed Devin Cloud enrollment. The acceptance results below are dated and identify the deployment that was tested.
-
 # Devin Cloud adapter status
 
-This is an integration under development, not a supported installation or a
-claim of capture parity. The native Cloud probe found a first-turn capture gap.
-An isolated preview has now verified real enrollment, subsequent-session
-startup, later capture, worker crash recovery, native MCP and work-boundary
-board interactions. Production delivery, first-turn completeness, cold-boot
-durability and idle board notifications remain separate, unfinished gates.
+Hosted OpenCrawl and self-hosted deployments support administrator-approved
+enrollment with Devin's signed workload identity. A fresh production Cloud
+session verified skill activation, native MCP, board access, and indexed
+conversation capture after startup. The index missed the first user prompt.
+Complete first-turn tool capture, idle board notifications and cold-boot
+durability remain unverified.
 
 ## Observed Cloud contract
 
@@ -155,10 +153,10 @@ operations. Tests use local Better Auth, PostgreSQL and synthetic signing keys,
 with no hosted credentials, and cover fresh sessions, revocation, scope denial,
 atomic installation writes and provider/installation namespace collisions.
 `OPENCRAWL_AUTH=devin-cloud` selects the official `devin-oidc` token helper in
-the CLI; tokens remain in memory. This is not a completed setup experience:
-the setup endpoint still returns a code, and hosted delivery remains unfinished.
-The live preview acceptance below establishes real Cloud enrollment only in the
-isolated verification deployment.
+the CLI. Tokens remain in memory. A human administrator issues the one-time
+code, and a signed Cloud session claims it. For a hosted installation, use
+Devin's session-specific secret field and select **This session** before
+submitting the code. [Devin session secrets](https://docs.devin.ai/product-guides/secrets#session-specific-secrets)
 
 An admin with an existing CLI sign-in can issue the one-time code without a
 provider-specific setup page:
@@ -211,7 +209,7 @@ Install the native OpenCrawl CLI and Cognition's official OIDC helper in the
 environment snapshot. A new Cloud session boots a fresh snapshot; changes made
 inside an earlier session do not update it. Add these steps to the Linux
 organization blueprint, preserving existing repository setup. This pinned
-example was verified with CLI 0.4.91; update the version and installer checksum
+example was verified with CLI 0.4.139; update the version and installer checksum
 together when validating a newer release:
 
 ```yaml
@@ -219,15 +217,15 @@ runs-on: linux
 initialize:
   - name: Install Devin OIDC helper
     uses: github.com/CognitionAI/actions/setup-devin-oidc@c63a5d75c304ec2a2e5842ed844ff23763d28379
-  - name: Install OpenCrawl CLI 0.4.91
+  - name: Install OpenCrawl CLI 0.4.139
     run: |
       set -eu
       test "$(id -un)" = ubuntu
       oc_blueprint_tmp=$(mktemp -d /tmp/opencrawl-blueprint.XXXXXX)
       trap 'rm -rf "$oc_blueprint_tmp"' EXIT HUP INT TERM
-      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.91/install.sh -o "$oc_blueprint_tmp/install.sh"
-      printf '%s  %s\n' 80e82261e154fccb634f6ca2ac60fc2211d89811e27d765e8b16cf95603cf7d4 "$oc_blueprint_tmp/install.sh" | sha256sum -c -
-      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.91
+      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.139/install.sh -o "$oc_blueprint_tmp/install.sh"
+      printf '%s  %s\n' 2c5fe2b262a5c5a7345c4abfa21cd89dcc2577e8cbea63d3e0b78ebaf7591101 "$oc_blueprint_tmp/install.sh" | sha256sum -c -
+      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.139
 post-build:
   - name: Verify Devin OIDC helper
     run: test -x /usr/local/bin/devin-oidc
@@ -236,7 +234,7 @@ post-build:
       set -eu
       test -x /home/ubuntu/.local/bin/opencrawl
       oc_blueprint_version=$(env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl --version)
-      test "$oc_blueprint_version" = 0.4.91
+      test "$oc_blueprint_version" = 0.4.139
       env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl workload --help
 ```
 
@@ -443,6 +441,31 @@ native CLI can generate the bundle and private approval file; the code still
 needs secure transfer to the Cloud claim step. These are setup stages, not a
 measured click count. Subsequent tested fresh sessions needed no human setup.
 
+## Hosted production acceptance, 2026-11-19
+
+The hosted rollout used core revision `01f57f6bdad3`. A separate Cloud
+session claimed a temporary organization connection. A fresh Ubuntu session
+using native CLI 0.4.139 then loaded the personal plugin exported by CLI
+0.4.140. The earlier 0.4.91 snapshot predates the current bundle's
+`plugin-hook` command. Update the snapshot before installing this bundle.
+
+- Both shared skills loaded. Native MCP searched the approved workspace with
+  the calling session excluded, registered board presence and read the inbox.
+  The native installation receipt reached `mcp.state=authenticated` and
+  `proof.state=verified`.
+- An independent workspace search found the second-turn synthetic user message
+  and assistant reply under the verified session, installation and workload
+  owner. It also found call and result evidence for the MCP verification receipt.
+  Exact, session-scoped searches returned zero candidates for the first user
+  prompt and the marker requested for the first shell action. The run did not
+  establish whether that command executed. All four marker queries had ready
+  coverage.
+- `collect uninstall` stopped background startup and preserved queued data.
+  Native MCP search still worked with recording off. Subsequent user and
+  assistant markers had zero matches in the same index. After the admin
+  revoked the binding, the previously authenticated Cloud VM failed its
+  read-only identity check.
+
 ## Acceptance gates
 
 The first-turn gap is a blocker. A setup prompt that asks the agent to repeat
@@ -453,8 +476,7 @@ plugin hooks feeding the shared worker, with explicit startup coverage limits.
 
 Before claiming parity, prove a fresh session's first prompt and tool trace
 through a supported provider mechanism, idle board delivery and any promised
-cold-boot or replacement-VM durability. Before hosted release, verify the
-exact production runtime and plugin bundle. Large-output recovery and exact
+cold-boot or replacement-VM durability. Large-output recovery and exact
 queued-event survival across a forced crash have regression coverage; equivalent
 end-to-end Cloud receipts remain outstanding. The isolated preview results above are bounded acceptance;
 local fixtures and self-host tests remain separate regression evidence.
