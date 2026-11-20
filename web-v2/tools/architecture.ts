@@ -3,8 +3,12 @@ import ts from 'typescript';
 export interface ArchitectureViolation {file: string; line: number; rule: string; message: string}
 const rawControls = new Set(['button', 'input', 'select', 'textarea', 'dialog', 'table']);
 const controlRoles = new Set(['button', 'textbox', 'combobox', 'listbox', 'checkbox', 'radio', 'switch', 'slider', 'dialog', 'table', 'tablist']);
-const isDesignFile = (file: string) => file.startsWith('src/design/');
-const isNavigationOwner = (file: string) => file === 'src/app.tsx' || file === 'src/onboarding/shell.tsx';
+const normalizePath = (file: string) => file.replace(/\\/g, '/');
+const isDesignFile = (file: string) => normalizePath(file).startsWith('src/design/');
+const isNavigationOwner = (file: string) => {
+  const normalized = normalizePath(file);
+  return normalized === 'src/app.tsx' || normalized === 'src/onboarding/shell.tsx';
+};
 
 /** Recognize static JSX values without pretending to resolve arbitrary runtime code. */
 function staticValues(node: ts.Node | undefined): string[] {
@@ -49,6 +53,7 @@ export function inspectUiText(file: string, text: string): ArchitectureViolation
 
 /** Deliberately small: failures are concrete code ownership rules, not taste scores. */
 export function inspectSource(file: string, text: string): ArchitectureViolation[] {
+  const normalizedFile = normalizePath(file);
   const violations = inspectUiText(file, text);
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const report = (node: ts.Node, rule: string, message: string) => violations.push({file, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, rule, message});
@@ -60,19 +65,19 @@ export function inspectSource(file: string, text: string): ArchitectureViolation
     }
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(source);
-      if (tag === 'h1' && !isDesignFile(file) && !file.startsWith('src/onboarding/')) report(node, 'shared-page-heading', 'Use Page or PageHeader for workspace titles. Onboarding retains its focused presentation.');
-      if (rawControls.has(tag) && !isDesignFile(file)) report(node, 'shared-controls', `Use the design-system ${tag} wrapper.`);
-      if (tag === 'nav' && !isNavigationOwner(file)) report(node, 'single-navigation', 'Workspace navigation belongs to AppShell; onboarding step navigation belongs to its shell.');
+      if (tag === 'h1' && !isDesignFile(normalizedFile) && !normalizedFile.startsWith('src/onboarding/')) report(node, 'shared-page-heading', 'Use Page or PageHeader for workspace titles. Onboarding retains its focused presentation.');
+      if (rawControls.has(tag) && !isDesignFile(normalizedFile)) report(node, 'shared-controls', `Use the design-system ${tag} wrapper.`);
+      if (tag === 'nav' && !isNavigationOwner(normalizedFile)) report(node, 'single-navigation', 'Workspace navigation belongs to AppShell; onboarding step navigation belongs to its shell.');
       for (const attribute of node.attributes.properties) {
         if (!ts.isJsxAttribute(attribute)) continue;
         const name = attribute.name.getText(source);
-        if (tag === 'Page' && name === 'bodyWidth' && staticValues(attribute.initializer).includes('narrow') && !isDesignFile(file)) report(attribute, 'single-page-grid', 'Sidebar pages share the full-width Page grid. Bound form rows with oc-form-measure instead.');
+        if (tag === 'Page' && name === 'bodyWidth' && staticValues(attribute.initializer).includes('narrow') && !isDesignFile(normalizedFile)) report(attribute, 'single-page-grid', 'Sidebar pages share the full-width Page grid. Bound form rows with oc-form-measure instead.');
         if (name === 'style') report(attribute, 'design-tokens', 'Do not add inline style; use a shared design-system pattern.');
         if (name === 'dangerouslySetInnerHTML') report(attribute, 'react-rendering', 'Render typed React content rather than HTML strings.');
         if (name === 'role' && /^[a-z]/.test(tag)) {
           const roles = staticValues(attribute.initializer).flatMap(value => value.split(/\s+/));
-          if (roles.includes('navigation') && tag !== 'nav' && !isNavigationOwner(file)) report(attribute, 'single-navigation', 'Workspace navigation belongs to AppShell; onboarding step navigation belongs to its shell.');
-          if (roles.some(role => controlRoles.has(role)) && !rawControls.has(tag) && !isDesignFile(file)) report(attribute, 'shared-controls', 'Use the shared control rather than recreating it with an ARIA role.');
+          if (roles.includes('navigation') && tag !== 'nav' && !isNavigationOwner(normalizedFile)) report(attribute, 'single-navigation', 'Workspace navigation belongs to AppShell; onboarding step navigation belongs to its shell.');
+          if (roles.some(role => controlRoles.has(role)) && !rawControls.has(tag) && !isDesignFile(normalizedFile)) report(attribute, 'shared-controls', 'Use the shared control rather than recreating it with an ARIA role.');
         }
         if (tag === 'a' && name === 'href' && hasInternalPath(attribute.initializer)) report(attribute, 'spa-navigation', 'Use Link for internal navigation.');
       }

@@ -70,13 +70,20 @@ test('production source obeys the shared component and styling boundaries', asyn
   const violations = (await Promise.all(sourceFiles.filter(file => /\.tsx?$/.test(file)).map(async file => inspectSource(relative(root, file), await readFile(file, 'utf8'))))).flat();
   assert.deepEqual(violations, [], violations.map(value => `${value.file}:${value.line} ${value.message}`).join('\n'));
   for (const file of sourceFiles.filter(file => file.endsWith('.css'))) {
-    const name = relative(root, file);
+    const name = relative(root, file).replace(/\\/g, '/');
     assert.ok(name.startsWith('src/design/') || name === 'src/styles.css' || name === 'src/onboarding/onboarding.css', `Feature CSS must live in the shared design system: ${name}`);
     const css = await readFile(file, 'utf8');
     assert.deepEqual(inspectUiText(name, css), [], `Do not encode separator dots in ${name}`);
     if (name === 'src/design/tokens.css' || name === 'src/onboarding/onboarding.css') continue;
     assert.equal(/#[0-9a-f]{3,8}\b|\brgba?\s*\(/i.test(css), false, `Use semantic color tokens in ${name}`);
   }
+});
+
+test('architecture inspection handles Windows path separators consistently', () => {
+  assert.deepEqual(inspectSource('src\\design\\components.tsx', '<button>Click</button>'), []);
+  assert.deepEqual(inspectSource('src\\app.tsx', '<nav/>'), []);
+  assert.deepEqual(inspectSource('src\\onboarding\\shell.tsx', '<h1>Connect your agent</h1>'), []);
+  assert.deepEqual(inspectSource('src\\onboarding\\invite.tsx', '<h1>Invite</h1>'), []);
 });
 
 test('shared web assets and HTML-producing source do not contain separator dots', async () => {
