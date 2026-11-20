@@ -4,7 +4,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {randomBytes,createHash} from 'node:crypto';
 import {mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile} from 'node:fs/promises';
-import {devNull, tmpdir} from 'node:os';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fixtureToken, startFileServer} from './fixtures/shared-files-http.mjs';
 
@@ -25,7 +25,7 @@ async function fixture(t, options = {}) {
   const git = async (who, dir, ...args) => {
     const result = await exec('git', ['-c', 'http.extraHeader=Authorization: Bearer ' + fixtureToken(who), ...args],
       {cwd:dir, env:{PATH:process.env.PATH, SystemRoot:process.env.SystemRoot,
-        GIT_CONFIG_NOSYSTEM:'1', GIT_CONFIG_GLOBAL:devNull, GIT_TERMINAL_PROMPT:'0', GIT_EDITOR:'true',
+        GIT_CONFIG_NOSYSTEM:'1', GIT_CONFIG_GLOBAL:'/dev/null', GIT_TERMINAL_PROMPT:'0', GIT_EDITOR:'true',
         GIT_AUTHOR_NAME:who, GIT_AUTHOR_EMAIL:who+'@example.invalid',
         GIT_COMMITTER_NAME:who, GIT_COMMITTER_EMAIL:who+'@example.invalid'}, timeout:90000});
     return result.stdout.trim();

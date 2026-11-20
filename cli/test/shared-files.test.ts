@@ -17,10 +17,12 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
   await writeFile(gitProfile,'[http]\n  extraHeader = Authorization: Bearer unrelated-fixture-token\n');
   const server = Bun.spawn(['node',resolve(import.meta.dir,'fixtures/shared-files-server.mjs'),rpc],
     {env:process.env,stdout:'pipe',stderr:'pipe'});
+  const diagnostics = new Response(server.stderr).text();
+  let failure: unknown;
   try {
     const startup = server.stdout.getReader();
     const first = await startup.read();
-    if (first.done) throw new Error(await new Response(server.stderr).text());
+    if (first.done) throw new Error(await diagnostics);
     startup.releaseLock();
     const api = new TextDecoder().decode(first.value).trim();
     const token = 'fixture-token-alice';
@@ -46,7 +48,11 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     expect(before).toContain('AM notes');
 
     // Two callers can resume the same session while a separate session has its own clone.
-    const [a,resume,b] = await Promise.all([run(open('alpha')),run(open('alpha')),run(open('beta'))]);
+    const opened = await Promise.allSettled([run(open('alpha')),run(open('alpha')),run(open('beta'))]);
+    const [a,resume,b] = opened.map(result => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    });
     expect(a).toBe(resume);
     expect(a).not.toBe(b);
     // Directly inspect the checkout on disk as well as comparing canonical paths.
@@ -104,9 +110,13 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     expect(message).toContain(join(misplaced,'repo'));
     expect(await readFile(join(misplaced,'repo','unsent.txt'),'utf8')).toBe('uncommitted draft');
     expect(JSON.parse(await readFile(record,'utf8')).scratch).toBe(misplaced);
+  } catch (error) {
+    failure = error;
   } finally {
     server.kill('SIGTERM');
     await server.exited;
-    await rm(root,{recursive:true,force:true});
+    if (failure) console.error('Shared-files fixture:', await diagnostics, failure);
+    await rm(root,{recursive:true,force:true,maxRetries:8,retryDelay:100});
+    if (failure) throw failure;
   }
 }, 60000);

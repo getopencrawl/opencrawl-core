@@ -1,5 +1,4 @@
 import {execFile, spawn} from 'node:child_process';
-import {devNull} from 'node:os';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 
@@ -12,7 +11,8 @@ const environment: NodeJS.ProcessEnv = {
   SystemRoot: process.env.SystemRoot,
   LC_ALL: 'C',
   GIT_CONFIG_NOSYSTEM: '1',
-  GIT_CONFIG_GLOBAL: devNull,
+  // Git for Windows also recognizes the Git spelling of the null device.
+  GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_ATTR_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
   GIT_NO_REPLACE_OBJECTS: '1',

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {mkdir, mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
-import {devNull, tmpdir} from 'node:os';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {promisify} from 'node:util';
 import {applicationDatabaseFixture, postgresUrl} from './fixtures/application-database.mjs';
@@ -11,7 +11,7 @@ import {postgresSharedFiles} from '../dist/src/files/store.mjs';
 const exec = promisify(execFile);
 async function git(dir,args,extra={}) {
   const {stdout} = await exec('git', args, {cwd:dir,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,
-    GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:devNull,GIT_AUTHOR_NAME:'Agent',GIT_AUTHOR_EMAIL:'agent@example.invalid',
+    GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_AUTHOR_NAME:'Agent',GIT_AUTHOR_EMAIL:'agent@example.invalid',
     GIT_COMMITTER_NAME:'Agent',GIT_COMMITTER_EMAIL:'agent@example.invalid',...extra}});
   return stdout.trim();
 }
