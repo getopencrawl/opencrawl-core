@@ -83,3 +83,18 @@ test('registered machines can install published Linux plugins with an MCP transp
   expect(isRegistrationMcp(config, api, dir)).toBe(true);
   expect(isRegistrationMcp(config, 'https://another.example', dir)).toBe(false);
 });
+
+test('machine provisioning requires future-capture consent and retains the existing credential and history boundary',async()=>{
+  const {provisionAgentHost}=await import('../src/agent-provision.ts');
+  let signupCount=0;
+  const signup=async()=>{signupCount++;return {workspace:{id:'org_trial'},claimed:false,limits:{}};};
+  const setup=async(action:string,api:string,values:unknown,deps:unknown)=>({action,api,values,deps});
+  const api='https://app.example';
+  const deps={session:()=>null,signup,setup,env:{}};
+  await expect(provisionAgentHost(api,false,deps)).rejects.toMatchObject({code:'INVALID_USAGE'});
+  expect(signupCount).toBe(0);
+  expect(await provisionAgentHost(api,true,deps)).toEqual({action:'apply',api,values:{plugins:'all',forward:'all',history:'none','capture-mode':'hook',yes:true,json:true},deps:{interactive:false}});
+  await provisionAgentHost(api,true,{...deps,session:()=>({})});
+  await provisionAgentHost(api,true,{...deps,env:{OPENCRAWL_TOKEN:'external'}});
+  expect(signupCount).toBe(1);
+});

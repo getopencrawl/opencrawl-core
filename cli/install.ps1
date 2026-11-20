@@ -1,6 +1,7 @@
 # Native Windows install. Requires only PowerShell and the Windows tar command.
-param([string]$Version = 'latest', [switch]$Setup)
+param([string]$Version = 'latest', [switch]$Setup, [switch]$CaptureNew)
 $ErrorActionPreference = 'Stop'
+if ($Setup -and $CaptureNew) { throw 'Choose either -Setup or -CaptureNew.' }
 if ($Version -in @('latest', 'next')) {
   $epoch = [math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() / 30)
   $Version = (Invoke-RestMethod "https://raw.githubusercontent.com/getopencrawl/opencrawl-core/cli-stable/release.json?epoch=$epoch").version
@@ -34,7 +35,11 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'OpenCrawl installation failed.' }
 } finally { Remove-Item -Recurse -Force $scratch }
 
-if ($Setup) {
+if ($CaptureNew) {
+  $bin = if ($env:OPENCRAWL_INSTALL_DIR) { $env:OPENCRAWL_INSTALL_DIR } else { Join-Path $HOME '.local/bin' }
+  & (Join-Path $bin 'opencrawl.cmd') provision --capture-new --json
+  if ($LASTEXITCODE -ne 0) { throw "OpenCrawl provisioning exited with code $LASTEXITCODE." }
+} elseif ($Setup) {
   if ([Environment]::UserInteractive -and ![Console]::IsInputRedirected -and ![Console]::IsErrorRedirected) {
     $bin = if ($env:OPENCRAWL_INSTALL_DIR) { $env:OPENCRAWL_INSTALL_DIR } else { Join-Path $HOME '.local/bin' }
     & (Join-Path $bin 'opencrawl.cmd') setup
