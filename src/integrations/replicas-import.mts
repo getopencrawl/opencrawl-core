@@ -86,6 +86,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       if(baseBytes+size>limit){
         const packed=packReplicasPayload(event,canonical(event.data));
         await put([packed.event],[event],packed.attachments,packed.blobs);
+        console.info(JSON.stringify({event:'replicas.import.large_record',tenantId:principal.tenantId,importId:state.id,
+          workspaceId:chat.workspace_id,chatId:chat.chat_id,bytes:size,parts:packed.attachments.length}));
       }else{batch.push(event);bytes+=size;}
     }
     await flush();

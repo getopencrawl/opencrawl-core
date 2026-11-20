@@ -347,8 +347,11 @@ test('a single oversized history event survives checkpoints, indexing and author
   }
   const [key,bytes]=batches[0],manifest=JSON.parse(gunzipSync(bytes));
   const {expandReplicasPayload}=await import('../dist/src/sessions/replicas-payload.mjs');
+  const part=manifest.attachments[0].objectKey;
   manifest.attachments[0].objectKey='outside/attachments/'+manifest.attachments[0].sha256;
   await assert.rejects(expandReplicasPayload(store,prefix,manifest.owner,key,manifest),/scoped/);
+  manifest.attachments[0].objectKey=part;store.data.set(part,Buffer.from('changed'));
+  await assert.rejects(expandReplicasPayload(store,prefix,manifest.owner,key,manifest),/missing or changed/);
 });
 
 test('duplicate catalog entries preserve their metadata while counting one distinct session',async t=>{

@@ -12,7 +12,7 @@ const historySchema=z.looseObject({events:z.array(z.unknown()).max(1000),before_
 export type ReplicasHistory=z.infer<typeof historySchema>;
 export type ReplicasOperation='identity'|'catalog'|'history';
 export class ReplicasPageError extends Error {
-  constructor(readonly reason:'page_size'|'invalid_page'|'cursor'|'deleted'|'waking',message:string){super(message);}
+  constructor(readonly reason:'page_size'|'invalid_page'|'cursor'|'deleted'|'waking',message:string,readonly observedBytes?:number,readonly limitBytes?:number){super(message);}
 }
 export function replicasError(message:string,status=400){return Object.assign(new Error(message),{status,expose:true});}
 
@@ -67,7 +67,7 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
     // Bound streamed responses too; Content-Length is not authoritative.
     const reader=response.body?.getReader();if(!reader)throw replicasError('Replicas returned an empty response.',502);
     const chunks:Uint8Array[]=[];let bytes=0;
-    try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>maxBytes)throw new ReplicasPageError('page_size','A Replicas response exceeds the import limit.');chunks.push(value);}}finally{await reader.cancel();}
+    try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>maxBytes)throw new ReplicasPageError('page_size','A Replicas response exceeds the import limit.',bytes,maxBytes);chunks.push(value);}}finally{await reader.cancel();}
     let parsed:unknown;
     try{parsed=JSON.parse(Buffer.concat(chunks).toString());}catch{throw new ReplicasPageError('invalid_page','Replicas returned invalid JSON.');}
     const result=schema.safeParse(parsed);
