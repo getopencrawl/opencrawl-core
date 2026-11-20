@@ -48,6 +48,8 @@ import type {SetupState} from '../state/setup.mjs';
 import {createSetupStatus} from '../setup/status.mjs';
 import {createSetupHandler} from '../setup/http.mjs';
 import {registerSetupTools} from '../setup/mcp.mjs';
+import {createSharedFilesHandler, sharedFilesAuthorization} from '../files/git-http.mjs';
+import type {SharedFilesStore} from '../files/store.mjs';
 import {createBoardHandler} from '../board/http.mjs';
 import {createOpenCrawlMcp} from '../mcp/server.mjs';
 import {createSessionSearch} from '../sessions/search.mjs';
@@ -73,6 +75,7 @@ export interface SelfhostApplicationOptions {
   contextSuggestions?:ContextSuggestionsExtension;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   setupState?:SetupState;
+  sharedFiles?:SharedFilesStore;
   recording?:import('../sessions/recording.mjs').RecordingPolicy;
   integrations?:Integrations;providers?:ProviderCatalog;connectors?:ReturnType<typeof createConnectorResolver>;
   oauth?:ReturnType<typeof createSlackOAuth>;sourceCredentials?:SourceCredentialProxy;
@@ -87,7 +90,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,setupState,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -155,7 +158,8 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   };
   const sessions=createSessionLibrary({forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
   const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
-  const identifyAgent=async(req:IncomingMessage)=>{const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];return identifyWorkload(token)??identifyCli(req.headers.authorization,{capture:true});};
+  const identifyAgent=async(req:IncomingMessage,authorization=req.headers.authorization)=>{const token=/^Bearer (.+)$/i.exec(authorization||'')?.[1];return identifyWorkload(token)??identifyCli(authorization,{capture:true});};
+  const filesHandler=sharedFiles && createSharedFilesHandler({store:sharedFiles});
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
   const contextCheck=createContextCheckHandler({authenticate,check:measuredCheck(usageActivity,createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize}))});
   const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:measuredSuggestionEvents(usageActivity,contextSuggestions.observe)})});
@@ -167,7 +171,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   const setupObserver=createOnboardingObserver(setup?{cli:onboarding.cli,session:setup.session}:null);
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
-  const boardHandler=createBoardHandler({board,authenticate});
+  const boardHandler=createBoardHandler({board,authenticate,sharedFiles:Boolean(filesHandler)});
   const mcp=createOpenCrawlMcp({usageActivity,origin:settings.url,revision:settings.revision,search:authorizedSearch,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
     const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];
     const workload=identifyWorkload(token);
@@ -227,6 +231,26 @@ export function selfhostApplication({settings,store,boardState,setupState,record
       if(url.pathname.startsWith('/api/sessions/'))return await capture(req,res);
       if(url.pathname==='/api/context/suggestions/events')return suggestionEvents(req,res);
       if(url.pathname==='/api/context/suggestions')return contextCheck(req,res);
+      if(url.pathname==='/api/files'||url.pathname.startsWith('/api/files/')){
+        if(!filesHandler)return respond(404,'Shared files unavailable');
+        if(req.headers.origin)return respond(403,'Browser request denied');
+        const authorization=sharedFilesAuthorization(req.headers.authorization);
+        // An empty string keeps a malformed Basic header from falling back to another credential.
+        const check=()=>identifyAgent(req,authorization??'');
+        const identity=await check();
+        if(identity.status!==200){
+          if(identity.status===401)res.setHeader('WWW-Authenticate','Basic realm="OpenCrawl shared files"');
+          return respond(identity.status,'Shared files authentication required');
+        }
+        await authorize(identity.principal);
+        return await filesHandler(req,res,identity.principal,async()=>{
+          const fresh=await check();
+          if(fresh.status!==200)throw Object.assign(new Error('Shared files access expired'),{status:fresh.status});
+          if(fresh.principal.userId!==identity.principal.userId || fresh.principal.tenantId!==identity.principal.tenantId)
+            throw Object.assign(new Error('Shared files identity changed'),{status:403});
+          await authorize(fresh.principal);
+        });
+      }
       if(url.pathname==='/api/search')return await query(req,res);
       if(url.pathname==='/api/search/fetch')return await fetchPassage(req,res);
       if(url.pathname==='/api/setup'||url.pathname.startsWith('/api/setup/'))return setupHandler?await setupHandler(req,res):respond(404,'Setup unavailable');

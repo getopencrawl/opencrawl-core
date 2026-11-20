@@ -5,7 +5,7 @@ import {serviceError} from '../sessions/types.mjs';
 import {boardRequestSchemas, boardValidationMessage} from './request-errors.mjs';
 
 /** Short, authenticated requests. The CLI owns polling/reconnect, never a terminal. */
-export function createBoardHandler({board, authenticate}: {board?: ReturnType<typeof createBoard>; authenticate: Authenticate}): HttpHandler {
+export function createBoardHandler({board, authenticate, sharedFiles = false}: {sharedFiles?: boolean; board?: ReturnType<typeof createBoard>; authenticate: Authenticate}): HttpHandler {
   return async (req, res) => {
     const send = (status: number, body: Record<string, unknown>) => {
       res.writeHead(status, {'content-type': 'application/json', 'cache-control': 'no-store'});
@@ -34,6 +34,7 @@ export function createBoardHandler({board, authenticate}: {board?: ReturnType<ty
       activityInput(input);
       requestOperation = operation as keyof typeof boardRequestSchemas;
       const data = modern ? await board.agent[name as keyof typeof board.agent](principal,input) : operation === 'fetch' ? await board.fetch(principal, input) : operation === 'channels' ? await board.channels(principal,input) : operation === 'thread' ? await board.thread(principal,input) : operation === 'search' ? await board.search(principal,input) : await board.participate(principal, operation, input);
+      if (operation === 'bootstrap' && sharedFiles && data && typeof data === 'object') return send(200, {data: {...data, sharedFiles: true}});
       send(200, {data});
     } catch(caught){const error=serviceError(caught);
       if (requestOperation && error.name === 'ZodError') {

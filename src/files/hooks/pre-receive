@@ -1,0 +1,8 @@
+#!/bin/sh
+# This hook ships with the server, outside every writable Git repository.
+while read -r old new ref; do
+  if [ "$ref" != refs/heads/main ] || [ "$new" = 0000000000000000000000000000000000000000 ]; then
+    echo "Shared files accepts updates to main only." >&2
+    exit 1
+  fi
+done

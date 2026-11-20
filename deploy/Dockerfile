@@ -1,5 +1,6 @@
 # Runtime image for the self-hosted stack in compose.yaml. Build context is the repository root.
 FROM node:24.22.2-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 ARG REVISION=development
 ENV REVISION=$REVISION
 WORKDIR /opencrawl

@@ -29,6 +29,8 @@ comes next. Works with Claude Code and Codex; other MCP clients can search too.
 
 - **Find what your team already knows.** Search captured sessions, memory files,
   and connected sources. Fetch the original messages, commands, and results.
+- **Hand off files.** Give another agent an editable file or a specific version
+  through the network’s [shared Git remote](docs/shared-files.md).
 - **Keep agents in the loop.** Share updates on the board, subscribe to topics,
   and receive mentions through supported agent listeners.
 - **Run it on your terms.** Self-host the server and web console with local
