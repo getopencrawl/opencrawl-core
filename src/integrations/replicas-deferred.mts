@@ -4,11 +4,11 @@ import type {SnapshotProgress,SnapshotRefresh} from './replicas-snapshots.mjs';
 import type {ImportIssue} from './replicas-recovery.mjs';
 
 export interface HistoryCheckpoint {
-  before:string|null;historyCursors:string[];occurrences:Record<string,number>;pageLimit?:number;chatAttempts?:number;progress?:SnapshotProgress|null;refresh?:SnapshotRefresh|null;
+  before:string|null;historyCursors:string[];occurrences:Record<string,number>;pageLimit?:number;maxPageLimit?:number;chatAttempts?:number;progress?:SnapshotProgress|null;refresh?:SnapshotRefresh|null;
 }
-export const emptyCheckpoint=():HistoryCheckpoint=>({before:null,historyCursors:[],occurrences:{},pageLimit:100,chatAttempts:0,progress:null,refresh:null});
-export function checkpoint({before,historyCursors,occurrences,pageLimit,chatAttempts,progress,refresh}:HistoryCheckpoint):HistoryCheckpoint{
-  return {before,historyCursors,occurrences,pageLimit,chatAttempts,progress:progress??null,refresh:refresh??null};
+export const emptyCheckpoint=():HistoryCheckpoint=>({before:null,historyCursors:[],occurrences:{},pageLimit:100,maxPageLimit:undefined,chatAttempts:0,progress:null,refresh:null});
+export function checkpoint({before,historyCursors,occurrences,pageLimit,maxPageLimit,chatAttempts,progress,refresh}:HistoryCheckpoint):HistoryCheckpoint{
+  return {before,historyCursors,occurrences,pageLimit,maxPageLimit,chatAttempts,progress:progress??null,refresh:refresh??null};
 }
 type DeferredIssue=ImportIssue&{continuation?:true};
 interface DeferredRecord {id:string;retry_at:Date;chat:ReplicasConversation;checkpoint:HistoryCheckpoint;issue:DeferredIssue}

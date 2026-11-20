@@ -28,6 +28,7 @@ interface State extends ReplicasImportStatus,HistoryCheckpoint {
 }
 // Reserve one activity in five for due pages while catalog work remains.
 const freshStepsPerRetry=4;
+const defaultHistoryLimit=100,largeHistoryLimit=400;
 export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 
 /** One explicit step reads one complete API page. Checkpoint only after the
@@ -200,7 +201,7 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
             return;
           }
         }
-        const history=await api.history(chat,state.before,state.pageLimit??100,info=>{historyResponse=info;});
+        const history=await api.history(chat,state.before,state.pageLimit??defaultHistoryLimit,info=>{historyResponse=info;});
         if(!state.before&&!history.before_cursor&&history.has_more!==true&&!history.events.length&&!replicasTurns(history).length){
           const senderLists=[chat.senders,history.senders];
           const removed=new Set(Array.isArray(history.removed_message_ids)?history.removed_message_ids:[]);
@@ -230,13 +231,16 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         delete state.waitingForSource;
         operation='ingest';
         await savePage(client,principal,state,chat,history);
-        const limit=state.pageLimit??100;
-        if(history.before_cursor&&limit<100&&historyResponse?.bytesRead!==undefined&&historyResponse.bytesRead<3*1024*1024){
-          // A large event affects its own page. Grow after a small successful
-          // page so thousands of subsequent events do not take one request each.
-          state.pageLimit=Math.min(100,limit*4);
+        const limit=state.pageLimit??defaultHistoryLimit;
+        // Recover from dense pages first. Grow beyond the default only when a
+        // full window fit in one quarter of the response byte budget.
+        const fullWindow=Math.max(history.events.length,replicasTurns(history).length)>=limit;
+        const ceiling=limit>=defaultHistoryLimit&&fullWindow?(state.maxPageLimit??largeHistoryLimit):defaultHistoryLimit;
+        if(history.before_cursor&&limit<ceiling&&historyResponse?.bytesRead!==undefined&&historyResponse.bytesRead<3*1024*1024){
+          state.pageLimit=Math.min(ceiling,limit*4);
           console.info(JSON.stringify({event:'replicas.import.page_limit',tenantId:principal.tenantId,importId:state.id,
-            workspaceId:chat.workspace_id,chatId:chat.chat_id,previous:limit,next:state.pageLimit,bytesRead:historyResponse.bytesRead}));
+            workspaceId:chat.workspace_id,chatId:chat.chat_id,previous:limit,next:state.pageLimit,bytesRead:historyResponse.bytesRead,
+            events:history.events.length,cursorHash:replicasDigest(history.before_cursor)}));
         }
         if(recoveredAttempt||state.retryAttempts)recoveredPage={events:history.events.length,turns:replicasTurns(history).length,final:!history.before_cursor};
       }else if(state.initialCatalog||state.next){
@@ -276,10 +280,11 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       const fields=issueFor(error,operation);
       if(error instanceof ReplicasPageError&&operation==='history'&&historyResponse)Object.assign(fields,historyResponse);
       const tooLarge=fields.operation!=='identity'&&(error instanceof ReplicasPageError&&error.reason==='page_size'||(fields.httpStatus===413||fields.internalStatus===413));
-      const limit=state.pageLimit??100;
+      const limit=state.pageLimit??defaultHistoryLimit;
+      const smallerWindow=limit>defaultHistoryLimit&&fields.operation==='history'&&(fields.httpStatus===400||fields.httpStatus===422);
       const localToChat=!!chat&&fields.operation!=='identity'&&(error instanceof ReplicasPageError||tooLarge||fields.reason==='record_rejected'||
         (fields.operation==='history'||fields.operation==='workspace_chats')&&error instanceof ReplicasProviderError&&![408,425,429].includes(error.status));
-      const decision=credentialRejected?'reconnect':chat&&tooLarge&&limit>1?'resize':localToChat?'defer':'retry';
+      const decision=credentialRejected?'reconnect':chat&&(tooLarge||smallerWindow)&&limit>1?'resize':localToChat?'defer':'retry';
       const missing=fields.operation==='history'&&fields.httpStatus===404;
       const priorChatAttempts=Math.max(state.chatAttempts??0,missing?previousMissingAttempt:0);
       const attempt=(decision==='defer'?priorChatAttempts:state.retryAttempts??0)+1;
@@ -330,7 +335,9 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       if(decision==='reconnect'){
         state.phase='failed';state.error='Replicas rejected the organization credential. Reconnect with a valid key for the same organization.';
       }else if(decision==='resize'){
-        state.pageLimit=Math.max(1,Math.floor(limit/2));
+        if(smallerWindow)state.maxPageLimit=defaultHistoryLimit;
+        state.pageLimit=smallerWindow?defaultHistoryLimit:Math.max(1,Math.floor(limit/2));
+        if(error instanceof ReplicasProviderError&&error.retryAfterMs)state.retryAt=issue.providerRetryAt;
       }else if(decision==='defer'&&chat){
         const position={...checkpoint(state),chatAttempts:attempt};
         if(missing&&state.blocked){

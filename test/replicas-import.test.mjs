@@ -861,3 +861,50 @@ test('an explicit snapshot recheck still requires the matching retained native c
   placeholder=false;clock+=31*60_000;for(let i=0;i<15;i++)await advance(f.reopen(),id);
   assert.equal((await f.database.pool.query('SELECT verify_next FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',scope)).rows[0].verify_next,false);
 });
+
+test('a long light transcript resumes from its cursor with fewer history requests',async t=>{
+  const total=1800,records=Array.from({length:total},(_,i)=>event('message '+i));
+  const windows=[];
+  const f=await fixture(t,{answer:url=>{
+    if(!url.pathname.endsWith('/history'))return;
+    const before=Number(url.searchParams.get('before_cursor')??total),limit=Number(url.searchParams.get('limit'));
+    const start=Math.max(0,before-limit);
+    windows.push({before,limit});
+    return Response.json({events:records.slice(start,before),before_cursor:start?String(start):null,has_more:start>0,total});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  let state;
+  for(let i=0;i<total/100+2;i++){
+    state=await advance(f.reopen(),id);
+    if(state.phase==='complete')break;
+  }
+  assert.equal(state.phase,'complete');assert.equal(state.imported,1);assert.equal(state.events,total);
+  assert.deepEqual(windows.map(w=>w.before),[1800,1700,1300,900,500,100]);
+  assert.equal(state.pages,6);
+});
+
+test('a rejected larger history window retries the same saved cursor and remembers the supported limit',async t=>{
+  const records=Array.from({length:550},(_,i)=>event('record '+i)),windows=[];
+  let clock=Date.now();
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(!url.pathname.endsWith('/history'))return;
+    const before=Number(url.searchParams.get('before_cursor')??records.length),limit=Number(url.searchParams.get('limit'));
+    windows.push([before,limit]);
+    if(limit>100)return new Response(null,{status:422,headers:{'Retry-After':'3'}});
+    const start=Math.max(0,before-limit);
+    return Response.json({events:records.slice(start,before),before_cursor:start?String(start):null,has_more:start>0});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  let state;
+  for(let i=0;i<10;i++){
+    state=await advance(f.reopen(),id);
+    if(state.retryAt){
+      assert.equal(Date.parse(state.retryAt)-clock,3000);
+      const reads=windows.length;await advance(f.reopen(),id);assert.equal(windows.length,reads);
+      clock=Date.parse(state.retryAt);
+    }
+    if(state.phase==='complete')break;
+  }
+  assert.deepEqual(windows,[[550,100],[450,400],[450,100],[350,100],[250,100],[150,100],[50,100]]);
+  assert.equal(state.phase,'complete');assert.equal(state.events,550);assert.equal(state.pages,6);
+});
