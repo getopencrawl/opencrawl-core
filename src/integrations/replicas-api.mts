@@ -11,7 +11,7 @@ const historySchema=z.looseObject({events:z.array(z.unknown()).max(1000),before_
   .refine(page=>page.waking===true||page.before_cursor!==undefined||page.has_more===false);
 export type ReplicasHistory=z.infer<typeof historySchema>;
 export type ReplicasOperation='identity'|'catalog'|'history'|'workspace_chats';
-export interface ReplicasResponseInfo {httpStatus:number;requestId?:string}
+export interface ReplicasResponseInfo {httpStatus:number;requestId?:string;bytesRead?:number}
 export class ReplicasPageError extends Error {
   constructor(readonly reason:'page_size'|'invalid_page'|'cursor'|'deleted'|'waking'|'empty_with_messages'|'empty_unverified',message:string,readonly observedBytes?:number,readonly limitBytes?:number){super(message);}
 }
@@ -70,6 +70,7 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
     const reader=response.body?.getReader();if(!reader)throw replicasError('Replicas returned an empty response.',502);
     const chunks:Uint8Array[]=[];let bytes=0;
     try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>maxBytes)throw new ReplicasPageError('page_size','A Replicas response exceeds the import limit.',bytes,maxBytes);chunks.push(value);}}finally{await reader.cancel();}
+    observe?.({httpStatus:response.status,requestId,bytesRead:bytes});
     let parsed:unknown;
     try{parsed=JSON.parse(Buffer.concat(chunks).toString());}catch{throw new ReplicasPageError('invalid_page','Replicas returned invalid JSON.');}
     const result=schema.safeParse(parsed);

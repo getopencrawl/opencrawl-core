@@ -22,7 +22,7 @@ export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
   workspaceChecks?:{id:string;at:number}[];
-  initialCatalog?:boolean;freshSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
+  initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 // Reserve one activity in five for due pages while catalog work remains.
 const freshStepsPerRetry=4;
@@ -41,6 +41,8 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       namespace text NOT NULL, tenant text NOT NULL, id bigint GENERATED ALWAYS AS IDENTITY,
       retry_at timestamptz NOT NULL, chat jsonb NOT NULL, checkpoint jsonb NOT NULL, issue jsonb NOT NULL,
       PRIMARY KEY(namespace,tenant,retry_at,id))`);
+    await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_continuation
+      ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL`);
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
@@ -112,16 +114,24 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
     if(state.blocked&&(!hasFresh||(state.freshSteps??freshStepsPerRetry)>=freshStepsPerRetry)){
       state.freshSteps=0;
-      const row=await pending.oldest();
+      // Once the catalog is drained, let a readable long transcript advance
+      // while still servicing the oldest unrelated retry at least every fifth step.
+      const preferContinuation=!hasFresh&&(state.continuationSteps??0)<freshStepsPerRetry;
+      const row=await pending.oldest(preferContinuation,now());
       if(!row)throw new Error('Replicas deferred checkpoint missing');
       if(row.retry_at.getTime()<=now()){
+        state.continuationSteps=preferContinuation&&row.issue.continuation&&row.checkpoint.before?(state.continuationSteps??0)+1:0;
         // Run a single deferred page, independently of a possibly mid-chat foreground cursor.
         const foreground={...checkpoint(state),queue:state.queue,next:state.next,initialCatalog:state.initialCatalog};
         await pending.remove(row);state.blocked--;
         Object.assign(state,row.checkpoint,{queue:[row.chat],next:null,initialCatalog:false});
         await processPage(principal,state,api,pending,true,client);
         if(state.queue.length){
-          await pending.save(row.chat,state,{...row.issue,continuation:true},state.retryAt??new Date(now()).toISOString());
+          const resumed=state.before&&state.before!==row.checkpoint.before;
+          const issue:ImportIssue=resumed?{at:new Date(now()).toISOString(),importId:state.id,operation:'history',reason:'page_saved',
+            decision:'continue',attempt:0,elapsedMs:0,workspaceId:row.chat.workspace_id,chatId:row.chat.chat_id,
+            pageLimit:state.pageLimit,cursorHash:replicasDigest(state.before!)}:(state.recentIssues?.at(-1)??row.issue);
+          await pending.save(row.chat,state,{...issue,continuation:true},state.retryAt??new Date(now()).toISOString());
           state.blocked++;
         }
         Object.assign(state,foreground);
@@ -185,6 +195,14 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         delete state.waitingForSource;
         operation='ingest';
         await savePage(principal,state,chat,history);
+        const limit=state.pageLimit??100;
+        if(history.before_cursor&&limit<100&&historyResponse?.bytesRead!==undefined&&historyResponse.bytesRead<3*1024*1024){
+          // A large event affects its own page. Grow after a small successful
+          // page so thousands of subsequent events do not take one request each.
+          state.pageLimit=Math.min(100,limit*4);
+          console.info(JSON.stringify({event:'replicas.import.page_limit',tenantId:principal.tenantId,importId:state.id,
+            workspaceId:chat.workspace_id,chatId:chat.chat_id,previous:limit,next:state.pageLimit,bytesRead:historyResponse.bytesRead}));
+        }
         if(recoveredAttempt||state.retryAttempts)recoveredPage={events:history.events.length,turns:replicasTurns(history).length,final:!history.before_cursor};
       }else if(state.initialCatalog||state.next){
         const hash=state.next?replicasDigest(state.next):undefined;
