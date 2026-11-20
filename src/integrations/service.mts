@@ -70,7 +70,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
 }
 
 export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
-  const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
+  const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>; pending: boolean}>();
   const statusCache = new Map<string, StatusEntry>();
   const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
   const provisioning = new Map<string, Promise<IntegrationRecord>>();
@@ -181,6 +181,11 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const cached = pendingAccountCache.get(key);
     if (cached && performance.now() - cached.at < 15000) return cached.result;
     pendingAccountCache.delete(key);
+    // Capture this call's own entry identity. A slow lookup may still be in
+    // flight when a later poll replaces it after the TTL; its rejection must
+    // not evict the newer entry.
+    const entry = {at: performance.now(), result: null as unknown as Promise<PendingSignInState>, pending: true};
+    pendingAccountCache.set(key, entry);
     const result = Promise.resolve().then(async (): Promise<PendingSignInState> => {
       let account;
       try { account = await oauth.account(required(record.connectedAccountId, 'connected account')); }
@@ -191,10 +196,20 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if (account.status === 'EXPIRED') return 'expired';
       if (!['ACTIVE', 'INITIATED', 'INITIALIZING'].includes(account.status)) throw new Error('Unknown sign-in account status');
       return 'pending';
-    }).catch(error => { pendingAccountCache.delete(key); throw error; });
+    }).then(value => {
+      if (pendingAccountCache.get(key) === entry) entry.at = performance.now();
+      return value;
+    }, error => {
+      if (pendingAccountCache.get(key) === entry) pendingAccountCache.delete(key);
+      throw error;
+    }).finally(() => { entry.pending = false; });
+    entry.result = result;
     // Bound both repeated polling and memory use without retaining provider credentials.
-    if (pendingAccountCache.size >= 256) pendingAccountCache.delete(pendingAccountCache.keys().next().value!);
-    pendingAccountCache.set(key, {at: performance.now(), result});
+    // Never evict an in-flight lookup: a poll joining it still holds its result.
+    if (pendingAccountCache.size >= 256) {
+      const idle = [...pendingAccountCache].find(([, value]) => !value.pending);
+      if (idle) pendingAccountCache.delete(idle[0]);
+    }
     return result;
   }
 
