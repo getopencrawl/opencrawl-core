@@ -5,7 +5,7 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {atomicJson,configDir,withSessionLock} from './session.ts';
 import {apiOrigin,CliError} from './oauth.ts';
 import {boardRequest,saveBoardRegistration} from './board.ts';
-import {captureDir,readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
+import {captureDevinStartup,captureDir,readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
 import {readSetupState} from './setup/state.ts';
 
 type StartupHarness='codex'|'claude-code'|'cursor'|'antigravity'|'devin';
@@ -137,6 +137,17 @@ export async function processSessionStartTask(config:CaptureConfig,task:unknown,
   const binding:Binding={api:task.api,installationId:task.installationId,owner:{...task.owner},harness:task.harness,sessionId:task.sessionId};
   if((await import('./incognito-state.ts')).sessionPrivate(config,binding))return;
   const guard=()=>assertCurrent(binding,config);guard();
+  let captureError:unknown;
+  if(task.harness==='devin' && 'source' in task.payload && task.payload.source==='startup') {
+    try {await captureDevinStartup(config,task.sessionId);} catch(error){captureError=error;}
+    guard();
+    if((await import('./incognito-state.ts')).sessionPrivate(config,binding))return;
+    const state=readState(binding);
+    if(state.confirmed && state.confirmed.observedAt>=task.at && state.pending?.id!==task.id) {
+      if(captureError)throw captureError;
+      return;
+    }
+  }
   const result:unknown=await boardRequest(task.api,'bootstrap',{session:task.sessionId,harness:task.harness,workspace:task.owner.tenantId},fetcher,
     {signal:AbortSignal.timeout(10_000),expectedOwner:task.owner,validateBinding:guard});
   guard();if(!registration(result,binding))throw new CliError('BOARD_PROTOCOL_ERROR','Background startup did not confirm the bound native session.');
@@ -147,4 +158,5 @@ export async function processSessionStartTask(config:CaptureConfig,task:unknown,
     atomicJson(stateFile(binding),{schemaVersion:1,binding,...(state.pending&&state.pending.id!==task.id?{pending:state.pending}:{}),confirmed});
   });
   guard();
+  if(captureError)throw captureError;
 }

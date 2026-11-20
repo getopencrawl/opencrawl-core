@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {generateKeyPair, SignJWT} from 'jose';
 import {McpServer, WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/server';
@@ -8,9 +11,16 @@ import {firstTurnDevinEvent, readDevinEventDetail} from '../dist/src/integration
 import {readDevinStartupEvents} from '../dist/src/integrations/devin-first-turn.mjs';
 import {withDevinEventClient} from '../dist/src/integrations/devin-events-client.mjs';
 import {createDevinWorkloads, DEVIN_ISSUER} from '../dist/src/identity/devin.mjs';
+import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
+import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
+import {createSessionSearch} from '../dist/src/sessions/search.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/devin-first-turn.json', import.meta.url), 'utf8'));
 const details = fixture.details.map(item => readDevinEventDetail(item.id, item.response));
+function fixtureList(input) {
+  return fixture.listLines.split('\n').filter(line => input.event_types.some(type => line.includes(' ' + type + ' ('))).join('\n');
+}
 
 test('the live provider fixture preserves the original user prompt, first command and corresponding completion', () => {
   const [user, call, terminalUpdate, result] = details.map(firstTurnDevinEvent);
@@ -59,13 +69,16 @@ async function startupFixture() {
     .setIssuer(DEVIN_ISSUER).setAudience(audience).setSubject('org_id:' + org).setIssuedAt().setExpirationTime('5m').sign(keys.privateKey);
   const identity = await workloads.identify(token);
   assert.equal(identity.status, 200);
-  const client = {client:'devin', installed:true, forward:true, forwardSince:'2026-11-20T00:52:50Z'};
+  const client = {client:'devin', installed:true, forward:true, forwardSince:through};
   const options = {
+    audience,
+    sessionAllowed:async()=>true,
     now: () => Date.parse(through),
     workloads,
     setup: {async read(p) {
       assert.equal(p, identity.principal);
-      return {record:{installations:[{installationId, clients:[{...client, forward:state.forward}]}]}};
+      return {record:{installations:[{installationId, clients:[{...client, forward:state.forward}]}]},
+        devinInitialForward:{installationId,forwardSince:client.forwardSince}};
     }},
     recording: {async read() {return {paused:state.paused,revision:'0'};},
       async capture(p, revision, timestamps, write) {
@@ -77,14 +90,19 @@ async function startupFixture() {
       assert.equal(t,tenant); assert.equal(o,org);
       return {id:'test-grant', enabledAt:state.enabledAt, key:'cog_synthetic'};
     },
-    async withClient(key, operation) {
+    async withClient(key, organizationId, operation) {
       assert.equal(key, 'cog_synthetic');
+      assert.equal(organizationId, org);
       return operation(async input => {
         requests.push(input);
         assert.equal(input.session_id,fixture.sessionId);
         state.onRequest?.(input);
-        if(input.action==='list') return state.page?.(input) ?? fixture.listLines;
-        return fixture.details.find(item=>item.id===input.event_ids[0]).response;
+        if(input.action==='list') return (input.first===2 ? undefined : state.page?.(input)) ?? fixtureList(input);
+        const response = fixture.details.find(item=>item.id===input.event_ids[0]).response;
+        if (input.event_ids[0]===fixture.details[0].id && state.privatePrompt) {
+          return response.replace('OCFIRSTNATIVE7Q4X.', state.privatePrompt);
+        }
+        return response;
       });
     },
   };
@@ -97,8 +115,57 @@ test('the reader fetches details in the signed native session and returns paired
   assert.deepEqual(events.map(e=>e.kind), ['message','tool_call','tool_result']);
   assert.equal(events[1].data.call_id,events[2].data.call_id);
   assert.equal(events[2].data.output,'OCRESULT-1795135980\n');
-  assert.deepEqual(requests.map(r=>r.action), ['list','details','details','details']);
+  assert.deepEqual(requests.map(r=>r.action), ['list','details','list','details','details']);
   assert.equal(new Set(requests.map(r=>r.session_id)).size,1);
+});
+
+test('an original privacy invocation prevents any request for tool details or summaries', async () => {
+  const {state,requests,read} = await startupFixture();
+  state.privatePrompt = '/oc-incognito';
+  await assert.rejects(read(), {status:403});
+  assert.deepEqual(requests.map(r=>r.action), ['list','details']);
+  assert.deepEqual(requests[0].event_types, ['initial_user_message']);
+});
+
+test('an independent workspace member finds each original event after ingest and retry', async t => {
+  const {principal,read} = await startupFixture();
+  const directory = await mkdtemp(join(tmpdir(), 'devin-startup-search-'));
+  t.after(() => rm(directory, {recursive: true, force: true}));
+  const endpoint = pathToFileURL(join(directory, 'search.sqlite')).href.replace('file:', 'sqlite:');
+  const store = memorySessionStore();
+  const options = {store, prefix: 'devin-first-turn/v1', endpoint};
+  const search = createSessionSearch(options);
+  const index = createSessionPipeline({...options, search, principal});
+  const ingest = createSessionIngest({...options, scheduleIndexing: key => index.processObject({key})});
+  const member = {tenantId: principal.tenantId, userId: 'workspace-reader'};
+  const sessionId = principal.owner.sessionId;
+  const batch = {schemaVersion: 1, owner: principal, harness: 'devin', origin: 'cloud', captureMode: 'live',
+    installationId, sessionId, events: await read(), attachments: []};
+  const receipt = await ingest.putBatch(principal, batch);
+  const retry = await ingest.putBatch(principal, {...batch, events: await read()});
+  assert.equal(retry.batchId, receipt.batchId);
+  const find = (query, scope = member, includeToolOutputs = true) =>
+    search.search(scope, {query, sessionId, includeToolOutputs});
+  const opener = await find('OCFIRSTNATIVE7Q4X');
+  assert.equal(opener.hits.length, 1);
+  assert.equal(opener.hits[0].role, 'user');
+  const commands = await find('printf');
+  const calls = commands.hits.filter(row => row.kind === 'tool_call');
+  assert.equal(calls.length, 1);
+  const output = await find('1795135980');
+  assert.equal(output.hits.length, 1);
+  assert.equal(output.hits[0].kind, 'tool_result');
+  assert.equal(output.hits[0].toolCallId, details[3].contents.process_id);
+  assert.equal(calls[0].toolCallId, output.hits[0].toolCallId);
+  for (const [hit, event] of [[opener.hits[0], details[0]], [calls[0], details[1]], [output.hits[0], details[3]]]) {
+    assert.equal(hit.nativeId, event.id);
+    assert.equal(hit.eventId, 'devin-event:' + event.id);
+    assert.equal(hit.sessionId, sessionId);
+    assert.equal(hit.userId, principal.userId);
+    assert.equal(hit.installationId, installationId);
+  }
+  assert.equal((await find('1795135980', member, false)).total, 0);
+  assert.equal((await find('OCFIRSTNATIVE7Q4X', {...member, tenantId: 'other-workspace'})).total, 0);
 });
 
 test('unverified identities, deselected recording and other installations make no upstream requests', async () => {
@@ -140,16 +207,16 @@ test('a subsequent user message on another page bounds the first turn regardless
     'Showing 4\nMore results available. Pass after=abc== to fetch the next page.\n' + fixture.listLines;
   const events = await read();
   assert.deepEqual(events.map(event=>event.kind), ['message']);
-  assert.deepEqual(requests.map(r=>r.action), ['list','list','details']);
-  assert.deepEqual(requests.at(-1).event_ids,[fixture.details[0].id]);
-  assert.equal(requests[1].after,'abc==');
+  assert.deepEqual(requests.map(r=>r.action), ['list','details','list','list']);
+  assert.deepEqual(requests[1].event_ids,[fixture.details[0].id]);
+  assert.equal(requests[3].after,'abc==');
 });
 
-test('a repeated provider cursor fails without requesting event contents', async () => {
+test('a repeated provider cursor fails before requesting tool contents', async () => {
   const {state,requests,read} = await startupFixture();
   state.page = ()=>'Showing 4\nMore results available. Pass after=abc== to fetch the next page.\n'+fixture.listLines;
   await assert.rejects(read(), {status:502});
-  assert.deepEqual(requests.map(r=>r.action), ['list','list']);
+  assert.deepEqual(requests.map(r=>r.action), ['list','details','list','list']);
 });
 
 test('real MCP transport reads only the named event tool and never serializes the service credential into results', async t => {
@@ -162,20 +229,41 @@ test('real MCP transport reads only the named event tool and never serializes th
     max_content_length:z.number().optional(),after:z.string().optional()})},async input=>{
     calls.push(input);
     assert.equal(input.session_id,fixture.sessionId);
-    const text = input.action==='list' ? fixture.listLines : fixture.details.find(row=>row.id===input.event_ids[0]).response;
+    const text = input.action==='list' ? fixtureList(input) : fixture.details.find(row=>row.id===input.event_ids[0]).response;
     return {content:[{type:'text',text}]};
   });
   await server.connect(transport);
   t.after(()=>server.close());
-  options.withClient=(key,callback)=>withDevinEventClient(key,callback,async (input,init)=>{
+  let identityReads = 0;
+  options.withClient=(key,organizationId,callback)=>withDevinEventClient(key,organizationId,callback,async (input,init)=>{
     const request = new Request(input,init);
-    assert.equal(request.url,'https://mcp.devin.ai/mcp');
     assert.equal(request.redirect,'error');
     assert.equal(request.headers.get('authorization'),'Bearer cog_synthetic');
+    if (request.url === 'https://api.devin.ai/v3/self') {
+      identityReads++;
+      return Response.json({principal_type: 'service_user', org_id: org});
+    }
+    assert.equal(request.url,'https://mcp.devin.ai/mcp');
+    assert.equal(identityReads, 1);
     return transport.handleRequest(request);
   });
   const events = await readDevinStartupEvents(options,principal,installationId,through);
   assert.deepEqual(events.map(event=>event.nativeId),[fixture.details[0].id,fixture.details[1].id,fixture.details[3].id]);
-  assert.equal(calls.length,4);
+  assert.equal(calls.length,5);
   assert.doesNotMatch(JSON.stringify(events),/cog_synthetic/);
+});
+
+test('wrong-organization, personal and enterprise credentials are rejected before the session ID is sent', async () => {
+  for (const identity of [{principal_type:'service_user', org_id:'org_foreign'},
+    {principal_type:'pat_user', org_id:org}, {principal_type:'service_user', org_id:null}]) {
+    const urls = [];
+    const fetcher = async (input, init) => {
+      urls.push(String(input));
+      assert.equal(init.body, undefined);
+      return Response.json(identity);
+    };
+    await assert.rejects(withDevinEventClient('cog_synthetic', org, read =>
+      read({action:'list',session_id:fixture.sessionId,first:1,event_types:['initial_user_message']}), fetcher), {status:502});
+    assert.deepEqual(urls, ['https://api.devin.ai/v3/self']);
+  }
 });

@@ -1,13 +1,14 @@
 import {fail} from '../errors.mjs';
 import {devinOwnerId, type createDevinWorkloads} from '../identity/devin.mjs';
 import type {Principal, SessionEvent} from '../sessions/types.mjs';
+import {privatePrompt} from '../sessions/private-invocation.mjs';
 import type {RecordingPolicy} from '../sessions/recording.mjs';
 import type {SetupState} from '../state/setup.mjs';
 import {withDevinEventClient} from './devin-events-client.mjs';
 import {firstTurnDevinEvent, readDevinEventDetail} from './devin-session-events.mjs';
 
 export type DevinEventRequest =
-  | {action: 'list'; session_id: string; first: number; event_types: string[]; after?: string}
+  | {action: 'list'; session_id: string; first: number; event_types: string[]; after?: string;created_after?:number;created_before?:number}
   | {action: 'details'; session_id: string; event_ids: string[]; max_content_length: number};
 
 /** The grant is established before the session starts, scoped to the provider
@@ -16,9 +17,12 @@ export interface DevinEventGrant {
   id: string;
   enabledAt: string;
   key: string;
+  sessionId?:string|null;
 }
 
 interface StartupReaderOptions {
+  audience: string;
+  sessionAllowed(principal:Principal,sessionId:string):Promise<boolean>;
   workloads: Pick<ReturnType<typeof createDevinWorkloads>, 'revalidate'>;
   setup: Pick<SetupState, 'read'>;
   recording: RecordingPolicy;
@@ -62,14 +66,17 @@ export async function readDevinStartupEvents(options: StartupReaderOptions, prin
   const deny = () => fail(403, 'Devin first-turn recording is not enabled for this installation');
   async function authorize() {
     await options.workloads.revalidate(principal);
-    const {record} = await options.setup.read(principal);
+    const {record,devinInitialForward} = await options.setup.read(principal);
     const installation = record?.installations.find(item => item.installationId === installationId);
     const client = installation?.clients.find(item => item.client === 'devin');
-    if (!client?.installed || !client.forward || !client.forwardSince) return deny();
+    if (!client?.installed || !client.forward || !client.forwardSince || devinInitialForward?.installationId !== installationId ||
+        devinInitialForward.forwardSince !== client.forwardSince) return deny();
     const grant = await options.grant(principal.tenantId, organizationId);
     if (!grant || !Number.isFinite(Date.parse(grant.enabledAt))) return deny();
+    if (grant.sessionId === null) fail(409,'Waiting for the administrator to select a Devin session');
+    if (grant.sessionId !== undefined && grant.sessionId !== session_id) return deny();
     const policy = await options.recording.read(principal);
-    if (policy.paused) return deny();
+    if (policy.paused || !await options.sessionAllowed(principal,session_id)) return deny();
     return {grant, forwardSince: client.forwardSince, revision: policy.revision};
   }
   const start = await authorize();
@@ -78,8 +85,9 @@ export async function readDevinStartupEvents(options: StartupReaderOptions, prin
     if (current.grant.id !== start.grant.id || current.grant.enabledAt !== start.grant.enabledAt ||
         current.forwardSince !== start.forwardSince || current.revision !== start.revision) deny();
   };
-  const events = await (options.withClient ?? withDevinEventClient)(start.grant.key, request =>
-    collectStartupEvents(request, recheck, session_id, Date.parse(start.grant.enabledAt), end));
+  const events = await (options.withClient ?? withDevinEventClient)(start.grant.key, organizationId, request =>
+    collectStartupEvents(request, recheck, session_id, Date.parse(start.grant.enabledAt),
+      Math.min(end,Date.parse(start.forwardSince)), options.audience));
   await recheck();
   return options.recording.capture(principal, start.revision, events.map(event => event.timestamp), async () => {
     await options.workloads.revalidate(principal);
@@ -88,13 +96,44 @@ export async function readDevinStartupEvents(options: StartupReaderOptions, prin
 }
 
 async function collectStartupEvents(request: (input: DevinEventRequest) => Promise<string>, recheck: () => Promise<void>,
-  session_id: string, enabledAt: number, end: number): Promise<SessionEvent[]> {
-  const listed = new Map<string,Listed>();
+  session_id: string, enabledAt: number, end: number, audience: string): Promise<SessionEvent[]> {
+  async function detail(item: Listed) {
+    await recheck();
+    const response = await request({action: 'details', session_id, event_ids: [item.id], max_content_length: 100000});
+    const actual = readDevinEventDetail(item.id, response);
+    const timestamp = Date.parse(actual.timestamp);
+    if (actual.type !== item.type || actual.category !== item.category || actual.direction !== item.direction ||
+        Math.floor(timestamp / 1000) * 1000 !== item.second) {
+      fail(502, 'Devin event details disagree with the session listing');
+    }
+    return actual;
+  }
+
+  // A private initial prompt must stop recovery before even requesting tool
+  // summaries. The first query contains no shell or later-message selectors.
+  await recheck();
+  const bounds = {created_after:Math.floor(enabledAt/1000)-1, created_before:Math.ceil(end/1000)+1};
+  const opening = readEventPage(await request({action:'list', session_id, first:2, event_types:['initial_user_message'], ...bounds}));
+  if (opening.after || opening.records.length > 1) fail(502, 'Ambiguous initial Devin prompt');
+  const opener = opening.records[0];
+  if (!opener || opener.type !== 'initial_user_message' || opener.category !== 'message' || opener.direction !== 'incoming' ||
+      opener.second > end || opener.second + 999 < enabledAt) return [];
+  const prompt = await detail(opener);
+  const openedAt = Date.parse(prompt.timestamp);
+  if (openedAt < enabledAt || openedAt > end) return [];
+  if (typeof prompt.contents.message === 'string' && privatePrompt(prompt.contents.message, audience)) {
+    throw Object.assign(new Error('The initial Devin prompt selected private recording'),{status:403,code:'DEVIN_SESSION_PRIVATE'});
+  }
+  const first = firstTurnDevinEvent(prompt);
+  if (!first) return [];
+
+  const listed = new Map<string, Listed>();
   const cursors = new Set<string>();
   let after: string | undefined;
   do {
     await recheck();
-    const page = readEventPage(await request({action:'list', session_id, first:100, event_types:[...selectors], ...(after && {after})}));
+    const page = readEventPage(await request({action:'list', session_id, first:100,
+      event_types:selectors.filter(type => type !== 'initial_user_message'), ...bounds, ...(after && {after})}));
     for (const item of page.records) listed.set(item.id, item);
     after = page.after;
     if (after) {
@@ -102,40 +141,21 @@ async function collectStartupEvents(request: (input: DevinEventRequest) => Promi
       cursors.add(after);
     }
   } while (after);
-  // Do not request the body of a subsequent user message. The provider's list
-  // exposes only second precision, so exclude the ambiguous boundary second.
+  // The listing only resolves whole seconds. Do not request the full text of
+  // a follow-up user message or attribute tools in its ambiguous boundary second.
   const nextTurn = Math.min(Infinity,...Array.from(listed.values(), item =>
     item.type === 'user_message' && item.direction === 'incoming' && item.category === 'message' ? item.second : Infinity));
-  const initial = [...listed.values()].filter(item => item.type === 'initial_user_message' && item.direction === 'incoming' && item.category === 'message');
-  if (initial.length !== 1) return [];
-  const opener = initial[0]!;
-  const ordered = [...listed.values()].filter(item => item.type !== 'initial_user_message' && item.type !== 'user_message' && item.second >= opener.second);
+  const ordered = [...listed.values()].filter(item =>
+    item.type.startsWith('shell_process_') && item.category === 'shell' && item.direction === 'outgoing' &&
+    item.second >= opener.second && item.second < nextTurn && item.second <= end);
   ordered.sort((a, b) => a.second - b.second);
-  ordered.unshift(opener);
-  const events: SessionEvent[] = [];
-  for (const {id, second, direction, type, category} of ordered) {
-    // Listing times have second precision. Check native precision again below.
-    if (second >= nextTurn || second > end || second + 999 < enabledAt) {
-      if (id === opener.id) return [];
-      continue;
-    }
-    await recheck();
-    const data = await request({action: 'details', session_id, event_ids: [id], max_content_length: 100000});
-    const detail = readDevinEventDetail(id, data);
-    if (detail.type !== type || detail.category !== category || detail.direction !== direction) {
-      fail(502, 'Devin event details disagree with the session listing');
-    }
-    const timestamp = Date.parse(detail.timestamp);
-    if (timestamp < enabledAt || timestamp > end || timestamp >= nextTurn) {
-      if (id === opener.id) return [];
-      continue;
-    }
-    const event = firstTurnDevinEvent(detail);
-    if (!event) {
-      if (id === opener.id) return [];
-      continue;
-    }
-    events.push(event);
+  const events = [first];
+  for (const item of ordered) {
+    const actual = await detail(item);
+    const at = Date.parse(actual.timestamp);
+    if (at < openedAt || at > end) continue;
+    const event = firstTurnDevinEvent(actual);
+    if (event) events.push(event);
   }
   return events;
 }
