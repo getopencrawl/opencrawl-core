@@ -1,7 +1,7 @@
 import type {SuggestionEvent} from '../../src/search/suggestion-events.mts';
 import {Database} from 'bun:sqlite';
 import {randomUUID} from 'node:crypto';
-import {mkdirSync,readFileSync,statSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
+import {mkdirSync,readFileSync,statSync,existsSync,lstatSync,chmodSync,openSync,closeSync} from 'node:fs';
 import {dirname,join} from 'node:path';
 import {atomicJson,configDir,withFileLock} from './session.ts';
 import {readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
@@ -61,7 +61,13 @@ export async function updateCheckSettings(binding:CheckBinding,selected:readonly
     const {file,choices}=preferences(binding);
     for(const harness of selected)choices[harness]=enabled;
     const settings=resolveSettings(binding,config,randomUUID(),choices);
-    atomicJson(file,{...settings,choices});return settings;
+    // A previously released native plugin can still read explicit selections
+    // while the installation upgrades. Never replace another account's file.
+    const legacy=settingsFile(binding.api);
+    const destination=existsSync(legacy)?file:legacy;
+    const explicit=CHECK_HARNESSES.filter(h=>choices[h]===true);
+    atomicJson(destination,{...settings,harnesses:explicit,choices});
+    return settings;
   });
 }
 export function assertCheckSettings(settings:CheckSettings,harness:CheckHarness):void {
