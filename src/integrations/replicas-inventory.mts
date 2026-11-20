@@ -48,9 +48,9 @@ export async function observeReplicasWorkspace(client:Client,scope:{namespace:st
     // A consistently absent chat is watched through the daily roster. Give
     // its history endpoint a weekly backstop even if the roster stays stale.
     // Count from the actual failed read so later checks cannot push it out.
-    const failedAt="COALESCE((issue->>'at')::timestamptz,$6::timestamptz)";
+    const failedAt="COALESCE(GREATEST((issue->>'at')::timestamptz,(issue->>'sharedAt')::timestamptz),$6::timestamptz)";
     const nextProbe=`GREATEST((issue->>'providerRetryAt')::timestamptz,
-      CASE WHEN COALESCE((issue->>'attempt')::int,0)>=3 AND issue ? 'workspaceAbsentAt' THEN ${failedAt}+interval '7 days'
+      CASE WHEN GREATEST((issue->>'attempt')::int,(checkpoint->>'chatAttempts')::int)>=3 AND issue ? 'workspaceAbsentAt' THEN ${failedAt}+interval '7 days'
            ELSE LEAST(GREATEST(retry_at,$7::timestamptz),${failedAt}+interval '24 hours') END)`;
     const absent=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=${nextProbe},
       issue=issue||jsonb_build_object('workspaceAbsentAt',COALESCE(issue->>'workspaceAbsentAt',$6::text),'retryAt',${nextProbe})

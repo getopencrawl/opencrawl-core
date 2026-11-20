@@ -1059,12 +1059,24 @@ test('daily rosters park repeatedly absent chats without rewriting the same retr
   assert.equal(await retry(),Date.parse(provider));
 });
 
-test('staggered absent-chat retries share the daily wake while active work keeps its deadline',async t=>{
+test('a shared empty-page observation keeps its actual time and attempt count in the weekly backstop',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  const now=Date.now(),day=86_400_000,shared=new Date(now-day).toISOString(),old=new Date(now-4*day).toISOString();
+  const scope=[f.database.namespace,principal.tenantId];
+  await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
+    [...scope,old,chat,{before:null,chatAttempts:4},{at:old,attempt:1,sharedAt:shared,workspaceAbsentAt:old,importId:id,operation:'history',reason:'empty_with_messages'}]);
+  const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
+  await f.database.transaction(db=>observeReplicasWorkspace(db,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now,async()=>({chats:[]})));
+  const row=(await f.database.pool.query('SELECT retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',scope)).rows[0];
+  assert.equal(row.retry_at.getTime(),Date.parse(shared)+7*day);
+});
+
+test('confirmed absent chats share the daily wake even with legacy counters while active work keeps its deadline',async t=>{
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const {deferredHistory}=await import('../dist/src/integrations/replicas-deferred.mjs');
   const db=f.database.pool,scope=[f.database.namespace,principal.tenantId],queue=deferredHistory(db,...scope);
   const now=Date.now(),day=86_400_000,next=now+day,at=new Date(now).toISOString();
-  const absent={at,attempt:4,workspaceAbsentAt:at,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
+  const absent={at,attempt:0,workspaceAbsentAt:at,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
   const add=(when,row,issue)=>queue.save(row,{before:null,historyCursors:[],occurrences:{}},issue,new Date(when).toISOString());
   await add(now+1000,chat,absent);
   assert.equal((await queue.oldest(false,now+2000,next)).wake,next);
@@ -1075,4 +1087,17 @@ test('staggered absent-chat retries share the daily wake while active work keeps
   await queue.remove(result.row);
   assert.equal((await queue.oldest(false,next,next+day)).row.chat.chat_id,chat.chat_id);
   assert.ok((await queue.oldest(false,next,next+day)).wake<=next);
+});
+
+test('a persistent catalog count mismatch shares the daily wake only with complete roster coverage',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
+  await advance(f.service,id);await advance(f.service,id);
+  const {nextWorkspaceExportReview,reviewWorkspaceExport}=await import('../dist/src/integrations/replicas-export-review.mjs');
+  const db=f.database.pool,scope=[f.database.namespace,principal.tenantId,id],now=Date.now(),day=86_400_000,next=new Date(now+day).toISOString();
+  const due=new Date(now+1000).toISOString(),issue={phase:'inconsistent_catalog',attempt:3,retryAt:due,lastFailure:{reason:'terminal_count'}};
+  const update=ids=>db.query("UPDATE opencrawl_replicas_workspace_inventories SET result='ready',chat_ids=$4,export_check=$5 WHERE namespace=$1 AND tenant=$2 AND import_id=$3",[...scope,ids,issue]);
+  await update([chat.chat_id]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(next));
+  assert.equal((await reviewWorkspaceExport(db,scope,[],{},now+2000,true,next)).requested,false);
+  assert.equal(await nextWorkspaceExportReview(db,scope,true,new Date(now+2*day).toISOString()),Date.parse(due));
+  await update([chat.chat_id,randomUUID()]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(due));
 });

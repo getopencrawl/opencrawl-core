@@ -15,7 +15,7 @@ import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-
 import {prepareSnapshots,saveSnapshot,snapshotProgress,snapshotsForPage,sourceRevision,type WorkspaceVersion} from './replicas-snapshots.mjs';
 import {nextWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
 import {observeReplicasWorkspace} from './replicas-inventory.mjs';
-import {checkpoint,deferredHistory,emptyCheckpoint,settledAbsence,type HistoryCheckpoint} from './replicas-deferred.mjs';
+import {checkpoint,deferredHistory,emptyCheckpoint,confirmedAbsence,type HistoryCheckpoint} from './replicas-deferred.mjs';
 import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} from './replicas-recovery.mjs';
 
 export interface ReplicasImportStatus {
@@ -52,7 +52,8 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       PRIMARY KEY(namespace,tenant,retry_at,id))`);
     await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_continuation
       ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL`);
-    await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_active ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE NOT (${settledAbsence})`);
+    await client.query(`CREATE INDEX IF NOT EXISTS opencrawl_replicas_deferred_unconfirmed ON opencrawl_replicas_deferred(namespace,tenant,retry_at,id) WHERE NOT (${confirmedAbsence})`);
+    await client.query('DROP INDEX IF EXISTS opencrawl_replicas_deferred_active');
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_workspace_inventories(
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
@@ -170,7 +171,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       state.nextCatalogAt=new Date(now()+day).toISOString();
     }
     const review=async()=>{
-      const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now(),sweep);
+      const result=await reviewWorkspaceExport(client,reviewScope,state.completedSessions,api,now(),sweep,state.nextCatalogAt);
       if(result.added){state.total+=result.added;state.blocked=(state.blocked??0)+result.added;delete state.waitingForSource;}
       return result.requested;
     };
@@ -205,10 +206,14 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         return;
       }
       if(!hasFresh){
-        const nextReview=await nextWorkspaceExportReview(client,reviewScope,sweep);
+        const nextReview=await nextWorkspaceExportReview(client,reviewScope,sweep,state.nextCatalogAt);
         if(nextReview!==undefined&&nextReview<=now()){await review();return;}
-        state.retryAt=new Date(Math.min(wake,nextReview??Infinity)).toISOString();
+        state.retryAt=new Date(Math.min(wake,nextReview??Infinity,state.nextCatalogAt?Date.parse(state.nextCatalogAt):Infinity)).toISOString();
         state.waitingForSource=await pending.onlyAbsent();
+        console.info(JSON.stringify({event:'replicas.import.wait',tenantId:principal.tenantId,importId:state.id,
+          pendingRecords:state.blocked,waitingForSource:state.waitingForSource,retryAt:state.retryAt,nextCatalogAt:state.nextCatalogAt,
+          deferredAt:row.retry_at.toISOString(),deferredWakeAt:new Date(wake).toISOString(),
+          workspaceReviewAt:nextReview===undefined?undefined:new Date(nextReview).toISOString()}));
         return;
       }
     }
@@ -462,7 +467,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         }
       }
       if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked){
-        const next=await nextWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length));
+        const next=await nextWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length),state.nextCatalogAt);
         if(next===undefined)state.phase='complete';
         else if(next>now()){state.retryAt=new Date(next).toISOString();state.waitingForSource=true;}
       }

@@ -52,7 +52,7 @@ pass. Unchanged chats require no history downloads or indexing handoffs.
 A new catalog record or a newer native revision queues that chat. Replicas pages
 history backwards and supplies no immutable-prefix guarantee, so a changed chat
 is checked through its terminal cursor. Active page continuations and transient
-failures resume from their checkpoints between daily scans. A chat that repeatedly returns empty or 404 and is absent from its workspace gets a weekly direct history probe during the daily inventory run. Its reappearance in the daily workspace list releases it earlier, subject to the provider’s Retry-After.
+failures resume from their checkpoints between daily scans. A failed first-page read confirmed absent by its workspace list waits for the next daily scan. A chat that repeatedly returns empty or 404 and is absent from its workspace gets a weekly direct history probe during the daily inventory run. Its reappearance in the daily workspace list releases it earlier, subject to the provider’s Retry-After.
 
 ### Live capture and history of the same chat
 
@@ -75,7 +75,7 @@ When a history request fails for one chat, the worker stores the catalog record,
 
 A 401 or 403 triggers a check of the key's organization identity. A 401 from the identity endpoint or a mismatched organization identity requires a new key. A temporary identity outage or a 403 from that check retains the credential for retry. Access to an individual workspace can depend on Team workspace visibility. A 404 alone cannot establish that setting. An admin can stop an active import in Integrations. The daily sync retains the encrypted key while connected. A confirmed credential rejection or an explicit stop clears it. Reconnecting the same organization continues the saved import, including records deferred before the stop. An earlier release may already have erased a key after a failure. Those imports need one reconnect.
 
-Daily catalog diagnostics record examined, unchanged and queued rows. Archive
+Daily catalog diagnostics record examined, unchanged and queued rows. The worker logs `replicas.import.wait` with the raw deferred deadline, its scheduled wake, the next catalog and workspace-review deadlines, and the selected retry time. Archive
 recovery logs record scanned bytes and page counts, and distinguish a verified
 thread from conflicting evidence. Both operations checkpoint per tenant and import.
 
