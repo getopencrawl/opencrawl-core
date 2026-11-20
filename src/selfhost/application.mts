@@ -39,7 +39,6 @@ import {productRoute,type Route} from '../application/routes.mjs';
 import {createConsoleReloadCache} from '../application/console-reload.mjs';
 import {productRouter,handleProductRpc,rpcError} from '../application/rpc.mjs';
 import {usageServices} from '../application/usage.mjs';
-import {valueReports} from '../application/value-report.mjs';
 import {diagnosticRequest} from '../application/diagnostics.mjs';
 import {integrationRequest} from '../application/integration-http.mjs';
 import {securityHeaders,document} from '../application/presentation.mjs';
@@ -138,7 +137,6 @@ export function selfhostApplication({settings,store,boardState,setupState,record
   const onboarding=createOnboardingStatus({store,prefix,
     onSharedReady:async p=>{if(p.owner?.provider==='devin')await devin?.connections.confirmInstallation(p);else await replicas.confirmInstallation(p);},
     sharedInstallations:async p=>(await Promise.all([replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
-  const values=valueReports({store,prefix});
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
@@ -264,7 +262,7 @@ export function selfhostApplication({settings,store,boardState,setupState,record
       const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[]];
       const consoleApi=createConsoleApi({usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
-        ...usageServices(principal => ({principal,directory,integrations,search,connectors,onboarding,values,log})),progress:guided.progress,next:guided.next,library,libraryFailure},setup?{bootstrap:async context=>({setup:await setup.read(context.principal)})}:{});
+        ...usageServices(principal => ({principal,directory,integrations,search,connectors,onboarding,log})),progress:guided.progress,next:guided.next,library,libraryFailure},setup?{bootstrap:async context=>({setup:await setup.read(context.principal)})}:{});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
         if(selected.name.startsWith('/api/console/')){
           if(!setup&&!['/api/console/bootstrap','/api/console/replicas/setup'].includes(selected.name)&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');

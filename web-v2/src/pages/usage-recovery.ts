@@ -4,7 +4,7 @@ import type {UsageSection, UsageSource} from '../../../src/application/reports.m
 const dependencies: Record<UsageSection, readonly UsageSource[]> = {
   workspace: ['organization'], agents: ['sessions'], overlap: ['overlap'],
   ingestion: ['integrations', 'connectors'], members: ['members', 'sessions', 'integrations', 'onboarding'],
-  value: ['value'], capture: ['capture'],
+  value: [], capture: ['capture'],
 };
 
 export function usageSectionFailed(report: Pick<UsageReport, 'failedSources'>, section: UsageSection) {
