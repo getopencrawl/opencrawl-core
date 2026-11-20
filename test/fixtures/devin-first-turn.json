@@ -1,0 +1,24 @@
+{
+  "source": "Four first-turn events returned by Devin Cloud devin_session_events on 2026-11-19. Session, sender, process, shell and event identifiers are sanitized.",
+  "originalArtifactSha256": "2dc15f08020f5bad3dc46f5335cfef1adaf59274733abe9d6b2c517bc3579c38",
+  "sessionId": "devin-11111111111111111111111111111111",
+  "listLines": "[event-00000000000000000000000000000001] 2026-11-20 00:52:48 UTC <<< initial_user_message (message): user: OCFIRSTNATIVE7Q4X. Synthetic first-turn diagnostic. Make your first tool call a shell execution of exactly: printf \"OCRESULT-%s\\n\" \"$(date +%s)\". T...\n[event-00000000000000000000000000000002] 2026-11-20 00:53:00 UTC >>> shell_process_started (shell): exec: printf \"OCRESULT-%s\\n\" \"$(date +%s)\" (shell: aa11bb)\n[event-00000000000000000000000000000003] 2026-11-20 00:53:00 UTC >>> terminal_update (shell): terminal output update (shell: aa11bb)\n[event-00000000000000000000000000000004] 2026-11-20 00:53:00 UTC >>> shell_process_completed (shell): exit_code=0, output: OCRESULT-1795135980",
+  "details": [
+    {
+      "id": "event-00000000000000000000000000000001",
+      "response": "Event details (1 events):\n\n--- event-00000000000000000000000000000001 ---\n  type: initial_user_message (message)\n  direction: incoming\n  created_at: 2026-11-20 00:52:48 UTC\n  contents: {\n  \"type\": \"initial_user_message\",\n  \"username\": \"SYNTHETIC_USERNAME\",\n  \"user_id\": \"user-SYNTHETIC\",\n  \"message\": \"OCFIRSTNATIVE7Q4X. Synthetic first-turn diagnostic. Make your first tool call a shell execution of exactly: printf \\\"OCRESULT-%s\\\\n\\\" \\\"$(date +%s)\\\". Then tell me only the single output line and wait. Work only in this session. Do not read repositories, credentials, other sessions or OpenCrawl.\",\n  \"origin\": \"web\",\n  \"timestamp\": \"2026-11-20T00:52:48.539660+00:00\",\n  \"rich_content\": [\n    {\n      \"text\": \"OCFIRSTNATIVE7Q4X. Synthetic first-turn diagnostic. Make your first tool call a shell execution of exactly: printf \\\"OCRESULT-%s\\\\n\\\" \\\"$(date +%s)\\\". Then tell me only the single output line and wait. Work only in this session. Do not read repositories, credentials, other sessions or OpenCrawl.\"\n    }\n  ],\n  \"github_username\": \"synthetic-gh-user\",\n  \"email\": \"user@example.invalid\"\n}"
+    },
+    {
+      "id": "event-00000000000000000000000000000002",
+      "response": "Event details (1 events):\n\n--- event-00000000000000000000000000000002 ---\n  type: shell_process_started (shell)\n  direction: outgoing\n  created_at: 2026-11-20 00:53:00 UTC\n  contents: {\n  \"type\": \"shell_process_started\",\n  \"timestamp\": \"2026-11-20T00:53:00.378000Z\",\n  \"starting_dir\": \"/home/ubuntu\",\n  \"process_id\": \"11111111-1111-4111-8111-111111111111\",\n  \"shell_id\": \"aa11bb\",\n  \"command\": \"printf \\\"OCRESULT-%s\\\\n\\\" \\\"$(date +%s)\\\"\",\n  \"is_major_action\": true\n}"
+    },
+    {
+      "id": "event-00000000000000000000000000000003",
+      "response": "Event details (1 events):\n\n--- event-00000000000000000000000000000003 ---\n  type: terminal_update (shell)\n  direction: outgoing\n  created_at: 2026-11-20 00:53:00 UTC\n  contents: {\n  \"type\": \"terminal_update\",\n  \"timestamp\": \"2026-11-20T00:53:00.378000Z\",\n  \"contents\": \"T0NSRVNVTFQtMTc5NTEzNTk4MA0K\",\n  \"shell_id\": \"aa11bb\",\n  \"process_id\": \"11111111-1111-4111-8111-111111111111\"\n}"
+    },
+    {
+      "id": "event-00000000000000000000000000000004",
+      "response": "Event details (1 events):\n\n--- event-00000000000000000000000000000004 ---\n  type: shell_process_completed (shell)\n  direction: outgoing\n  created_at: 2026-11-20 00:53:00 UTC\n  contents: {\n  \"type\": \"shell_process_completed\",\n  \"timestamp\": \"2026-11-20T00:53:00.380000Z\",\n  \"output_trunc\": \"OCRESULT-1795135980\\n\",\n  \"process_id\": \"11111111-1111-4111-8111-111111111111\",\n  \"process_uuid\": \"11111111-1111-4111-8111-111111111111\",\n  \"exit_code\": \"0\"\n}"
+    }
+  ]
+}
