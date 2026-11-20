@@ -59,7 +59,7 @@ test('independent source failures are reported, and a display-name failure canno
   const report=await usageReport({principal,directory:{...directory,organizations:{getOrganization:failure}},captured:async()=>({tokens:42,since:'2026-11-01'}),
     integrations:{list:failure},values:{read:failure},search:{usage:failure,overlap:async()=>({timeZone:'UTC',measuredAt:new Date().toISOString(),sessions:1,daily:[]})}});
   assert.equal(report.capture.tokens,42);assert.equal(report.overlap.sessions,1);assert.equal(report.agents,null);
-  assert.deepEqual(report.failedSources,['integrations','organization','sessions','value']);
+  assert.deepEqual(report.failedSources,['integrations','organization','sessions']);
 });
 
 test('console logs the private cause without exposing it, and revalidates partial reports', async () => {
@@ -92,7 +92,7 @@ test('Usage highlights and details partition the reads for a full report', async
     integrations: {list: read('integrations', [])}, connectors: {count: read('connectors', {total: 0, kinds: {}, providers: {}, connections: {}})},
     onboarding: {read: read('onboarding', {})}, search: {usage: read('activity', activity), overlap: read('overlap', {sessions: 1, daily: []})}};
   const highlights = await usageReport({...options, part: 'highlights'});
-  assert.deepEqual(calls.sort(), ['capture', 'organization', 'value']);
+  assert.deepEqual(calls.sort(), ['capture', 'organization']);
   assert.equal(highlights.capture.tokens, 42);
   calls.length = 0;
   const details = await usageReport({...options, part: 'details'});

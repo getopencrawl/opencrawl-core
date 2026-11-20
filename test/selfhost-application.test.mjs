@@ -186,7 +186,7 @@ test('self-host team integration actions reject members through both HTTP and tR
   assert.deepEqual(calls,['connect','retry','disconnect','disconnect-all']);
 });
 
-test('OSS reads only its configured organization measured report from operator storage',async t=>{
+test('OSS ignores historical judged reports stored for its own and other organizations',async t=>{
   const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
@@ -201,7 +201,7 @@ test('OSS reads only its configured organization measured report from operator s
   assert.equal((await (await f.request('/api/console/usage','admin')).json()).value,null);
   await f.store.put(valueReportKey(f.prefix,org),JSON.stringify(report));
   const response=await f.request('/api/console/usage','admin');assert.equal(response.status,200);
-  const result=await response.json();assert.deepEqual(result.value,report);assert.equal(result.capture,null);
+  const result=await response.json();assert.equal(result.value,null);assert.equal(result.capture,null);
 
 });
 test('OSS withholds a completed tRPC response if membership or admin role changes during its read',async t=>{

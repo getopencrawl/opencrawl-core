@@ -23,24 +23,12 @@ test('value reports accept schema 4 exactly and ignore anything else', () => {
   ]) assert.equal(parseValueReport(bad), null);
 });
 
-test('the usage report shows only the signed-in workspace’s own measured value', async () => {
+test('the legacy reader stays tenant-scoped', async () => {
   const store = memorySessionStore();
   await store.put(valueReportKey(prefix, 'org_a'), JSON.stringify(report));
-  await store.put(valueReportKey(prefix, 'org_b'), JSON.stringify({...report, work: {...report.work, tasks: 1}}));
-  assert.notEqual(valueReportKey(prefix, 'org_a'), valueReportKey(prefix, 'org_b'));
-  assert.match(valueReportKey(prefix, 'org_a'), /^sessions\/staging\/v1\/value\/tenants\/[a-f0-9]{64}\.json$/);
   const values = valueReports({store, prefix});
-  const directory = {
-    organizations: {getOrganization: async id => ({id, name: 'Acme'})},
-    userManagement: {listOrganizationMemberships: async () => ({data: []}), getUser: async () => null},
-  };
-  const read = tenantId => usageReport({principal: {tenantId, userId: 'user_a'}, directory, values});
-  assert.equal((await read('org_a')).value?.work.tasks, 368);
-  assert.equal((await read('org_b')).value?.work.tasks, 1);
-  assert.equal((await read('org_c')).value, null);
-  await store.put(valueReportKey(prefix, 'org_c'), '{"schema":4}');
-  assert.equal((await read('org_c')).value, null);
-  assert.equal((await usageReport({principal: {tenantId: 'org_a', userId: 'user_a'}, directory})).value, null);
+  assert.deepEqual(await values.read('org_a'), report);
+  assert.equal(await values.read('org_b'), null);
 });
 
 test('tokens captured uses only the verified organization adapter', async () => {

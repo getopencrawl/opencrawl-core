@@ -298,47 +298,11 @@ function cards(html: string, heading: string) {
 
 const capture = {tokens: 52_500_000, since: '2026-11-01T00:00:00.000Z'};
 
-test('with a measured report Usage has one Agent alignment row: tokens captured, drift saves, uses and answers used', () => {
-  const html = render({...report(), value: value(), capture});
-  assert.deepEqual([...html.matchAll(/<h2\b[^>]*>([^<]+)<\/h2>/g)].map(match => match[1]), ['Agent alignment', 'Data sources', 'Team']);
-  assert.deepEqual(cards(html, 'Agent alignment'), [
-    ['Tokens captured', '52.5M', 'captured since 2026-11-01'],
-    ['Drift saves', '42', '35 conflicts, 7 duplicates avoided'],
-    ['OpenCrawl uses', '4,030', '340 searches, 3,690 board messages'],
-    ['Answers agents used', '290', '221 search results, 69 board fixes'],
-  ]);
-  const text = html.replace(/<[^>]*>/g, '');
-  assert.match(text, /How OpenCrawl kept your agents on track since 2026-11-05, across 386 sessions and 368 tasks\./);
-  const section = text.slice(text.indexOf('Agent alignment'), text.indexOf('Data sources'));
-  assert.doesNotMatch(section, /AI spend|list prices|\$|saved|savings|fewer|would have|Without OpenCrawl|OpenCrawl cost|×/i);
-  for (const label of ['Sessions', 'Messages', 'Tool calls', 'OpenCrawl calls']) assert.doesNotMatch(html, new RegExp(`<dt>${label}<`));
-  // The capture charts stay under the merged row.
-  for (const kept of ['Daily agent sessions', 'Where agents run', 'Machines capturing:']) assert.ok(section.includes(kept), kept);
-  const help = [...html.matchAll(/<button type="button" class="report-help-button" aria-label="([^"]+)" aria-describedby="([^"]+)">\?<\/button><span class="report-help-text" role="tooltip" id="([^"]+)">(.*?)<\/span>/g)];
-  assert.deepEqual(help.map(match => match[1]), ['How Tokens captured is calculated', 'How Drift saves is calculated', 'How OpenCrawl uses is calculated', 'How Answers agents used is calculated']);
-  assert.ok(help.every(match => match[2] === match[3]));
-  assert.equal(help[0]![4], 'The text of your agents’ sessions that OpenCrawl has stored since 2026-11-01, counted in tokens. This is what OpenCrawl billing is based on.');
-  assert.equal(help[3]![4], '221 search results the agent’s next message went on to use, plus 69 fixes and decisions picked up from another agent on the board. Searches most often found what teammates’ agents were doing (116), where things live (65), past decisions (34).');
-});
-
-test('the merged row adapts: sessions lead when tokens are not metered, and zero uses show plainly', () => {
-  assert.deepEqual(cards(render({...report(), value: value()}), 'Agent alignment').map(card => card[0]), ['Sessions', 'Drift saves', 'OpenCrawl uses', 'Answers agents used']);
-  const empty = {...value(), drift: {conflictsAvoided: 1, duplicatesAvoided: 0}, usage: {searches: 0, boardMessages: 1},
-    value: {searchesUsed: 0, fixesReused: 1, found: {teammateWork: 0, whereThingsLive: 0, pastDecisions: 0, pastFixes: 0, other: 0}}};
-  const html = render({...report(), value: empty, capture});
-  assert.deepEqual(cards(html, 'Agent alignment').slice(1), [
-    ['Drift saves', '1', '1 conflict, 0 duplicates avoided'],
-    ['OpenCrawl uses', '1', '0 searches, 1 board message'],
-    ['Answers agents used', '1', '0 search results, 1 board fix'],
-  ]);
-  assert.doesNotMatch(html, /Searches most often found/);
-  const unavailable = render({...report(), agents: null, value: value(), capture});
-  assert.equal(cards(unavailable, 'Agent alignment').length, 4);
-});
-
-test('without a measured report the section stays Agent sessions with its capture cards and no hovers', () => {
-  assert.doesNotMatch(render(), /Agent alignment|report-help/);
-  assert.doesNotMatch(render({...report(), value: null}), /Agent alignment/);
+test('Usage ignores historical model judgments and renders captured activity', () => {
+  const current = render({...report(), value: null, capture});
+  const legacy = render({...report(), value: value(), capture});
+  assert.equal(legacy, current);
+  assert.doesNotMatch(legacy, /Agent alignment|Drift saves|Answers agents used/);
 });
 
 test('Agent sessions shows tokens captured when metered and OpenCrawl calls instead of machines', () => {
