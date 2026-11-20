@@ -53,7 +53,7 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
     for (const key of store.data.keys()) if (!before.has(key) && key.endsWith('.json.gz')) await pipeline.processObject({key});
     await search.refresh(user);
   }
-  await upload(owner, 'shared', [human('a', 1, 'Alice request'), human('b', 2, 'Bob request'), human('c', 1, 'Another request'), {id: 'answer', kind: 'message', timestamp: '2026-11-13T10:01:00Z', data: {role: 'assistant', content: 'quayside answer'}}], {[sender(1)]: {provider: 'replicas', userId: sender(1), name: 'Alice'}, [sender(2)]: {provider: 'replicas', userId: sender(2), name: 'Bob'}});
+  await upload(owner, 'shared', [human('a', 1, 'Alice request'), human('b', 2, 'Bob request'), human('c', 1, 'Another request'), {id: 'answer', kind: 'message', timestamp: '2026-11-13T10:01:00Z', data: {role: 'assistant', content: 'quayside answer'}}], {[sender(1)]: {provider: 'replicas', userId: sender(1), name: 'Alice', email: 'Alice@Example.org'}, [sender(2)]: {provider: 'replicas', userId: sender(2), name: 'Bob'}});
   await upload(owner, 'unknown', [{...human('unknown', 3, 'Anonymous API message'), actor: {...actor(3), kind: 'unknown', userId: undefined}}]);
   await upload(principal, 'local', [{id: 'local', kind: 'message', timestamp: '2026-11-13T10:00:00Z', data: {role: 'user', content: 'Local request'}}]);
   await upload(principal, 'assistant-only', [{id: 'answer-only', kind: 'message', timestamp: '2026-11-13T10:00:00Z', data: {role: 'assistant', content: 'A partial local capture'}}]);
@@ -64,9 +64,31 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
   assert.deepEqual(list.sessions.find(s => s.sessionId === 'local').participants, [{id: 'user:alice'}]);
   assert.deepEqual(list.sessions.find(s => s.sessionId === 'assistant-only').participants, [{id: 'user:alice'}]);
   assert.deepEqual(list.sessions.find(s => s.sessionId === 'uploader-only').participants.map(p => p.id), ['replicas:' + sender(2)]);
+  const member = {id: 'member-alice', email: 'alice@example.org', emailVerified: true};
+  const window = {team: true, now: Date.parse('2026-11-14T10:00:00Z')};
+  const report = async (members = [member]) => (await search.usage(principal, {...window, members})).people;
+  assert.deepEqual(await report(), [{userId: member.id, sessions: 0, subagentSessions: 0, messages: 0, toolCalls: 0,
+    events: 0, weekEvents: 2, lastAt: '2026-11-13T10:00:00.000Z'}]);
+  assert.deepEqual(await report([{...member, emailVerified: false}]), []);
+  assert.deepEqual(await report([member, {...member, id: 'duplicate'}]), []);
+  assert.deepEqual(await report([{...member, email: 'bob@example.org'}]), []);
+  assert.deepEqual((await search.usage({...principal, tenantId: foreign}, {...window, members: [member]})).people, []);
+  await assert.rejects(search.usage(principal, {members: [member]}), {status: 403});
   const filler = Array.from({length: 501}, (_, n) => ({id: 'filler-' + n, document: {...owner, harness: 'claude-code', sessionId: 'aaa' + String(n).padStart(3, '0'), kind: 'message', chunk: 0, participantVersion: 1, participantId: 'replicas:' + sender(2), text: 'Unrelated', timestamp: '2026-11-13T10:00:00Z'}}));
   const excludedOwners = filler.map(item => ({id: 'owner-' + item.id, document: {...item.document, userId: principal.userId}}));
   await collection.bulk(principal, [...filler, ...excludedOwners], {refresh: true});
+  // Shared installations can outnumber the roster by orders of magnitude.
+  const quiet = {...member, id: 'quiet-member'};
+  const workloads = filler.flatMap((item, n) => [0, 1].map(i => ({id: 'workload-' + n + '-' + i,
+    document: {...item.document, userId: 'workload_replicas_' + n}})));
+  const direct = {id: 'quiet-direct', document: {...filler[0].document, userId: quiet.id, timestamp: '2026-11-12T10:00:00Z'}};
+  await collection.bulk(principal, [...workloads, direct], {refresh: true});
+  const [active] = await report([quiet]);
+  assert.equal(active.sessions, 1);
+  assert.equal(active.weekEvents, 3);
+  assert.equal(active.lastAt, '2026-11-13T10:00:00.000Z');
+  await collection.delete(principal, [...workloads, direct].map(item => item.id));
+  await realm.refresh(principal);
   assert.deepEqual((await library.list(principal, {participant: 'replicas:' + sender(2), query: 'quayside'})).sessions.map(s => s.sessionId), ['shared'], 'search reaches matches after the first 500 participant sessions');
   assert.deepEqual((await library.list(principal, {participant: 'user:alice'})).sessions.map(s => s.sessionId), ['assistant-only', 'local'], 'excluded uploader-only pages do not hide later participant matches');
   await collection.delete(principal, [...filler, ...excludedOwners].map(item => item.id)); await realm.refresh(principal);
@@ -77,9 +99,24 @@ for (const backend of ['sqlite', 'opensearch']) test(`session participants use h
   assert.deepEqual((await library.list(principal, {participant: 'replicas:' + sender(1)})).sessions, []);
   assert.deepEqual((await library.list({...principal, tenantId: foreign})).sessions, []);
   await assert.rejects(library.setVisibility(principal, {harness: 'claude-code', sessionId: 'shared', visibility: 'team'}), {status: 404});
+  assert.deepEqual(await report(), []);
+  const attributed = (await collection.search(principal, {size: 10, query: {term: {'session.participantId': 'replicas:' + sender(1)}}})).hits.hits;
+  await collection.bulk(principal, attributed.map(hit => {
+    const {participantEmailKey, ...document} = hit._source;
+    assert.ok(participantEmailKey);
+    return {id: hit._id, document: {...document, participantVersion: 1}};
+  }), {refresh: true});
+  const backfill = {realm, principal, store, prefix, replicasActivityOnly: true};
+  assert.equal((await migrateSessionParticipants(backfill)).events, attributed.length);
+  assert.equal((await migrateSessionParticipants({...backfill, dryRun: false})).events, attributed.length);
+  await realm.refresh(principal);
+  assert.equal((await migrateSessionParticipants(backfill)).events, 0);
+  await library.setVisibility(owner, {harness: 'claude-code', sessionId: 'shared', visibility: 'team'});
+  assert.equal((await report())[0].weekEvents, 2);
+  await library.setVisibility(owner, {harness: 'claude-code', sessionId: 'shared', visibility: 'private'});
   // Emulate older projections while keeping immutable captures intact.
   const existing = await collection.search(principal, {size: 100});
-  const legacy = existing.hits.hits.map(hit => {const document = {...hit._source}; for (const field of ['participantVersion','participantId','participantName','participantUnknown']) delete document[field]; return {id: hit._id, document};});
+  const legacy = existing.hits.hits.map(hit => {const document = {...hit._source}; for (const field of ['participantVersion','participantId','participantName','participantUnknown','participantEmailKey']) delete document[field]; return {id: hit._id, document};});
   await collection.bulk(principal, legacy, {refresh: true});
   const snapshot = await collection.mget(principal, legacy.map(d => d.id));
   assert.equal((await migrateSessionParticipants({realm, principal, store, prefix})).events, legacy.length);

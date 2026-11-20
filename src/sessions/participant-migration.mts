@@ -4,14 +4,15 @@ import {createSessionIngest, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
 import {createControls} from './controls.mjs';
 import {withSessionDocumentWrites} from './write-barrier.mjs';
+import {replicasProjection} from './replicas-record.mjs';
 import {participantProjection} from './participants.mjs';
 
 export interface ParticipantMigrationReport {events: number; skippedDeleted: number; after: JsonValue[] | null; complete: boolean}
 /** Add sender metadata to existing first passages. Raw data and ownership stay
  * intact. Atomic writes cannot recreate deleted documents or restore privacy. */
-export async function migrateSessionParticipants({realm, principal, store, prefix, dryRun = true, pageSize = 100, maxEvents = 1000, after = null, onPage = async () => {}}: {
+export async function migrateSessionParticipants({realm, principal, store, prefix, replicasActivityOnly = false, dryRun = true, pageSize = 100, maxEvents = 1000, after = null, onPage = async () => {}}: {
   realm: SearchRealm; principal: TenantPrincipal; store: ObjectStore; prefix: string;
-  dryRun?: boolean; pageSize?: number; maxEvents?: number; after?: JsonValue[] | null;
+  replicasActivityOnly?: boolean; dryRun?: boolean; pageSize?: number; maxEvents?: number; after?: JsonValue[] | null;
   onPage?(report: ParticipantMigrationReport): Promise<unknown>;
 }): Promise<ParticipantMigrationReport> {
   if (!principal?.tenantId || principal.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
@@ -21,7 +22,10 @@ export async function migrateSessionParticipants({realm, principal, store, prefi
   const report: ParticipantMigrationReport = {events: 0, skippedDeleted: 0, after, complete: false};
   for (;;) {
     const page = await collection.search(principal, {size: Math.min(pageSize, maxEvents - report.events - report.skippedDeleted),
-      query: {bool: {filter: [{term: {[f('chunk')]: 0}}, {terms: {[f('kind')]: ['message', 'user_message', 'agent_message', 'tool_call']}}], must_not: [{exists: {field: f('participantVersion')}}]}},
+      query: {bool: {filter: [{term: {[f('chunk')]: 0}}, {terms: {[f('kind')]: ['message', 'user_message', 'agent_message', 'tool_call']}}], should: [
+        ...(replicasActivityOnly ? [] : [{bool: {must_not: [{exists: {field: f('participantVersion')}}]}}]),
+        {bool: {filter: [{term: {[f('participantVersion')]: 1}}, {wildcard: {[f('userId')]: 'workload_replicas_*'}}, {wildcard: {[f('participantId')]: 'replicas:*'}}]}},
+      ], minimum_should_match: 1}},
       _source: ['userId', 'harness', 'sessionId', 'installationId', 'eventId', 'kind', 'sourceKey', 'chunk'],
       sort: [...['userId', 'harness', 'sessionId', 'eventId'].map(key => ({[f(key)]: 'asc'})), {id: 'asc'}], ...(report.after ? {search_after: report.after} : {}),
     }, {createIfMissing: false});
@@ -48,7 +52,7 @@ export async function migrateSessionParticipants({realm, principal, store, prefi
       const events = new Map(batch.events.map(event => [event.id, event]));
       for (const hit of hits) {
         const event = events.get(hit._source.eventId!);
-        if (!event || event.kind !== hit._source.kind) throw new Error('Participant source does not contain indexed event');
+        if (!event || replicasProjection(event).kind !== hit._source.kind) throw new Error('Participant source does not contain indexed event');
         updates.push({id: hit._id, document: {...hit._source, ...participantProjection(event, batch)}, policy: 'session-participants'});
       }
     }
@@ -60,7 +64,10 @@ export async function migrateSessionParticipants({realm, principal, store, prefi
       await collection.bulk(principal, updates);
       const actual = await collection.mget(principal, updates.map(item => item.id));
       const byId = new Map(actual.docs.map(hit => [hit._id, hit]));
-      for (const item of updates) if (!byId.get(item.id)?.found || byId.get(item.id)!._source.participantVersion !== 1) {
+      for (const item of updates) {
+        const hit = byId.get(item.id);
+        if (hit?.found && hit._source.participantVersion === item.document.participantVersion &&
+          hit._source.participantEmailKey === item.document.participantEmailKey) continue;
         const d = item.document;
         if (!(await controls.read({tenantId: principal.tenantId, userId: d.userId!}, 'sessions', d.harness!, d.sessionId!))?.deletedAt) throw new Error('Participant migration readback mismatch');
       }
