@@ -22,6 +22,7 @@ const environment: NodeJS.ProcessEnv = {
   GIT_COMMITTER_EMAIL: 'service@localhost'
 };
 const config = [
+  ...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
   '-c',
   'core.hooksPath=' + hooks,
   '-c',

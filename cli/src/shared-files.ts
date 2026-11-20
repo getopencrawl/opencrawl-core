@@ -143,6 +143,7 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
     const config = ['credential.helper=', 'credential.helper=' + helper, 'credential.useHttpPath=true',
       'http.extraHeader=', 'http.followRedirects=false', 'core.hooksPath=' + hooks, 'core.symlinks=false',
       'user.name=OpenCrawl ' + session, 'user.email=agent-' + key.slice(0,16) + '@opencrawl.invalid'];
+    if (process.platform === 'win32') config.push('core.longpaths=true');
     const env: NodeJS.ProcessEnv = {...gitEnvironment(), OPENCRAWL_API_URL:api};
     try {
       await git('git', ['clone', '--template=', ...config.flatMap(value => ['--config', value]), '--quiet',
