@@ -19,6 +19,7 @@ export type ReplicasImportInput={action:'connect';apiKey:string}|{action:'stop';
 export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
+  workspaceChecks?:{id:string;at:number}[];
   initialCatalog?:boolean;freshSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
 // Reserve one activity in five for due pages while catalog work remains.
@@ -47,12 +48,12 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
       'The previous import stopped before recording the provider status. Reconnect to resume from the saved page.':state.error;
     return {id,organization,phase:phase==='importing'&&!state.background?'preview':phase,total,processed,imported,events,turns,pages,updatedAt,error,blocked,retryAt};
   }
-  async function status(principal:Principal){
+  async function status(principal:Principal,includeBlockedChats=true){
     await ready();
-    const row=(await database.pool.query(`SELECT state, CASE WHEN (state->>'blocked')::int>0 THEN
+    const row=(await database.pool.query(`SELECT state, CASE WHEN $3 AND (state->>'blocked')::int>0 THEN
       (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int FROM opencrawl_replicas_deferred
        WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
-      FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2`,[namespace,principal.tenantId])).rows[0];
+      FROM opencrawl_replicas_imports WHERE namespace=$1 AND tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
     return row?{...visible(row.state as State),blockedChats:row.blocked_chats??undefined}:null;
   }
   async function savePage(principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
@@ -174,6 +175,20 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
         ...(decision==='defer'||decision==='retry'?{retryAt}:{}),
         ...(chat?{workspaceId:chat.workspace_id,chatId:chat.chat_id,pageLimit:limit}:{}),
         ...(state.before||(!chat&&state.next)?{cursorHash:replicasDigest((chat?state.before:state.next)!)}:{})};
+      if(missing&&chat&&retry&&attempt>=3){
+        // A sample from the workspace's own inventory distinguishes inconsistent
+        // listings from a missing history page. Diagnostics never decide import eligibility.
+        const recent=(state.workspaceChecks??[]).filter(check=>check.at>now()-30*60_000);
+        if(recent.length<32&&!recent.some(check=>check.id===chat.workspace_id)){
+          state.workspaceChecks=[...recent,{id:chat.workspace_id,at:now()}];
+          try{
+            const inventory=await api.workspaceChats(chat.workspace_id);
+            issue.workspaceInventory={result:inventory.waking?'waking':inventory.chats.some(item=>item.id===chat.chat_id)?'listed':'absent',chats:inventory.chats.length};
+          }catch(check){
+            issue.workspaceInventory={result:'unavailable',httpStatus:check instanceof ReplicasProviderError?check.status:undefined};
+          }
+        }
+      }
       state.recentIssues=[...(state.recentIssues??[]).slice(-31),issue];
       console.warn(JSON.stringify({event:'replicas.import.issue',tenantId:principal.tenantId,importId:state.id,
         organizationId:state.organization.id,processed:state.processed,pages:state.pages,...issue}));
@@ -248,14 +263,14 @@ export function createReplicasImport({database,key,ingest,schedule,request=fetch
     });
   }
   async function source(principal:Principal):Promise<SourceCard>{
-    const history=await status(principal);
+    const history=await status(principal,false);
     const phase=history?.phase;
     const state=phase==='complete'?'synced':phase==='importing'?'syncing':phase==='failed'?'error':'disconnected';
     return {provider:'replicas',name:'Replicas',description:'Import session history from your Replicas organization.',auth:'api-key',scope:'team',state,
-      account:history?.organization.name,synced:history?.processed,total:history?.total,units:['conversation record','conversation records'],
-      message:history?.error,
+      account:history?.organization.name,synced:history?.imported,units:['session','sessions'],
+      message:phase==='failed'?history?.error:undefined,
       lastSyncedAt:phase==='complete'?history?.updatedAt:undefined,
-      rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'},{label:'Events',count:history.events,done:phase==='complete'}]:[],history:history??undefined};
+      rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'}]:[],history:history??undefined};
   }
   return {status,source,
     async action(principal:Principal,input:ReplicasImportInput){

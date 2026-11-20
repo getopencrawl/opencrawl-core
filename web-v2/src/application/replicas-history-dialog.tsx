@@ -21,7 +21,7 @@ export function ReplicasHistoryDialog({adapter,onClose,onConnected}:{adapter:Sou
   }
   return <Dialog open onClose={onClose} title="Connect Replicas" description="Import your organization’s session history.">
     <form className="stack" onSubmit={connect}>
-      <p>Use an organization key from <a href="https://app.replicas.dev/dashboard/settings?tab=api-keys" target="_blank" rel="noreferrer">Replicas API Keys</a>. OpenCrawl imports the history your organization can access and retries unavailable conversations automatically.</p>
+      <p>Use an organization key from <a href="https://app.replicas.dev/dashboard/settings?tab=api-keys" target="_blank" rel="noreferrer">Replicas API Keys</a>.</p>
       <Field label="Organization API key"><Input type="password" autoComplete="off" spellCheck={false} value={key} onChange={event=>setKey(event.target.value)} required/></Field>
       {error&&<Notice tone="danger">{error}</Notice>}
       <div className="actions"><Button onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" disabled={busy||!key.trim()}>{busy?'Connecting…':'Connect'}</Button></div>

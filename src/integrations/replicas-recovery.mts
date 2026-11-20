@@ -7,10 +7,12 @@ export type ImportIssue={
   identityCheck?:'verified'|'identity_mismatch'|'rejected'|'unavailable';
   attempt:number;elapsedMs:number;originalHttpStatus?:number;originalOperation?:ReplicasOperation;originalRequestId?:string;httpStatus?:number;internalStatus?:number;requestId?:string;retryAt?:string;
   workspaceId?:string;chatId?:string;cursorHash?:string;pageLimit?:number;
+  missingResource?:ReplicasProviderError['missingResource'];
+  workspaceInventory?:{result:'listed'|'absent'|'waking';chats:number}|{result:'unavailable';httpStatus?:number};
 };
 
-export function issueFor(error:unknown,operation:ImportOperation):Pick<ImportIssue,'operation'|'reason'|'httpStatus'|'internalStatus'|'requestId'>{
-  if(error instanceof ReplicasProviderError)return {operation:error.operation,reason:'provider_http',httpStatus:error.status,requestId:error.requestId};
+export function issueFor(error:unknown,operation:ImportOperation):Pick<ImportIssue,'operation'|'reason'|'httpStatus'|'internalStatus'|'requestId'|'missingResource'>{
+  if(error instanceof ReplicasProviderError)return {operation:error.operation,reason:'provider_http',httpStatus:error.status,requestId:error.requestId,missingResource:error.missingResource};
   if(error instanceof ReplicasPageError)return {operation,reason:error.reason};
   if(operation==='ingest'){
     const {status,permanent}=errorInfo(error);
