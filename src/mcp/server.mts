@@ -3,6 +3,7 @@ import type {Principal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {createWorkspaceSearch} from '../search/workspace.mjs';
 import type {createBoard} from '../board/board.mjs';
+import {ObservableMcpServer, type ObserveTool} from './tool-observation.mjs';
 export interface McpExchange {method: string; tool: string | null}
 export interface McpClientInfo {name?: unknown; version?: unknown}
 interface RpcEnvelope {method?: string; params?: {name?: unknown; clientInfo?: McpClientInfo; _meta?: Record<string, McpClientInfo>}}
@@ -10,6 +11,7 @@ export interface McpOptions {
  authenticate: (request: IncomingMessage, response: ServerResponse) => Principal | null | undefined | Promise<Principal | null | undefined>;
  origin: string; revision?: string;
  onAuthenticated?: (principal: Principal, info: McpClientInfo | undefined, exchange: McpExchange) => unknown | Promise<unknown>;
+ onToolCall?: (principal: Principal, ...args: Parameters<ObserveTool>) => ReturnType<ObserveTool>;
  onConnectionTest?: (principal: Principal) => unknown | Promise<unknown>;
  observationTimeoutMs?: number;
  onObservationError?: (event: McpExchange & {event: string; reason: string}) => unknown | Promise<unknown>;
@@ -31,14 +33,18 @@ const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
-export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest,
+export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest, onToolCall,
   observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search, registerTools}: McpOptions) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   if (!Number.isInteger(observationTimeoutMs) || observationTimeoutMs < 1 || observationTimeoutMs > 10000) throw new Error('Invalid MCP observation timeout');
   const handler = createMcpHandler(() => {
-    const server = new McpServer({name: 'opencrawl', version: '0.1.7'}, {
+    const server = new ObservableMcpServer({name: 'opencrawl', version: '0.1.7'}, {
       instructions: 'OpenCrawl provides authenticated workspace knowledge and agent coordination. Available tools depend on the services configured in this deployment.',
     });
+    if (onToolCall) {
+      const actor = context.getStore()!;
+      server.observeTool = call => onToolCall(actor, call);
+    }
     server.registerTool('opencrawl', {
       title: 'OpenCrawl overview',
       description: 'Return an overview of OpenCrawl, the services available through this connection, and their access and data boundaries.',
