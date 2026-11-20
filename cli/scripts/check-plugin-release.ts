@@ -14,7 +14,11 @@ async function download(path: string) {
   return Buffer.from(await response.arrayBuffer());
 }
 const catalog = JSON.parse((await download('catalog.json')).toString());
-assert.deepEqual(catalog.packages.map((p: {harness:string}) => p.harness).sort(), harnesses);
+assert.deepEqual(catalog.packages.map((p: {harness:string}) => p.harness).sort(), [...harnesses, 'devin'].sort());
+const devin = catalog.packages.find((p: {harness:string}) => p.harness === 'devin');
+const cloudManifest = JSON.parse((await download('plugins/devin/.devin-plugin/plugin.json')).toString());
+assert.deepEqual(devin, {harness:'devin', name:cloudManifest.name, path:'plugins/devin', version:cloudManifest.version, distribution:'repository'});
+assert.deepEqual(cloudManifest.platforms, ['cloud']);
 assert.deepEqual(packages.map(p => p.harness).sort(), harnesses);
 assert.equal(new Set(packages.map(p => p.version)).size, 1);
 for (const pkg of packages) {
@@ -36,4 +40,4 @@ for (const pkg of packages) {
   }
 }
 assert.equal(replicasPolicy.sha256, createHash('sha256').update(await download('scripts/replicas-codex-policy.mjs')).digest('hex'));
-console.log('Verified one release for four harnesses and five platforms at '+ref);
+console.log('Verified the Devin repository install and four native packages on five platforms at '+ref);

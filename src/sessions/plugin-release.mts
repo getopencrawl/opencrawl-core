@@ -5,7 +5,7 @@ export type PluginRelease={repository:string;ref:string;schemaVersion:1;bindingS
 // Both guided setup and the Replicas installer consume this verified release.
 export const pluginRelease:PluginRelease = {
   "repository": "getopencrawl/opencrawl-plugins",
-  "ref": "32804c27cf6f3a0b4ffec2109e859b7b758d8697",
+  "ref": "7074078b2dd94d00b5b352962525e0e626e0a33c",
   "schemaVersion": 1,
   "bindingSchemaVersion": 1,
   "packages": [
