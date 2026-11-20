@@ -9,7 +9,7 @@ export type EnrollmentFetch=(url:string,init:RequestInit)=>Promise<Response>;
 const help=`Usage: opencrawl workload connect --code-stdin --api https://host [--json]
        opencrawl workload approve --provider devin --api ORIGIN --code-file PATH [--json]
        opencrawl workload events --api ORIGIN --organization DEVIN_ORG (--key-stdin [--one-session] | --select-session DEVIN_SESSION | --off)
-       opencrawl workload bundle --api ORIGIN --directory PATH --command LINUX_EXECUTABLE --config-home CLOUD_PROFILE --recording on|off [--json]
+       opencrawl workload bundle --api ORIGIN --directory PATH --command LINUX_EXECUTABLE --config-home CLOUD_PROFILE --recording on|off [--organization DEVIN_ORG] [--key-stdin] [--one-session] [--json]
 
 Connect a cloud organization using its administrator's one-time setup code.
 Select OPENCRAWL_AUTH=devin-cloud or replicas-workspace in that cloud session.

@@ -120,12 +120,24 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   assert.equal((await connections.sharedInstallations(admin))[0].name,'Devin Cloud');
   const eventGrant='/api/cli/workloads/devin/event-grant', startupEvents='/api/cli/workloads/devin/startup-events';
   const realFetch=globalThis.fetch;
-  let inspectedKeys=0;
+  let inspectedKeys=0,eventsAvailable=true;
+  const prepare={action:'prepareRecording'};
+
   const interception=t.mock.method(globalThis,'fetch',(target,init)=>{
     if(String(target)==='https://api.devin.ai/v3/self'){
       assert.equal(new Headers(init.headers).get('authorization'),'Bearer cog_test_org');
       inspectedKeys++;
       return Promise.resolve(Response.json({principal_type:'service_user',org_id:org}));
+    }
+    if(String(target)==='https://mcp.devin.ai/mcp'){
+      assert.equal(new Headers(init.headers).get('authorization'),'Bearer cog_test_org');
+      const body=JSON.parse(init.body);
+      if(body.method==='notifications/initialized')return Promise.resolve(new Response(null,{status:202}));
+      assert.ok(['initialize','tools/list'].includes(body.method),'setup must never read an actual session');
+      const result=body.method==='initialize'
+        ?{protocolVersion:body.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'devin-fixture',version:'1'}}
+        :{tools:eventsAvailable?[{name:'devin_session_events',inputSchema:{type:'object',properties:{}}}]:[]};
+      return Promise.resolve(Response.json({jsonrpc:'2.0',id:body.id,result}));
     }
     return realFetch(target,init);
   });
@@ -134,15 +146,35 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   assert.equal((await request(eventGrant,{...input,tenantId:'other'},human)).status,400);
   assert.equal((await request(eventGrant,input,human,{origin:url})).status,403);
   assert.equal(inspectedKeys,0);
+  assert.equal((await request(eventGrant,prepare,token)).status,403);
+  const missing=await request(eventGrant,prepare,human);
+  assert.equal(missing.status,412);
+  assert.equal((await missing.json()).error.code,'DEVIN_RECORDING_CREDENTIAL_REQUIRED');
+  eventsAvailable=false;
+  const unavailable=await request(eventGrant,{...prepare,serviceKey:input.serviceKey},human);
+  assert.equal((await unavailable.json()).error.code,'DEVIN_RECORDING_EVENTS_UNAVAILABLE');
+  assert.equal(await devinState.eventGrants.read(organizationId,org),null);
+  eventsAvailable=true;
+  const prepared=await request(eventGrant,{...prepare,serviceKey:input.serviceKey},human);
+  assert.deepEqual((await prepared.json()).data,{recording:true,organizationId:org,scope:'organization'});
+  const authorized=await devinState.eventGrants.read(organizationId,org);
+  assert.equal((await request(eventGrant,prepare,human)).status,200);
+  assert.deepEqual(await devinState.eventGrants.read(organizationId,org),authorized,'reuse preserves the first eligible timestamp');
+  assert.equal((await request(eventGrant,{...prepare,restrictToOneSession:true},human)).status,409);
+  assert.equal((await request(eventGrant,{...prepare,serviceKey:'cog_different'},human)).status,409);
+  await request(eventGrant,{organizationId:org,serviceKey:null},human);
   const grantReceipt=await request(eventGrant,input,human);
   assert.equal(grantReceipt.status,200);
   assert.deepEqual((await grantReceipt.json()).data,{enabled:true,organizationId:org});
-  assert.equal(inspectedKeys,1);
+  assert.equal(inspectedKeys,4);
   assert.equal((await request(eventGrant,{organizationId:org,selectSession:'devin-synthetic'},human)).status,200);
   assert.equal((await request(startupEvents,{installationId:'unknown',through:new Date().toISOString()},token)).status,403);
   assert.equal((await request(startupEvents,{sessionId:'devin-synthetic',installationId:'unknown',through:new Date().toISOString()},token)).status,400);
   assert.equal((await request(startupEvents,{installationId:'unknown',through:new Date().toISOString()},human)).status,401);
-  assert.equal(inspectedKeys,1);
+  assert.equal((await request(eventGrant,prepare,human)).status,409,'an export cannot silently widen a pilot');
+  assert.equal((await request(eventGrant,{...prepare,restrictToOneSession:true},human)).status,200);
+  assert.equal((await devinState.eventGrants.read(organizationId,org)).sessionId,'devin-synthetic');
+  assert.equal(inspectedKeys,5);
   interception.mock.restore();
   const disconnect='/api/cli/workloads/devin/disconnect';
   assert.equal((await request(disconnect,{organizationId:org},token)).status,403);

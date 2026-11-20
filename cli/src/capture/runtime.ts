@@ -828,7 +828,14 @@ export async function captureDevinStartup(config:CaptureConfig,sessionId:string,
       if(selected()){markPrivate(config,meta);await purgePrivateQueue(config,meta);}
       return;
     }
-    if(error.httpStatus===404||error.httpStatus===403)return;
+    if(error.responseCode==='DEVIN_RECORDING_CREDENTIAL_REQUIRED'||error.httpStatus===404) {
+      if(selected()) {
+        const code=error.httpStatus===404?'DEVIN_STARTUP_GAP':'DEVIN_RECORDING_CREDENTIAL_REQUIRED';
+        recordError(new CliError(code,'Devin first-turn capture is unavailable. Check the recording credential and receiver version.'));
+      }
+      return;
+    }
+    if(error.httpStatus===403)return;
     throw error;
   }
   if(!selected())return;

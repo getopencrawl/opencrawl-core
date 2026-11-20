@@ -16,26 +16,26 @@ a fresh session's original user prompt, first shell command and its output.
    private code file. Give the code to one Devin session through its encrypted
    **This session** secret and run `opencrawl workload connect --code-stdin` there.
    This binds the Devin organization to that workspace.
-3. Generate the deployment’s plugin with `opencrawl workload bundle`. Select
-   `--recording off` for search and board access or `--recording on` to also
-   capture new sessions. ZIP the contents of the export directory, including
-   hidden files, with the plugin manifest at `.devin-plugin/plugin.json` inside
-   the archive. In **Customize → Plugins**, choose **Myself** for a pilot or
-   the organization for team rollout. Upload the ZIP and enable its MCP server.
-4. To recover the opening prompt and early shell events, create a dedicated
-   organization service user in Devin with access to session events. The pilot
-   used the Member role, which can also manage sessions across the organization.
-   Provide its key on stdin to
-   `opencrawl workload events --api ORIGIN --organization DEVIN_ORG --key-stdin`
-   while signed in as the OpenCrawl admin. The receiver verifies the service
-   user’s organization and encrypts the key. The plugin contains no key.
-   For a single-session pilot add `--one-session` before starting the session,
-   then bind its ID with `--select-session devin-SESSION`. The grant reads no
-   session until the administrator selects it. Use `--off` to erase the grant.
+3. Choose whether to record when you generate the plugin. For recording, create
+   a dedicated organization service user in Devin with access to session events.
+   Supply its key to `opencrawl workload bundle --recording on --key-stdin` from
+   a private file or secret manager (full command below). OpenCrawl verifies the
+   credential with Devin and encrypts it in the workspace. Subsequent exports
+   reuse it. Recording includes the opening prompt and early shell activity.
+   For search and board access alone, use `--recording off`.
+4. ZIP the contents of the export directory, including hidden files, with
+   `.devin-plugin/plugin.json` at the expected path inside the archive. In
+   **Customize → Plugins**, choose **Myself** or the organization, upload
+   the ZIP and enable its MCP server.
 5. Start a **fresh** Devin session. Verify workspace search. For recording, run
    a first command with an unpredictable output, then search from another
    OpenCrawl session for the original prompt, command and output under that
    Devin session ID. Include tool outputs when searching for the result.
+
+For an explicitly single-session pilot, add `--one-session` to the recording
+bundle command and bind the fresh session with `workload events --select-session`.
+The pilot used Devin’s Member role, which can also manage organization sessions.
+The service key stays on the receiver. Use `workload events --off` to erase it.
 
 ## Observed Cloud contract
 
@@ -333,8 +333,13 @@ opencrawl workload bundle --api https://opencrawl.example \
   --directory /absolute/export/opencrawl-devin \
   --command /home/ubuntu/.local/bin/opencrawl \
   --config-home /home/ubuntu/.config/opencrawl-cloud \
-  --recording on --json
+  --recording on --key-stdin --json < /private/path/devin-service-key
 ```
+
+Omit `--key-stdin` and the redirection on subsequent exports to reuse the
+workspace credential. For a workspace with several connected Devin organizations,
+pass `--organization DEVIN_ORG`. Recording setup verifies the service account
+and checks for Devin's session-events tool before writing the bundle.
 
 Use `--recording off` for search and board access without new capture. The command
 exports only public settings, shared skills, a Cloud-only manifest, native hooks
@@ -466,8 +471,7 @@ plugin files and the working snapshot were retained.
 
 The preview used an organization snapshot, workspace enrollment and a
 deployment-bound plugin. Subsequent tested sessions inherited those settings.
-The administrator setup above also covers the additional grant for first-turn
-recovery.
+Current recording setup includes authorization to capture the opening turn.
 
 ## Hosted production acceptance, 2026-11-19
 
