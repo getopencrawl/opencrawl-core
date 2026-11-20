@@ -1,4 +1,3 @@
-import {scanTargetInventoryIn,assertTargetInventoryBoundIn,targetInventoryFailure,targetInventoryValueBytes,type OnlineOwnedInventoryItem} from './online-target-inventory-support.mjs';
 import {z} from 'zod';
 import type {PoolClient} from 'pg';
 import {createHash,randomUUID} from 'node:crypto';
@@ -369,45 +368,4 @@ export function validateLegacyBoard(value:unknown):asserts value is BoardState{
       for(const delivered of p.pending.messages){const {reasons,...body}=delivered,message=state.messages[body.id-1];if(!message||body.id<=previous||body.id>p.pending.through||!isDeepStrictEqual(body,visible(message)))throw fail('Legacy board delivery differs from its immutable publication');previous=body.id;}
     }
   }
-}
-
-/** Inventory includes every normalized relation; derived indexes are checked
- * against their existing owner producer, not promoted to source authority. */
-export async function* inventoryBoardTargetsIn(database:ApplicationDatabase,client:PoolClient):AsyncGenerator<OnlineOwnedInventoryItem>{
- const ns=database.namespace,repo=createPostgresBoardState(database);
- if((await client.query('SELECT 1 FROM opencrawl_board_search_snapshots WHERE namespace=$1 UNION ALL SELECT 1 FROM opencrawl_board_search_pages WHERE namespace=$1 LIMIT 1',[ns])).rows.length)targetInventoryFailure('inactive shadow has runtime board search state');
- const tables=['heads','messages','search_chunks','topics','agents','participants','deliveries','delivery_messages'] as const;
- const owners=tables.map(name=>`SELECT tenant_hash FROM opencrawl_board_${name} WHERE namespace=$1`).join(' UNION ');
- for await(const row of scanTargetInventoryIn(client,`SELECT tenant_hash FROM (${owners}) owners ORDER BY tenant_hash COLLATE "C"`,[ns])){
-  const key=String(row.tenant_hash);
-  await assertTargetInventoryBoundIn(client,`SELECT coalesce(sum(bytes),0)::text bytes,count(*)::text rows FROM (${tables.map(name=>`SELECT octet_length(to_jsonb(t)::text) bytes FROM opencrawl_board_${name} t WHERE namespace=$1 AND tenant_hash=$2`).join(' UNION ALL ')}) bounded`,[ns,key]);
-  const value=await repo.readIn(client,key);if(!value)targetInventoryFailure('board child has no parent');validateLegacyBoard(value);targetInventoryValueBytes(value,16*1024*1024);
-  const head=(await client.query('SELECT head,participants_present FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[ns,key])).rows[0];if(head.head!==String(value.messages.length)||head.participants_present!==(value.participants!==undefined))targetInventoryFailure('board head differs');
-  const topics=new Map<string,{first:number;posts:number;latest:{id:number;timestamp:number;name:string}}>();
-  for await(const m of scanTargetInventoryIn(client,'SELECT id,stamp,agent,author,name,topic,request_id,legacy_agent,record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 ORDER BY id',[ns,key])){
-   const message=value.messages[Number(m.id)-1];if(!message||!isDeepStrictEqual(m.record,message)||String(m.id)!==String(message.id)||String(m.stamp)!==String(message.timestamp)||m.agent!==message.agent||m.author!==message.author||m.name!==message.name||m.topic!==message.topic||m.request_id!==message.requestId||m.legacy_agent!==(message.agent===boardIdentity(message.author,message.name)))targetInventoryFailure('board message lookup differs');
-   const prior=topics.get(message.topic);topics.set(message.topic,{first:prior?.first??message.id,posts:(prior?.posts??0)+1,latest:{id:message.id,timestamp:message.timestamp,name:message.name||message.agent}});
-  }
-  for(const batch of boardBatches(value.messages)){
-   const inputs=batch.map(message=>({id:message.id,chunks:boardMessageChunks(message)}));
-   const mismatch=(await client.query(`WITH input AS (SELECT * FROM jsonb_to_recordset($3::jsonb) AS x(id bigint,chunks jsonb)),
-    expected AS (SELECT id,ordinal-1 AS ordinal,to_tsvector('simple',text) AS words FROM input CROSS JOIN LATERAL jsonb_array_elements_text(chunks) WITH ORDINALITY AS c(text,ordinal)),
-    actual AS (SELECT message_id AS id,ordinal,words FROM opencrawl_board_search_chunks WHERE namespace=$1 AND tenant_hash=$2 AND message_id IN (SELECT id FROM input))
-    SELECT 1 FROM expected FULL JOIN actual USING(id,ordinal) WHERE expected.words IS DISTINCT FROM actual.words LIMIT 1`,[ns,key,JSON.stringify(inputs)])).rows;
-   if(mismatch.length)targetInventoryFailure('board derived search chunks differ');
-  }
-  // These joins are necessary even with normal foreign keys: malformed test or
-  // restored schemas must not hide a row that owning export does not visit.
-  const orphan=(await client.query(`SELECT 1 FROM opencrawl_board_search_chunks c WHERE c.namespace=$1 AND c.tenant_hash=$2 AND NOT EXISTS(SELECT 1 FROM opencrawl_board_messages m WHERE m.namespace=c.namespace AND m.tenant_hash=c.tenant_hash AND m.id=c.message_id)
-   UNION ALL SELECT 1 FROM opencrawl_board_deliveries c WHERE c.namespace=$1 AND c.tenant_hash=$2 AND NOT EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=c.namespace AND p.tenant_hash=c.tenant_hash AND p.agent=c.agent)
-   UNION ALL SELECT 1 FROM opencrawl_board_delivery_messages c WHERE c.namespace=$1 AND c.tenant_hash=$2 AND NOT EXISTS(SELECT 1 FROM opencrawl_board_deliveries p WHERE p.namespace=c.namespace AND p.tenant_hash=c.tenant_hash AND p.agent=c.agent) LIMIT 1`,[ns,key])).rows;
-  if(orphan.length)targetInventoryFailure('board orphan child');
-  for await(const t of scanTargetInventoryIn(client,'SELECT topic,first_id,posts,latest FROM opencrawl_board_topics WHERE namespace=$1 AND tenant_hash=$2 ORDER BY topic COLLATE "C"',[ns,key])){const expected=topics.get(String(t.topic));if(!expected||String(t.first_id)!==String(expected.first)||String(t.posts)!==String(expected.posts)||!isDeepStrictEqual(t.latest,expected.latest))targetInventoryFailure('board derived topic differs');topics.delete(String(t.topic));}if(topics.size)targetInventoryFailure('board derived topic missing');
-  let position=0;for await(const a of scanTargetInventoryIn(client,'SELECT agent,position,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent COLLATE "C"',[ns,key])){position++;if(String(a.position)!==String(position)||!isDeepStrictEqual(a.record,value.agents[String(a.agent)]))targetInventoryFailure('board agent differs');}
-  for await(const p of scanTargetInventoryIn(client,'SELECT agent,user_id,name,seen,record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 ORDER BY agent COLLATE "C"',[ns,key])){const participant=value.participants?.[String(p.agent)];if(!participant||p.user_id!==(participant.userId??null)||p.name!==participant.name||String(p.seen)!==String(participant.seen))targetInventoryFailure('board participant lookup differs');
-   const delivery=(await client.query('SELECT receipt FROM opencrawl_board_deliveries WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[ns,key,p.agent])).rows[0];if(delivery&&delivery.receipt!==participant.pending?.receipt)targetInventoryFailure('board delivery receipt differs');
-   let ordinal=0;for await(const d of scanTargetInventoryIn(client,'SELECT ordinal FROM opencrawl_board_delivery_messages WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3 ORDER BY ordinal',[ns,key,p.agent]))if(d.ordinal!==ordinal++)targetInventoryFailure('board delivery ordering differs');
-  }
-  yield {kind:'target',domains:['board'],identity:[key],value,maxBytes:16*1024*1024};
- }
 }

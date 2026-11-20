@@ -12,8 +12,14 @@ export async function prepareScopedState(database:ApplicationDatabase){
   });
 }
 export async function requireScopedState(database:ApplicationDatabase){
-  const full=await database.pool.query('SELECT state FROM opencrawl_application_installations WHERE namespace=$1',[database.namespace]);
-  if(full.rows.length)throw new Error('This installation used the retired whole-application migration. Keep its existing release and restore its verified recovery point before adopting the scoped-state release.');
+  // Fresh installs no longer create the retired whole-application migration
+  // tables. Detect a legacy installation by catalog presence before selecting,
+  // so the fail-closed guard still works without that relation on new databases.
+  const legacy=(await database.pool.query("SELECT to_regclass('opencrawl_application_installations') IS NOT NULL AS present")).rows[0]?.present;
+  if(legacy){
+    const full=await database.pool.query('SELECT state FROM opencrawl_application_installations WHERE namespace=$1',[database.namespace]);
+    if(full.rows.length)throw new Error('This installation used the retired whole-application migration. Keep its existing release and restore its verified recovery point before adopting the scoped-state release.');
+  }
   const {rows}=await database.pool.query('SELECT source_identity,state FROM opencrawl_scoped_installations WHERE namespace=$1',[database.namespace]);
   if(rows.length!==1||rows[0].state!=='ready'||!isDeepStrictEqual(rows[0].source_identity,database.sourceIdentity))throw new Error('Verified scoped-state initialization is required before starting writers');
 }

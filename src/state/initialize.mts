@@ -19,7 +19,11 @@ export async function initializeApplicationState({database,bucket,prefix,organiz
   const client=await database.pool.connect(),lock=database.namespace+':scoped-import';
   try{
     await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))',[lock]);
-    if((await client.query('SELECT 1 FROM opencrawl_application_installations WHERE namespace=$1',[database.namespace])).rows.length)throw new Error('This database holds an unsupported earlier installation; start from an empty database');
+    // The retired migration schema is no longer created on fresh installs. Only
+    // query it when the relation actually exists; legacy databases still fail
+    // closed, while a new database needs no tombstone table to admit setup.
+    const legacy=(await client.query("SELECT to_regclass('opencrawl_application_installations') IS NOT NULL AS present")).rows[0]?.present;
+    if(legacy&&(await client.query('SELECT 1 FROM opencrawl_application_installations WHERE namespace=$1',[database.namespace])).rows.length)throw new Error('This database holds an unsupported earlier installation; start from an empty database');
     const previous=(await client.query('SELECT source_identity,state FROM opencrawl_scoped_installations WHERE namespace=$1',[database.namespace])).rows[0];
     if(previous&&!isDeepStrictEqual(previous.source_identity,database.sourceIdentity))throw new Error('Application-state binding differs');
     if(previous?.state==='ready'){await requireScopedState(database);return {command,ready:true,created:false};}

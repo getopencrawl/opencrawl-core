@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createPostgresBoardState,inventoryBoardTargetsIn} from '../dist/src/state/board.mjs';
+import {createPostgresBoardState} from '../dist/src/state/board.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {createBoard} from '../dist/src/board/board.mjs';
 import {boardTenant} from './fixtures/board-state.mjs';
@@ -89,10 +89,4 @@ test('large imports bound batch bytes while preserving Unicode and search chunks
  assert.deepEqual(await f.repo.exportLegacy(tenant),state);
  const found=await f.repo.search(tenant,'user',{query:'migration',topics:[],agents:[],authors:[],sort:'newest',facets:[],facetSize:5,limit:1},Date.now());
  assert.equal(found.total,140);assert.equal(found.messages[0].id,140);
-});
-
-test('final board inventory verifies all search vectors with a bounded query budget',{skip:!postgresUrl},async t=>{
- const f=await fixture(t);await f.repo.importLegacy(tenant,snapshot());
- const result=await f.measure(async c=>{await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');let count=0;for await(const item of inventoryBoardTargetsIn(f.database,c)){assert.deepEqual(item.identity,[tenant]);count++;}assert.equal(count,1);});
- t.diagnostic(JSON.stringify({inventory:result}));assert.ok(result.calls<80,JSON.stringify(result));
 });
