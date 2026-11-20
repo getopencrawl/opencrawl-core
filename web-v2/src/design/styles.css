@@ -456,6 +456,7 @@ img { max-width: 100%; }
 }
 
 .report-section > .report-note { margin-bottom: var(--space-4); }
+.report-section > .oc-notice:not(:last-child) { margin-bottom: var(--space-4); }
 
 /* The same integration card serves the directory and Usage. */
 

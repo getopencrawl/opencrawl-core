@@ -116,7 +116,7 @@ for (const width of [1440, 390]) test(`source counts fail locally, keep live con
   await expect(card.getByRole('list')).toHaveText('Messages7');
   await expect(retry).toHaveCount(0);
   // A fresh list can drop an old connection and change sync state even while counts fail.
-  data = {...report(), ingestion: {sources: [{...source, name: 'GitHub', state: 'syncing'}], index: null}, failedSources: ['connectors']};
+  data = {...report(), ingestion: {sources: [{...source, name: 'GitHub', icon: '/assets/integrations/github.svg', state: 'syncing'}], index: null}, failedSources: ['connectors']};
   await page.clock.runFor(60_001);
   await expect(card).toHaveCount(0);
   const github = section.getByRole('article', {name: 'GitHub'});
