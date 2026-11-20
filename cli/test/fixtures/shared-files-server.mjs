@@ -13,11 +13,12 @@ store.open = async tenant => {
 await store.ready();
 const git=createSharedFilesHandler({store});
 const enabled=join(process.argv[2],'enabled');
+const members={...writers,registered:{tenantId:'team-a',userId:'agent_reg_fixture'}};
 const server=createServer(async(req,res)=>{
   const auth=sharedFilesAuthorization(req.headers.authorization);
-  const who=Object.keys(writers).find(name=>auth==='Bearer '+fixtureToken(name));
+  const who=Object.keys(members).find(name=>auth==='Bearer '+fixtureToken(name));
   if(!who)return res.writeHead(401,{'WWW-Authenticate':'Basic realm="OpenCrawl shared files"'}).end();
-  const principal=writers[who];
+  const principal=members[who];
   if(req.url==='/api/setup' && req.method==='GET')return res.writeHead(200,{'Content-Type':'application/json'}).end(
     JSON.stringify({schemaVersion:1,data:{scope:principal,installations:[],firstWin:null}}));
   if(!existsSync(enabled))return res.writeHead(404).end();

@@ -2,6 +2,7 @@ import {expect, test} from 'bun:test';
 import {mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, writeFile} from 'node:fs/promises';
 import {isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {tmpdir} from 'node:os';
+import {createHash} from 'node:crypto';
 
 test('shared-file sessions open outside the project, preserve drafts and scope Git credentials', async () => {
   const root = await mkdtemp(join(tmpdir(),'opencrawl-files-cli-'));
@@ -41,14 +42,26 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     const open = (session:string) => [...entry,'files','open','--api',api,'--session',session];
     // Setup may predate the workspace rollout. Stock Git is the first client
     // command after enablement: no new setup, startup hook or files command.
-    const setup = JSON.parse(await run([...entry,'setup','apply','--plugins','none','--forward','none','--history','none','--yes','--json','--api',api]));
+    // macOS also admits a new human profile. On Windows/Linux, native setup
+    // requires a registered agent or a previously enrolled installation.
+    const setupToken=process.platform==='darwin'?token:'fixture-token-registered';
+    if(setupToken!==token){
+      const profile=join(home,'config','opencrawl');
+      await mkdir(profile,{recursive:true});
+      const key=createHash('sha256').update(api).digest('hex');
+      await writeFile(join(profile,key+'.json'),JSON.stringify({
+        auth:{clientId:'fixture',tokenEndpoint:api+'/token'},accessToken:setupToken,refreshToken:'fixture-refresh',
+        expiresAt:Date.now()+3600000,registrationId:'agent_reg_fixture'
+      }),{mode:0o600});
+    }
+    const setup = JSON.parse(await run([...entry,'setup','apply','--plugins','none','--forward','none','--history','none','--yes','--json','--api',api],{token:setupToken}));
     expect(setup.data).toMatchObject({status:'recording_off'});
     expect(setup.data).not.toHaveProperty('gitCredentials');
     expect(JSON.stringify(setup)).not.toContain('/files.git');
     await writeFile(join(rpc,'enabled'),'on');
     const firstClone=join(root,'first-plain-clone');
     await mkdir(firstClone);
-    await run(['git','-C',firstClone,'clone',api+'/git/team-a/files.git','.']);
+    await run(['git','-C',firstClone,'clone',api+'/git/team-a/files.git','.'],{token:setupToken});
     expect(await run(['git','-C',firstClone,'branch','--show-current'])).toBe('main');
     await run(['git','-C',project,'init','--initial-branch=customer-draft']);
     await writeFile(join(project,'notes'),'customer WIP');
