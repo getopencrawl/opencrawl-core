@@ -12,7 +12,7 @@ import {createControls} from '../dist/src/sessions/controls.mjs';
 import {createSessionSearch} from '../dist/src/sessions/search.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createSessionPipeline} from '../dist/src/sessions/indexer.mjs';
-import {agentSearchEntry,observeAgentRequest,admitActivity,activityInput} from '../dist/src/application/agent-activity.mjs';
+import {agentSearchEntry,httpTool,isAgentHttpTool,observeAgentRequest,admitActivity,activityInput} from '../dist/src/application/agent-activity.mjs';
 import {createContextCheck,lexicalCheckJudgment} from '../dist/src/search/check.mjs';
 import {measuredCheck,measuredSuggestionEvents} from '../dist/src/search/check-activity.mjs';
 
@@ -26,7 +26,7 @@ test('authenticated call accounting, scoped paging and idempotent proactive outc
   const requests=[];
   const activity=createSearchActivity({...db,pool:{async query(sql,args){const result=await db.pool.query(sql,args);requests.push({sql,returned:result.rows.length});return result;}}});
   await activity.ready();
-  const req={url:'/api/search'},res={statusCode:200,writableEnded:true};
+  const req={url:'/api/search',headers:{}},res={statusCode:200,writableEnded:true};
   await observeAgentRequest(activity,'search',req,res,async()=>{admitActivity(alice);admitActivity(alice);activityInput({query:'needle',currentSession:ctx});});
   await observeAgentRequest(activity,'board_sync',req,res,async()=>{});
   await Promise.all(Array.from({length:30},()=>activity.agentCall(bob,entry('indexed query'))));
@@ -119,4 +119,28 @@ test('history and summary query plans stay bounded with a large workspace and ma
   }
   assert.doesNotMatch(JSON.stringify(plans[2]),/opencrawl_search_history/);
   t.diagnostic('100,000-row fixture; PostgreSQL first/next/summary ms: '+plans.map(p=>p['Execution Time']).join(', '));
+});
+
+
+test('only foreground HTTP operations count as agent tool calls',async()=>{
+  let calls=0;
+  const activity={agentCall:async()=>{calls++;}};
+  const observe=(method,path,headers={})=>observeAgentRequest(activity,httpTool(method,path),{method,url:path,headers},
+    {statusCode:200,writableEnded:true},async()=>{admitActivity(alice);return 'served';});
+  const digest='a'.repeat(64);
+  const background=[
+    ['GET','/api/sessions/identity'],['GET','/api/sessions/recording'],['HEAD','/api/sessions/recording'],
+    ['POST','/api/sessions/batches'],['POST','/api/sessions/memories'],['PUT','/api/sessions/attachments/'+digest],
+    ['POST','/api/context/suggestions'],['POST','/api/context/suggestions/events'],['GET','/api/cli/me'],
+    ['GET','/api/setup'],['POST','/api/setup/verify'],['POST','/api/agent-tokens'],['DELETE','/api/sessions/credentials/'+digest],
+    ...['bootstrap','ack','inbox','leave','profile','register','v2/inbox','v2/sync','v2/presence'].map(n=>['POST','/api/board/'+n]),
+    ['POST','/api/new-worker'],
+  ];
+  for(const [method,path] of background){assert.equal(httpTool(method,path),undefined,path);assert.equal(await observe(method,path),'served');}
+  assert.equal(await observe('POST','/api/search',{origin:'https://console.example'}),'served');
+  assert.equal(calls,0);
+  for(const [method,path] of [['POST','/api/search'],['POST','/api/search/fetch'],['GET','/api/sessions/batches'],['POST','/api/board/v2/post']]){
+    assert.ok(isAgentHttpTool(httpTool(method,path)));await observe(method,path);
+  }
+  assert.equal(calls,4);
 });
