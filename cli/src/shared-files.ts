@@ -262,4 +262,3 @@ export async function sharedFileCredential(args: string[]) {
     return 0;
   } catch { return 1; }
 }
-
