@@ -329,6 +329,10 @@ export async function boardCommand(operation: string, api: string, values: Optio
     if (['register', 'bootstrap', 'profile'].includes(operation) && file){
       saveBoardRegistration(api, sessionId(values), result);
       markBoardActivity(api,sessionId(values));
+      if (operation === 'bootstrap' && result.sharedFiles === true) {
+        const {repairFilesGit} = await import('./shared-files.ts');
+        await repairFilesGit(api,sessionId(values));
+      }
     }
     if(operation==='register' && result.boardInbox===true && !values.full){
       delete result.home;
@@ -347,9 +351,21 @@ export async function boardCommand(operation: string, api: string, values: Optio
   try{
     await withSessionLock(`${api}/board-listener/${session}`, async () => {
       const started=Date.now(),{waitForStartupRegistration}=await import('./session-start-task.ts');
-      if(!await waitForStartupRegistration(api,session,{timeoutMs,signal:lifetime.signal,check:lifetime.check}))return;
+      let filesOwner: {tenantId:string;userId:string} | undefined;
+      if(!await waitForStartupRegistration(api,session,{timeoutMs,signal:lifetime.signal,check:lifetime.check,
+        onConfirmed(observation,binding){if(observation.registration.sharedFiles===true)filesOwner=binding.owner;}
+      }))return;
       lifetime.check();lifetime.signal.throwIfAborted();
       if(file)try{reload();}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      // An asynchronous native hook can't revise its initial prompt. Give the
+      // active chat a local capability notice after checking current access.
+      const noticeBudget=timeoutMs?Math.min(1000,timeoutMs-(Date.now()-started)):1000;
+      if(operation==='watch' && notice==='full' && filesOwner && noticeBudget>0) {
+        const {availableFiles,sharedFilesInstruction}=await import('./shared-files.ts');
+        const signal=AbortSignal.any([lifetime.signal,AbortSignal.timeout(noticeBudget)]);
+        if(await availableFiles(api,session,filesOwner,signal) && !signal.aborted)
+          await emit({type:'board.capabilities',sharedFiles:sharedFilesInstruction(api,session)});
+      }
       const remaining=timeoutMs?timeoutMs-(Date.now()-started):0;if(timeoutMs&&remaining<=0)return;
       let useInbox = Boolean(notice);
       const poll = async (lastEmitted: string | null) => {
@@ -386,8 +402,6 @@ export function participationInstructions(api?: string) {
   return `## Coordination
 
 Reuse SessionStart's session handle; set your name/task with board profile if unnamed. If startup is missing or failed, register once: opencrawl board register --session <id> --harness <harness> --name <name> --task "<task>"${apiFlag} --json. Use a stable agent name and short task description. On joining, peers online in your workspace receive your handle and task. Your introduction includes the online peers’ handles and short tasks. With MCP alone, set announce:true on board_presence when advertised. Use the native session ID, otherwise retain a UUID across resumes.
-
-When another agent needs a file, run opencrawl files open --session <id>${apiFlag} on deployments offering shared files. It prints your private scratch clone outside the working project. Write the handoff in the printed directory, commit it there, then run git -C <printed-dir> push origin main. After the push succeeds, give the recipient the repo-relative path and commit ID. To receive an update, fetch origin and read the file at that commit.
 
 Keep one native listener attached to this chat. Use the configured CLI and the same session handle. The command is opencrawl board watch --session <id>${apiFlag} --notify-only --json. Read the messages directly from each board.notice. After handling every message, pass its cursor as acknowledge to board_inbox or --cursor to the CLI inbox. Process any returned page the same way and deduplicate by message ID. If a notice is truncated, contains only IDs, or has no cursor, read the pending page with opencrawl board inbox --session <id>${apiFlag} --json. Older servers receipt that CLI read automatically. For output-limited monitors, --ids-only requests just the IDs.
 

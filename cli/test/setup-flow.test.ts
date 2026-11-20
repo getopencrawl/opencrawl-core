@@ -52,7 +52,7 @@ test('authenticated setup registers the Git helper on apply and repairs it on re
   expect(config('--get-urlmatch','credential.helper',api+'/git/tenant/files.git')).toContain('files-credential');
   expect(config('--get-urlmatch','credential.helper','https://example.invalid/repo.git')).toBe('');
   expect(readFileSync(config('--global','--get','include.path'),'utf8')).not.toContain(process.env.OPENCRAWL_TOKEN!);
- });
+ },false,'codex',false,true);
 });
 
 test('first run stays open after interruption and remembers an explicit opt-out without capture',()=>fixture(async api=>{
@@ -64,7 +64,9 @@ test('first run stays open after interruption and remembers an explicit opt-out 
  expect(readCaptureConfig()).toBeNull();
  expect(await needsFirstRunSetup()).toBe(false);
  expect(await needsFirstRunSetup('https://different.example')).toBe(true);
- expect(await setupCommand('run',api,{yes:true,json:true})).toMatchObject({status:'recording_off'});
+ const result=await setupCommand('run',api,{yes:true,json:true});
+ expect(result).toMatchObject({status:'recording_off'});
+ expect(result).not.toHaveProperty('gitCredentials'); // Older servers and disabled accounts receive no Git setup prompts.
  expect(readCaptureConfig()).toBeNull();
 }));
 
@@ -400,13 +402,18 @@ async function legacySetupCommand(action:string,api:string,values:Parameters<typ
  return setupCommand(action,api,values,dependencies);
 }
 type ClientStatus=SetupServerStatus['installations'][number]['clients'][number];
-async function fixture(run:(api:string,dir:string,observations:unknown[],setClient:(patch:Partial<ClientStatus>)=>void,calls:string[])=>Promise<void>,pluginStateSupported=false,patchedClient='codex',inviteEnabled=false){
+async function fixture(run:(api:string,dir:string,observations:unknown[],setClient:(patch:Partial<ClientStatus>)=>void,calls:string[])=>Promise<void>,pluginStateSupported=false,patchedClient='codex',inviteEnabled=false,sharedFiles=false){
  const dir=mkdtempSync(join(tmpdir(),'opencrawl-setup-flow-')),saved={...process.env},observations:unknown[]=[],calls:string[]=[];let installations:SetupServerStatus['installations']=[],clientPatch:Partial<ClientStatus>={};
  const server=createServer(async(req,res)=>{
   calls.push(req.url??'');
   const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=chunks.length?JSON.parse(Buffer.concat(chunks).toString()):{};
   let data:unknown;
   if(req.url==='/api/setup')data={schemaVersion:1,scope:{tenantId:'tenant',userId:'user'},...(pluginStateSupported?{pluginStateSupported:true}:{}),firstWin:null,installations:installations.map(row=>({...row,clients:row.clients.map(client=>client.client===patchedClient?{...client,...clientPatch}:client)}))};
+  else if(sharedFiles&&req.url==='/api/files'&&req.headers.authorization==='Bearer fixture-access-token-0123456789'){
+   // Cold hosted membership + storage discovery may exceed a native hook's budget.
+   if(calls.filter(path=>path==='/api/files').length===1)await new Promise(resolve=>setTimeout(resolve,1200));
+   data={remotePath:'/api/files/'+'a'.repeat(64)+'.git',tenantId:'tenant',userId:'user'};
+  }
   else if(inviteEnabled&&req.url==='/api/setup/invitations'){
    if(req.method==='GET')data={scope:{tenantId:'tenant',userId:'user'},workspace:'Example Team',delivery:'email'};
    else{observations.push(body);data={created:true,delivery:'email'};}

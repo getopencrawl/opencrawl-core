@@ -1,4 +1,4 @@
-import {setupFilesGit} from '../shared-files.ts';
+import {availableFiles,setupFilesGit} from '../shared-files.ts';
 import {readSession} from '../session.ts';
 import {removeCursorSetupHooks} from './cursor-native-hooks.ts';
 import {waitForSetup} from './wait.ts';
@@ -211,6 +211,7 @@ export function setupCommand(action:string,api:string,values:Values,deps:Depende
   if(action!=='run'&&action!=='apply')return result;
   // Committed setup results carry installationId, even when recording is off.
   if(!result||!('installationId' in result))return result;
+  if(!await availableFiles(api,undefined,result.scope,AbortSignal.timeout(10_000)))return result;
   let warning:string|undefined;
   if(!Bun.which('git',{PATH:process.env.PATH})){
    warning='Install Git and rerun setup to enable workspace Git authentication.';

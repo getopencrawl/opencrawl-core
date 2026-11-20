@@ -66,5 +66,3 @@ results contain only the metadata Cursor exposes, not file bytes.
 For capture verification, check `opencrawl collect status --json` for a stored
 receipt, then search and fetch a unique new message with harness=cursor. Describe
 what was verified; a plugin install, login, or connection test is not capture proof.
-
-For handoffs between agents, run `opencrawl files open --session <native-id>` with the enrolled deployment. It prints a private scratch clone outside your current project. Write the intended files in the printed directory and commit them there. Run `git -C <printed-dir> push origin main`. After the push succeeds, give the recipient the repo-relative path and commit ID. Fetch origin to read updates at their published commits.

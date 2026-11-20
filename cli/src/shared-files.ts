@@ -43,13 +43,13 @@ function checkPrivacy(api: string, session?: string) {
   if (config?.api === api && ids.some(id => id && ['codex','claude-code','cursor','antigravity','devin'].some(harness => sessionPrivate(config, {harness, sessionId: id}))))
     throw new CliError('SESSION_INCOGNITO', 'This private session cannot use shared files.', 2);
 }
-async function discoverRepo(api: string) {
-  const configured = await configuredToken('OPENCRAWL_TOKEN', api);
-  let token = configured || await accessToken(api);
-  const request = () => jsonRequest(api + '/api/files', {headers: {authorization: 'Bearer ' + token}});
+async function discoverRepo(api: string, signal?: AbortSignal) {
+  const configured = await configuredToken('OPENCRAWL_TOKEN', api, undefined, signal);
+  let token = configured || await accessToken(api, undefined, fetch, signal);
+  const request = () => jsonRequest(api + '/api/files', {headers: {authorization: 'Bearer ' + token},signal});
   let result = await request();
   if (result.response.status === 401 && (!configured || workspaceIdentityEnabled())) {
-    token = await configuredToken('OPENCRAWL_TOKEN', api, token) || await accessToken(api, token);
+    token = await configuredToken('OPENCRAWL_TOKEN', api, token, signal) || await accessToken(api, token, fetch, signal);
     result = await request();
   }
   if (!result.response.ok) throw new CliError('FILES_UNAVAILABLE', `Shared files unavailable (HTTP ${result.response.status}). Check this deployment and your sign-in.`, 2);
@@ -61,8 +61,21 @@ async function discoverRepo(api: string) {
   return {repo, token};
 }
 export async function sharedFilesUrl(api:string) {
+  checkPrivacy(api);
   const {repo} = await discoverRepo(api);
+  await repairFilesGit(api);
   return api + (repo.clonePath ?? repo.remotePath);
+}
+export async function availableFiles(api:string, session?:string, owner?:{tenantId:string;userId:string}, signal=AbortSignal.timeout(1000)) {
+  try {
+    checkPrivacy(api, session);
+    const {repo} = await discoverRepo(api, signal);
+    checkPrivacy(api, session);
+    return !owner || (owner.tenantId === repo.tenantId && owner.userId === repo.userId);
+  } catch { return false; }
+}
+export function sharedFilesInstruction(api:string, session:string) {
+  return `For file handoffs, use opencrawl files open --session ${session} --api ${api}. It prints a directory outside your project. Put the handoff file in that directory, commit it there, and run git -C <printed-dir> push origin main. After the push succeeds, send the commit ID and file path to your teammate. To read a handoff, fetch origin and read the file at that commit.`;
 }
 function credentialCommand(target:string, command=commandForSelf()) {
   // Git runs shell credential helpers through sh, including on Windows.
@@ -70,7 +83,8 @@ function credentialCommand(target:string, command=commandForSelf()) {
   return [...entry, 'files-credential', target].map(word => literal(word, false)).join(' ');
 }
 
-export async function setupFilesGit(api:string, command=setupCommandForSelf()) {
+export async function setupFilesGit(api:string, command=setupCommandForSelf(), signal=AbortSignal.timeout(2500)) {
+  checkPrivacy(api);
   const name = createHash('sha256').update(api).digest('hex') + '.gitconfig';
   const file = resolve(configDir(), 'files', name);
   // Git may run in a new shell. Bind the setup profile and workload identity,
@@ -86,10 +100,26 @@ export async function setupFilesGit(api:string, command=setupCommandForSelf()) {
     return ['[credential ' + scope + ']', '  useHttpPath = true', '  helper =', '  helper = ' + helper,
       '[http ' + scope + ']', '  extraHeader =', '  followRedirects = false'].join('\n');
   }).join('\n') + '\n';
-  atomicFile(file, config);
+  // On an upgraded installation this runs at confirmed startup. Preserve file
+  // timestamps and unrelated user configuration when the helper is current.
+  const current = exists(file);
+  if (!current?.isFile() || current.size !== Buffer.byteLength(config) || readFileSync(file, 'utf8') !== config) atomicFile(file, config);
   const include = process.platform === 'win32' ? file.replaceAll('\\','/') : file;
-  await git('git', ['config','--global','--fixed-value','--replace-all','include.path',include,include], {env:gitEnvironment()});
+  const options = {env:gitEnvironment(), signal, windowsHide:true};
+  let matches = '';
+  try { matches = (await git('git', ['config','--global','--fixed-value','--get-all','include.path',include], options)).stdout; }
+  catch (error) { if ((error as {code?:unknown}).code !== 1) throw error; }
+  if (matches.trimEnd() !== include)
+    await git('git', ['config','--global','--fixed-value','--replace-all','include.path',include,include], options);
   return {api,config:file};
+}
+// No network or login here. Call only after this agent's current, authenticated
+// server response enabled files. Board participation survives absent/locked Git.
+export async function repairFilesGit(api:string, session?:string) {
+  try {
+    checkPrivacy(api, session);
+    await setupFilesGit(api, undefined, AbortSignal.timeout(500));
+  } catch { /* Retry on the next confirmed startup. */ }
 }
 function contains(root: string, path: string) {
   const diff = relative(root, path);
@@ -131,6 +161,7 @@ export async function openSharedFiles(api: string, rawSession: unknown) {
   if (!nativeId(session)) throw new CliError('INVALID_USAGE', 'Pass --session with this agent session’s stable ID.', 64);
   checkPrivacy(api, session);
   const {repo} = await discoverRepo(api);
+  await repairFilesGit(api, session);
   const key = bindingKey(api, repo, session);
   const remote = api + repo.remotePath;
   const cwd = realpathSync.native(process.cwd());

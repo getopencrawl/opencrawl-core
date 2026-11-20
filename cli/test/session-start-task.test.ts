@@ -11,6 +11,7 @@ import {scopeKey,statePath,type SetupState} from '../src/setup/state.ts';
 import * as session from '../src/session.ts';
 import * as identity from '../src/workspace-identity.ts';
 import * as service from '../src/capture/daemon-service.ts';
+import {privacyRoot,privacyKey} from '../src/incognito-state.ts';
 
 const api='https://startup-background.example',sessionId='native-startup-session';
 const event={hook_event_name:'SessionStart',session_id:sessionId,source:'startup'};
@@ -19,7 +20,7 @@ type Fixture={config:CaptureConfig;setup:SetupState;writeConfig:(config:CaptureC
 async function fixture(run:(f:Fixture)=>Promise<void>){
  const home=mkdtempSync(join(tmpdir(),'opencrawl-background-start-')),saved={...process.env};
  try{
-  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(home,'config'),OPENCRAWL_API_URL:api,OPENCRAWL_TOKEN:'synthetic-startup-token'});
+  Object.assign(process.env,{OPENCRAWL_CONFIG_HOME:join(home,'config'),OPENCRAWL_API_URL:api,OPENCRAWL_TOKEN:'synthetic-startup-token',GIT_CONFIG_GLOBAL:join(home,'gitconfig')});
   delete process.env.OPENCRAWL_AUTH;delete process.env.OPENCRAWL_SESSIONS_TOKEN;
   const config:CaptureConfig={schemaVersion:1,api,installationId:'startup-installation',owner:{tenantId:'startup-team',userId:'startup-owner'},installedAt:new Date().toISOString(),roots:{codex:join(home,'codex'),'claude-code':join(home,'claude')},command:[],hookOwnership:'plugin',backgroundStartup:true,disabled:true,harnesses:[]};
   const setup:SetupState={schemaVersion:1,scope:{api,...config.owner},installationId:config.installationId,acceptedAt:new Date().toISOString(),selections:{plugins:Object.fromEntries(clients.map(c=>[c,true])),forward:Object.fromEntries(clients.map(c=>[c,false])),history:{}}};
@@ -31,7 +32,7 @@ async function fixture(run:(f:Fixture)=>Promise<void>){
   await run({config,setup,writeConfig,writeSetup,tasks,inbox,stateFile:()=>join(session.configDir(),'startup','registrations',readdirSync(join(session.configDir(),'startup','registrations'))[0]!)});
  }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);rmSync(home,{recursive:true,force:true});}
 }
-function receiver(f:Fixture,onRequest?:(path:string)=>void):typeof fetch {
+function receiver(f:Fixture,onRequest?:(path:string)=>void,filesEnabled=false):typeof fetch {
  return (async(input:RequestInfo|URL,init?:RequestInit)=>{
   const path=new URL(String(input)).pathname;
   expect(new Headers(init?.headers).get('authorization')).toBe('Bearer synthetic-startup-token');
@@ -39,9 +40,46 @@ function receiver(f:Fixture,onRequest?:(path:string)=>void):typeof fetch {
   if(path==='/api/cli/me')return Response.json({schemaVersion:1,data:{user:{id:f.config.owner.userId},workspace:{id:f.config.owner.tenantId}}});
   expect(path).toBe('/api/board/bootstrap');
   const body=JSON.parse(String(init?.body));expect(body.workspace).toBe(f.config.owner.tenantId);
-  return Response.json({schemaVersion:1,data:{workspace:f.config.owner.tenantId,session:body.session,agent:'a'.repeat(64),name:null,task:null}});
+  return Response.json({schemaVersion:1,data:{workspace:f.config.owner.tenantId,session:body.session,agent:'a'.repeat(64),name:null,task:null,...(filesEnabled?{sharedFiles:true}:{})}});
  }) as typeof fetch;
 }
+
+test('a background upgrade repairs on confirmed bootstrap and announces only current file access',()=>fixture(async f=>{
+  let enabled=true;
+  const global=process.env.GIT_CONFIG_GLOBAL!;
+  const fetcher=(async(input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=new URL(String(input)).pathname;
+    if(path==='/api/files')return enabled?Response.json({schemaVersion:1,data:{...f.config.owner,remotePath:'/api/files/'+'a'.repeat(64)+'.git'}}):new Response(null,{status:404});
+    if(path==='/api/board/v2/inbox')return Response.json({schemaVersion:1,data:{left:true,ids:[],messages:[],more:false}});
+    return receiver(f,undefined,enabled)(input,init);
+  }) as typeof fetch;
+  const live=spyOn(globalThis,'fetch').mockImplementation(fetcher);
+  try {
+    const start=async()=> (await sessionStart(api,'codex',event)).hookSpecificOutput.additionalContext;
+    const work=async()=>{
+      const id=JSON.parse(readFileSync(f.stateFile(),'utf8')).pending.id;
+      await processSessionStartTask(f.config,f.tasks().find(task=>task.id===id),fetcher);
+    };
+    const notices=async()=>{
+      const result:unknown[]=[];
+      await boardCommand('watch',api,{session:sessionId,'notify-only':true,'timeout-ms':2000},row=>result.push(row));
+      return result;
+    };
+    expect(await start()).not.toContain('files open');expect(existsSync(global)).toBe(false);
+    await work();expect(readFileSync(global,'utf8')).toContain('include');
+    expect(await notices()).toMatchObject([{type:'board.capabilities',sharedFiles:expect.stringContaining('files open --session '+sessionId)}]);
+    enabled=false;
+    expect(await notices()).toEqual([]); // The prior receipt still says enabled.
+    expect(await start()).not.toContain('files open');
+    rmSync(global);await work();expect(existsSync(global)).toBe(false);
+    expect(await notices()).toEqual([]);
+    enabled=true;await start();
+    const privateId={harness:'codex',sessionId};
+    session.atomicJson(join(privacyRoot(f.config),'accepted',privacyKey(privateId)),privateId);
+    await work();expect(existsSync(global)).toBe(false);
+    expect(await start()).toContain('incognito');
+  } finally {live.mockRestore();}
+}));
 
 test('offline startup is a bounded local handoff across four harnesses with static retrieval guidance',()=>fixture(async f=>{
  const network=spyOn(globalThis,'fetch').mockImplementation((async()=>{throw Error('foreground network');}) as unknown as typeof fetch);

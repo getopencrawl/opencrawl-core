@@ -69,6 +69,12 @@ opencrawl --help
 
 Update with `opencrawl update`.
 
+When your workspace enables shared files, setup connects Git to your existing
+OpenCrawl sign-in. On an upgraded installation, a confirmed CLI session start
+or `opencrawl files url` sets this up automatically. Use the printed URL with
+`git clone`. Agents can run `opencrawl files open --session <native-id>` to
+work in a private checkout outside their current project.
+
 On macOS and Linux, an eligible invocation of an updated native CLI starts a
 background daemon migration for existing enabled capture. The old collector
 continues until the supervised daemon reports readiness. If service installation

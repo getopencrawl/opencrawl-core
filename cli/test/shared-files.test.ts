@@ -100,10 +100,11 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     expect(await run(['git','-C',project,'show',':notes'])).toBe('customer WIP');
     expect(await readFile(join(project,'notes'),'utf8')).toBe('customer WIP plus unstaged updates');
 
-    // An ordinary Git client can start in an empty folder, before any clone has local config.
+    // An upgraded CLI also repairs an existing profile when a member requests
+    // the URL, even if their independently packaged plugin owns SessionStart.
+    await run(['git','config','--global','--unset-all','include.path']);
     const cloneUrl = await run([...entry,'files','url','--api',api]);
     expect(cloneUrl).toBe(api+'/git/team-a/files.git');
-    for (let i=0;i<2;i++) await run([...entry,'files','setup-git','--api',api]);
     const includes = await run(['git','config','--global','--get-all','include.path']);
     expect(includes.split('\n')).toHaveLength(1);
     const human = join(root,'human');
@@ -123,6 +124,8 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     await run(['git','-C',b,'push']);
     await run(['git','-C',human,'pull','--ff-only']);
     expect(await readFile(join(human,'reply.txt'),'utf8')).toBe('from another member');
+    await run([...entry,'files','setup-git','--api',api]);
+    expect(await run(['git','config','--global','--get-all','include.path'])).toBe(includes);
     // The account and network are verified again when Git later fetches or pushes.
     await run(['git','-C',human,'fetch'],{token:'fixture-token-other',failure:true});
     for(const candidate of [cloneUrl.replace('/team-a/','/team-b/'),api+'/not-git',cloneUrl.replace('127.0.0.1','localhost')]){

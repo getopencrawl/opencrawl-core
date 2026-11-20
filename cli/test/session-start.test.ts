@@ -9,9 +9,10 @@ import {boardStateFile, saveBoardRegistration, boardRequest} from '../src/board.
 import {sessionFile} from '../src/session.ts';
 
 async function fixture(run: (home: string) => Promise<void> | void) {
-  const home=mkdtempSync(join(tmpdir(),'opencrawl-start-')), saved=process.env.OPENCRAWL_CONFIG_HOME;
+  const home=mkdtempSync(join(tmpdir(),'opencrawl-start-')), saved=process.env.OPENCRAWL_CONFIG_HOME, previousGit=process.env.GIT_CONFIG_GLOBAL;
   process.env.OPENCRAWL_CONFIG_HOME=join(home,'config');
-  try {await run(home);} finally {if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;rmSync(home,{recursive:true,force:true});}
+  process.env.GIT_CONFIG_GLOBAL=join(home,'gitconfig');
+  try {await run(home);} finally {if(saved===undefined)delete process.env.OPENCRAWL_CONFIG_HOME;else process.env.OPENCRAWL_CONFIG_HOME=saved;if(previousGit===undefined)delete process.env.GIT_CONFIG_GLOBAL;else process.env.GIT_CONFIG_GLOBAL=previousGit;rmSync(home,{recursive:true,force:true});}
 }
 const event={hook_event_name:'SessionStart',session_id:'native-123',source:'startup'};
 const registration={workspace:'test',agent:'a'.repeat(64),session:'native-123',name:null,task:null};
@@ -170,7 +171,7 @@ test('startup installation preserves capture and user hooks, is idempotent, and 
 }));
 
 test('real startup CLI and board server preserve the agent-chosen profile across native lifecycle events',()=>fixture(async home=>{
-  const env={...process.env,OPENCRAWL_NO_UPDATE:'1',HOME:home,USERPROFILE:home,CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),OPENCRAWL_TOKEN:'disposable-board-test-token'};
+  const env={...process.env,OPENCRAWL_NO_UPDATE:'1',HOME:home,USERPROFILE:home,CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),OPENCRAWL_TOKEN:'disposable-board-test-token',TEST_BOARD_FILES:'1'};
   const server=Bun.spawn(['node',resolve(import.meta.dir,'fixtures/board-server.mjs'),join(home,'board.sqlite')],{env,stdout:'pipe',stderr:'pipe'});
   try {
     const reader=server.stdout.getReader(), first=await reader.read();
@@ -182,7 +183,10 @@ test('real startup CLI and board server preserve the agent-chosen profile across
       expect(code).toBe(0);expect(err).toBe('');return JSON.parse(out);
     };
     const start=(source:string,session='native-123',harness='codex')=>run(['session','start','--harness',harness],{...event,source,session_id:session});
-    expect((await start('startup')).hookSpecificOutput.additionalContext).toContain('registered with');
+    const firstStart=(await start('startup')).hookSpecificOutput.additionalContext;
+    expect(firstStart).toContain('registered with');expect(firstStart).toContain('files open --session native-123');
+    const helper=Bun.spawnSync(['git','config','--get-urlmatch','credential.helper',api+'/git/fixture/files.git'],{env}).stdout.toString();
+    expect(helper).toContain('files-credential');
     await run(['board','profile','--session','native-123','--name','codex:agent-choice','--task','Test real lifecycle','--json']);
     for(const source of ['resume','compact'])expect((await start(source)).hookSpecificOutput.additionalContext).toContain('codex:agent-choice');
     expect((await start('fork','native-fork')).hookSpecificOutput.additionalContext).toContain('Display name/task: unset');
@@ -235,10 +239,25 @@ test('Devin startup and resume keep native identity and only announce confirmed 
 }));
 
 
-test('file handoffs appear only when this deployment advertises shared files', () => fixture(async () => {
+test('an upgraded foreground installation repairs its Git helper on a confirmed enabled startup', () => fixture(async home => {
   const api = 'http://127.0.0.1:8093';
-  const supported = await sessionStart(api, 'codex', event, async () => ({...registration,sharedFiles:true}));
-  expect(supported.hookSpecificOutput.additionalContext).toContain('opencrawl files open --session ' + event.session_id);
+  const global = join(home,'gitconfig');
+  const supportedStart = () => sessionStart(api, 'codex', event, async () => ({...registration,sharedFiles:true}));
   const older = await sessionStart(api, 'codex', event, async () => registration);
   expect(older.hookSpecificOutput.additionalContext).not.toContain('files open');
+  expect(existsSync(global)).toBe(false);
+  const supported = await supportedStart();
+  expect(supported.hookSpecificOutput.additionalContext).toContain('opencrawl files open --session ' + event.session_id);
+  const helper = Bun.spawnSync(['git','config','--global','--get','include.path'],{env:process.env}).stdout.toString().trim();
+  expect(readFileSync(helper,'utf8')).toContain('files-credential');
+  const times=()=>[global,helper].map(file=>statSync(file).mtimeMs);
+  const before=times();await supportedStart();expect(times()).toEqual(before);
+  writeFileSync(global,'[user]\n\tname = Existing\n');
+  await supportedStart();
+  expect(readFileSync(global,'utf8')).toContain('name = Existing');
+  expect(readFileSync(global,'utf8')).toContain('include');
+  rmSync(helper);await supportedStart();expect(existsSync(helper)).toBe(true);
+  rmSync(global);const disabled=await sessionStart(api, 'codex', event, async () => ({...registration,sharedFiles:false}));
+  expect(disabled.hookSpecificOutput.additionalContext).not.toContain('files open');
+  expect(existsSync(global)).toBe(false);
 }));
