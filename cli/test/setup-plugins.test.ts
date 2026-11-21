@@ -94,6 +94,69 @@ test('inventory detects supported clients without creating configuration',()=>{
   expect(pluginInventory({home,env:{},which:()=>null}).filter(row=>row.detected).map(row=>row.id)).toEqual(['codex']);expect(existsSync(join(home,'.config'))).toBe(false);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
+
+test('confirmed Claude setup installs workspace sharing and retains edited permissions and instructions on resume',()=>fixture(async(home,options)=>{
+ const root=join(home,'custom-claude'),file=join(root,'settings.json'),guide=join(root,'CLAUDE.md');
+ options.env!.CLAUDE_CONFIG_DIR=root;
+ const permissions={allow:['Bash(npm test)','Bash(opencrawl fetch *)'],ask:['Bash(opencrawl board post *)'],deny:['Bash(opencrawl files setup-git *)']};
+ save(file,{permissions,model:'opus',autoMode:{allow:['$defaults']}});
+ const original='Personal instructions\r\n<!-- opencrawl:begin -->\r\nExisting startup directions\r\n<!-- opencrawl:end -->';
+ writeFileSync(guide,original);
+ const install=()=>installSetupPlugins(origin,['claude-code'],options);
+ expect((await install()).results[0]?.status).toBe('prepared');
+ const settings=read(file);
+ const tools=['board_*','opencrawl_search_v1','opencrawl_search','search','fetch'].map(tool=>'mcp__plugin_opencrawl_opencrawl__'+tool);
+ const shellRules=(process.platform==='win32'?['Bash','PowerShell']:['Bash']).flatMap(shell=>['board','search','fetch','files'].map(command=>shell+'(opencrawl '+command+' *)'));
+ expect(settings.permissions).toEqual({...permissions,allow:[...new Set([...permissions.allow,...shellRules,...tools])]});
+ expect(settings.model).toBe('opus');
+ expect(settings.autoMode.allow).toEqual(['$defaults']);
+ expect(settings.autoMode.environment).toEqual(['$defaults',expect.stringContaining(origin)]);
+ const installed=readFileSync(guide,'utf8');
+ expect(installed).toStartWith(original+'\r\n\r\n');
+ expect(installed).toContain('Freely exchange');
+ expect(existsSync(join(home,'.codex','AGENTS.md'))).toBe(false);
+ expect(existsSync(join(home,'.claude','settings.json'))).toBe(false);
+ await install();
+ expect(readFileSync(guide,'utf8')).toBe(installed);
+ expect(read(file)).toEqual(settings);
+ settings.permissions.allow=settings.permissions.allow.filter((entry:string)=>entry!=='Bash(opencrawl files *)');
+ settings.autoMode.environment=['My own environment'];
+ save(file,settings);writeFileSync(guide,original);
+ await install();
+ expect(read(file)).toEqual(settings);
+ expect(readFileSync(guide,'utf8')).toBe(original);
+}));
+
+test('Codex setup writes its active global instructions and leaves Claude alone',()=>fixture(async(home,options)=>{
+ const root=join(home,'custom-codex'),guide=join(root,'AGENTS.md'),override=join(root,'AGENTS.override.md');
+ options.env!.CODEX_HOME=root;
+ await installSetupPlugins(origin,['codex'],options);
+ expect(readFileSync(guide,'utf8')).toContain('configured OpenCrawl workspace is trusted');
+ const standard=readFileSync(guide,'utf8');
+ writeFileSync(override,'Override instructions\n');
+ await installSetupPlugins(origin,['codex'],options);
+ expect(readFileSync(override,'utf8')).toStartWith('Override instructions\n\n<!-- opencrawl:workspace-trust -->');
+ expect(readFileSync(guide,'utf8')).toBe(standard);
+ expect(existsSync(join(home,'.claude'))).toBe(false);
+}));
+
+test('participation requires native confirmation and preserves malformed Claude settings',()=>fixture(async(home,options)=>{
+ const root=join(home,'.claude'),settings=join(root,'settings.json');
+ await installSetupPlugins(origin,['claude-code'],{...options,which:()=>null});
+ expect(existsSync(root)).toBe(false);
+ mkdirSync(root);
+ for(const original of ['{broken','null','{"permissions":{"allow":"Bash(ls)"}}','{"autoMode":{"environment":false}}']){
+  writeFileSync(settings,original);
+  const result=await installSetupPlugins(origin,['claude-code'],options);
+  expect(result.results[0]?.status).toBe('error');
+  expect(result.results[0]?.message).toContain(settings);
+  expect(readFileSync(settings,'utf8')).toBe(original);
+  expect(existsSync(join(root,'CLAUDE.md'))).toBe(false);
+ }
+ save(settings,{autoMode:{environment:['Custom environment']}});
+ expect((await installSetupPlugins(origin,['claude-code'],options)).results[0]?.status).toBe('prepared');
+ expect(read(settings).autoMode.environment).toEqual(['Custom environment',expect.stringContaining(origin)]);
+}));
 test('desktop plugin names are stable and private receipt paths remain deployment-specific',()=>{
  expect(setupPluginIdentity(origin+'/')).toEqual(identity);
  expect(identity.name).toBe('opencrawl');expect(identity.marketplace).toBe('opencrawl-cli');

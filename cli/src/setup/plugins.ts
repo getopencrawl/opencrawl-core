@@ -15,6 +15,7 @@ import {pluginHookFiles} from './plugin-hooks.ts';
 import {powershellQuote} from '../hook-runner.ts';
 import {pluginActivationMatches,verifyPluginBundle,checkRepairablePluginBundle} from './plugin-context.ts';
 import {setupPluginIdentity,scopedPluginIdentity} from './plugin-identity.ts';
+import {installParticipation} from './participation.ts';
 export {setupPluginIdentity} from './plugin-identity.ts';
 import type {PublishedPackage,CaptureMode,LocalPluginClient} from './published-plugins.ts';
 import {bundleManifest,MAX_PLUGIN_BINARY,MAX_PLUGIN_TEXT,type BundleFiles} from './plugin-bundle.ts';
@@ -424,6 +425,10 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         }
         options.validateBinding?.();
         await previousPlugin?.retire();
+        if(client==='claude-code'||client==='codex') {
+          const profile=client==='claude-code'?(env.CLAUDE_CONFIG_DIR||join(home,'.claude')):(env.CODEX_HOME||join(home,'.codex'));
+          await withSessionLock('capture:configuration',async()=>installParticipation(client,resolve(profile),origin,marketRoot));
+        }
         const cursor=cursorArchive?cursorPreparation(prior,unchanged,digest,configHome,JSON.parse(published!.files['.opencrawl-binding.json']!).installationId,options.cursorCapture):undefined;
         safeDirectory(dirname(receipt),configHome);atomicJson(receipt,{schemaVersion:2,api:origin,client,pluginName:identity.name,configHome,digest,pluginId,directory,nativeRoot:loadedRoot,...(client==='codex'&&loadedRoot?{cachePath:loadedRoot}:{}),...cursor});
         const active=cursor?.captureConfirmed??published?.captureAvailable??Boolean(loadedRoot&&pluginActivationMatches({api:origin,client,pluginName:identity.name,digest,nativeRoot:loadedRoot,configHome}));

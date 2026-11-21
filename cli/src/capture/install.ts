@@ -24,7 +24,7 @@ function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(f
 /** Rewrite another program's JSON config the way people keep it: their
  * indentation (two spaces when new or unknown), same permissions, and the
  * directory left as it is. */
-function writeHarnessJson(file:string,value:unknown) {
+export function writeHarnessJson(file:string,value:unknown) {
   const before=existsSync(file)?readFileSync(file,'utf8'):'';
   if(before&&isDeepStrictEqual(JSON.parse(before),value))return;
   const text=before.trim();
@@ -33,7 +33,12 @@ function writeHarnessJson(file:string,value:unknown) {
   mkdirSync(dirname(file),{recursive:true});
   replaceFile(file,(indent?JSON.stringify(value,null,indent):JSON.stringify(value))+'\n');
 }
-function backup(file:string){if(existsSync(file)){const p=join(captureDir(),'backups',randomUUID()+'.json');copyFileSync(file,p);}}
+function backup(file:string){
+  if(!existsSync(file))return;
+  const dir=join(captureDir(),'backups');
+  mkdirSync(dir,{recursive:true,mode:0o700});
+  copyFileSync(file,join(dir,randomUUID()+'.json'));
+}
 type HookEntry={command:string,async?:boolean,timeout:number};
 function modifyHooks(file:string,events:string[],entry:((event:string)=>HookEntry)|null) {
   const config=readJson(file);
@@ -97,10 +102,12 @@ function modifyCursorFormatHooks(file:string,command:string|null,harness:'cursor
 /** For a file in another program's directory: new contents, same permissions,
  * and the directory left as it is. */
 function replaceFile(file:string,bytes:string|Buffer) {
-  const temp=file+'.opencrawl-tmp',mode=existsSync(file)?statSync(file).mode&0o777:0o600;
-  writeFileSync(temp,bytes,{mode:0o600});
-  chmodSync(temp,mode); // the creation mode is narrowed by the umask
-  retryWindowsSharing(()=>renameSync(temp,file));
+  const temp=file+'.'+randomUUID()+'.tmp',mode=existsSync(file)?statSync(file).mode&0o777:0o600;
+  try {
+    writeFileSync(temp,bytes,{mode:0o600,flag:'wx'});
+    chmodSync(temp,mode); // the creation mode is narrowed by the umask
+    retryWindowsSharing(()=>renameSync(temp,file));
+  } finally { if(existsSync(temp))unlinkSync(temp); }
 }
 function enableCodex(root:string) {
   const file=join(root,'config.toml');
