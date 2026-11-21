@@ -118,11 +118,10 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
     /** Activity within the requested UTC calendar-day window, plus lifetimeEvents for
      * index inventory. Never returns transcript text. With team:true the caller
      * must already have authorized the principal for its whole tenant. */
-    async usage(principal: Principal,{team=false,days=30,now=Date.now(),members}: {team?: boolean; days?: number; now?: number; members?: UsageMember[]}={}) {
+    /** days:null reads every captured day up to now. */
+    async usage(principal: Principal,{team=false,days=30,now=Date.now(),members}: {team?: boolean; days?: number | null; now?: number; members?: UsageMember[]}={}) {
       sessionScope(principal);
-      if(!Number.isInteger(days)||days<1||days>365||!Number.isFinite(now)||!Number.isFinite(new Date(now).getTime()))fail(400,'Invalid usage window');
-      const day=(t: number)=>new Date(t).toISOString().slice(0,10),since=day(now-(days-1)*86400000),today=day(now);
-      const until=new Date(now).toISOString();
+      const {since,today,until,window}=usageWindow(days,now);
       const filter=[{term:{tenantId:principal.tenantId}},...(team?[]:[{term:{[f('userId')]:principal.userId}}]),{term:{[f('chunk')]:0}}];
       const messages={filter:{term:{[f('kind')]:'message'}}},toolCalls={value_count:{field:f('toolNames')}};
       // Sessions are the ones a person started; each spawned subagent has its own
@@ -131,7 +130,6 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       const sessions={filter:{bool:{must_not:[subagent]}},aggs:{count}},subagentSessions={filter:subagent,aggs:{count}};
       if (members && !team) fail(403, 'Team usage required for member reporting');
       const collection = resolve(principal).collection('session');
-      const window = {range:{[f('timestamp')]:{gte:since+'T00:00:00.000Z',lte:until}}};
       const activityMetrics = {last:{max:{field:f('timestamp')}},week:{filter:{range:{[f('timestamp')]:{gte:new Date(now-7*86400000).toISOString(),lte:until}}}}};
       const ownerMetrics = {sessions,subagentSessions,messages,toolCalls,...activityMetrics};
       const result = await collection.search(principal,{size:0,track_total_hits:true,query:{bool:{filter}},aggs:{
@@ -140,7 +138,7 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
         tools:{terms:{field:f('toolNames'),size:8}},opencrawl:{filter:{wildcard:{[f('toolNames')]:'*opencrawl*'}}},
         harnesses:{terms:{field:f('harness'),size:5}},origins:{terms:{field:f('origin'),size:6}},
         first:{min:{field:f('timestamp')}},last:{max:{field:f('timestamp')}},
-        daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,extended_bounds:{min:since,max:today}},aggs:{sessions}},
+        daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,...since?{extended_bounds:{min:since,max:today}}:{}},aggs:{sessions}},
         ...(members ? {} : {people:{terms:{field:f('userId'),size:500},aggs:ownerMetrics}}),
       }}}});
       const a=result?.aggregations?.activity as unknown as ActivityAggregation | undefined;
@@ -151,12 +149,60 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       return {events:a.doc_count,lifetimeEvents:result.hits.total.value,sessions:a.sessions.count.value,subagentSessions:a.subagentSessions.count.value,messages:a.messages.doc_count,toolCalls:a.toolCalls.value,
         machines:a.machines.value,opencrawlCalls:a.opencrawl.doc_count,tools:terms(a.tools),harnesses:terms(a.harnesses),origins:terms(a.origins),
         firstAt:a.first.value_as_string??null,lastAt:a.last.value_as_string??null,
-        daily:a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.count.value})),people};
+        daily:throughToday(a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.count.value})),today,date=>({date,events:0,sessions:0})),people};
+    },
+    /** Captured tokens of session events in the window, by the UTC day each event happened. */
+    async tokenTotals(principal: Principal,{team=false,days=30,now=Date.now()}: {team?: boolean; days?: number | null; now?: number}={}) {
+      sessionScope(principal);
+      const {since,today,window}=usageWindow(days,now);
+      const filter=[{term:{tenantId:principal.tenantId}},...(team?[]:[{term:{[f('userId')]:principal.userId}}]),{term:{[f('chunk')]:0}},window];
+      const tokens={sum:{field:f('capturedTokens')}};
+      const result=await resolve(principal).collection('session').search(principal,{size:0,query:{bool:{filter}},aggs:{tokens,first:{min:{field:f('timestamp')}},
+        daily:{date_histogram:{field:f('timestamp'),calendar_interval:'day',format:'yyyy-MM-dd',min_doc_count:0,...since?{extended_bounds:{min:since,max:today}}:{}},aggs:{tokens}}}});
+      const a=result?.aggregations as unknown as {tokens:{value:number};first:{value_as_string?:string};daily:{buckets:Array<{key_as_string:string;tokens:{value:number}}>}}|undefined;
+      if(!a?.daily||!Array.isArray(a.daily.buckets))throw new Error('Invalid token usage response');
+      const daily=throughToday(a.daily.buckets.map(b=>({date:b.key_as_string,count:tokenValue(b.tokens)})),today,date=>({date,count:0}));
+      return {total:tokenValue(a.tokens),first:a.first?.value_as_string??null,daily};
+    },
+    /** Sessions with captured tokens in the window, most recently active first. Never returns text. */
+    async tokenSessions(principal: Principal,{team=false,days=30,now=Date.now(),offset=0}: {team?: boolean; days?: number | null; now?: number; offset?: number}={}) {
+      sessionScope(principal);
+      if(!Number.isInteger(offset)||offset<0||offset>tokenSessionLimit)fail(400,'Invalid session page');
+      const {window}=usageWindow(days,now);
+      const filter=[{term:{tenantId:principal.tenantId}},...(team?[]:[{term:{[f('userId')]:principal.userId}}]),{term:{[f('chunk')]:0}},window];
+      const result=await resolve(principal).collection('session').search(principal,{size:0,query:{bool:{filter}},aggs:{sessions:{
+        multi_terms:{terms:['userId','harness','sessionId'].map(key=>({field:f(key)})),size:offset+tokenSessionPage+1,order:[{last:'desc'},{_key:'asc'}]},
+        aggs:{last:{max:{field:f('timestamp')}},tokens:{sum:{field:f('capturedTokens')}}}}}});
+      type Bucket={key:string[];last:{value_as_string?:string};tokens:{value:number}};
+      const buckets=result?.aggregations?.sessions?.buckets as unknown as Bucket[]|undefined;
+      if(!Array.isArray(buckets))throw new Error('Invalid token session response');
+      const rows=buckets.slice(offset,offset+tokenSessionPage).map(b=>({userId:b.key[0]!,harness:b.key[1]!,sessionId:b.key[2]!,tokens:tokenValue(b.tokens),lastAt:b.last?.value_as_string??null}));
+      return {rows,more:buckets.length>offset+tokenSessionPage&&offset+tokenSessionPage<tokenSessionLimit};
     },
     refresh:(principal: Principal)=>resolve(principal).refresh(principal),
     applySessionControl:(principal: Principal,key: {harness: string; sessionId: string},control: ResourceControl)=>
       applySessionControl(resolve(principal).collection('session'),principal,{userId:principal.userId,...key},control),
   };
+}
+const tokenSessionPage=25,tokenSessionLimit=1000;
+const dayOf=(t: number)=>new Date(t).toISOString().slice(0,10);
+/** Calendar-day UTC window ending now; days:null has no lower bound. */
+function usageWindow(days: number | null | undefined,now: number) {
+  if((days!=null&&(!Number.isInteger(days)||days<1||days>365))||!Number.isFinite(now)||!Number.isFinite(new Date(now).getTime()))fail(400,'Invalid usage window');
+  const until=new Date(now).toISOString(),today=dayOf(now),since=days==null?null:dayOf(now-(days-1)*86400000);
+  return {since,today,until,window:{range:{['session.timestamp']:{...since?{gte:since+'T00:00:00.000Z'}:{},lte:until}}}};
+}
+/** A histogram without a lower bound stops at its last event; days after it measured zero. */
+function throughToday<T extends {date: string}>(days: T[],today: string,empty: (date: string)=>T) {
+  const result=days.filter(day=>day.date<=today);
+  for(let at=result.length?Date.parse(result.at(-1)!.date+'T00:00:00Z')+86400000:Infinity;at<=Date.parse(today+'T00:00:00Z');at+=86400000)result.push(empty(dayOf(at)));
+  return result;
+}
+/** OpenSearch sums are doubles; a negative or unsafe sum is a bad read, not a count. */
+function tokenValue(agg: {value: number} | undefined) {
+  const value=Math.round(agg?.value ?? 0);
+  if(!Number.isSafeInteger(value)||value<0)throw new Error('Invalid token aggregation');
+  return value;
 }
 export function searchSettings(env=process.env) {
   const endpoint=env.OPENCRAWL_SEARCH_URL||env.OPENCRAWL_OPENSEARCH_URL;

@@ -1,4 +1,7 @@
 import {historyRequest} from './search-activity.mjs';
+import {usageRange,tokenSessionsRequest} from './usage-range.mjs';
+import {z} from 'zod';
+const rangeOnly=z.strictObject({range:usageRange.optional()});
 import {hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {replicasSetupPrompt, replicasEnrollmentPrompt} from '../sessions/cloud-setup.mjs';
 import type {IncomingMessage} from 'node:http';
@@ -14,12 +17,16 @@ type Progress = {completed?: {observedAt?: string} | null; shared?: {observedAt?
 export interface ConsoleContext {principal: Principal; user: User; member: Membership; revalidate: () => Promise<boolean>; admitted?: boolean; cacheScope?: string}
 export interface ConsoleServices {
   usageActivity?: {
-    totals:import('../state/search-activity.mjs').SearchActivity['totals'];
+    totals:(p:Principal,range?:import('./usage-range.mjs').UsageRange)=>Promise<import('./search-activity.mjs').CallTotals>;
     page:(p:Principal,input:import('./search-activity.mjs').HistoryRequest)=>Promise<import('./search-activity.mjs').SearchActivityPage>;
   };
   usageParts?: {
     highlights(principal: Principal): Promise<import('./reports.mjs').UsageHighlights>;
-    details(principal: Principal): Promise<import('./reports.mjs').UsageDetails>;
+    details(principal: Principal, range?: import('./usage-range.mjs').UsageRange): Promise<import('./reports.mjs').UsageDetails>;
+  };
+  usageTokens?: {
+    usage(principal: Principal, range: import('./usage-range.mjs').UsageRange): Promise<import('./usage-range.mjs').TokenUsage>;
+    sessions(principal: Principal, input: unknown): Promise<import('./usage-range.mjs').TokenSessionPage>;
   };
   log?: Log;
   url: string;
@@ -45,8 +52,8 @@ export interface ConsoleServices {
 const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|(?:privacy|recording)\/(?:status|change))$/;
 export const consolePages = new Set(['/', '/setup', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
-  if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/usage/highlights','/api/console/usage/details','/api/console/usage/calls','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
-  if (['/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
+  if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/usage/highlights','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
+  if (['/api/console/usage/details','/api/console/usage/calls','/api/console/usage/tokens','/api/console/usage/token-sessions','/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   if (['/setup','/sources','/data','/diagnostics','/settings', '/settings/team', '/settings/privacy', '/agent-setup','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
@@ -107,7 +114,11 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if(path==='/api/console/usage/calls'||path==='/api/console/usage/search-history'){
         if(!services.usageActivity)throw consoleFailure(503,'Search activity unavailable.');
-        if(path.endsWith('/calls'))body={...await services.usageActivity.totals(principal),cacheScope};
+        if(path.endsWith('/calls')){
+          const parsed=rangeOnly.safeParse(await input(req));
+          if(!parsed.success)throw consoleFailure(400,'Invalid usage range.');
+          body={...await services.usageActivity.totals(principal,parsed.data.range),cacheScope};
+        }
         else{
           const parsed=historyRequest.safeParse(await input(req));
           if(!parsed.success)throw consoleFailure(400,'Invalid history page.');
@@ -117,7 +128,21 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         body = await services.usage(principal);
       } else if (path === '/api/console/usage/highlights' || path === '/api/console/usage/details') {
         if (!services.usageParts) throw consoleFailure(404, 'Usage section unavailable.');
-        body = {...await services.usageParts[path.endsWith('/highlights') ? 'highlights' : 'details'](principal), cacheScope};
+        const parsed = rangeOnly.safeParse(await input(req));
+        if (!parsed.success) throw consoleFailure(400, 'Invalid usage range.');
+        body = {...await (path.endsWith('/highlights') ? services.usageParts.highlights(principal) : services.usageParts.details(principal, parsed.data.range)), cacheScope};
+      } else if (path === '/api/console/usage/tokens' || path === '/api/console/usage/token-sessions') {
+        if (!services.usageTokens) throw consoleFailure(404, 'Token usage unavailable.');
+        const request = await input(req);
+        if (path.endsWith('/tokens')) {
+          const parsed = z.strictObject({range: usageRange}).safeParse(request);
+          if (!parsed.success) throw consoleFailure(400, 'Invalid usage range.');
+          body = {...await services.usageTokens.usage(principal, parsed.data.range), cacheScope};
+        } else {
+          const parsed = tokenSessionsRequest.safeParse(request);
+          if (!parsed.success) throw consoleFailure(400, 'Invalid session page.');
+          body = {...await services.usageTokens.sessions(principal, parsed.data), cacheScope};
+        }
       } else if (path === '/api/console/sources') {
         body = {items:await services.sources(principal)};
       } else if (path === '/api/console/team') {

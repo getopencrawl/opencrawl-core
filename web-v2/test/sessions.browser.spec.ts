@@ -231,3 +231,27 @@ for(const width of [390,1440])test(`linked history opens independently of live c
   await archive.click();
   await expect(page).toHaveURL(/harness=replicas/);
 });
+
+for (const width of [1440, 390]) test(`sessions list and transcript show a brand spinner while loading at ${width}px`, async ({page, request}, testInfo) => {
+  await request.post('/__test/reset', {data: {}});
+  await page.setViewportSize({width, height: 900});
+  let release = () => {}, held = Promise.resolve();
+  await page.route('**/api/library/**', async route => {
+    await held;
+    const read = route.request().url().includes('read');
+    await route.fulfill({json: read ? {session: base, events: [], total: 0, next: null, authors: {}} : {sessions, limit: 50}});
+  });
+  for (const [path, label, loaded] of [['/sessions', 'Loading sessions', page.locator('.oc-rows .oc-row').first()], ['/sessions?user=alice&harness=codex&id=single', 'Loading session', page.getByRole('heading', {name: 'Single machine'})]] as const) {
+    held = new Promise<void>(resolve => {release = resolve;});
+    await page.goto(path);
+    const spinner = page.locator('.oc-loading-spinner');
+    await expect(spinner).toBeVisible();
+    await expect(spinner).toHaveCSS('opacity', '1');
+    await expect(page.getByRole('status')).toHaveText(label);
+    await expect(spinner.locator('svg.oc-spin')).toHaveCSS('color', 'rgb(125, 130, 255)');
+    await page.screenshot({path: testInfo.outputPath(`${label.replaceAll(' ', '-').toLowerCase()}-${width}.png`)});
+    release();
+    await expect(loaded).toBeVisible();
+    await expect(spinner).toHaveCount(0);
+  }
+});

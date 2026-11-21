@@ -124,13 +124,18 @@ test('both Usage reads require fresh final access and accept only trusted scope'
       [part]: async scope => {calls.push(scope); return {privateMeasurement: 42};},
     }});
     const context = {principal, user:{id:principal.userId}, member:{}, cacheScope:'session-a', admitted:true};
-    const denied = await api({url: route}, route, {...context, revalidate: async () => false});
+    const request = (url, body = '') => ({url, async *[Symbol.asyncIterator]() {if (body) yield Buffer.from(body);}});
+    const denied = await api(request(route), route, {...context, revalidate: async () => false});
     assert.equal(denied.status, 403);
     assert.doesNotMatch(JSON.stringify(denied.body), /privateMeasurement/);
-    const allowed = await api({url: route}, route, {...context, revalidate: async () => true});
+    const allowed = await api(request(route), route, {...context, revalidate: async () => true});
     assert.deepEqual(allowed.body, {privateMeasurement:42, cacheScope:'session-a'});
-    const forged = await api({url: route+'?tenantId=another'}, route, {...context, revalidate: async () => true});
+    const forged = await api(request(route+'?tenantId=another'), route, {...context, revalidate: async () => true});
     assert.equal(forged.status, 400);
+    const badRange = await api(request(route, JSON.stringify({range: '90d'})), route, {...context, revalidate: async () => true});
+    assert.equal(badRange.status, 400);
+    const extra = await api(request(route, JSON.stringify({range: '7d', tenantId: 'another'})), route, {...context, revalidate: async () => true});
+    assert.equal(extra.status, 400);
     assert.deepEqual(calls, [principal, principal]);
   }
 });

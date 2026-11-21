@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<{children: ReactNode}, {failed: boolean}> 
   render() {return this.state.failed ? <FocusedFrame footer={<SignOut/>}><Notice tone="danger" title="This page couldn’t load">Reload your workspace to try again.</Notice><LinkButton to="/" reloadDocument>Reload workspace</LinkButton></FocusedFrame> : this.props.children;}
 }
 function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {
-  const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({callTotals:api.callTotals,searchHistory:api.searchHistory,usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board}), [api]);
+  const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({callTotals:api.callTotals,searchHistory:api.searchHistory,usageTokens:api.usageTokens,tokenSessions:api.tokenSessions,usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board}), [api]);
   const libraryAdapter = api.library;
   const onboardingAdapter = useMemo<OnboardingAdapter>(() => ({
     replicasSetup: api.replicasSetup,
@@ -71,7 +71,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     'console.team': consoleResourceKey(api.team), 'console.sources': consoleResourceKey(api.sources),
     'console.usage': consoleResourceKey(dataAdapter, 'usage'),
     'console.usageHighlights': consoleResourceKey(dataAdapter, 'usage-highlights'),
-    'console.usageDetails': consoleResourceKey(dataAdapter, 'usage-details'), ...extensions?.reloadKeys,
+    'console.usageDetails': [...consoleResourceKey(dataAdapter, 'usage-details'), '30d'], ...extensions?.reloadKeys,
   };
   const seeds = data && data.cacheScope === snapshot?.bootstrap.cacheScope
     ? Object.entries(snapshot.reports).flatMap(([name, value]) => reportKeys[name] ? [{key:reportKeys[name], data:value}] : []) : [];

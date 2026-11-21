@@ -115,7 +115,7 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
     </Button></div>}
     {error && <Notice tone="danger">{error}</Notice>}
     {error && <div className="actions"><Button onClick={retry}>Try again</Button></div>}
-    {!data && loading && <LoadingState label="Loading sessions"/>}
+    {!data && loading && <LoadingState label="Loading sessions" spinner/>}
     {data && (data.sessions.length ? <><div className="oc-row-item oc-row-heading" aria-hidden="true"><div className="oc-row oc-row-with-host"><span>Session</span><span className="oc-row-participants">Participants</span><span className="oc-row-optional">Agent</span><span className="oc-row-host" title="The machine that captured the transcript. Imported history may have originated elsewhere.">Hostname</span><span className="oc-row-tokens">Captured tokens</span><span className="oc-row-end">Updated</span></div><span className="oc-row-actions"><span className="oc-row-visibility"/><span className="oc-row-action"/></span></div>
     <ol className="oc-row-groups" aria-busy={loading || undefined}>{byDay(data.sessions, session => session.lastActivityAt).map(([day, items]) => <li key={day}>
       <h2 className="oc-row-group-label">{day}</h2>
@@ -278,7 +278,7 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   }
   const closeDetails = () => {setDetails(false); info.current?.focus();};
   const back = <Link to="/sessions" className="oc-session-back" aria-label="Back to sessions" title="Back to sessions"><Icon name="arrow-left" size={18}/></Link>;
-  if (!data) return <div className="oc-session-viewer"><header className="oc-session-header">{back}<PageHeader title="Session"/></header><div className="oc-session-loading">{loading ? <LoadingState label="Loading session"/> : <>
+  if (!data) return <div className="oc-session-viewer"><header className="oc-session-header">{back}<PageHeader title="Session"/></header><div className="oc-session-loading">{loading ? <LoadingState label="Loading session" spinner/> : <>
     <Notice tone="danger">{readFailure || error}</Notice>{<div className="actions"><Button busy={moreState.busy} onClick={readFailure ? () => void retryTranscript() : retry}>Try again</Button></div>}</>}</div></div>;
   const {session} = data, current: Visibility = visibility ?? (session.private ? 'private' : 'team');
   const first = events.find(event => event.timestamp)?.timestamp ?? null, last = events.findLast(event => event.timestamp)?.timestamp ?? null;

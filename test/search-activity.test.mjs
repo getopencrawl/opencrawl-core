@@ -38,7 +38,19 @@ test('authenticated call accounting, scoped paging and idempotent proactive outc
   await activity.search(alice,{kind:'proactive',operation:'Context check',queries:['refund'],...ctx,messageId:'prompt-43',returned:1,eventKey:'handoff'});
   await Promise.all([1,2].map(()=>measuredSuggestionEvents(activity)(alice,[{stage:'handoff',eventKey:'handoff'}])));
   const totals=await activity.totals(bob);
-  assert.deepEqual({...totals,since:null},{since:null,calls:32,agentSearches:31,proactiveChecks:2,nonSilent:1,delivered:1});
+  const {daily,...counts}=totals;
+  assert.deepEqual({...counts,since:null},{since:null,calls:32,agentSearches:31,proactiveChecks:2,nonSilent:1,delivered:1});
+  // Thirty UTC days through today; tracking began today, so earlier days are not tracked rather than zero.
+  const today=new Date().toISOString().slice(0,10);
+  assert.equal(daily.length,30);assert.equal(daily.at(-1).date,today);
+  assert.deepEqual(daily.at(-1),{date:today,agentSearches:31,nonSilent:1});
+  assert.ok(daily.slice(0,-1).every(day=>day.agentSearches===null&&day.nonSilent===null));
+  assert.equal(totals.since,today+'T00:00:00.000Z');
+  const week=await activity.totals(bob,'7d');
+  assert.equal(week.daily.length,7);assert.equal(week.agentSearches,31);
+  const all=await activity.totals(bob,'all');
+  assert.deepEqual(all.daily,[{date:today,agentSearches:31,nonSilent:1}]);
+  await assert.rejects(activity.totals(bob,'90d'));
   assert.equal((await activity.totals(other)).calls,1);
   const proactive=await activity.page(bob,{kind:'proactive'},identity);
   assert.equal(proactive.rows.length,2);
@@ -99,7 +111,7 @@ test('history and summary query plans stay bounded with a large workspace and ma
   const plans=[];
   const activity=createSearchActivity({...db,pool:{async query(sql,args){
     const result=await db.pool.query(sql,args);
-    if(sql.startsWith('select'))plans.push((await db.pool.query('explain (analyze,buffers,format json) '+sql,args)).rows[0]['QUERY PLAN'][0]);
+    if(/^\s*(select|with)\b/.test(sql))plans.push((await db.pool.query('explain (analyze,buffers,format json) '+sql,args)).rows[0]['QUERY PLAN'][0]);
     return result;
   }}});
   await activity.ready();
