@@ -31,7 +31,7 @@ an interruption. The uploaded count measures batches. Run search to verify index
        opencrawl setup hooks --json
        opencrawl setup apply --plugins IDS --forward IDS --history IDS --plan-id ID --yes
 
-On macOS, setup detects Claude Code, Codex, Antigravity (agy), and Cursor.
+On macOS and Linux (glibc, x64 or ARM64), setup detects Claude Code, Codex, Antigravity (agy), and Cursor.
 Paste your workspace address when none is saved, then complete two short phases:
 1. Choose agents to install and record, or Do not record any sessions on this machine.
 2. Choose past sessions to import, or skip. Empty history needs no answer.

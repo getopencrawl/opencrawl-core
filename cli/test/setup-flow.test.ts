@@ -56,16 +56,16 @@ test('authenticated setup registers the Git helper on apply and repairs it on re
  },false,'codex',false,true);
 });
 
-test('first run stays open after interruption and remembers an explicit opt-out without capture',()=>fixture(async api=>{
+test.each(['darwin','linux'] as const)('%s first run stays open after interruption and remembers an explicit opt-out without capture',platform=>fixture(async api=>{
  expect(await needsFirstRunSetup()).toBe(true);
  const selectNone=(screen:SelectionScreen)=>screen.items.map(item=>({...item,selected:false}));
- await setupCommand('run',api,{}, {interactive:true,choose:async screen=>screen.phase===2?null:selectNone(screen)});
+ await setupCommand('run',api,{}, {platform,interactive:true,choose:async screen=>screen.phase===2?null:selectNone(screen)});
  expect(await needsFirstRunSetup()).toBe(true);
- await setupCommand('run',api,{}, {interactive:true,choose:async screen=>selectNone(screen)});
+ await setupCommand('run',api,{}, {platform,interactive:true,choose:async screen=>selectNone(screen)});
  expect(readCaptureConfig()).toBeNull();
  expect(await needsFirstRunSetup()).toBe(false);
  expect(await needsFirstRunSetup('https://different.example')).toBe(true);
- const result=await setupCommand('run',api,{yes:true,json:true});
+ const result=await setupCommand('run',api,{yes:true,json:true},{platform});
  expect(result).toMatchObject({status:'recording_off'});
  expect(result).not.toHaveProperty('gitCredentials'); // Older servers and disabled accounts receive no Git setup prompts.
  expect(readCaptureConfig()).toBeNull();
@@ -915,16 +915,18 @@ test('supervised and not-required workers allow configured setup without invente
 }));
 
 
-test('new setup offers Mac Claude, Codex, Antigravity and Cursor and rejects deferred selections before authentication',async()=>fixture(async(api,dir,_observations,_set,calls)=>{
+test('fresh macOS and Linux setup offer native agents and reject deferred selections before authentication',async()=>fixture(async(api,dir,_observations,_set,calls)=>{
  mkdirSync(join(dir,'claude'));mkdirSync(join(dir,'cursor'));mkdirSync(join(dir,'agy'));
- const plan=await setupCommand('plan',api,{plugins:'all',forward:'all',history:'all'}) as {clients:{id:string}[];selections:SetupState['selections']};
- expect(plan.clients.map(row=>row.id).sort()).toEqual(['antigravity','claude-code','codex','cursor']);
- expect(plan.selections.plugins).toEqual({'claude-code':true,codex:true,cursor:true,antigravity:true});
- expect(plan.selections.forward).toEqual({'claude-code':true,codex:true,cursor:true,antigravity:true});
- expect(plan.selections.history).toEqual({'claude-code':false,codex:true,cursor:false,antigravity:false});
+ for(const platform of ['darwin','linux'] as const){
+  const plan=await setupCommand('plan',api,{plugins:'all',forward:'all',history:'all'},{platform}) as {clients:{id:string}[];selections:SetupState['selections']};
+  expect(plan.clients.map(row=>row.id).sort()).toEqual(['antigravity','claude-code','codex','cursor']);
+  expect(plan.selections.plugins).toEqual({'claude-code':true,codex:true,cursor:true,antigravity:true});
+  expect(plan.selections.forward).toEqual({'claude-code':true,codex:true,cursor:true,antigravity:true});
+  expect(plan.selections.history).toEqual({'claude-code':false,codex:true,cursor:false,antigravity:false});
+ }
  delete process.env.OPENCRAWL_TOKEN;calls.length=0;let login=0;
  for(const values of [{plugins:'devin'},{forward:'devin'},{history:'devin'}])await expect(setupCommand('run',api,values,{interactive:true,login:async()=>{login++;}})).rejects.toMatchObject({code:'SETUP_CLIENT_NOT_AVAILABLE'});
- for(const platform of ['linux','win32'] as const)await expect(setupCommand('run',api,{}, {platform,interactive:true,login:async()=>{login++;}})).rejects.toMatchObject({code:'SETUP_NOT_AVAILABLE'});
+ await expect(setupCommand('run',api,{}, {platform:'win32',interactive:true,login:async()=>{login++;}})).rejects.toMatchObject({code:'SETUP_NOT_AVAILABLE'});
  expect(login).toBe(0);expect(calls).toEqual([]);expect(readCaptureConfig()).toBeNull();expect(existsSync(join(dir,'config','opencrawl','setup'))).toBe(false);
 }));
 
@@ -959,7 +961,7 @@ test('existing deferred choices and bounded completed history survive new Mac of
  expect(readSetupState(scope)?.historyJob).toEqual(before.historyJob);
  await updateSetupState(scope,state=>({...state!,historyJob:{...state!.historyJob!,state:'paused'}}));
  const paused=readSetupState(scope)!.historyJob;
- await setupCommand('apply',api,{yes:true,plugins:'all',forward:'none',history:'all'},{...setupCodex,platform:'linux',installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'antigravity',status:'installed'}],humanTasks:[]})});
+ await setupCommand('apply',api,{yes:true,plugins:'all',forward:'none',history:'all'},{...setupCodex,platform:'win32',installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'antigravity',status:'installed'}],humanTasks:[]})});
  expect(readSetupState(scope)?.historyJob).toEqual(paused);
  const off=await setupCommand('plan',api,{plugins:'none',forward:'none',history:'none'},{platform:'linux'}) as {selections:SetupState['selections']};
  expect(Object.values(off.selections.plugins).every(v=>!v)).toBe(true);expect(Object.values(off.selections.history).every(v=>!v)).toBe(true);

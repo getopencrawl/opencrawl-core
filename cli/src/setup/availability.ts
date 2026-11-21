@@ -2,12 +2,18 @@ import {pluginRelease} from './plugin-release.ts';
 import {CliError} from '../oauth.ts';
 import {selectGroup,type SetupClient,type SetupSelections} from './state.ts';
 
-export const setupAvailabilityMessage='New setup is available for Claude Code, Codex, Antigravity, and Cursor on macOS. Existing installations can continue setup with their saved choices.';
-export const newSetupClientAvailable=(client:string,platform:NodeJS.Platform=process.platform,registered=false)=>(platform==='darwin'||registered&&Boolean(pluginRelease.packages.find(entry=>entry.harness===client)?.archives?.[platform+'-'+process.arch]))&&['claude-code','codex','antigravity','cursor'].includes(client);
+export const setupAvailabilityMessage='Guided setup supports Claude Code, Codex, Antigravity, and Cursor on macOS and Linux (glibc, x64 or ARM64). Existing installations can continue with their saved choices.';
+const personalSetupAvailable=(platform:NodeJS.Platform)=>platform==='darwin'||(platform==='linux'&&['x64','arm64'].includes(process.arch));
+export function newSetupClientAvailable(client:string,platform:NodeJS.Platform=process.platform,registered=false){
+ const release=pluginRelease.packages.find(entry=>entry.harness===client);
+ if(!release)return false;
+ if(platform==='darwin')return true;
+ return (personalSetupAvailable(platform)||registered)&&Boolean(release.archives?.[platform+'-'+process.arch]);
+}
 
 /** Saved true choices may continue; discovery and an environment flag are not consent. */
 export function assertSetupAvailability(platform:NodeJS.Platform,values:Record<string,unknown>,saved?:SetupSelections,registered=false){
- if(platform!=='darwin'&&!saved&&!registered)throw new CliError('SETUP_NOT_AVAILABLE',setupAvailabilityMessage,2);
+ if(!personalSetupAvailable(platform)&&!saved&&!registered)throw new CliError('SETUP_NOT_AVAILABLE',setupAvailabilityMessage,2);
  for(const group of ['plugins','forward','history'] as const){
   const value=values[group];if(value===undefined||value==='all'||value==='none')continue;
   if(typeof value!=='string')throw new CliError('INVALID_USAGE','Expected comma-separated setup client IDs.',64);

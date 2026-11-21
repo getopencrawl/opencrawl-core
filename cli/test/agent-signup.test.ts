@@ -71,7 +71,7 @@ test('unattended signup persists a retryable registration before bootstrap and k
 });
 test('registered machines can install published Linux plugins with an MCP transport bound to the same installation', () => {
   expect(newSetupClientAvailable('claude-code', 'linux', true)).toBe(true);
-  expect(newSetupClientAvailable('claude-code', 'linux', false)).toBe(false);
+  expect(newSetupClientAvailable('claude-code', 'linux', false)).toBe(true);
   const api = 'https://app.example',
     dir = tmpdir(),
     config = registrationMcp([join(dir, 'oc')], {

@@ -26,7 +26,9 @@ Or with npm (Node.js 22.15+; allow install scripts and optional dependencies):
 npm install -g @getopencrawl/cli
 ```
 
-## Set up on macOS
+## Set up on macOS or Linux
+
+Linux setup supports x64 and ARM64 systems with glibc.
 
 Run `opencrawl` in a terminal to start setup. Until you finish, reopening the CLI
 brings you back to setup. Afterward it shows help. You can also run
