@@ -81,6 +81,7 @@
     "./application/agent-activity": "./dist/src/application/agent-activity.mjs",
     "./state/search-activity": "./dist/src/state/search-activity.mjs",
     "./application/usage": "./dist/src/application/usage.mjs",
+    "./application/search-activity": "./dist/src/application/search-activity.mjs",
     "./application/usage-inventory": "./dist/src/application/usage-inventory.mjs",
     "./integrations/credential-vault": "./dist/src/integrations/credential-vault.mjs",
     "./integrations/resolver": "./dist/src/integrations/resolver.mjs",

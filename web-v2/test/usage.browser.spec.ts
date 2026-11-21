@@ -253,3 +253,45 @@ test('slow lists and charts show a visible spinner instead of a blank panel', as
   await expect(sessions.getByRole('table').locator('tbody tr')).toHaveCount(1);
   await expect(spinner).toHaveCount(0);
 });
+
+test('with a billing meter every search row shows what it cost and why, and the arithmetic adds up', async ({page}) => {
+  await serve(page);
+  const charge = (credits: number, reason: string) => ({charge: {credits, reason}});
+  const agentRows = [
+    {...searchRow(0, 'agent'), operation: 'Workspace', returned: 4, ...charge(3, 'charged')},
+    {...searchRow(1, 'agent'), userId: 'user_sam', operation: 'Board', returned: 0, ...charge(0, 'no_results')},
+    {...searchRow(2, 'agent'), operation: 'Sessions', returned: null, outcome: 'failed', ...charge(0, 'failed')},
+    {...searchRow(3, 'agent'), userId: 'user_sam', operation: 'Workspace', queries: [], sessionId: null, returned: 2, withheld: 'private', ...charge(3, 'charged')},
+    {...searchRow(4, 'agent'), queries: [], sessionId: null, withheld: 'session_deleted', ...charge(3, 'charged')},
+    {...searchRow(5, 'agent'), userId: '', operation: '', queries: [], harness: null, sessionId: null, returned: null, withheld: 'unrecorded', ...charge(3, 'charged')},
+  ];
+  await page.route('**/api/console/usage/calls', route => route.fulfill({json: {cacheScope: scope, since: day(3) + 'T00:00:00.000Z', calls: 9, agentSearches: 4, proactiveChecks: 9, nonSilent: 1, delivered: 0,
+    charged: true, rates: {agent: 3, proactive: 10}, uncharged: {noResults: 1, failed: 1}, daily: span(30, () => 0).map(({date}) => ({date, agentSearches: 0, nonSilent: 0}))}}));
+  await page.route('**/api/console/usage/search-history', route => {
+    const {kind} = route.request().postDataJSON() as {kind: string};
+    return route.fulfill({json: {cacheScope: scope, next: null, rows: kind === 'agent' ? agentRows : [{...searchRow(0, 'proactive'), operation: 'Context check', returned: 1, ...charge(10, 'charged')}]}});
+  });
+  await page.goto('/usage?split&activity');
+  await tab(page, 'Searches').click();
+  const panel = page.getByRole('region', {name: 'Searches', exact: true}), list = panel.getByRole('table'), rows = list.locator('tbody tr');
+  await expect(panel.locator('.usage-charge-summary')).toHaveText('4 searches charged × 3 credits = 12 credits. 1 search with no results and 1 failed: free.');
+  await expect(list.locator('thead th')).toHaveText(['Time', 'Query', 'Searched', 'Results', 'From', 'Session', 'Charge']);
+  await expect(rows).toHaveCount(6);
+  const cells = (index: number) => rows.nth(index).locator('td');
+  await expect(cells(0)).toContainText(['agent query 0', 'Workspace', '4', 'Alex Example', 's0', '3 credits']);
+  await expect(cells(1).nth(6)).toHaveText('FreeNo results');
+  await expect(cells(2).nth(6)).toHaveText('FreeSearch failed');
+  await expect(cells(3).nth(1)).toHaveText('Private session');
+  await expect(cells(3).nth(6)).toHaveText('3 credits');
+  await expect(cells(3).nth(4)).toContainText('Sam Example');
+  await expect(cells(4).nth(1)).toHaveText('Deleted with its session');
+  await expect(cells(5).nth(1)).toHaveText('Recorded before search text was kept');
+  await expect(cells(5).nth(4)).toHaveText('Not recorded');
+  // The charged rows on screen are the charge.
+  expect(await rows.filter({hasText: '3 credits'}).count()).toBe(4);
+  await tab(page, 'Proactive context').click();
+  const edits = page.getByRole('region', {name: 'Edits', exact: true});
+  await expect(edits.locator('.usage-charge-summary')).toHaveText('1 edit charged × 10 credits = 10 credits.');
+  await expect(edits.getByRole('table').locator('thead th')).toHaveText(['Time', 'Triggering message', 'Search', 'Results', 'From', 'Session', 'Charge']);
+  await expect(edits.getByRole('table').locator('tbody tr').first()).toContainText('10 credits');
+});

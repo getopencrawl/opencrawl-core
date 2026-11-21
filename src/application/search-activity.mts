@@ -14,6 +14,10 @@ export interface SearchActivityRow {
   id:string; at:string; userId:string; operation:string; queries:string[];
   harness:string|null; sessionId:string|null; messageId:string|null; message:string|null;
   returned:number|null; outcome:'complete'|'failed'|'unknown'; delivered:boolean;
+  /** From a billing meter: this row is one receipt, and this is what it cost and why. */
+  charge?:{credits:number;reason:'charged'|'no_results'|'failed'};
+  /** Why the search text is not shown: another member's private session, erased with its session, past retention, or never recorded. */
+  withheld?:'private'|'session_deleted'|'expired'|'unrecorded';
 }
 export interface SearchActivityPage {
   rows:SearchActivityRow[]; next:NonNullable<HistoryRequest['before']>|null;
@@ -23,6 +27,9 @@ export interface CallTotals {
   since:string; includesEarlierCalls?:boolean; calls:number; agentSearches:number; proactiveChecks:number; nonSilent:number; delivered:number;
   /** Set when the counts come from a billing meter: only searches delivered with results are counted. */
   charged?:true;
+  /** With a billing meter: agent searches in the range that were not charged, and credits per charged search. */
+  uncharged?:{noResults:number;failed:number};
+  rates?:{agent:number;proactive:number};
   /** Every UTC day of the requested range through today. */
   daily?:Array<{date:string;agentSearches:number|null;nonSilent:number|null}>;
 }
