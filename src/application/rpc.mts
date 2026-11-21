@@ -123,7 +123,11 @@ export async function handleProductRpc<R extends AnyRouter>(req: IncomingMessage
     const error={error:{message:'Workspace access changed. Sign in again.',code:-32003,data:{code:'FORBIDDEN',httpStatus:403}}};
     return {status:403,body:JSON.stringify(url.searchParams.get('batch')==='1'?url.pathname.slice('/api/trpc/'.length).split(',').map(()=>error):error)};
   }
-  if (remember && response.status === 200) remember(body.length <= maxReloadReportBytes + 64 ? JSON.parse(body).result?.data : undefined);
+  if (remember && response.status === 200) {
+    const data = body.length <= maxReloadReportBytes + 64 ? JSON.parse(body).result?.data : undefined;
+    // A reload opens Usage on its default range; another range's report must not stand in for it.
+    if (operation !== 'console.usageDetails' || data?.days === 30) remember(data);
+  }
   if (binding && [401,402,403,404,409].includes(response.status)) binding.cache.invalidate(binding.tenant);
   return {status:response.status,body};
 }

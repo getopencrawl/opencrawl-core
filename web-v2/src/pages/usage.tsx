@@ -1,7 +1,7 @@
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import {ProactiveTab, SearchesTab, From, SessionLink, scoped} from './search-activity.tsx';
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
-import {consoleResourceKey, useConsoleResource} from '../data.tsx';
+import {consoleResourceKey, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
 import {BarList, Button, DailyBarChart, DailyLineChart, EmptyState, IntegrationCard, LoadingState, MetricGrid, Notice, Page, Section, Select, Table, Tabs} from '../design/components.js';
 import {Link} from '../router.js';
@@ -173,6 +173,7 @@ function OverviewTab({adapter, scope, range, names}: {adapter: TokenAdapter; sco
           <td title={count(row.tokens)}>{compact(row.tokens)}</td>
           <td>{row.lastAt ? <time dateTime={row.lastAt} title={row.lastAt}>{ago(row.lastAt)}</time> : 'Unavailable'}</td>
         </tr>}/>
+      {data?.memories ? <p className="report-note usage-memories">Memories: <strong title={count(data.memories)}>{compact(data.memories)}</strong> tokens stored. They are part of the total above and are not listed by session.</p> : null}
       <p className="report-note">The list shows sessions you can see. The total includes every session.</p>
     </Section>
   </>;
@@ -190,6 +191,26 @@ function useTeamReport(adapter: ConsoleDataAdapter, scope: string | undefined, r
   return details;
 }
 
+/**
+ * Once the selected range is on screen, read the other ranges in the background (one at a time,
+ * sharing the cache with the page's own reads) so changing the range or tab never waits.
+ */
+function usePrefetchedRanges(ready: boolean, current: UsageRange, reads: ReadonlyArray<{key: (range: UsageRange) => readonly unknown[]; read: (range: UsageRange, signal: AbortSignal) => Promise<unknown>}>) {
+  const client = useConsoleQueryClient();
+  useEffect(() => {
+    if (!ready || !client) return;
+    let stopped = false;
+    void (async () => {
+      // The selected range first: it also covers tabs that are not open yet. A read already cached or in flight is shared.
+      for (const value of [current, ...ranges.map(item => item.value).filter(item => item !== current)]) for (const {key, read} of reads) {
+        if (stopped) return;
+        await client.prefetchQuery({queryKey: key(value), queryFn: ({signal}) => read(value, signal), staleTime: 60_000}).catch(() => {});
+      }
+    })();
+    return () => {stopped = true;};
+  }, [ready, client, current]);
+}
+
 export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: PageProps) {
   const [tab, setTab] = useState<Tab>('overview');
   const [range, setRange] = useState<UsageRange>('30d');
@@ -197,6 +218,15 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
   const activity = showActivity && adapter.callTotals && adapter.searchHistory ? {adapter: adapter as ActivityAdapter, scope: showActivity} : undefined;
   const tokenAdapter = scope && adapter.usageTokens && adapter.tokenSessions ? adapter as TokenAdapter : undefined;
   const team = useTeamReport(adapter, scope, range);
+  const ranged = Boolean(scope && adapter.usageDetails);
+  usePrefetchedRanges(Boolean(team.data) && Boolean(scope), range, [
+    ...ranged ? [{key: (r: UsageRange) => [...consoleResourceKey(adapter, 'usage-details'), r], read: async (r: UsageRange, signal: AbortSignal) => ({workspace: null, ...scoped(scope!, await adapter.usageDetails!(signal, r))})}] : [],
+    ...tokenAdapter ? [
+      {key: (r: UsageRange) => [...consoleResourceKey(tokenAdapter, 'usage-tokens'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(scope!, await tokenAdapter.usageTokens(r, signal))},
+      {key: (r: UsageRange) => [...consoleResourceKey(tokenAdapter, 'usage-token-sessions'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(scope!, await tokenAdapter.tokenSessions({range: r}, signal))},
+    ] : [],
+    ...activity ? [{key: (r: UsageRange) => [...consoleResourceKey(activity.adapter, 'call-totals'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(activity.scope, await activity.adapter.callTotals(r, signal))}] : [],
+  ]);
   const names: MemberNames = new Map((team.data?.members ?? []).flatMap(member => member.userId ? [[member.userId, memberName(member)] as const] : []));
   const tabs: Array<{value: Tab; label: string}> = [
     ...tokenAdapter ? [{value: 'overview' as const, label: 'Overview'}] : [],

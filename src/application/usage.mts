@@ -18,7 +18,7 @@ import type {SearchActivityRow} from './search-activity.mjs';
  * captured tokens in the index by the day each event happened.
  */
 export interface TokenLedger {
-  usage(principal: Principal, range: UsageRange, now: number): Promise<{total: number; daily: DailyCount[]}>;
+  usage(principal: Principal, range: UsageRange, now: number): Promise<{total: number; daily: DailyCount[]; memories?: number}>;
 }
 type Visible = (principal: Principal, rows: SearchActivityRow[]) => Promise<SearchActivityRow[]>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}

@@ -71,7 +71,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     'console.team': consoleResourceKey(api.team), 'console.sources': consoleResourceKey(api.sources),
     'console.usage': consoleResourceKey(dataAdapter, 'usage'),
     'console.usageHighlights': consoleResourceKey(dataAdapter, 'usage-highlights'),
-    'console.usageDetails': consoleResourceKey(dataAdapter, 'usage-details'), ...extensions?.reloadKeys,
+    'console.usageDetails': [...consoleResourceKey(dataAdapter, 'usage-details'), '30d'], ...extensions?.reloadKeys,
   };
   const seeds = data && data.cacheScope === snapshot?.bootstrap.cacheScope
     ? Object.entries(snapshot.reports).flatMap(([name, value]) => reportKeys[name] ? [{key:reportKeys[name], data:value}] : []) : [];

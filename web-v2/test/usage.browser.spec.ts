@@ -111,8 +111,8 @@ test('Overview shows only session tokens: the total, tokens per day and sessions
   await page.getByLabel('Date range').selectOption('7d');
   await expect(chart.locator('.report-bar')).toHaveCount(7);
   await expect(chartTotal(page, 'Tokens stored')).toHaveText('28k');
-  expect(requests.tokens).toEqual(['30d', '7d']);
-  expect(requests.sessions!.at(-1)).toEqual({range: '7d'});
+  expect(requests.tokens!.slice(0, 1)).toEqual(['30d']); expect(requests.tokens).toContain('7d');
+  expect(requests.sessions).toContainEqual({range: '7d'});
 });
 
 test('Searches and Proactive context each count, chart and list only their own events for the selected range', async ({page}) => {
@@ -231,8 +231,7 @@ test('Sources lists everything indexed from each source, largest first, and neve
   await expect(page.getByRole('article', {name: 'Slack'})).toContainText('Messages7');
   await expect(page.getByRole('article', {name: 'GitHub'})).toContainText('Syncing');
   data = {...withActivity(30), failedSources: ['connectors']};
-  await tab(page, 'Team').click();
-  await page.getByLabel('Date range').selectOption('7d');
+  await page.goto('/usage?split&activity');
   await tab(page, 'Sources').click();
   await expect(summary).toContainText('Indexed item counts unavailable.');
   await expect(summary.locator('.report-chart-total')).toHaveText('Unavailable');
@@ -294,4 +293,39 @@ test('with a billing meter every search row shows what it cost and why, and the 
   await expect(edits.locator('.usage-charge-summary')).toHaveText('1 edit charged × 10 credits = 10 credits.');
   await expect(edits.getByRole('table').locator('thead th')).toHaveText(['Time', 'Triggering message', 'Search', 'Results', 'From', 'Session', 'Charge']);
   await expect(edits.getByRole('table').locator('tbody tr').first()).toContainText('10 credits');
+});
+
+test('other ranges load in the background, so changing the range shows data at once without a new wait', async ({page}) => {
+  const requests = await serve(page);
+  await page.goto('/usage?split&activity');
+  await expect(chartTotal(page, 'Tokens stored')).toHaveText('465k');
+  // Every range of every read is fetched once, the selected one first.
+  await expect.poll(() => [requests.tokens!.length, requests.details!.length, requests.calls!.length, new Set(requests.sessions!.map(r => (r as {range: string}).range)).size]).toEqual([3, 3, 3, 3]);
+  expect(requests.tokens![0]).toBe('30d'); expect(requests.details![0]).toBe('30d');
+  // Hold every further response: what appears now can only come from what was already loaded.
+  let release = () => {};
+  const held = new Promise<void>(resolve => {release = resolve;});
+  await page.route('**/api/console/usage/**', async route => {await held; await route.fallback();});
+  try {
+    await page.getByLabel('Date range').selectOption('all');
+    await expect(chartTotal(page, 'Tokens stored')).toHaveText('1M');
+    await expect(page.locator('.oc-loading-spinner')).toHaveCount(0);
+    await tab(page, 'Team').click();
+    await expect(metric(page, 'Sessions')).toHaveText('4');
+    await expect(page.getByRole('region', {name: 'Agent sessions per day', exact: true}).locator('.report-bar')).toHaveCount(40);
+    await tab(page, 'Searches').click();
+    await expect(chartTotal(page, 'Agent searches')).toBeVisible();
+    await page.getByLabel('Date range').selectOption('7d');
+    await expect(chartTotal(page, 'Agent searches')).toHaveText('21');
+    await tab(page, 'Overview').click();
+    await expect(chartTotal(page, 'Tokens stored')).toHaveText('28k');
+    await expect(page.getByRole('region', {name: 'Sessions', exact: true}).getByRole('table')).toBeVisible();
+  } finally {release();}
+});
+
+test('memories are shown as their own line so the list and the total add up', async ({page}) => {
+  await serve(page);
+  await page.route('**/api/console/usage/tokens', route => route.fulfill({json: {cacheScope: scope, source: 'meter', range: '30d', total: 5_000_000, memories: 1_250_000, daily: [{date: day(0), count: 5_000_000}]}}));
+  await page.goto('/usage?split&activity');
+  await expect(page.locator('.usage-memories')).toHaveText('Memories: 1.3M tokens stored. They are part of the total above and are not listed by session.');
 });

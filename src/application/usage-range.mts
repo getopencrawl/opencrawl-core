@@ -13,7 +13,9 @@ export interface DailyCount {date: string; count: number | null}
  * Tokens that count toward usage. From a meter: stored tokens, total = stored now and daily = the level each day.
  * From the index: captured session tokens, total and daily summed by the day each event happened.
  */
-export interface TokenUsage {source: 'meter' | 'index'; range: UsageRange; total: number; daily: DailyCount[]}
+export interface TokenUsage {source: 'meter' | 'index'; range: UsageRange; total: number; daily: DailyCount[];
+  /** Tokens in the total that are memory files, not sessions, when the meter counts them. */
+  memories?: number}
 export interface TokenSession {userId: string; harness: string | null; sessionId: string | null; tokens: number; lastAt: string | null}
 export const tokenSessionsRequest = z.strictObject({range: usageRange, offset: z.number().int().min(0).max(1000).optional()});
 export type TokenSessionsRequest = z.infer<typeof tokenSessionsRequest>;
