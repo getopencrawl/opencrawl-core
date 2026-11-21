@@ -13,12 +13,14 @@ import type {SetupState} from '../src/setup/state.ts';
 const api='https://cursor-fixture.example',scope={api,tenantId:'fixture-tenant',userId:'fixture-user'};
 const installationId='cursor-fixture-installation';
 const platform='darwin-arm64';
-const entry=packageRelease('cursor')!;
-const pin=entry.archives![platform]!;
 const realDir=process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR;
+const published=packageRelease('cursor')!;
+// The checked-in test ZIP keeps its manifest version when the public pin advances.
+const entry=realDir?published:{...published,version:'0.3.0'};
+const pin=published.archives![platform]!;
 const archive=readFileSync(realDir?join(realDir,basename(pin.url)):new URL('./fixtures/published-cursor-test.zip',import.meta.url));
 const metadata=realDir?readFileSync(join(realDir,basename(pin.metadataUrl))):Buffer.from(JSON.stringify({
- schemaVersion:1,harness:'cursor',name:entry.name,version:entry.version,platform,filename:basename(pin.url),
+ schemaVersion:1,harness:'cursor',name:entry.name,version:entry.version,platform,filename:`opencrawl-cursor-${entry.version}-${platform}.zip`,
  sha256:fileHash(archive),executable:'bin/opencrawl-hook',source:['auth.mjs','capture.mjs','io.mjs','lifecycle.mjs','main.mjs','privacy.mjs','redact.mjs','THIRD_PARTY_NOTICES.txt'].map(name=>'runtime/'+name)
 }));
 const release:PluginRelease=realDir?pluginRelease:{...pluginRelease,packages:[{...entry,archives:{[platform]:{...pin,sha256:fileHash(archive),metadataSha256:fileHash(metadata)}}}]};
