@@ -44,7 +44,7 @@ export function PagedList<T,C>({resetKey,load,label,head,row,empty,className=''}
   return <>
     {rows.length>0&&<Table label={label} className={className}><thead>{head}</thead><tbody>{rows.map(row)}</tbody></Table>}
     {state==='idle'&&!rows.length&&<EmptyState title={empty}/>}
-    {state==='loading'&&<LoadingState label={'Loading '+label.toLowerCase()}/>}
+    {state==='loading'&&<LoadingState spinner label={(rows.length?'Loading more ':'Loading ')+label.toLowerCase()+'…'}/>}
     {state==='error'&&<Notice tone="warning" actions={<Button onClick={()=>read(rows.length?next??undefined:undefined)}>Try again</Button>}>{label} couldn’t load.</Notice>}
     {state==='idle'&&next!=null&&<Button variant="quiet" onClick={()=>read(next)}>Load more</Button>}
     <div ref={end} aria-hidden="true"/>

@@ -81,13 +81,12 @@ for (const width of [1440, 390]) test(`tabs and the date range sit on one bar an
   }
 });
 
-test('Overview shows the billed totals, metered tokens per day and sessions with who ran them', async ({page}) => {
+test('Overview shows only session tokens: the total, tokens per day and sessions with who ran them', async ({page}) => {
   const requests = await serve(page);
   await page.goto('/usage?split&activity');
   await expect(chartTotal(page, 'Session tokens indexed')).toHaveText('465k');
   await expect(metric(page, 'Session tokens indexed')).toHaveCount(0);
-  await expect(metric(page, 'Agent searches')).toHaveText('435');
-  await expect(metric(page, 'Proactive context edits')).toHaveText('870');
+  await expect(page.locator('.report-metric')).toHaveCount(0);
   const chart = page.getByRole('region', {name: 'Session tokens indexed', exact: true});
   await expect(chart.locator('.report-bar')).toHaveCount(30);
   await expect(await hoverDay(page, 'Session tokens indexed', -1)).toHaveText(`${day(0)}30,000 tokens`);
@@ -237,4 +236,20 @@ test('Sources lists everything indexed from each source, largest first, and neve
   await tab(page, 'Sources').click();
   await expect(summary).toContainText('Indexed item counts unavailable.');
   await expect(summary.locator('.report-chart-total')).toHaveText('Unavailable');
+});
+
+test('slow lists and charts show a visible spinner instead of a blank panel', async ({page}) => {
+  await serve(page);
+  let release = () => {};
+  const held = new Promise<void>(resolve => {release = resolve;});
+  await page.route('**/api/console/usage/token-sessions', async route => {await held; await route.fulfill({json: {cacheScope: scope, rows: [sessionRow(0)], next: null}});});
+  await page.goto('/usage?split&activity');
+  const sessions = page.getByRole('region', {name: 'Sessions', exact: true});
+  const spinner = sessions.locator('.oc-loading-spinner');
+  await expect(spinner).toBeVisible();
+  await expect(spinner).toHaveText('Loading sessions…');
+  await expect(spinner.locator('.oc-spin')).toBeVisible();
+  release();
+  await expect(sessions.getByRole('table').locator('tbody tr')).toHaveCount(1);
+  await expect(spinner).toHaveCount(0);
 });

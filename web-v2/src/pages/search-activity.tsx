@@ -42,7 +42,7 @@ function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;s
   const request:HistoryRequest={kind,range,...edits?{edits:true as const}:{}};
   return <>
     {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>{label} couldn’t update.</Notice>}
-    {loading&&!data&&<LoadingState label={'Loading '+label.toLowerCase()}/>}
+    {loading&&!data&&<LoadingState spinner label={'Loading '+label.toLowerCase()+'…'}/>}
     {data&&<Section className="report-panel" headingLevel={3} title={label} actions={<span className="report-chart-total" title={count(value(data))}>{compact(value(data))}</span>}>
       <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:edits?day.nonSilent:day.agentSearches}))} label={label+' per day'}
         unit={n=>edits?plural(n,'edit'):plural(n,'search','searches')}/>

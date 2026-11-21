@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {ProactiveTab, SearchesTab, From, SessionLink, scoped, useCallTotals} from './search-activity.tsx';
+import {ProactiveTab, SearchesTab, From, SessionLink, scoped} from './search-activity.tsx';
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
@@ -150,21 +150,12 @@ function DataSources({report, now, retry}: {report: UsageReport; now: number; re
   </>;
 }
 
-function ActivityCards({activity, range, children}: {activity: {adapter: ActivityAdapter; scope: string}; range: UsageRange; children: (items: MetricItem[]) => React.ReactNode}) {
-  const {data} = useCallTotals(activity.adapter, activity.scope, range);
-  return <>{children(data ? [
-    {label: 'Agent searches', value: compact(data.agentSearches), title: count(data.agentSearches)},
-    {label: 'Proactive context edits', value: compact(data.nonSilent), title: count(data.nonSilent)},
-  ] : [])}</>;
-}
-
 /** Overview: session tokens (with the other billed counts beside them), tokens per day, then sessions. */
-function OverviewTab({adapter, scope, range, names, activity}: {adapter: TokenAdapter; scope: string; range: UsageRange; names: MemberNames; activity?: {adapter: ActivityAdapter; scope: string}}) {
+function OverviewTab({adapter, scope, range, names}: {adapter: TokenAdapter; scope: string; range: UsageRange; names: MemberNames}) {
   const {data, error, loading, reload} = useConsoleResource([...consoleResourceKey(adapter, 'usage-tokens'), range], async signal => scoped(scope, await adapter.usageTokens(range, signal)), tokenRefresh);
   return <>
     {error && <Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Session tokens couldn’t update.</Notice>}
-    {loading && !data && <LoadingState label="Loading session tokens"/>}
-    {activity && <ActivityCards activity={activity} range={range}>{items => items.length > 0 && <MetricGrid items={items}/>}</ActivityCards>}
+    {loading && !data && <LoadingState spinner label="Loading session tokens…"/>}
     {data && <Section className="report-panel" headingLevel={3} title="Session tokens indexed" actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
       <DailyBarChart days={data.daily.map(day => ({date: day.date, value: day.count}))} label="Session tokens indexed per day" unit={tokens}/>
     </Section>}
@@ -218,17 +209,17 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
         {ranges.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
       </Select>
     </div>
-    {current === 'overview' && tokenAdapter && scope && <OverviewTab adapter={tokenAdapter} scope={scope} range={range} names={names} activity={activity}/>}
+    {current === 'overview' && tokenAdapter && scope && <OverviewTab adapter={tokenAdapter} scope={scope} range={range} names={names}/>}
     {current === 'searches' && activity && <SearchesTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {current === 'proactive' && activity && <ProactiveTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {(current === 'activity' || current === 'sources') && <>
       {team.error && <Notice tone={team.data ? 'warning' : 'danger'} actions={!team.data && <Button onClick={team.reload} disabled={team.loading}>Try again</Button>}>{team.data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : team.error}</Notice>}
-      {team.loading && !team.data && <LoadingState label="Loading usage"/>}
+      {team.loading && !team.data && <LoadingState spinner label="Loading usage…"/>}
       {team.data && (current === 'activity' ? <AgentActivity report={team.data} now={Date.now()} retry={team.reload}/> : <DataSources report={team.data} now={Date.now()} retry={team.reload}/>)}
     </>}
     {current === 'team' && <>
       {team.error && <Notice tone={team.data ? 'warning' : 'danger'} actions={!team.data && <Button onClick={team.reload} disabled={team.loading}>Try again</Button>}>{team.data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : team.error}</Notice>}
-      {team.loading && !team.data && <LoadingState label="Loading usage"/>}
+      {team.loading && !team.data && <LoadingState spinner label="Loading usage…"/>}
       {team.data && <UsageReportView data={team.data} retry={team.reload}/>}
     </>}
   </Page>;
