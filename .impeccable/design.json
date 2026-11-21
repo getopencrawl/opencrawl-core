@@ -155,10 +155,10 @@
   ],
   "narrative": {
     "northStar": "Porcelain",
-    "overview": "The shared OpenCrawl console carries the landing page: a light lavender-grey page, hairline frames, square corners, Funnel Display headings, Switzer or Geist reading text and IBM Plex Mono labels.",
+    "overview": "The shared OpenCrawl console sits on the landing hero's lavender: ink text and hairlines, square corners, ink blocks for navigation and actions, Funnel Display headings, Switzer or Geist reading text and IBM Plex Mono labels.",
     "keyCharacteristics": [
-      "Ink blocks are actions and navigation.",
-      "Lavender fills what is selected or featured.",
+      "Lavender is the page; nothing is white.",
+      "Ink blocks are actions, navigation and highlights.",
       "Status includes a readable label."
     ],
     "rules": [],

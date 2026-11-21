@@ -232,7 +232,7 @@ for(const width of [390,1440])test(`linked history opens independently of live c
   await expect(page).toHaveURL(/harness=replicas/);
 });
 
-for (const width of [1440, 390]) test(`sessions list and transcript show a brand spinner while loading at ${width}px`, async ({page, request}, testInfo) => {
+for (const width of [1440, 390]) test(`sessions list and transcript show an ink spinner while loading at ${width}px`, async ({page, request}, testInfo) => {
   await request.post('/__test/reset', {data: {}});
   await page.setViewportSize({width, height: 900});
   let release = () => {}, held = Promise.resolve();
@@ -248,7 +248,7 @@ for (const width of [1440, 390]) test(`sessions list and transcript show a brand
     await expect(spinner).toBeVisible();
     await expect(spinner).toHaveCSS('opacity', '1');
     await expect(page.getByRole('status')).toHaveText(label);
-    await expect(spinner.locator('svg.oc-spin')).toHaveCSS('color', 'rgb(125, 130, 255)');
+    await expect(spinner.locator('svg.oc-spin')).toHaveCSS('color', 'rgb(10, 10, 10)');
     await page.screenshot({path: testInfo.outputPath(`${label.replaceAll(' ', '-').toLowerCase()}-${width}.png`)});
     release();
     await expect(loaded).toBeVisible();

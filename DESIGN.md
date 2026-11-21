@@ -1,44 +1,44 @@
 ---
 name: OpenCrawl Porcelain
-description: A shared light operations console that carries the landing page's type, ink buttons, hairline frames and lavender emphasis.
+description: A shared operations console set on the landing hero's lavender, with its type, ink text, ink blocks and hairline frames.
 colors:
-  bg: "#f4f3f9"
-  surface: "#fbfbfe"
-  surface-subtle: "#ebeaf4"
-  surface-raised: "#e3e2ef"
-  text: "#1b1b22"
-  strong: "#121212"
-  muted: "#565663"
-  quiet: "#6f6f80"
-  line: "#d8d7e6"
-  line-strong: "#c3c2d6"
-  control-line: "#a5a4b8"
+  bg: "#7d82ff"
+  surface: "color-mix(in srgb, #121212 7%, #7d82ff)"
+  surface-subtle: "color-mix(in srgb, #121212 13%, #7d82ff)"
+  surface-raised: "color-mix(in srgb, #121212 19%, #7d82ff)"
+  text: "#121212"
+  strong: "#0a0a0a"
+  muted: "#1a1a2c"
+  quiet: "#25253d"
+  line: "rgb(18 18 18 / .28)"
+  line-strong: "rgb(18 18 18 / .42)"
+  control-line: "rgb(18 18 18 / .62)"
   brand-face: "#7d82ff"
-  brand-face-hover: "#6b70f2"
+  brand-face-hover: "#959aff"
   brand-coral: "#ff6268"
   brand-cobalt: "#164bff"
   brand-ink: "#121212"
-  accent: "#5459dc"
-  accent-hover: "#3b40bd"
+  accent: "#121212"
+  accent-hover: "#fff"
   primary: "#161616"
   primary-hover: "#2b2b2b"
   on-primary: "#eaeaea"
-  secondary: "color-mix(in srgb, #7d82ff 22%, #fbfbfe)"
-  secondary-hover: "color-mix(in srgb, #7d82ff 32%, #fbfbfe)"
-  secondary-line: "color-mix(in srgb, #7d82ff 60%, #fbfbfe)"
-  on-secondary: "#23256b"
-  band: "#7d82ff"
-  band-ink: "#121212"
-  band-body: "#1e1e33"
-  wash: "color-mix(in srgb, #7d82ff 14%, transparent)"
-  selection: "color-mix(in srgb, #7d82ff 38%, transparent)"
-  success: "#1c7442"
-  success-wash: "#e0f1e6"
-  pending: "#84560a"
-  pending-wash: "#f7ecd2"
-  danger: "#c5362c"
-  danger-strong: "#9f251c"
-  danger-wash: "#f8e2df"
+  secondary: "color-mix(in srgb, #fff 34%, #7d82ff)"
+  secondary-hover: "color-mix(in srgb, #fff 46%, #7d82ff)"
+  secondary-line: "rgb(18 18 18 / .55)"
+  on-secondary: "#121212"
+  band: "#161616"
+  band-ink: "#f6f6f6"
+  band-body: "#d6d6d6"
+  wash: "rgb(255 255 255 / .2)"
+  selection: "rgb(255 255 255 / .45)"
+  success: "#042a16"
+  success-wash: "#93dcb3"
+  pending: "#3a2300"
+  pending-wash: "#f1cf7c"
+  danger: "#74090d"
+  danger-strong: "#4f0508"
+  danger-wash: "#ff6268"
   backdrop: "rgb(18 18 18 / .55)"
   nav-bg: "#161616"
   nav-hover: "#262626"
@@ -46,7 +46,7 @@ colors:
   nav-strong: "#f6f6f6"
   nav-line: "#2e2e2e"
   nav-accent: "#aeb1ff"
-  chart-rest: "#e1e0ea"
+  chart-rest: "rgb(18 18 18 / .16)"
 typography:
   display:
     fontFamily: "'Funnel Display', Geist, system-ui, sans-serif"
@@ -195,9 +195,10 @@ components:
 ## Overview
 
 The console helps people connect machines and tools, inspect what their agents
-can find, and manage workspace access. It shares one visual language with
-[getopencrawl.com](https://getopencrawl.com): a light lavender-grey page,
-near-white panels inside hairline frames, and square corners throughout.
+can find, and manage workspace access. It shares one visual language with the
+hero of [getopencrawl.com](https://getopencrawl.com): the mark's lavender as the
+page, ink text and hairlines, and square corners throughout. Panels are the page
+darkened a step with ink. Nothing is white.
 
 - **Type.** Funnel Display sets page and section headings and large figures,
   light and tight. Reading text and controls use Switzer where a deployment
@@ -207,11 +208,12 @@ near-white panels inside hairline frames, and square corners throughout.
 - **Ink.** Navigation is an ink box with light text, like the landing page's
   navigation. Primary actions are ink blocks. A text-only primary action ends
   with a plus that turns on hover. Secondary actions are ink outlines.
-- **Lavender.** The mark's lavender fills what is selected or featured: the
-  current navigation item and highlight blocks, with ink text on top. The
-  deeper accent draws links, focus rings, selected tabs and chart series.
-- **Status.** Status has a readable label alongside its colour. Indicators are
-  small squares. People keep round avatars and agents keep square pixel faces.
+- **Lavender.** Lavender is the ground, so it cannot mark emphasis in the page.
+  Links, focus rings, selected tabs and chart series are ink. Highlight blocks
+  are ink with light text. A white wash marks what is selected. The current
+  navigation item is a lavender block inside the ink sidebar.
+- **Status.** Status has a readable label alongside its colour. Tags sit on a
+  mint, amber or coral fill with dark text. Indicators are small squares. People keep round avatars and agents keep square pixel faces.
 
 Switzer may be served by an operator from their own application and may not be
 redistributed, so core does not ship it. A deployment that holds its own copy

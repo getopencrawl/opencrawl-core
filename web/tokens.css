@@ -1,5 +1,5 @@
-/* OpenCrawl Porcelain. The shared visual vocabulary for every product surface, matching getopencrawl.com:
-   a light lavender-grey page, hairline frames, square controls, ink buttons and the mark's lavender for emphasis.
+/* OpenCrawl Porcelain. The shared visual vocabulary for every product surface, matching the hero of getopencrawl.com:
+   the mark's lavender as the page, ink text and hairlines, square controls, and ink blocks for navigation and actions.
    Type: Funnel Display (headings, figures), Switzer or Geist (reading text, controls), IBM Plex Mono (labels, data). */
 @font-face {
   font-family: 'Funnel Display';
@@ -93,55 +93,55 @@
   --page-width: 1200px;
   --chat-width: 800px;
   --motion-fast: 150ms ease;
-  /* Surfaces: the landing page, its panels and its hairlines. */
-  --bg: #f4f3f9;
-  --surface: #fbfbfe;
-  --surface-subtle: #ebeaf4;
-  --surface-raised: #e3e2ef;
-  --text: #1b1b22;
-  --strong: #121212;
-  --muted: #565663;
-  --quiet: #6f6f80;
-  --line: #d8d7e6;
-  --line-strong: #c3c2d6;
-  --control-line: #a5a4b8;
+  /* Surfaces: the landing hero. Panels are the page darkened a step with ink; nothing is white. */
+  --bg: #7d82ff;
+  --surface: color-mix(in srgb, #121212 7%, #7d82ff);
+  --surface-subtle: color-mix(in srgb, #121212 13%, #7d82ff);
+  --surface-raised: color-mix(in srgb, #121212 19%, #7d82ff);
+  --text: #121212;
+  --strong: #0a0a0a;
+  --muted: #1a1a2c;
+  --quiet: #25253d;
+  --line: rgb(18 18 18 / .28);
+  --line-strong: rgb(18 18 18 / .42);
+  --control-line: rgb(18 18 18 / .62);
   /* The OC mark: a lavender face over coral and cobalt layers. */
   --brand-face: #7d82ff;
-  --brand-face-hover: #6b70f2;
+  --brand-face-hover: #959aff;
   --brand-coral: #ff6268;
   --brand-cobalt: #164bff;
   --brand-ink: #121212;
-  --accent: #5459dc;
-  --accent-hover: #3b40bd;
-  /* Actions are ink blocks; lavender marks what is selected or featured. */
+  --accent: #121212;
+  --accent-hover: #fff;
+  /* Actions are ink blocks. Featured blocks are ink too; white washes mark what is selected. */
   --primary: #161616;
   --primary-hover: #2b2b2b;
   --on-primary: #eaeaea;
-  --secondary: color-mix(in srgb, var(--brand-face) 22%, #fbfbfe);
-  --secondary-hover: color-mix(in srgb, var(--brand-face) 32%, #fbfbfe);
-  --secondary-line: color-mix(in srgb, var(--brand-face) 60%, #fbfbfe);
-  --on-secondary: #23256b;
-  --band: var(--brand-face);
-  --band-ink: #121212;
-  --band-body: #1e1e33;
-  --band-line: rgb(18 18 18 / .25);
+  --secondary: color-mix(in srgb, #fff 34%, #7d82ff);
+  --secondary-hover: color-mix(in srgb, #fff 46%, #7d82ff);
+  --secondary-line: rgb(18 18 18 / .55);
+  --on-secondary: #121212;
+  --band: #161616;
+  --band-ink: #f6f6f6;
+  --band-body: #d6d6d6;
+  --band-line: rgb(255 255 255 / .22);
   --logo-layers: -1px 0 0 var(--brand-coral), 1px 0 0 var(--brand-cobalt);
   --logo-layers-wide: -2px 0 0 var(--brand-coral), 2px 0 0 var(--brand-cobalt);
   --logo-layers-soft: -1px 0 0 color-mix(in srgb, var(--brand-coral) 60%, transparent), 1px 0 0 color-mix(in srgb, var(--brand-cobalt) 60%, transparent);
-  --wash: color-mix(in srgb, var(--brand-face) 14%, transparent);
-  --selection: color-mix(in srgb, var(--brand-face) 38%, transparent);
-  --success: #1c7442;
-  --success-wash: #e0f1e6;
-  --pending: #84560a;
-  --pending-wash: #f7ecd2;
-  --danger: #c5362c;
-  --danger-strong: #9f251c;
-  --danger-wash: #f8e2df;
+  --wash: rgb(255 255 255 / .2);
+  --selection: rgb(255 255 255 / .45);
+  --success: #042a16;
+  --success-wash: #93dcb3;
+  --pending: #3a2300;
+  --pending-wash: #f1cf7c;
+  --danger: #74090d;
+  --danger-strong: #4f0508;
+  --danger-wash: #ff6268;
   --backdrop: rgb(18 18 18 / .55);
-  --header-glass: rgb(244 243 249 / .82);
+  --header-glass: rgb(125 130 255 / .82);
   --shadow-paper: none;
-  --shadow-floating: 0 10px 30px rgb(18 18 18 / .16);
-  --shadow-dialog: 0 30px 80px rgb(18 18 18 / .28);
+  --shadow-floating: 0 10px 30px rgb(18 18 18 / .28);
+  --shadow-dialog: 0 30px 80px rgb(18 18 18 / .4);
   /* Navigation: the landing page's ink boxes. Surfaces inside it read these in place of the page palette. */
   --nav-bg: #161616;
   --nav-hover: #262626;
@@ -152,8 +152,8 @@
   --nav-line: #2e2e2e;
   --nav-line-strong: #454545;
   --nav-accent: #aeb1ff;
-  /* Charts: the featured series in accent, the rest in the landing page's grey bar. */
-  --chart-rest: #e1e0ea;
+  /* Charts: series in ink on an ink-tinted track. */
+  --chart-rest: rgb(18 18 18 / .16);
 }
 :root[data-brand-fonts] {
   --font-sans: Switzer, Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
