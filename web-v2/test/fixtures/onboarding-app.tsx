@@ -40,10 +40,12 @@ const adapter: OnboardingAdapter = {
 const never = new AbortController().signal;
 const usageAdapter: ConsoleDataAdapter = {usage: signal => request('/api/console/usage', signal), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
 const progressiveUsageAdapter: ConsoleDataAdapter = {...usageAdapter,
-  callTotals:signal=>request('/api/console/usage/calls',signal),
+  callTotals:(range,signal)=>request('/api/console/usage/calls',signal,{range}),
+  usageTokens:(range,signal)=>request('/api/console/usage/tokens',signal,{range}),
+  tokenSessions:(input,signal)=>request('/api/console/usage/token-sessions',signal,input),
   searchHistory:(input,signal)=>request('/api/console/usage/search-history',signal,input),
   usageHighlights: signal => request('/api/console/usage/highlights', signal),
-  usageDetails: signal => request('/api/console/usage/details', signal),
+  usageDetails: (signal, range = '30d') => request('/api/console/usage/details', signal, {range}),
 };
 const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, search:(query,signal,page)=>request('/api/debug/search',signal,{query,page}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
 const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');

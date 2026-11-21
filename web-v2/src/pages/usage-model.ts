@@ -54,6 +54,11 @@ export function sortedMembers(members: UsageMember[]) {
     || memberName(left).localeCompare(memberName(right)));
 }
 
+export function topMember(members: UsageMember[], key: 'sources' | 'sessions' | 'toolCalls') {
+  return members.filter(member => measured(member[key]) && member[key] > 0)
+    .sort((left, right) => right[key] - left[key] || memberName(left).localeCompare(memberName(right)))[0];
+}
+
 export function harnessName(name: string) {
   return ({'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', 'grok-bot': 'Grok Bot', antigravity: 'Antigravity'} as Record<string, string>)[name] || name;
 }

@@ -38,8 +38,7 @@ function report(): UsageReport {
       people: [{userId: 'first'}, {userId: 'second'}], tools: [{name: 'mcp__opencrawl__search', count: 4}],
       harnesses: [{name: 'claude-code', count: 70}, {name: 'codex', count: 30}], origins: [{name: 'cli', count: 90}, {name: 'cloud', count: 10}],
       firstAt: '2026-11-01T10:00:00Z', lastAt: '2026-11-07T19:55:00Z',
-      daily: [{date: '2026-11-06', sessions: 3, events: 40, tokens: 1_200_000}, {date: '2026-11-07', sessions: 5, events: 60, tokens: 800_000}],
-      indexedTokens: 9_500_000, tokenHistory: [{date: '2026-11-04', tokens: 7_500_000}, {date: '2026-11-05', tokens: 0}, {date: '2026-11-06', tokens: 1_200_000}, {date: '2026-11-07', tokens: 800_000}],
+      daily: [{date: '2026-11-06', sessions: 3, events: 40}, {date: '2026-11-07', sessions: 5, events: 60}],
     },
     overlap: {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 8, daily: [{date: '2026-11-07', average: 1, peak: 2, partial: true}]},
     members: [
@@ -72,6 +71,48 @@ test('partial refresh preserves only failed sections and their original freshnes
   assert.deepEqual(reconcileUsage(missing,missing).staleSections,{});
 });
 
+test('Team leaderboard orders measured sessions then tool calls and retains actual member stats without mutating input', () => {
+  const data = report();
+  const html = render(data);
+  assert.doesNotMatch(html, /Most sources connected/);
+  assert.match(html, /Most sessions/);
+  assert.match(html, /Most tool calls/);
+  assert.match(html, /Ranked by sessions, then tool calls/);
+  assert.match(html, /aria-label="Sessions not set up"/);
+  assert.match(html, /report-email">Codex/);
+  assert.match(html, /Alex<em>you<\/em>/);
+  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
+  assert.deepEqual(data.members.map(member => member.name), ['Alex', 'Sam']);
+  const table = html.slice(html.indexOf('<table'));
+  assert.ok(table.indexOf('Sam') < table.indexOf('Alex'));
+  assert.match(table, /<th scope="col">Messages<\/th>/);
+  assert.doesNotMatch(table, /score/i);
+  const alex = data.members[0];
+  assert.ok(alex);
+  alex.sessions = 5;
+  alex.toolCalls = 50;
+  assert.equal(sortedMembers(data.members)[0]?.name, 'Alex');
+  alex.name = '<script>alert(1)</script>';
+  assert.doesNotMatch(render(data), /<script>/);
+});
+
+test('subagent sessions are reported beside, not inside, the sessions a person started', () => {
+  const data = report();
+  assert.doesNotMatch(render(data), /plus [\d,]+ subagent|\+[\d,]+ subagent/);
+  if (!data.agents) throw new Error('fixture has agents');
+  data.agents.subagentSessions = 2435;
+  const [alex, sam] = data.members;
+  if (!alex || !sam) throw new Error('fixture has members');
+  alex.subagentSessions = 2435;
+  const html = render(data);
+  assert.match(html, /Ranked by sessions, then tool calls; subagent sessions are counted separately/);
+  const table = html.slice(html.indexOf('<table'));
+  assert.match(table, /<td>3<span class="report-email">\+2,435 subagent<\/span><\/td>/);
+  // Ranking and highlights still use started sessions only.
+  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
+  assert.match(html, /Most sessions<\/dt><dd><strong>Sam<\/strong><span>5 sessions/);
+});
+
 test('relative date formatting handles recent and invalid values', () => {
   assert.equal(ago('2026-11-07T20:01:00Z', now), 'just now');
   assert.equal(ago('invalid', now), 'never');
@@ -89,11 +130,6 @@ function value(): ValueReport {
   };
 }
 
-function cards(html: string, heading: string) {
-  const start = html.indexOf(`>${heading}</h2>`);
-  const section = html.slice(start, html.indexOf('</section>', start));
-  return [...section.matchAll(/<dt>([^<]*)(?:<span class="report-help">.*?<\/span><\/span>)?<\/dt><dd><span class="report-metric-value"[^>]*>(.*?)<\/span>(?:<span class="report-metric-note">(.*?)<\/span>)?/g)].map(match => match.slice(1, 4));
-}
 
 const capture = {tokens: 52_500_000, since: '2026-11-01T00:00:00.000Z'};
 
@@ -133,65 +169,41 @@ test('copying writes the exact prompt and reports when the browser cannot copy',
   assert.deepEqual(written, [prompt]);
 });
 
+test('shared setup is labeled once instead of marking personal installations missing',()=>{
+ const data=report();
+ for(const member of data.members)member.setup={shared:{name:'Replicas',observedAt:'2026-11-13T00:00:00Z'}};
+ const html=renderToStaticMarkup(createElement(MemoryRouter,null,createElement(UsageReportView,{data,now})));
+ assert.match(html,/Shared Replicas setup/);assert.doesNotMatch(html,/CLI not set up|MCP not set up|Sessions not set up/);
+});
 
 const headings = (html: string) => [...html.matchAll(/<h([23])\b[^>]*>([^<]+)<\/h\1>/g)].map(match => match[2]);
-const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
-test('Usage leads with consumption, then sources, then team, without billing, setup or tool rankings', () => {
-  const html = render({...report(), capture});
-  assert.deepEqual(headings(html), ['Overview', 'Indexed session tokens', 'Indexed items by source', 'Team', 'Agent sessions per day']);
-  assert.deepEqual(cards(html, 'Overview').map(card => card.slice(0, 2)), [['Session tokens indexed', '2M'], ['Source items indexed', '19.7k']]);
-  // Cards carry a label and a number only.
-  assert.ok(cards(html, 'Overview').every(card => card[2] === undefined));
-  assert.doesNotMatch(html, /Tokens captured|since 2026-11-01|Machines capturing|Where agents run|Most used|Setup|set up|Rank|Main session overlap|report-line-chart|Proactive searches|Most sessions/);
-  const adapter: ConsoleDataAdapter = {usage: async () => report(), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
-  const page = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(UsagePage, {adapter})));
-  assert.doesNotMatch(page.slice(page.indexOf('<header'), page.indexOf('</header>')), /<p>/);
-});
-
-test('session tokens chart by session day; a 30-day total is unavailable when a day was not measured', () => {
+test('Team shows its totals, sessions per day, the leaders and member activity, in that order', () => {
   const html = render();
-  assert.match(html, /<title>2026-11-06: 1,200,000 tokens<\/title>/);
-  assert.match(html, /title="2,000,000">2M</);
-  const partial = report();
-  delete partial.agents!.daily[0]!.tokens;
-  const unmeasured = render(partial);
-  assert.match(unmeasured, /<title>2026-11-06: not tracked<\/title>/);
-  assert.equal(cards(unmeasured, 'Overview')[0]![1], 'Unavailable');
+  assert.deepEqual(headings(html), ['Agent sessions per day', 'Member activity']);
+  assert.deepEqual([...html.matchAll(/<dt>([^<]+)<\/dt><dd><span class="report-metric-value"[^>]*>([^<]+)/g)].map(match => [match[1], match[2]]),
+    [['Sessions', '8'], ['Active members', '2 of 2'], ['Tool calls', '60']]);
+  assert.match(html, /<title>2026-11-07: 5 sessions<\/title>/);
+  assert.ok(html.indexOf('Agent sessions per day') < html.indexOf('Most sessions'));
+  assert.ok(html.indexOf('Most sessions') < html.indexOf('Member activity'));
+  assert.doesNotMatch(html, /Tokens captured|Machines capturing|Where agents run|Main session overlap|Data sources/);
 });
 
-test('sources list indexed items largest first; failed counts and missing reporting are not shown as zero', () => {
-  const html = render();
-  const sources = text(html.slice(html.indexOf('Indexed items by source'), html.indexOf('>Team</h2>')));
-  assert.match(sources, /GitHub 16,136 Slack 3,550 Notion 12/);
-  assert.match(html, /href="\/integrations"[^>]*>Manage</);
-  const failed = render({...report(), failedSources: ['connectors']});
-  assert.match(failed, /Indexed item counts unavailable/);
-  assert.doesNotMatch(failed, /report-bars/);
-  assert.match(render({...report(), ingestion: {sources: [], index: null}}), /No sources connected/);
-  assert.match(render({...report(), ingestion: null}), /Source reporting isn’t available/);
+test('failed session or team reads show notices instead of zero totals or an invented ranking', () => {
+  const failed = render({...report(), agents: null, failedSources: ['sessions']});
+  assert.match(failed, /Session activity couldn’t load/);
+  assert.match(failed, /Team activity couldn’t load/);
+  assert.doesNotMatch(failed, /Ranked by sessions|report-metric|Agent sessions per day/);
+  const empty = report();
+  Object.assign(empty.agents!, {events: 0, sessions: 0, messages: 0, toolCalls: 0, daily: [], people: []});
+  assert.match(render(empty), /No agent sessions captured yet/);
+  assert.match(render({...report(), members: []}), /Team reporting isn’t available/);
+  assert.equal(count(null), 'Unavailable');
+  assert.equal(compact(Number.NaN), 'Unavailable');
+  assert.equal(compact(0), '0');
 });
 
-test('failed session activity shows notices instead of zero tokens or a zero team ranking', () => {
-  const html = render({...report(), agents: null, failedSources: ['sessions']});
-  assert.match(html, /Session activity couldn’t load/);
-  assert.doesNotMatch(html, /Session tokens indexed|Indexed session tokens/);
-  assert.match(html, /Team activity couldn’t load/);
-  assert.doesNotMatch(html, /Team usage/);
-  assert.match(html, /Indexed items by source/);
-});
-
-test('team table orders measured sessions then tool calls and reports subagents beside them', () => {
-  const html = render();
-  const rows = [...html.matchAll(/<th scope="row"><span class="report-member">([^<]+)/g)].map(match => match[1]);
-  assert.deepEqual(rows, ['Sam', 'Alex']);
-  const data = report();
-  data.members[0]!.subagentSessions = 2;
-  assert.match(text(render(data)), /Alex you 3 \+2 subagents 10 20/);
-  assert.deepEqual([...render().matchAll(/<th scope="col">([^<]+)/g)].map(match => match[1]), ['Member', 'Sessions', 'Messages', 'Tool calls', 'Last active']);
-});
-
-test('shared helpers: readable agent names everywhere, unavailable is never zero, ranking does not mutate', () => {
+test('every captured agent has one readable name on Usage and in the session library', () => {
   for (const [harness, name] of [['claude-code', 'Claude Code'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['grok-bot', 'Grok Bot'], ['antigravity', 'Antigravity']] as const) {
     assert.equal(harnessName(harness), name); assert.equal(libraryHarnessName(harness), name);
   }
@@ -202,13 +214,4 @@ test('shared helpers: readable agent names everywhere, unavailable is never zero
       createElement(SessionsPage, {adapter: library})),
   }));
   assert.match(viewerHtml, /aria-label="Back to sessions"[^>]*href="\/sessions"/);
-  assert.equal(count(null), 'Unavailable');
-  assert.equal(compact(Number.NaN), 'Unavailable');
-  assert.equal(compact(0), '0');
-  const data = report();
-  assert.deepEqual(sortedMembers(data.members).map(member => member.name), ['Sam', 'Alex']);
-  assert.deepEqual(data.members.map(member => member.name), ['Alex', 'Sam']);
-  const empty = report();
-  Object.assign(empty.agents!, {events: 0, sessions: 0, daily: [], people: []});
-  assert.match(render(empty), /No agent sessions captured yet/);
 });

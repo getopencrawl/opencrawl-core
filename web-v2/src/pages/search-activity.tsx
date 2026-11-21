@@ -1,87 +1,72 @@
-import {useEffect,useRef,useState} from 'react';
 import {consoleResourceKey,useConsoleResource} from '../data.tsx';
-import {Button,DailyBarChart,Dialog,EmptyState,LoadingState,Notice,Section,Table} from '../design/components.js';
+import {Button,DailyBarChart,LoadingState,MetricGrid,Notice,Section} from '../design/components.js';
+import {Link} from '../router.js';
 import type {ConsoleDataAdapter} from './types.js';
 import type {CallTotals,HistoryRequest,SearchActivityRow} from '../../../src/application/search-activity.mjs';
-import {harnessName,plural} from './usage-model.ts';
+import type {UsageRange} from '../../../src/application/usage-range.mjs';
+import {compact,count,harnessName,plural} from './usage-model.ts';
+import {PagedList} from './usage-list.tsx';
 
 const refresh={autoRefreshMilliseconds:60_000,staleMilliseconds:60_000};
 const dateFormat=new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'});
 export type ActivityAdapter=Required<Pick<ConsoleDataAdapter,'callTotals'|'searchHistory'>>;
-/** Signed-in names by WorkOS user ID; queries from people outside the list show their agent only. */
+/** Display names by user ID; anyone outside the list shows as a workspace member. */
 export type MemberNames=ReadonlyMap<string,string>;
-const shown=5;
 
-function scoped<T extends {cacheScope:string}>(scope:string,result:T){
+export function scoped<T extends {cacheScope:string}>(scope:string,result:T){
   if(scope!==result.cacheScope)throw Object.assign(new Error('Your workspace changed. Reload this page.'),{status:403});
   return result;
 }
 
-export function useCallTotals(adapter:ActivityAdapter,scope:string){
-  return useConsoleResource(consoleResourceKey(adapter,'call-totals'),async signal=>scoped(scope,await adapter.callTotals(signal)),refresh);
+export function useCallTotals(adapter:ActivityAdapter,scope:string,range:UsageRange){
+  return useConsoleResource([...consoleResourceKey(adapter,'call-totals'),range],async signal=>scoped(scope,await adapter.callTotals(range,signal)),refresh);
 }
 
-function QueryRows({rows,names}:{rows:SearchActivityRow[];names:MemberNames}){
-  return <Table label="Agent queries" className="usage-search-history"><thead><tr><th scope="col">Query</th><th scope="col">From</th><th scope="col">Time</th></tr></thead>
-    <tbody>{rows.map(row=><tr key={row.id}>
-      <td>{row.queries.length?row.queries.join('\n'):<span className="report-email">No query text</span>}</td>
-      <td>{names.get(row.userId)??'Workspace member'}{row.harness&&<span className="report-email">{harnessName(row.harness)}</span>}</td>
-      <td><time dateTime={row.at} title={row.at}>{dateFormat.format(new Date(row.at))}</time></td>
-    </tr>)}</tbody></Table>;
+export function From({userId,harness,names}:{userId:string;harness:string|null;names:MemberNames}){
+  return <>{names.get(userId)??'Workspace member'}{harness&&<span className="report-email">{harnessName(harness)}</span>}</>;
 }
 
-/** Every visible agent query, newest first; older pages load as the end of the list scrolls into view. */
-function QueryHistory({adapter,scope,names,open,onClose}:{adapter:ActivityAdapter;scope:string;names:MemberNames;open:boolean;onClose:()=>void}){
-  const [rows,setRows]=useState<SearchActivityRow[]>([]);
-  const [next,setNext]=useState<HistoryRequest['before']|null|undefined>(undefined);
-  const [state,setState]=useState<'idle'|'loading'|'error'>('idle');
-  const end=useRef<HTMLDivElement>(null);
-  const reading=useRef<AbortController|null>(null);
-  useEffect(()=>{if(!open){reading.current?.abort();setRows([]);setNext(undefined);setState('idle');}},[open]);
-  function load(before?:HistoryRequest['before']){
-    if(reading.current)return;
-    const controller=new AbortController();
-    reading.current=controller;
-    setState('loading');
-    adapter.searchHistory({kind:'agent',...before?{before}:{}},controller.signal).then(page=>{
-      const result=scoped(scope,page);
-      setRows(previous=>[...previous,...result.rows]);
-      setNext(result.next);
-      setState('idle');
-    },()=>{if(!controller.signal.aborted)setState('error');}).finally(()=>{if(reading.current===controller)reading.current=null;});
-  }
-  useEffect(()=>{if(open&&next===undefined)load();},[open,next]);
-  useEffect(()=>{
-    const element=end.current;
-    if(!open||!element||!next)return;
-    const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))load(next);});
-    observer.observe(element);
-    return ()=>observer.disconnect();
-  },[open,next,rows.length]);
-  useEffect(()=>()=>reading.current?.abort(),[]);
-  return <Dialog open={open} onClose={onClose} title="Agent queries" className="usage-query-dialog">
-    {rows.length>0&&<QueryRows rows={rows} names={names}/>}
-    {state==='loading'&&<LoadingState label="Loading agent queries"/>}
-    {state==='error'&&<Notice tone="warning" actions={<Button onClick={()=>load(next??undefined)}>Try again</Button>}>Queries couldn’t load.</Notice>}
-    {next===null&&!rows.length&&<EmptyState title="No visible agent queries."/>}
-    <div ref={end} aria-hidden="true"/>
-  </Dialog>;
+export function SessionLink({userId,harness,sessionId}:{userId:string;harness:string|null;sessionId:string|null}){
+  if(!sessionId||!harness)return <span className="report-email">Not recorded</span>;
+  return <Link to={'/sessions?'+new URLSearchParams({user:userId,harness,id:sessionId})}><code>{sessionId.slice(0,8)}</code></Link>;
 }
 
-/** Agent search tool calls by day on the page's shared date axis, above the newest queries. */
-export function AgentQueries({adapter,scope,names,axis,totals}:{adapter:ActivityAdapter;scope:string;names:MemberNames;axis:string[];totals:CallTotals|undefined}){
-  const [open,setOpen]=useState(false);
-  const {data,error,loading,reload}=useConsoleResource([...consoleResourceKey(adapter,'search-history'),'agent'],
-    async signal=>scoped(scope,await adapter.searchHistory({kind:'agent'},signal)),{...refresh,staleMilliseconds:0});
-  const tracked=totals&&new Map((totals.daily??[]).map(day=>[day.date,day.agentSearches]));
-  const since=totals?.since.slice(0,10);
-  const days=axis.map(date=>({date,value:tracked&&since&&date>=since?tracked.get(date)??0:null}));
-  const more=Boolean(data&&(data.rows.length>shown||data.next));
-  return <Section className="report-panel" headingLevel={3} title="Agent queries" actions={more&&<Button variant="quiet" onClick={()=>setOpen(true)}>View all</Button>}>
-    {tracked&&<DailyBarChart days={days} label="Agent search tool calls per day" unit={value=>plural(value,'query','queries')}/>}
-    {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Queries couldn’t update.</Notice>}
-    {loading&&<LoadingState label="Loading agent queries"/>}
-    {data&&!error&&(data.rows.length?<QueryRows rows={data.rows.slice(0,shown)} names={names}/>:<EmptyState title="No agent queries in the last 30 days."/>)}
-    <QueryHistory adapter={adapter} scope={scope} names={names} open={open} onClose={()=>setOpen(false)}/>
-  </Section>;
+const time=(at:string)=><time dateTime={at} title={at}>{dateFormat.format(new Date(at))}</time>;
+
+/** One billable count on a tab: its number, its bars by day, then its rows. */
+function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames;kind:'agent'|'proactive'}){
+  const {data,error,loading,reload}=useCallTotals(adapter,scope,range);
+  const edits=kind==='proactive';
+  const label=edits?'Proactive context edits':'Agent searches';
+  const value=(totals:CallTotals)=>edits?totals.nonSilent:totals.agentSearches;
+  const request:HistoryRequest={kind,range,...edits?{edits:true as const}:{}};
+  return <>
+    {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>{label} couldn’t update.</Notice>}
+    {loading&&!data&&<LoadingState label={'Loading '+label.toLowerCase()}/>}
+    {data&&<>
+      <MetricGrid items={[{label,value:compact(value(data)),title:count(value(data))}]}/>
+      <Section className="report-panel" headingLevel={3} title={edits?'Proactive context edits per day':'Agent searches per day'}>
+        <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:edits?day.nonSilent:day.agentSearches}))} label={label+' per day'}
+          unit={n=>edits?plural(n,'edit'):plural(n,'search','searches')}/>
+      </Section>
+    </>}
+    <Section className="report-panel" headingLevel={3} title={edits?'Edits':'Searches'}>
+      <PagedList<SearchActivityRow,NonNullable<HistoryRequest['before']>> resetKey={JSON.stringify([scope,request])} label={edits?'Proactive context edits':'Agent searches'}
+        className="usage-search-history" empty={edits?'No proactive context edits in this period.':'No agent searches in this period.'}
+        load={async(before,signal)=>scoped(scope,await adapter.searchHistory({...request,...before?{before}:{}},signal))}
+        head={<tr><th scope="col">Time</th>{edits&&<th scope="col">Triggering message</th>}<th scope="col">{edits?'Search':'Query'}</th>{edits&&<th scope="col">Results</th>}<th scope="col">From</th><th scope="col">Session</th></tr>}
+        row={row=><tr key={row.id}>
+          <td>{time(row.at)}</td>
+          {edits&&<td>{row.message??<span className="report-email">Message unavailable</span>}</td>}
+          <td>{row.queries.length?row.queries.join('\n'):<span className="report-email">No query text</span>}</td>
+          {edits&&<td>{row.returned==null?'Unavailable':count(row.returned)}</td>}
+          <td><From userId={row.userId} harness={row.harness} names={names}/></td>
+          <td><SessionLink userId={row.userId} harness={row.harness} sessionId={row.sessionId}/></td>
+        </tr>}/>
+      <p className="report-note">Lists show the last 30 days at most, from sessions you can see. The count includes every {edits?'edit':'search'}.</p>
+    </Section>
+  </>;
 }
+
+export const SearchesTab=(props:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames})=><ActivityTab {...props} kind="agent"/>;
+export const ProactiveTab=(props:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames})=><ActivityTab {...props} kind="proactive"/>;

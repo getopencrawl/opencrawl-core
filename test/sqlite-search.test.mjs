@@ -241,13 +241,26 @@ test('SQLite supports library and usage aggregations', async t => {
   const sessions = createSessionSearch({endpoint, store: memorySessionStore(), prefix: 'capture-v1'});
   await sessions.ensureIndex(principal);
   await sessions.putDocuments([{id: 'event', document: {...principal, text: 'hello', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'session', installationId: 'machine', chunk: 0, toolNames: ['mcp__opencrawl__search', 'exec'], timestamp: '2026-11-01T12:00:00Z', receivedAt: '2026-11-01T12:00:00Z'}}], principal);
-  await sessions.putDocuments([{id: 'older', document: {...principal, text: 'earlier', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'old', installationId: 'machine', chunk: 0, capturedTokens: 40, timestamp: '2026-10-20T12:00:00Z', receivedAt: '2026-11-01T12:00:00Z'}}], principal);
+  await sessions.putDocuments([
+    {id: 'older', document: {...principal, text: 'earlier', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'old', installationId: 'machine', chunk: 0, capturedTokens: 40, timestamp: '2026-10-30T12:00:00Z', receivedAt: '2026-11-01T12:00:00Z'}},
+    {id: 'recent', document: {...principal, text: 'later', kind: 'message', role: 'user', harness: 'codex', origin: 'cli', sessionId: 'new', installationId: 'machine', chunk: 0, capturedTokens: 7, timestamp: '2026-11-02T08:00:00Z', receivedAt: '2026-11-02T08:00:00Z'}},
+  ], principal);
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  // Tokens are dated by when the event happened; days with nothing captured read zero, and the window bounds the sum.
+  assert.deepEqual(await sessions.tokenTotals(principal, {days: 2, now}), {total: 7, first: '2026-11-01T12:00:00.000Z', daily: [{date: '2026-11-01', count: 0}, {date: '2026-11-02', count: 7}]});
+  const all = await sessions.tokenTotals(principal, {days: null, now});
+  assert.equal(all.total, 47); assert.equal(all.daily[0].date, '2026-10-30'); assert.equal(all.daily.at(-1).date, '2026-11-02'); assert.equal(all.daily.length, 4);
+  const page = await sessions.tokenSessions(principal, {days: null, now});
+  assert.deepEqual(page.rows.map(row => [row.sessionId, row.tokens]), [['new', 7], ['session', 0], ['old', 40]]);
+  assert.equal(page.more, false);
+  assert.deepEqual((await sessions.tokenSessions({...principal, tenantId: 'org_other'}, {days: null, now})).rows, []);
+  await assert.rejects(sessions.tokenSessions(principal, {offset: 5000}), {status: 400});
   const usage = await sessions.usage(principal, {days: 2, now: Date.parse('2026-11-02T12:00:00Z')});
-  assert.equal(usage.indexedTokens, 40); assert.equal(usage.tokenHistory[0].date, '2026-10-20'); assert.equal(usage.tokenHistory.length, 13);
-  assert.deepEqual(usage.daily.map(day => day.tokens), [0, 0]);
-  assert.equal(usage.events, 1); assert.equal(usage.sessions, 1); assert.equal(usage.toolCalls, 2); assert.equal(usage.opencrawlCalls, 1); assert.equal(usage.daily.length, 2);
+  assert.equal(usage.events, 2); assert.equal(usage.sessions, 2); assert.equal(usage.toolCalls, 2); assert.equal(usage.opencrawlCalls, 1); assert.equal(usage.daily.length, 2);
+  const ever = await sessions.usage(principal, {days: null, now: Date.parse('2026-11-02T12:00:00Z')});
+  assert.equal(ever.events, 3); assert.equal(ever.daily[0].date, '2026-10-30'); assert.equal(ever.daily.at(-1).date, '2026-11-02');
   const groups = await realm.collection('session').search(principal, {size: 0, aggs: {sessions: {multi_terms: {terms: [{field: 'session.userId'}, {field: 'session.sessionId'}], order: [{last: 'desc'}, {_key: 'asc'}]}, aggs: {last: {max: {field: 'timestamp'}}, records: {top_hits: {size: 1}}}}}});
-  assert.deepEqual(groups.aggregations.sessions.buckets[0].key, ['alice', 'session']);
+  assert.deepEqual(groups.aggregations.sessions.buckets[0].key, ['alice', 'new']);
   assert.equal(groups.aggregations.sessions.buckets[0].records.hits.hits[0]._source.corpus, 'session');
 });
 

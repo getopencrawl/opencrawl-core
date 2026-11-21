@@ -1,4 +1,5 @@
 import {historyRequest,type SearchActivityPage,type CallTotals} from './search-activity.mjs';
+import {usageRange, tokenSessionsRequest, type TokenUsage, type TokenSessionPage} from './usage-range.mjs';
 import {replicasImportInput} from './replicas-import-http.mjs';
 import type {IncomingMessage} from 'node:http';
 import {initTRPC, TRPCError, type AnyRouter} from '@trpc/server';
@@ -17,6 +18,7 @@ export const webRpc = initTRPC.context<WebContext>().create({errorFormatter: ({s
 const t = webRpc;
 const p = t.procedure;
 export const empty = z.object({}).strict().optional();
+const rangeOnly = z.strictObject({range: usageRange.optional()}).optional().transform(value => value ?? {});
 const provider = z.string().regex(/^[a-z0-9-]{1,40}$/);
 const email = z.object({email: z.string().max(254)}).strict();
 export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamReport = TeamReport>() {return {
@@ -30,9 +32,11 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
       return report;
     }),
     usageHighlights: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageHighlights & {cacheScope: string}>('/api/console/usage/highlights')),
-    callTotals:p.input(empty).query(({ctx})=>ctx.invoke<CallTotals & {cacheScope:string}>('/api/console/usage/calls')),
+    callTotals:p.input(rangeOnly).query(({ctx,input})=>ctx.invoke<CallTotals & {cacheScope:string}>('/api/console/usage/calls','POST',input)),
+    usageTokens:p.input(z.strictObject({range:usageRange})).query(({ctx,input})=>ctx.invoke<TokenUsage & {cacheScope:string}>('/api/console/usage/tokens','POST',input)),
+    tokenSessions:p.input(tokenSessionsRequest).query(({ctx,input})=>ctx.invoke<TokenSessionPage & {cacheScope:string}>('/api/console/usage/token-sessions','POST',input)),
     searchHistory:p.input(historyRequest).query(({ctx,input})=>ctx.invoke<SearchActivityPage & {cacheScope:string}>('/api/console/usage/search-history','POST',input)),
-    usageDetails: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details')),
+    usageDetails: p.input(rangeOnly).query(({ctx,input}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details','POST',input)),
     sources: p.input(empty).query(({ctx}) => ctx.invoke<{items: SourceCard[]}>('/api/console/sources')),
     team: p.input(empty).query(({ctx}) => ctx.invoke<T>('/api/console/team')),
     invite: p.input(email).mutation(({ctx,input}) => ctx.invoke<{ok: true; inviteUrl?: string}>('/api/console/team/invite','POST',input)),
@@ -105,7 +109,9 @@ export async function handleProductRpc<R extends AnyRouter>(req: IncomingMessage
   // The internal HTTP method distinguishes writes from tRPC's POST transport.
   const invoke: WebContext['invoke'] = async <T,>(path: string, method?: 'GET' | 'POST', input?: object) => {
     const write = binding && method === 'POST' && path !== '/api/debug/search'
-      && path !== '/api/console/library/privacy/status' && path !== '/api/console/library/recording/status' && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path);
+      && path !== '/api/console/library/privacy/status' && path !== '/api/console/library/recording/status' && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path)
+      // Usage reads send their range and page in a POST body; they change nothing.
+      && !/^\/api\/console\/usage(\/[a-z-]+)?$/.test(path);
     if (write) binding.cache.invalidate(binding.tenant);
     try {return await context.invoke<T>(path, method, input);}
     finally {if (write) binding.cache.invalidate(binding.tenant);}

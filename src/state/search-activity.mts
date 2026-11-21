@@ -2,6 +2,7 @@ import {createHash,randomUUID,randomBytes,createCipheriv,createDecipheriv} from 
 import type {ApplicationDatabase} from './postgres.mjs';
 import type {Principal} from '../identity/types.mjs';
 import {historyRequest,type HistoryRequest,type SearchActivityPage,type CallTotals,type SearchActivityRow} from '../application/search-activity.mjs';
+import {usageRange,type UsageRange} from '../application/usage-range.mjs';
 import {isSessionHarness} from '../sessions/types.mjs';
 import {maskPatterns} from '../sessions/credential-patterns.mjs';
 
@@ -160,23 +161,36 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
         update opencrawl_search_days d set delivered=d.delivered+m.n from (select day,count(*) n from marked group by day) m
         where d.namespace=$1 and d.tenant_id=$2 and d.day=m.day`,[namespace,...scope(p),keys]);
     },
-    async totals(p:Principal):Promise<CallTotals>{
-      const {rows}=await pool.query(`select greatest(started_at,${windowStart} at time zone 'UTC') as since,
-        c.*,s.*,d.* from opencrawl_activity_start cross join lateral (
-          select coalesce(sum(calls),0) as calls,coalesce(sum(earlier_calls),0) as earlier from opencrawl_call_days
-          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) c cross join lateral (select coalesce(sum(agent),0) as agent,coalesce(sum(proactive),0) as proactive,
-          coalesce(sum(non_silent),0) as non_silent,coalesce(sum(delivered),0) as delivered from opencrawl_search_days
-          where namespace=$1 and tenant_id=$2 and day>=${windowStart}) s cross join lateral (select coalesce(jsonb_agg(jsonb_build_array(to_char(day,'YYYY-MM-DD'),agent) order by day),'[]') as daily
-          from opencrawl_search_days where namespace=$1 and tenant_id=$2 and day>=${windowStart} and agent>0) d where namespace=$1`,[namespace,readScope(p)[0]]);
+    /** Daily counters are kept indefinitely; only individual searches expire after 30 days. */
+    async totals(p:Principal,range:UsageRange='30d'):Promise<CallTotals>{
+      const window=usageRange.parse(range);
+      const {rows}=await pool.query(`with b as (
+          select s.started_at,(now() at time zone 'UTC')::date as today,
+            least(s.started_at::date,(select min(day) from opencrawl_search_days where namespace=$1 and tenant_id=$2),
+              (select min(day) from opencrawl_call_days where namespace=$1 and tenant_id=$2)) as tracked
+          from opencrawl_activity_start s where s.namespace=$1
+        ), r as (select *,case $3 when '7d' then today-6 when '30d' then today-29 else tracked end as from_day from b),
+        sd as (select day,agent,proactive,non_silent,delivered from opencrawl_search_days where namespace=$1 and tenant_id=$2 and day>=(select from_day from r)),
+        cd as (select day,calls,earlier_calls from opencrawl_call_days where namespace=$1 and tenant_id=$2 and day>=(select from_day from r))
+        select to_char(r.tracked,'YYYY-MM-DD') as tracked,
+          (select coalesce(sum(calls),0) from cd) as calls,(select coalesce(sum(earlier_calls),0) from cd) as earlier,
+          (select coalesce(sum(agent),0) from sd) as agent,(select coalesce(sum(proactive),0) from sd) as proactive,
+          (select coalesce(sum(non_silent),0) from sd) as non_silent,(select coalesce(sum(delivered),0) from sd) as delivered,
+          (select coalesce(jsonb_agg(jsonb_build_array(to_char(g.day,'YYYY-MM-DD'),case when g.day<r.tracked then null else coalesce(sd.agent,0) end,
+            case when g.day<r.tracked then null else coalesce(sd.non_silent,0) end) order by g.day),'[]')
+            from (select generate_series(r.from_day,r.today,interval '1 day')::date as day) g left join sd using(day)) as daily
+        from r`,[namespace,readScope(p)[0],window]);
       const r=rows[0];
-      return {since:r.since.toISOString(),...(Number(r.earlier)>0?{includesEarlierCalls:true}:{}),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered),
-        daily:(r.daily as [string,number|string][]).map(([date,agent])=>({date,agentSearches:Number(agent)}))};
+      const value=(v:unknown)=>v==null?null:Number(v);
+      return {since:r.tracked+'T00:00:00.000Z',...(Number(r.earlier)>0?{includesEarlierCalls:true}:{}),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered),
+        daily:(r.daily as [string,unknown,unknown][]).map(([date,agent,edits])=>({date,agentSearches:value(agent),nonSilent:value(edits)}))};
     },
     async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
-      const {kind,before}=historyRequest.parse(input);
+      const {kind,before,range,edits}=historyRequest.parse(input);
       const owner=readScope(p);
-      const audience=JSON.stringify([namespace,...owner,kind]);
-      const window=`namespace=$1 and tenant_id=$2 and kind=$4 and at>=${windowStart} at time zone 'UTC'
+      const audience=JSON.stringify([namespace,...owner,kind,range??'30d',Boolean(edits)]);
+      const start=range==='7d'?"((now() at time zone 'UTC')::date - 6)":windowStart;
+      const window=`namespace=$1 and tenant_id=$2 and kind=$4 and at>=${start} at time zone 'UTC' ${edits?"and kind='proactive' and returned>0":''}
         ${before?'and (at,id)<($5::timestamptz,$6::uuid)':''}`;
       const end=`order by at desc,id desc limit ${pageSize+1}`;
       // Two disjoint index seeks. A workspace's unlinked searches cannot force a

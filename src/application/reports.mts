@@ -30,7 +30,8 @@ export type UsageSection = 'workspace' | 'agents' | 'overlap' | 'ingestion' | 'm
 interface UsageReportBase {
   workspace: string | null;
   team?: boolean;
-  days: number;
+  /** null: every captured day. */
+  days: number | null;
   generatedAt: string;
   /** Failed reads are distinct from an unconfigured service or a measured zero. */
   failedSources?: UsageSource[];
@@ -51,11 +52,7 @@ interface AgentUsage {
   people?: Array<{userId: string}>;
   tools: NamedCount[]; harnesses: NamedCount[]; origins: NamedCount[];
   firstAt: string | null; lastAt: string | null;
-  /** tokens: captured tokens of session events that happened that UTC day. */
-  daily: Array<{date: string; events: number; sessions: number; tokens?: number}>;
-  /** Captured tokens of every indexed session event, by the UTC day it happened. */
-  indexedTokens?: number | null;
-  tokenHistory?: Array<{date: string; tokens: number}>;
+  daily: Array<{date: string; events: number; sessions: number}>;
 }
 /** Independent measurements can fail without discarding the rest of the report. */
 export type UsageReport = UsageReportBase & {agents: AgentUsage | null; overlap: SessionOverlap | null};
@@ -85,10 +82,12 @@ export interface BoardReport {
   next: number | null;
 }
 export interface ConsoleDataAdapter {
-  callTotals?(signal:AbortSignal):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
+  callTotals?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
+  usageTokens?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenUsage & {cacheScope:string}>;
+  tokenSessions?(input:import('./usage-range.mjs').TokenSessionsRequest,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenSessionPage & {cacheScope:string}>;
   searchHistory?(input:import('./search-activity.mjs').HistoryRequest,signal:AbortSignal):Promise<import('./search-activity.mjs').SearchActivityPage & {cacheScope:string}>;
   usageHighlights?(signal: AbortSignal): Promise<UsageHighlights & {cacheScope: string}>;
-  usageDetails?(signal: AbortSignal): Promise<UsageDetails & {cacheScope: string}>;
+  usageDetails?(signal: AbortSignal, range?: import('./usage-range.mjs').UsageRange): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;
   search(query: string, signal: AbortSignal, page?: number): Promise<DiagnosticSearch>;
   board(input: {channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;

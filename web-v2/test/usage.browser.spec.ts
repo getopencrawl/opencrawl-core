@@ -1,141 +1,169 @@
 import {test, expect, type Page} from '@playwright/test';
 import type {UsageReport} from '../src/pages/types.ts';
 
-const day = (offset: number) => new Date(Date.UTC(2026, 10, 19 - offset)).toISOString().slice(0, 10);
-const daily = Array.from({length: 30}, (_, i) => ({date: day(29 - i), sessions: i % 4, events: 10 * (i % 4), tokens: 1000 * i}));
-const history = [{date: '2026-09-01', tokens: 5000}, ...daily.map(({date, tokens}) => ({date, tokens}))];
+const DAY = 86_400_000, today = Date.UTC(2026, 10, 19);
+const day = (offset: number) => new Date(today - offset * DAY).toISOString().slice(0, 10);
+const span = (days: number, value: (i: number) => number | null) => Array.from({length: days}, (_, i) => ({date: day(days - 1 - i), value: value(i)}));
+const scope = 'usage-fixture';
 
-const report = (): UsageReport => ({workspace: 'Example workspace', days: 30, generatedAt: '2026-11-19T12:00:00Z', overlap: null,
-  ingestion: {sources: [{name: 'Slack', icon: '/assets/integrations/slack.svg', state: 'synced', records: 9, indexed: 9, lastSyncedAt: null}],
-    index: {sessionEvents: 100, connectorDocuments: 9, sources: [{name: 'Slack', count: 9}], searchMs: null}},
-  members: [{userId: 'user_alex', name: 'Alex Example', email: 'alex@example.test', you: true, sources: 1, sessions: 3, messages: 4, toolCalls: 5, weekEvents: 1, lastAt: null, setup: {}}],
-  agents: {events: 50, lifetimeEvents: 100, sessions: 20, messages: 30, toolCalls: 20, machines: 2, opencrawlCalls: 5, tools: [], harnesses: [], origins: [],
-    firstAt: '2026-09-01T00:00:00Z', lastAt: '2026-11-19T11:00:00Z', daily, indexedTokens: 440_000, tokenHistory: history},
+const details = (days: number | null): UsageReport & {cacheScope: string} => ({cacheScope: scope, workspace: null, days, generatedAt: '2026-11-19T12:00:00Z', overlap: null, ingestion: null,
+  members: [{userId: 'user_alex', name: 'Alex Example', email: 'alex@example.test', you: true, sources: 1, sessions: days === 7 ? 2 : 3, messages: 4, toolCalls: 5, weekEvents: 1, lastAt: null, setup: {}},
+    {userId: 'user_sam', name: 'Sam Example', email: 'sam@example.test', you: false, sources: 0, sessions: 1, messages: 2, toolCalls: 9, weekEvents: 0, lastAt: null, setup: {}}],
+  agents: {events: 50, lifetimeEvents: 100, sessions: days === 7 ? 3 : 4, messages: 6, toolCalls: 14, machines: 2, opencrawlCalls: 5, tools: [], harnesses: [], origins: [],
+    firstAt: null, lastAt: null, daily: span(days ?? 40, i => i % 2).map(({date, value}) => ({date, sessions: value ?? 0, events: value ?? 0}))},
 });
-const row = (i: number) => ({id: `row-${i}`, at: new Date(Date.UTC(2026, 10, 19, 12) - i * 3_600_000).toISOString(), userId: i % 2 ? 'user_unknown' : 'user_alex',
-  operation: 'search', queries: [`query ${i}`], harness: 'codex', sessionId: `s${i}`, messageId: null, message: null, returned: 1, outcome: 'complete', delivered: false});
-const totals = {cacheScope: 'usage-fixture', since: day(29) + 'T00:00:00Z', calls: 90, agentSearches: 60, proactiveChecks: 20, nonSilent: 7, delivered: 6,
-  daily: [{date: day(0), agentSearches: 12}, {date: day(1), agentSearches: 48}]};
+const sessionRow = (i: number) => ({userId: i % 2 ? 'user_sam' : 'user_alex', harness: 'codex', sessionId: `session-${String(i).padStart(3, '0')}-abcdef`, tokens: 1000 + i, lastAt: new Date(today - i * 3_600_000).toISOString()});
+const searchRow = (i: number, kind: string) => ({id: `${kind}-${i}`, at: new Date(today - i * 3_600_000).toISOString(), userId: i % 2 ? 'user_unknown' : 'user_alex', operation: 'search',
+  queries: [`${kind} query ${i}`], harness: 'claude-code', sessionId: `s${i}`, messageId: null, message: kind === 'proactive' ? `prompt ${i}` : null, returned: 2, outcome: 'complete', delivered: false});
 
-async function serve(page: Page, rows = 60) {
-  const reads: Array<string | undefined> = [];
-  await page.route('**/api/console/usage', route => route.fulfill({json: report()}));
-  await page.route('**/api/console/usage/calls', route => route.fulfill({json: totals}));
-  await page.route('**/api/console/usage/search-history', route => {
-    const {kind, before} = route.request().postDataJSON() as {kind: string; before?: string};
-    expect(kind).toBe('agent');
-    reads.push(before);
-    const start = before ? Number(before.slice(-2)) : 0;
-    const page = Array.from({length: Math.max(0, Math.min(25, rows - start))}, (_, i) => row(start + i));
-    return route.fulfill({json: {cacheScope: 'usage-fixture', rows: page, next: start + 25 < rows ? 'cursor'.padEnd(30, 'x') + String(start + 25).padStart(2, '0') : null}});
+async function serve(page: Page, {sessions = 60}: {sessions?: number} = {}) {
+  const requests: Record<string, unknown[]> = {tokens: [], sessions: [], calls: [], history: [], details: []};
+  await page.route('**/api/console/usage/highlights', route => route.fulfill({json: {cacheScope: scope, workspace: 'Example', value: null, capture: null, days: 30, generatedAt: '2026-11-19T12:00:00Z'}}));
+  await page.route('**/api/console/usage/details', route => {
+    const {range} = route.request().postDataJSON() as {range: string};
+    requests.details!.push(range);
+    return route.fulfill({json: details(range === '7d' ? 7 : range === 'all' ? null : 30)});
   });
-  return reads;
+  await page.route('**/api/console/usage/tokens', route => {
+    const {range} = route.request().postDataJSON() as {range: string};
+    requests.tokens!.push(range);
+    const days = range === '7d' ? 7 : range === 'all' ? 45 : 30;
+    const daily = span(days, i => 1000 * (i + 1)).map(({date, value}) => ({date, count: value}));
+    return route.fulfill({json: {cacheScope: scope, source: 'meter', range, total: daily.reduce((sum, d) => sum + (d.count ?? 0), 0), daily}});
+  });
+  await page.route('**/api/console/usage/token-sessions', route => {
+    const input = route.request().postDataJSON() as {range: string; offset?: number};
+    requests.sessions!.push(input);
+    const start = input.offset ?? 0;
+    return route.fulfill({json: {cacheScope: scope, rows: Array.from({length: Math.max(0, Math.min(25, sessions - start))}, (_, i) => sessionRow(start + i)), next: start + 25 < sessions ? start + 25 : null}});
+  });
+  await page.route('**/api/console/usage/calls', route => {
+    const {range} = route.request().postDataJSON() as {range: string};
+    requests.calls!.push(range);
+    const days = range === '7d' ? 7 : range === 'all' ? 40 : 30;
+    // Tracking began 35 days ago: earlier days are not tracked rather than zero.
+    const daily = span(days, i => i).map(({date}, i) => date < day(34) ? {date, agentSearches: null, nonSilent: null} : {date, agentSearches: i, nonSilent: 2 * i});
+    const sum = (key: 'agentSearches' | 'nonSilent') => daily.reduce((total, d) => total + (d[key] ?? 0), 0);
+    return route.fulfill({json: {cacheScope: scope, since: day(34) + 'T00:00:00.000Z', calls: 999, agentSearches: sum('agentSearches'), proactiveChecks: 500, nonSilent: sum('nonSilent'), delivered: 0, daily}});
+  });
+  await page.route('**/api/console/usage/search-history', route => {
+    const input = route.request().postDataJSON() as {kind: string; range?: string; edits?: boolean; before?: string};
+    requests.history!.push(input);
+    return route.fulfill({json: {cacheScope: scope, rows: Array.from({length: 3}, (_, i) => searchRow(i, input.kind)), next: null}});
+  });
+  return requests;
 }
 
-for (const width of [1440, 390]) test(`overview charts share one date range and fit at ${width}px`, async ({page}, info) => {
+const tab = (page: Page, name: string) => page.getByRole('tab', {name, exact: true});
+const metric = (page: Page, label: string) => page.locator('.report-metric').filter({hasText: label}).locator('.report-metric-value');
+
+for (const width of [1440, 390]) test(`tabs and the date range sit on one bar and every tab fits at ${width}px`, async ({page}, info) => {
   await page.setViewportSize({width, height: 900});
   await serve(page);
-  await page.goto('/usage?activity');
-  const tokens = page.getByRole('region', {name: 'Indexed session tokens', exact: true});
-  const queries = page.getByRole('region', {name: 'Agent queries', exact: true});
-  await expect(page.locator('.report-metric').filter({hasText: 'OpenCrawl context edits'})).toContainText('7');
-  await expect(page.locator('.report-metric').filter({hasText: 'Session tokens indexed'})).toContainText('435k');
-  await expect(tokens.locator('rect')).toHaveCount(30);
-  await expect(queries.locator('figure rect')).toHaveCount(30);
-  await expect(queries.locator('figure rect').last().locator('title')).toHaveText(`${day(0)}: 12 queries`);
-  await page.getByLabel('Date range').selectOption('all');
-  await expect(page.locator('.report-metric').filter({hasText: 'Session tokens indexed'})).toContainText('440k');
-  const span = await tokens.locator('rect').count();
-  expect(span).toBeGreaterThan(70);
-  await expect(queries.locator('figure rect')).toHaveCount(span);
-  await expect(queries.locator('figure rect').first().locator('title')).toHaveText('2026-09-01: not tracked');
-  await expect(tokens.locator('figcaption')).toContainText('2026-09-01');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
-  await page.screenshot({path: info.outputPath(`usage-${width}.png`)});
+  await page.goto('/usage?split&activity');
+  await expect(page.getByRole('tablist', {name: 'Usage'}).getByRole('tab')).toHaveText(['Overview', 'Searches', 'Proactive context', 'Team']);
+  await expect(tab(page, 'Overview')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('Date range').locator('option')).toHaveText(['Last 30 days', 'Last 7 days', 'All time']);
+  for (const name of ['Overview', 'Searches', 'Proactive context', 'Team']) {
+    await tab(page, name).click();
+    await expect(page.locator('.report-metric').first()).toBeVisible();
+    await expect(page.locator('.report-chart')).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
+    await page.screenshot({path: info.outputPath(`${name.replace(/ /g, '-').toLowerCase()}-${width}.png`)});
+  }
 });
 
-test('agent queries show the five newest with who asked, and View all scrolls through every page', async ({page}) => {
-  const reads = await serve(page);
-  await page.goto('/usage?activity');
-  const queries = page.getByRole('region', {name: 'Agent queries', exact: true});
-  const table = queries.getByRole('table');
-  await expect(table.locator('tbody tr')).toHaveCount(5);
-  await expect(table.locator('thead th')).toHaveText(['Query', 'From', 'Time']);
-  await expect(table.locator('tbody tr').first()).toContainText('query 0');
+test('Overview shows the billed totals, metered tokens per day and sessions with who ran them', async ({page}) => {
+  const requests = await serve(page);
+  await page.goto('/usage?split&activity');
+  await expect(metric(page, 'Session tokens indexed')).toHaveText('465k');
+  await expect(metric(page, 'Agent searches')).toHaveText('435');
+  await expect(metric(page, 'Proactive context edits')).toHaveText('870');
+  const chart = page.getByRole('region', {name: 'Session tokens indexed per day', exact: true});
+  await expect(chart.locator('rect')).toHaveCount(30);
+  await expect(chart.locator('rect').last().locator('title')).toHaveText(`${day(0)}: 30,000 tokens`);
+  const table = page.getByRole('region', {name: 'Sessions', exact: true}).getByRole('table');
+  await expect(table.locator('thead th')).toHaveText(['Session', 'From', 'Tokens', 'Last active']);
   await expect(table.locator('tbody tr').first()).toContainText('Alex Example');
   await expect(table.locator('tbody tr').first()).toContainText('Codex');
-  await expect(table.locator('tbody tr').nth(1)).toContainText('Workspace member');
-  await queries.getByRole('button', {name: 'View all'}).click();
-  const dialog = page.getByRole('dialog', {name: 'Agent queries'});
-  await expect(dialog.locator('tbody tr')).toHaveCount(25);
-  for (let i = 0; i < 6 && await dialog.locator('tbody tr').count() < 60; i++) await dialog.locator('tbody tr').last().scrollIntoViewIfNeeded();
-  await expect(dialog.locator('tbody tr')).toHaveCount(60);
-  await expect(dialog.locator('tbody tr').last()).toContainText('query 59');
-  expect(reads.filter(Boolean)).toHaveLength(2);
-  await page.keyboard.press('Escape');
-  await expect(dialog).toBeHidden();
+  await expect(table.locator('tbody tr').first().getByRole('link')).toHaveAttribute('href', '/sessions?user=user_alex&harness=codex&id=session-000-abcdef');
+  await expect(table.locator('tbody tr').nth(1)).toContainText('Sam Example');
+  await expect(table.locator('tbody tr')).toHaveCount(25);
+  for (let i = 0; i < 6 && await table.locator('tbody tr').count() < 60; i++) await page.getByRole('region', {name: 'Sessions', exact: true}).locator('[aria-hidden="true"]').last().scrollIntoViewIfNeeded();
+  await expect(table.locator('tbody tr')).toHaveCount(60);
+  await expect(page.getByRole('button', {name: 'Load more'})).toHaveCount(0);
+  await page.getByLabel('Date range').selectOption('7d');
+  await expect(chart.locator('rect')).toHaveCount(7);
+  await expect(metric(page, 'Session tokens indexed')).toHaveText('28k');
+  expect(requests.tokens).toEqual(['30d', '7d']);
+  expect(requests.sessions!.at(-1)).toEqual({range: '7d'});
 });
 
-test('View all is hidden when the five rows are everything', async ({page}) => {
-  await serve(page, 4);
-  await page.goto('/usage?activity');
-  const queries = page.getByRole('region', {name: 'Agent queries', exact: true});
-  await expect(queries.locator('tbody tr')).toHaveCount(4);
-  await expect(queries.getByRole('button', {name: 'View all'})).toHaveCount(0);
+test('Searches and Proactive context each count, chart and list only their own events for the selected range', async ({page}) => {
+  const requests = await serve(page);
+  await page.goto('/usage?split&activity');
+  await tab(page, 'Searches').click();
+  await expect(metric(page, 'Agent searches')).toHaveText('435');
+  const searches = page.getByRole('region', {name: 'Agent searches per day', exact: true});
+  await expect(searches.locator('rect')).toHaveCount(30);
+  const list = page.getByRole('region', {name: 'Searches', exact: true}).getByRole('table');
+  await expect(list.locator('thead th')).toHaveText(['Time', 'Query', 'From', 'Session']);
+  await expect(list.locator('tbody tr').first()).toContainText('agent query 0');
+  await expect(list.locator('tbody tr').first()).toContainText('Alex Example');
+  await expect(list.locator('tbody tr').nth(1)).toContainText('Workspace member');
+  await page.getByLabel('Date range').selectOption('all');
+  await expect(searches.locator('rect')).toHaveCount(40);
+  await expect(searches.locator('rect').first().locator('title')).toHaveText(`${day(39)}: not tracked`);
+  await tab(page, 'Proactive context').click();
+  await expect(metric(page, 'Proactive context edits')).toHaveText('1,540');
+  const edits = page.getByRole('region', {name: 'Edits', exact: true}).getByRole('table');
+  await expect(edits.locator('thead th')).toHaveText(['Time', 'Triggering message', 'Search', 'Results', 'From', 'Session']);
+  await expect(edits.locator('tbody tr').first()).toContainText('prompt 0');
+  expect(requests.history).toContainEqual({kind: 'agent', range: '30d'});
+  expect(requests.history).toContainEqual({kind: 'agent', range: 'all'});
+  expect(requests.history).toContainEqual({kind: 'proactive', range: 'all', edits: true});
+  expect(requests.history!.some(input => (input as {kind: string}).kind === 'proactive' && !(input as {edits?: boolean}).edits)).toBe(false);
 });
 
-test('without call tracking the page shows no query panel or context edits', async ({page}) => {
+test('Team keeps the leaders and member activity and follows the range', async ({page}) => {
+  const requests = await serve(page);
+  await page.goto('/usage?split&activity');
+  await tab(page, 'Team').click();
+  await expect(metric(page, 'Sessions')).toHaveText('4');
+  await expect(metric(page, 'Active members')).toHaveText('2 of 2');
+  await expect(page.getByText('Most sessions')).toBeVisible();
+  await expect(page.getByText('Most tool calls')).toBeVisible();
+  await expect(page.getByRole('region', {name: 'Team usage'}).locator('tbody tr').first()).toContainText('Alex Example');
+  await page.getByLabel('Date range').selectOption('7d');
+  await expect(metric(page, 'Sessions')).toHaveText('3');
+  await expect(page.getByRole('region', {name: 'Agent sessions per day', exact: true}).locator('rect')).toHaveCount(7);
+  expect(requests.details).toEqual(expect.arrayContaining(['30d', '7d']));
+});
+
+test('a changed workspace clears the report instead of showing another workspace’s numbers', async ({page}) => {
   await serve(page);
-  await page.goto('/usage');
-  await expect(page.getByRole('region', {name: 'Indexed session tokens', exact: true})).toBeVisible();
-  await expect(page.getByRole('region', {name: 'Agent queries', exact: true})).toHaveCount(0);
-  await expect(page.getByText('OpenCrawl context edits')).toHaveCount(0);
-});
-
-test('a failed refresh keeps the last report, recovery replaces it, and access denial clears it', async ({page}) => {
-  await page.clock.install();
-  let status = 200;
-  const data = report();
-  await page.route('**/api/console/usage', route => status === 200 ? route.fulfill({json: data}) : route.fulfill({status, json: {error: 'Usage request failed'}}));
-  await page.goto('/usage');
-  const chart = page.getByRole('region', {name: 'Indexed session tokens', exact: true});
-  await expect(chart).toBeVisible();
-  status = 503;
-  await page.clock.runFor(60_001);
-  await expect(page.getByText('Usage couldn’t update.', {exact: false})).toBeVisible();
-  await expect(chart).toBeVisible();
-  status = 200;
-  data.agents!.daily.at(-1)!.tokens = 99;
-  await page.clock.runFor(60_001);
-  await expect(chart.locator('rect').last().locator('title')).toHaveText(`${day(0)}: 99 tokens`);
-  status = 403;
-  await page.clock.runFor(60_001);
-  await expect(chart).toHaveCount(0);
-});
-
-test('a changed workspace clears the split report', async ({page}) => {
-  await page.clock.install();
-  const {workspace, value, capture, ...details} = report();
-  let scope = 'usage-fixture';
-  await page.route('**/api/console/usage/highlights', route => route.fulfill({json: {workspace, value, capture, days: 30, generatedAt: details.generatedAt, cacheScope: 'usage-fixture'}}));
-  await page.route('**/api/console/usage/details', route => route.fulfill({json: {...details, cacheScope: scope}}));
-  await page.goto('/usage?split');
-  await expect(page.getByRole('heading', {name: 'Indexed session tokens'})).toBeVisible();
-  scope = 'different-workspace';
-  await page.clock.runFor(60_001);
+  await page.route('**/api/console/usage/tokens', route => route.fulfill({json: {cacheScope: 'another-workspace', source: 'meter', range: '30d', total: 5, daily: []}}));
+  await page.goto('/usage?split&activity');
   await expect(page.getByText('Your workspace changed. Reload this page.')).toBeVisible();
-  await expect(page.getByRole('heading', {name: 'Indexed session tokens'})).toHaveCount(0);
+  await expect(metric(page, 'Session tokens indexed')).toHaveCount(0);
 });
 
-test('failed source counts are unavailable, not zero, and recover', async ({page}) => {
-  await page.clock.install();
-  let data: UsageReport = {...report(), failedSources: ['connectors']};
-  await page.route('**/api/console/usage', route => route.fulfill({json: data}));
+test('a failed session page can be retried without losing the totals', async ({page}) => {
+  await serve(page);
+  let fail = true;
+  await page.route('**/api/console/usage/token-sessions', route => fail ? route.fulfill({status: 503, json: {error: 'unavailable'}}) : route.fulfill({json: {cacheScope: scope, rows: [sessionRow(0)], next: null}}));
+  await page.goto('/usage?split&activity');
+  const sessions = page.getByRole('region', {name: 'Sessions', exact: true});
+  await expect(sessions.getByText('Sessions couldn’t load.')).toBeVisible();
+  await expect(metric(page, 'Session tokens indexed')).toHaveText('465k');
+  fail = false;
+  await sessions.getByRole('button', {name: 'Try again'}).click();
+  await expect(sessions.getByRole('table').locator('tbody tr')).toHaveCount(1);
+});
+
+test('without usage tabs data the page still shows the team report', async ({page}) => {
+  await page.route('**/api/console/usage', route => route.fulfill({json: {...details(30), workspace: 'Example'}}));
   await page.goto('/usage');
-  const sources = page.getByRole('region', {name: 'Indexed items by source', exact: true});
-  await expect(sources).toContainText('Indexed item counts unavailable.');
-  await expect(sources.getByRole('list')).toHaveCount(0);
-  data = report();
-  await page.clock.runFor(60_001);
-  await expect(sources.getByRole('list')).toHaveText('Slack9');
+  await expect(page.getByRole('tablist', {name: 'Usage'}).getByRole('tab')).toHaveText(['Team']);
+  await expect(page.getByRole('region', {name: 'Team usage'})).toBeVisible();
 });

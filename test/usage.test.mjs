@@ -10,8 +10,7 @@ const bucket = (key, extra = {}) => ({key, doc_count: 4, sessions: {count: {valu
 const aggregations = people => ({activity: {doc_count: 8, sessions: {count: {value: 3}}, subagentSessions: {count: {value: 7}}, messages: {doc_count: 6}, toolCalls: {value: 9}, machines: {value: 2}, opencrawl: {doc_count: 1},
   tools: {buckets: [{key: 'Bash', doc_count: 7}]}, harnesses: {buckets: [{key: 'codex', doc_count: 8}]}, origins: {buckets: [{key: 'cli', doc_count: 8}]},
   first: {value_as_string: '2026-11-01T00:00:00.000Z'}, last: {value_as_string: '2026-11-05T10:00:00.000Z'},
-  daily: {buckets: [{key_as_string: '2026-11-05', doc_count: 8, sessions: {count: {value: 3}}, tokens: {value: 234}}]}, people: {buckets: people}},
-  indexedTokens: {total: {value: 1234}, history: {buckets: [{key_as_string: '2026-11-04', tokens: {value: 1000}}, {key_as_string: '2026-11-05', tokens: {value: 234}}]}}});
+  daily: {buckets: [{key_as_string: '2026-11-05', doc_count: 8, sessions: {count: {value: 3}}}]}, people: {buckets: people}}});
 
 test('session usage counts only the principal, or the whole tenant when asked, and never returns text', async () => {
   const bodies = [];
@@ -33,12 +32,6 @@ test('session usage counts only the principal, or the whole tenant when asked, a
     assert.deepEqual(aggs.sessions, {filter: {bool: {must_not: [subagent]}}, aggs: {count}});
     assert.deepEqual(aggs.subagentSessions, {filter: subagent, aggs: {count}});
   } assert.equal(mine.daily[0].date, '2026-11-05');
-  // Token measurements are summed by the day each session event happened, not when it was received.
-  assert.deepEqual(bodies[0].aggs.activity.aggs.daily.aggs.tokens, {sum: {field: 'session.capturedTokens'}});
-  assert.deepEqual(bodies[0].aggs.indexedTokens.filter, {range: {'session.timestamp': {lte: '2026-11-05T12:00:00.000Z'}}});
-  assert.equal(bodies[0].aggs.indexedTokens.aggs.history.date_histogram.field, 'session.timestamp');
-  assert.equal(mine.indexedTokens, 1234); assert.deepEqual(mine.tokenHistory, [{date: '2026-11-04', tokens: 1000}, {date: '2026-11-05', tokens: 234}]);
-  assert.equal(mine.daily[0].tokens, 234);
   assert.doesNotMatch(JSON.stringify(mine), /text/);
   people = [bucket('user_a'), bucket('user_b')];
   await assert.rejects(search.usage(owner), /ownership/);
