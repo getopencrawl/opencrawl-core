@@ -84,12 +84,12 @@ for (const width of [1440, 390]) test(`tabs and the date range sit on one bar an
 test('Overview shows only session tokens: the total, tokens per day and sessions with who ran them', async ({page}) => {
   const requests = await serve(page);
   await page.goto('/usage?split&activity');
-  await expect(chartTotal(page, 'Session tokens indexed')).toHaveText('465k');
-  await expect(metric(page, 'Session tokens indexed')).toHaveCount(0);
+  await expect(chartTotal(page, 'Tokens stored')).toHaveText('465k');
+  await expect(metric(page, 'Tokens stored')).toHaveCount(0);
   await expect(page.locator('.report-metric')).toHaveCount(0);
-  const chart = page.getByRole('region', {name: 'Session tokens indexed', exact: true});
+  const chart = page.getByRole('region', {name: 'Tokens stored', exact: true});
   await expect(chart.locator('.report-bar')).toHaveCount(30);
-  await expect(await hoverDay(page, 'Session tokens indexed', -1)).toHaveText(`${day(0)}30,000 tokens`);
+  await expect(await hoverDay(page, 'Tokens stored', -1)).toHaveText(`${day(0)}30,000 tokens stored`);
   // The y-axis starts at zero and its top gridline covers the tallest day.
   await expect(chart.locator('.report-bar-axis').first()).toHaveText('0');
   await expect(chart.locator('.report-bar-axis').nth(3)).toHaveText('30K');
@@ -97,7 +97,7 @@ test('Overview shows only session tokens: the total, tokens per day and sessions
   await expect(chart.locator('.report-bar-tip')).toHaveCount(0);
   await chart.locator('svg').focus();
   await page.keyboard.press('ArrowRight');
-  await expect(chart.getByRole('status')).toHaveText(`${day(29)}: 1,000 tokens`);
+  await expect(chart.getByRole('status')).toHaveText(`${day(29)}: 1,000 tokens stored`);
   const table = page.getByRole('region', {name: 'Sessions', exact: true}).getByRole('table');
   await expect(table.locator('thead th')).toHaveText(['Session', 'From', 'Tokens', 'Last active']);
   await expect(table.locator('tbody tr').first()).toContainText('Alex Example');
@@ -110,7 +110,7 @@ test('Overview shows only session tokens: the total, tokens per day and sessions
   await expect(page.getByRole('button', {name: 'Load more'})).toHaveCount(0);
   await page.getByLabel('Date range').selectOption('7d');
   await expect(chart.locator('.report-bar')).toHaveCount(7);
-  await expect(chartTotal(page, 'Session tokens indexed')).toHaveText('28k');
+  await expect(chartTotal(page, 'Tokens stored')).toHaveText('28k');
   expect(requests.tokens).toEqual(['30d', '7d']);
   expect(requests.sessions!.at(-1)).toEqual({range: '7d'});
 });
@@ -165,7 +165,7 @@ test('a changed workspace clears the report instead of showing another workspace
   await page.route('**/api/console/usage/tokens', route => route.fulfill({json: {cacheScope: 'another-workspace', source: 'meter', range: '30d', total: 5, daily: []}}));
   await page.goto('/usage?split&activity');
   await expect(page.getByText('Your workspace changed. Reload this page.')).toBeVisible();
-  await expect(chartTotal(page, 'Session tokens indexed')).toHaveCount(0);
+  await expect(chartTotal(page, 'Tokens stored')).toHaveCount(0);
 });
 
 test('a failed session page can be retried without losing the totals', async ({page}) => {
@@ -175,7 +175,7 @@ test('a failed session page can be retried without losing the totals', async ({p
   await page.goto('/usage?split&activity');
   const sessions = page.getByRole('region', {name: 'Sessions', exact: true});
   await expect(sessions.getByText('Sessions couldn’t load.')).toBeVisible();
-  await expect(chartTotal(page, 'Session tokens indexed')).toHaveText('465k');
+  await expect(chartTotal(page, 'Tokens stored')).toHaveText('465k');
   fail = false;
   await sessions.getByRole('button', {name: 'Try again'}).click();
   await expect(sessions.getByRole('table').locator('tbody tr')).toHaveCount(1);

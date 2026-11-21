@@ -21,6 +21,8 @@ export interface SearchActivityPage {
 export interface CallTotals {
   /** First UTC day with tracked calls; earlier days in daily are null (not tracked). */
   since:string; includesEarlierCalls?:boolean; calls:number; agentSearches:number; proactiveChecks:number; nonSilent:number; delivered:number;
+  /** Set when the counts come from a billing meter: only searches delivered with results are counted. */
+  charged?:true;
   /** Every UTC day of the requested range through today. */
   daily?:Array<{date:string;agentSearches:number|null;nonSilent:number|null}>;
 }

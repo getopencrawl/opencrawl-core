@@ -156,8 +156,9 @@ function OverviewTab({adapter, scope, range, names}: {adapter: TokenAdapter; sco
   return <>
     {error && <Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Session tokens couldn’t update.</Notice>}
     {loading && !data && <LoadingState spinner label="Loading session tokens…"/>}
-    {data && <Section className="report-panel" headingLevel={3} title="Session tokens indexed" actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
-      <DailyBarChart days={data.daily.map(day => ({date: day.date, value: day.count}))} label="Session tokens indexed per day" unit={tokens}/>
+    {data && <Section className="report-panel" headingLevel={3} title={data.source === 'meter' ? 'Tokens stored' : 'Session tokens indexed'} actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
+      <DailyBarChart days={data.daily.map(day => ({date: day.date, value: day.count}))} label={data.source === 'meter' ? 'Tokens stored each day' : 'Session tokens indexed per day'}
+        unit={data.source === 'meter' ? value => `${count(value)} tokens stored` : tokens}/>
     </Section>}
     <Section className="report-panel" headingLevel={3} title="Sessions">
       <PagedList<TokenSession, number> resetKey={JSON.stringify([scope, range])} label="Sessions" className="usage-search-history" empty="No sessions in this period."

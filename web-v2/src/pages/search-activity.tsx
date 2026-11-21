@@ -60,7 +60,7 @@ function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;s
           <td><From userId={row.userId} harness={row.harness} names={names}/></td>
           <td><SessionLink userId={row.userId} harness={row.harness} sessionId={row.sessionId}/></td>
         </tr>}/>
-      <p className="report-note">Lists show the last 30 days at most, from sessions you can see. The count includes every {edits?'edit':'search'}.</p>
+      <p className="report-note">{data?.charged&&!edits?'The total counts searches that returned results, which is what is charged. The list shows every search':'The total counts every '+(edits?'edit':'search')+'. The list shows those'} from sessions you can see, for the last 30 days at most.</p>
     </Section>
   </>;
 }

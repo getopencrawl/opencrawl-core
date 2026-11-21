@@ -13,12 +13,12 @@ type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'
 import {rangeDays, tokenSessionsRequest, type UsageRange, type TokenUsage, type TokenSessionPage, type DailyCount, type TokenSession} from './usage-range.mjs';
 import type {SearchActivityRow} from './search-activity.mjs';
 /**
- * A deployment's usage meter: the session tokens it charges for, dated by when each
- * event happened. Without one, Usage reads captured tokens from the index.
+ * A deployment's usage meter: the stored tokens it charges for, as the level on each UTC
+ * day (total is the level now; a day it did not measure is null). Without one, Usage sums
+ * captured tokens in the index by the day each event happened.
  */
 export interface TokenLedger {
   usage(principal: Principal, range: UsageRange, now: number): Promise<{total: number; daily: DailyCount[]}>;
-  sessions(principal: Principal, range: UsageRange, offset: number): Promise<{rows: TokenSession[]; more: boolean}>;
 }
 type Visible = (principal: Principal, rows: SearchActivityRow[]) => Promise<SearchActivityRow[]>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
@@ -149,11 +149,11 @@ export async function tokenUsage({principal, search, tokens}: UsageOptions, rang
 }
 
 /** One page of sessions by recent activity. Rows the viewer may not read are left out; totals still count them. */
-export async function tokenSessionPage({principal, search, tokens, visible}: UsageOptions, input: unknown, now = Date.now()): Promise<TokenSessionPage> {
+export async function tokenSessionPage({principal, search, visible}: UsageOptions, input: unknown, now = Date.now()): Promise<TokenSessionPage> {
   const {range, offset = 0} = tokenSessionsRequest.parse(input);
-  const page = tokens ? await tokens.sessions(principal, range, offset)
-    : search?.tokenSessions ? await search.tokenSessions(principal, {team: principal.tenantId.startsWith('org_'), days: rangeDays(range), now, offset})
-    : (() => {throw consoleFailure(503, 'Token usage is unavailable on this deployment.');})();
+  // Sessions and their tokens always come from the index, which is what a meter measures.
+  if (!search?.tokenSessions) throw consoleFailure(503, 'Token usage is unavailable on this deployment.');
+  const page = await search.tokenSessions(principal, {team: principal.tenantId.startsWith('org_'), days: rangeDays(range), now, offset});
   if (page.rows.length > 25) throw new Error('Oversized token session page');
   if (!visible) throw consoleFailure(503, 'Session visibility is unavailable.');
   const asRows = page.rows.map((row, i): SearchActivityRow => ({id: String(i), at: row.lastAt ?? '', userId: row.userId, operation: '', queries: [], harness: row.harness, sessionId: row.sessionId,

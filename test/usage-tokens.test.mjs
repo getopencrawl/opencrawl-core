@@ -8,7 +8,7 @@ const session = (userId, sessionId, tokens) => ({userId, harness: sessionId ? 'c
 
 test('Usage tokens come from the deployment meter when it has one, else from the index, with the requested window', async () => {
   const seen = [];
-  const ledger = {usage: async (p, range, now) => {seen.push(['meter', p, range]); return {total: 9, daily: [{date: '2026-11-20', count: 9}]};}, sessions: async () => ({rows: [], more: false})};
+  const ledger = {usage: async (p, range, now) => {seen.push(['meter', p, range]); return {total: 9, daily: [{date: '2026-11-20', count: 9}]};}};
   const search = {tokenTotals: async (p, options) => {seen.push(['index', p, options.team, options.days]); return {total: 3, first: null, daily: []};}};
   assert.deepEqual(await tokenUsage({principal, tokens: ledger, search}, '7d', 0), {source: 'meter', range: '7d', total: 9, daily: [{date: '2026-11-20', count: 9}]});
   assert.deepEqual(await tokenUsage({principal, search}, 'all', 0), {source: 'index', range: 'all', total: 3, daily: []});
@@ -19,22 +19,25 @@ test('Usage tokens come from the deployment meter when it has one, else from the
 
 test('the session list leaves out sessions the viewer cannot read; unrecorded sessions show only to their owner', async () => {
   const rows = [session('alice', 's1', 5), session('bob', 'private', 7), session('bob', 'shared', 2), session('bob', null, 4), session('alice', null, 1)];
-  const ledger = {usage: async () => ({total: 0, daily: []}), sessions: async (p, range, offset) => ({rows, more: offset === 0})};
+  const calls = [];
+  const search = {tokenSessions: async (p, options) => {calls.push(options); return {rows, more: options.offset === 0};}};
   // The same visibility rule as search history: teammates' sessions need a readable capture.
   const visible = async (p, candidates) => candidates.filter(row => row.sessionId ? row.userId === p.userId || row.sessionId === 'shared' : row.userId === p.userId);
-  const page = await tokenSessionPage({principal, tokens: ledger, visible}, {range: '30d'});
+  const page = await tokenSessionPage({principal, search, visible}, {range: '30d'});
   assert.deepEqual(page.rows.map(row => [row.userId, row.sessionId, row.tokens]), [['alice', 's1', 5], ['bob', 'shared', 2], ['alice', null, 1]]);
   assert.equal(page.next, 25);
-  assert.equal((await tokenSessionPage({principal, tokens: ledger, visible}, {range: '30d', offset: 25})).next, null);
-  await assert.rejects(tokenSessionPage({principal, tokens: ledger}, {range: '30d'}), {status: 503});
-  await assert.rejects(tokenSessionPage({principal, tokens: ledger, visible}, {range: '30d', tenantId: 'org_b'}));
-  const oversized = {...ledger, sessions: async () => ({rows: Array.from({length: 26}, (_, i) => session('alice', 's' + i, 1)), more: false})};
-  await assert.rejects(tokenSessionPage({principal, tokens: oversized, visible}, {range: '30d'}), /Oversized/);
+  assert.equal((await tokenSessionPage({principal, search, visible}, {range: '30d', offset: 25})).next, null);
+  await assert.rejects(tokenSessionPage({principal, search}, {range: '30d'}), {status: 503});
+  await assert.rejects(tokenSessionPage({principal, visible}, {range: '30d'}), {status: 503});
+  await assert.rejects(tokenSessionPage({principal, search, visible}, {range: '30d', tenantId: 'org_b'}));
+  const oversized = {tokenSessions: async () => ({rows: Array.from({length: 26}, (_, i) => session('alice', 's' + i, 1)), more: false})};
+  assert.deepEqual(calls.slice(0, 2).map(c => [c.team, c.days, c.offset]), [[true, 30, 0], [true, 30, 25]]);
+  await assert.rejects(tokenSessionPage({principal, search: oversized, visible}, {range: '30d'}), /Oversized/);
 });
 
 test('token endpoints require fresh access, a valid range and only trusted scope', async () => {
   const calls = [];
-  const services = usageServices(p => ({principal: p, tokens: {usage: async (_, range) => {calls.push(range); return {total: 1, daily: []};}, sessions: async () => ({rows: [], more: false})}, visible: async (_, rows) => rows}));
+  const services = usageServices(p => ({principal: p, tokens: {usage: async (_, range) => {calls.push(range); return {total: 1, daily: []};}}, search: {tokenSessions: async () => ({rows: [], more: false})}, visible: async (_, rows) => rows}));
   const api = createConsoleApi({url: 'https://example.test', usageTokens: services.usageTokens});
   const request = (url, body = '') => ({url, async *[Symbol.asyncIterator]() {if (body) yield Buffer.from(body);}});
   const context = {principal, user: {id: principal.userId}, member: {}, cacheScope: 'scope-a', admitted: true, revalidate: async () => true};
