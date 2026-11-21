@@ -1,4 +1,28 @@
-/* OpenCrawl Night. The shared visual vocabulary for every product surface, matching getopencrawl.com. */
+/* OpenCrawl Porcelain. The shared visual vocabulary for every product surface, matching getopencrawl.com:
+   a light lavender-grey page, hairline frames, square controls, ink buttons and the mark's lavender for emphasis.
+   Type: Funnel Display (headings, figures), Switzer or Geist (reading text, controls), IBM Plex Mono (labels, data). */
+@font-face {
+  font-family: 'Funnel Display';
+  src: url('/assets/funnel-display.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/assets/plex-mono-400.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/assets/plex-mono-500.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+/* Geist is the reading face of the open distribution and the face of the wordmark, which is part of the logo. */
 @font-face {
   font-family: Geist;
   src: url('/assets/geist-sans.woff2') format('woff2');
@@ -6,31 +30,48 @@
   font-weight: 100 900;
   font-display: swap;
 }
+/* Switzer's licence lets an operator serve it from their own application and forbids redistribution, so this
+   repository does not ship the files. A deployment that holds its own copy serves /assets/switzer-400.woff2 and
+   /assets/switzer-500.woff2 and sets data-brand-fonts on the root element. Nothing is requested otherwise. */
 @font-face {
-  font-family: 'Geist Mono';
-  src: url('/assets/geist-mono.woff2') format('woff2');
+  font-family: Switzer;
+  src: url('/assets/switzer-400.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: Switzer;
+  src: url('/assets/switzer-500.woff2') format('woff2');
   font-style: normal;
   font-weight: 500;
   font-display: swap;
 }
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   --font-sans: Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-display: 'Funnel Display', var(--font-sans);
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-wordmark: Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --text-xs: .75rem;
   --text-sm: .8125rem;
   --text-ui: .875rem;
   --text-body: .9375rem;
   --text-title: 1rem;
-  --text-heading: 1.125rem;
+  --text-heading: 1.25rem;
   --text-welcome: 2.5rem;
   --text-welcome-mobile: 1.875rem;
   --text-brand: 1.5rem;
   --text-brand-compact: 1.3125rem;
-  --leading-ui: 1.5;
-  --leading-prose: 1.7;
+  --leading-ui: 1.45;
+  --leading-prose: 1.65;
   --tracking-display: -.04em;
-  --tracking-heading: -.025em;
+  --tracking-heading: -.02em;
+  --tracking-text: -.01em;
+  --tracking-mono: -.02em;
+  /* Headings are set light, as on the landing page. Emphasis in reading text is medium, the heaviest Switzer served. */
+  --weight-display: 400;
+  --weight-strong: 500;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -41,58 +82,79 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
-  --radius-badge: 4px;
-  --radius-control: 6px;
-  --radius-message: 10px;
-  --radius-panel: 12px;
+  /* Square corners throughout. One pixel keeps edges crisp without reading as rounded. */
+  --radius-badge: 1px;
+  --radius-control: 1px;
+  --radius-message: 1px;
+  --radius-panel: 1px;
   --control-height: 40px;
   --header-height: 72px;
   --pane-inset: 32px;
   --page-width: 1200px;
   --chat-width: 800px;
-  --motion-fast: 160ms ease-out;
-  /* Surfaces: pure black canvas, near-black panels, hairline borders. */
-  --bg: #000;
-  --surface: #0a090c;
-  --surface-subtle: #131118;
-  --surface-raised: #17151d;
-  --text: #f7f5f6;
-  --strong: #fff;
-  --muted: #b9b4c0;
-  --quiet: #8a8492;
-  --line: #24212b;
-  --line-strong: #353140;
-  --control-line: #3d3949;
+  --motion-fast: 150ms ease;
+  /* Surfaces: the landing page, its panels and its hairlines. */
+  --bg: #f4f3f9;
+  --surface: #fbfbfe;
+  --surface-subtle: #ebeaf4;
+  --surface-raised: #e3e2ef;
+  --text: #1b1b22;
+  --strong: #121212;
+  --muted: #565663;
+  --quiet: #6f6f80;
+  --line: #d8d7e6;
+  --line-strong: #c3c2d6;
+  --control-line: #a5a4b8;
   /* The OC mark: a lavender face over coral and cobalt layers. */
   --brand-face: #7d82ff;
-  --brand-face-hover: #959aff;
+  --brand-face-hover: #6b70f2;
   --brand-coral: #ff6268;
   --brand-cobalt: #164bff;
-  --brand-ink: #0c0d2a;
-  --accent: #a3a6ff;
-  --accent-hover: #c5c7ff;
-  --primary: var(--brand-face);
-  --primary-hover: var(--brand-face-hover);
-  --on-primary: var(--brand-ink);
-  --secondary: color-mix(in srgb, var(--brand-face) 22%, #050510);
-  --secondary-hover: color-mix(in srgb, var(--brand-face) 32%, #050510);
-  --secondary-line: color-mix(in srgb, var(--brand-face) 50%, #000);
-  --on-secondary: #e4e5ff;
+  --brand-ink: #121212;
+  --accent: #5459dc;
+  --accent-hover: #3b40bd;
+  /* Actions are ink blocks; lavender marks what is selected or featured. */
+  --primary: #161616;
+  --primary-hover: #2b2b2b;
+  --on-primary: #eaeaea;
+  --secondary: color-mix(in srgb, var(--brand-face) 22%, #fbfbfe);
+  --secondary-hover: color-mix(in srgb, var(--brand-face) 32%, #fbfbfe);
+  --secondary-line: color-mix(in srgb, var(--brand-face) 60%, #fbfbfe);
+  --on-secondary: #23256b;
+  --band: var(--brand-face);
+  --band-ink: #121212;
+  --band-body: #1e1e33;
+  --band-line: rgb(18 18 18 / .25);
   --logo-layers: -1px 0 0 var(--brand-coral), 1px 0 0 var(--brand-cobalt);
   --logo-layers-wide: -2px 0 0 var(--brand-coral), 2px 0 0 var(--brand-cobalt);
   --logo-layers-soft: -1px 0 0 color-mix(in srgb, var(--brand-coral) 60%, transparent), 1px 0 0 color-mix(in srgb, var(--brand-cobalt) 60%, transparent);
-  --wash: color-mix(in srgb, var(--brand-face) 12%, transparent);
-  --selection: color-mix(in srgb, var(--brand-face) 40%, transparent);
-  --success: #8fe0a8;
-  --success-wash: #10261a;
-  --pending: #f0c47e;
-  --pending-wash: #2c2212;
-  --danger: #ff8a95;
-  --danger-strong: #ff6268;
-  --danger-wash: #2d1217;
-  --backdrop: rgb(0 0 0 / .72);
-  --header-glass: rgb(0 0 0 / .72);
-  --shadow-paper: inset 0 1px 0 rgb(255 255 255 / .04);
-  --shadow-floating: 0 8px 28px rgb(0 0 0 / .6);
-  --shadow-dialog: 0 35px 120px rgb(0 0 0 / .6);
+  --wash: color-mix(in srgb, var(--brand-face) 14%, transparent);
+  --selection: color-mix(in srgb, var(--brand-face) 38%, transparent);
+  --success: #1c7442;
+  --success-wash: #e0f1e6;
+  --pending: #84560a;
+  --pending-wash: #f7ecd2;
+  --danger: #c5362c;
+  --danger-strong: #9f251c;
+  --danger-wash: #f8e2df;
+  --backdrop: rgb(18 18 18 / .55);
+  --header-glass: rgb(244 243 249 / .82);
+  --shadow-paper: none;
+  --shadow-floating: 0 10px 30px rgb(18 18 18 / .16);
+  --shadow-dialog: 0 30px 80px rgb(18 18 18 / .28);
+  /* Navigation: the landing page's ink boxes. Surfaces inside it read these in place of the page palette. */
+  --nav-bg: #161616;
+  --nav-hover: #262626;
+  --nav-raised: #2f2f2f;
+  --nav-ink: #d6d6d6;
+  --nav-strong: #f6f6f6;
+  --nav-quiet: #9a9aa6;
+  --nav-line: #2e2e2e;
+  --nav-line-strong: #454545;
+  --nav-accent: #aeb1ff;
+  /* Charts: the featured series in accent, the rest in the landing page's grey bar. */
+  --chart-rest: #e1e0ea;
+}
+:root[data-brand-fonts] {
+  --font-sans: Switzer, Geist, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }

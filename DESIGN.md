@@ -1,108 +1,127 @@
 ---
-name: OpenCrawl Night
-description: A shared dark operations console with Geist type and the OpenCrawl mark's periwinkle actions.
+name: OpenCrawl Porcelain
+description: A shared light operations console that carries the landing page's type, ink buttons, hairline frames and lavender emphasis.
 colors:
-  bg: "#000"
-  surface: "#0a090c"
-  surface-subtle: "#131118"
-  surface-raised: "#17151d"
-  text: "#f7f5f6"
-  strong: "#fff"
-  muted: "#b9b4c0"
-  quiet: "#8a8492"
-  line: "#24212b"
-  line-strong: "#353140"
-  control-line: "#3d3949"
+  bg: "#f4f3f9"
+  surface: "#fbfbfe"
+  surface-subtle: "#ebeaf4"
+  surface-raised: "#e3e2ef"
+  text: "#1b1b22"
+  strong: "#121212"
+  muted: "#565663"
+  quiet: "#6f6f80"
+  line: "#d8d7e6"
+  line-strong: "#c3c2d6"
+  control-line: "#a5a4b8"
   brand-face: "#7d82ff"
-  brand-face-hover: "#959aff"
+  brand-face-hover: "#6b70f2"
   brand-coral: "#ff6268"
   brand-cobalt: "#164bff"
-  brand-ink: "#0c0d2a"
-  accent: "#a3a6ff"
-  accent-hover: "#c5c7ff"
-  secondary: "color-mix(in srgb, #7d82ff 22%, #050510)"
-  secondary-hover: "color-mix(in srgb, #7d82ff 32%, #050510)"
-  secondary-line: "color-mix(in srgb, #7d82ff 50%, #000)"
-  on-secondary: "#e4e5ff"
-  wash: "color-mix(in srgb, #7d82ff 12%, transparent)"
-  selection: "color-mix(in srgb, #7d82ff 40%, transparent)"
-  success: "#8fe0a8"
-  success-wash: "#10261a"
-  pending: "#f0c47e"
-  pending-wash: "#2c2212"
-  danger: "#ff8a95"
-  danger-strong: "#ff6268"
-  danger-wash: "#2d1217"
-  backdrop: "rgb(0 0 0 / .72)"
+  brand-ink: "#121212"
+  accent: "#5459dc"
+  accent-hover: "#3b40bd"
+  primary: "#161616"
+  primary-hover: "#2b2b2b"
+  on-primary: "#eaeaea"
+  secondary: "color-mix(in srgb, #7d82ff 22%, #fbfbfe)"
+  secondary-hover: "color-mix(in srgb, #7d82ff 32%, #fbfbfe)"
+  secondary-line: "color-mix(in srgb, #7d82ff 60%, #fbfbfe)"
+  on-secondary: "#23256b"
+  band: "#7d82ff"
+  band-ink: "#121212"
+  band-body: "#1e1e33"
+  wash: "color-mix(in srgb, #7d82ff 14%, transparent)"
+  selection: "color-mix(in srgb, #7d82ff 38%, transparent)"
+  success: "#1c7442"
+  success-wash: "#e0f1e6"
+  pending: "#84560a"
+  pending-wash: "#f7ecd2"
+  danger: "#c5362c"
+  danger-strong: "#9f251c"
+  danger-wash: "#f8e2df"
+  backdrop: "rgb(18 18 18 / .55)"
+  nav-bg: "#161616"
+  nav-hover: "#262626"
+  nav-ink: "#d6d6d6"
+  nav-strong: "#f6f6f6"
+  nav-line: "#2e2e2e"
+  nav-accent: "#aeb1ff"
+  chart-rest: "#e1e0ea"
 typography:
   display:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "'Funnel Display', Geist, system-ui, sans-serif"
     fontSize: "2.5rem"
-    fontWeight: 600
-    lineHeight: 1.12
+    fontWeight: 400
+    lineHeight: 1.08
     letterSpacing: "-.04em"
   console-heading:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "'Funnel Display', Geist, system-ui, sans-serif"
     fontSize: "2rem"
-    fontWeight: 600
-    lineHeight: 1.25
-    letterSpacing: "-.025em"
+    fontWeight: 400
+    lineHeight: 1.1
+    letterSpacing: "-.03em"
   console-heading-compact:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "'Funnel Display', Geist, system-ui, sans-serif"
     fontSize: "1.75rem"
-    fontWeight: 600
-    lineHeight: 1.25
-    letterSpacing: "-.025em"
+    fontWeight: 400
+    lineHeight: 1.1
+    letterSpacing: "-.03em"
   heading:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: "1.125rem"
-    fontWeight: 600
-    lineHeight: 1.5
-    letterSpacing: "-.025em"
+    fontFamily: "'Funnel Display', Geist, system-ui, sans-serif"
+    fontSize: "1.25rem"
+    fontWeight: 400
+    lineHeight: 1.2
+    letterSpacing: "-.02em"
   title:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "Switzer, Geist, system-ui, sans-serif"
     fontSize: "1rem"
-    fontWeight: 600
-    lineHeight: 1.5
+    fontWeight: 500
+    lineHeight: 1.45
   body:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "Switzer, Geist, system-ui, sans-serif"
     fontSize: ".9375rem"
-    lineHeight: 1.5
+    lineHeight: 1.45
+    letterSpacing: "-.01em"
   ui:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "Switzer, Geist, system-ui, sans-serif"
     fontSize: ".875rem"
-    lineHeight: 1.5
+    lineHeight: 1.45
+    letterSpacing: "-.01em"
   control:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "Switzer, Geist, system-ui, sans-serif"
     fontSize: ".875rem"
     fontWeight: 500
-    lineHeight: 1.5
+    lineHeight: 1.45
+    letterSpacing: "-.02em"
   board-author:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "Switzer, Geist, system-ui, sans-serif"
     fontSize: ".875rem"
-    fontWeight: 700
-    lineHeight: 1.5
+    fontWeight: 500
+    lineHeight: 1.45
   label:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: ".8125rem"
-    fontWeight: 500
-    lineHeight: 1.5
-  metadata:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontFamily: "'IBM Plex Mono', ui-monospace, monospace"
     fontSize: ".75rem"
-    lineHeight: 1.5
+    fontWeight: 400
+    lineHeight: 1.45
+    letterSpacing: "-.02em"
+  metadata:
+    fontFamily: "Switzer, Geist, system-ui, sans-serif"
+    fontSize: ".75rem"
+    lineHeight: 1.45
   mono:
-    fontFamily: "'Geist Mono', ui-monospace, SFMono-Regular, Consolas, monospace"
+    fontFamily: "'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace"
     fontSize: ".8125rem"
+    letterSpacing: "-.02em"
   metric:
-    fontFamily: "Geist, system-ui, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: "1.5rem"
+    fontFamily: "'Funnel Display', Geist, system-ui, sans-serif"
+    fontSize: "2rem"
     fontWeight: 500
-    lineHeight: 1.5
+    lineHeight: 1
+    letterSpacing: "-.03em"
 rounded:
-  badge: "4px"
-  control: "6px"
-  panel: "12px"
+  badge: "1px"
+  control: "1px"
+  panel: "1px"
 spacing:
   '1': "4px"
   '2': "8px"
@@ -116,16 +135,16 @@ spacing:
   '16': "64px"
 components:
   button-primary:
-    backgroundColor: "{colors.brand-face}"
-    textColor: "{colors.brand-ink}"
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
     padding: "8px 16px"
   button-primary-hover:
-    backgroundColor: "{colors.brand-face-hover}"
-    textColor: "{colors.brand-ink}"
+    backgroundColor: "{colors.primary-hover}"
+    textColor: "{colors.on-primary}"
   button-secondary:
-    backgroundColor: "{colors.surface-subtle}"
+    backgroundColor: "transparent"
     textColor: "{colors.text}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
@@ -153,34 +172,54 @@ components:
     rounded: "{rounded.control}"
     padding: "8px 12px"
   badge:
-    backgroundColor: "{colors.surface-raised}"
+    backgroundColor: "transparent"
     textColor: "{colors.muted}"
+    typography: "{typography.label}"
     rounded: "{rounded.badge}"
-    padding: "4px 8px"
+    padding: "3px 6px"
   inset:
-    backgroundColor: "{colors.surface-subtle}"
+    backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
     rounded: "{rounded.control}"
     padding: "16px"
   dialog:
-    backgroundColor: "{colors.surface-raised}"
+    backgroundColor: "{colors.bg}"
     textColor: "{colors.text}"
     rounded: "{rounded.panel}"
     padding: "24px"
     width: "min(520px, calc(100vw - 32px))"
 ---
 
-# OpenCrawl Night
+# OpenCrawl Porcelain
 
 ## Overview
 
 The console helps people connect machines and tools, inspect what their agents
-can find, and manage workspace access. Use the static OpenCrawl mark, self-hosted
-Geist, a black canvas, near-black surfaces and hairline borders. Use periwinkle
-for actions and selection. Status has a readable label alongside its color.
-Geist Mono is for commands, identifiers and other technical text.
+can find, and manage workspace access. It shares one visual language with
+[getopencrawl.com](https://getopencrawl.com): a light lavender-grey page,
+near-white panels inside hairline frames, and square corners throughout.
 
-The [Night tokens](web/tokens.css), [console dimensions](web-v2/src/design/tokens.css)
+- **Type.** Funnel Display sets page and section headings and large figures,
+  light and tight. Reading text and controls use Switzer where a deployment
+  serves it and Geist otherwise. IBM Plex Mono sets labels, table headings,
+  timestamps, tags, commands and identifiers, in sentence case. The wordmark
+  stays in Geist because it is part of the logo.
+- **Ink.** Navigation is an ink box with light text, like the landing page's
+  navigation. Primary actions are ink blocks. A text-only primary action ends
+  with a plus that turns on hover. Secondary actions are ink outlines.
+- **Lavender.** The mark's lavender fills what is selected or featured: the
+  current navigation item and highlight blocks, with ink text on top. The
+  deeper accent draws links, focus rings, selected tabs and chart series.
+- **Status.** Status has a readable label alongside its colour. Indicators are
+  small squares. People keep round avatars and agents keep square pixel faces.
+
+Switzer may be served by an operator from their own application and may not be
+redistributed, so core does not ship it. A deployment that holds its own copy
+serves `/assets/switzer-400.woff2` and `/assets/switzer-500.woff2` and sets
+`data-brand-fonts` on the root element. Switzer has two weights, so emphasis in
+reading text is medium (`--weight-strong`). Do not ask for heavier text.
+
+The [Porcelain tokens](web/tokens.css), [console dimensions](web-v2/src/design/tokens.css)
 and [component styles](web-v2/src/design/styles.css) define the rendered values.
 The frontmatter and Impeccable swatches preview primitives. Use the React
 implementations and fixtures below to see how a screen fits together.
@@ -219,5 +258,5 @@ and the test for representative data, state transitions and viewport coverage.
 [Button and LinkButton](web-v2/src/design/components.tsx) default to secondary.
 Use primary for the main action, quiet for low-emphasis actions and danger for
 destructive confirmation. Keep the sized control intact when placing it in a
-card or footer. The primary button's coral and cobalt edges appear on hover.
+card or footer. A primary button with an icon or a busy indicator drops its plus.
 Preserve visible keyboard focus and the shared compact-screen touch targets.
