@@ -30,8 +30,8 @@ cloud credit dependency.
 | Devin Cloud | `UserPromptSubmit`, native prompt ID | Background process; one result on a subsequent `PostToolUse` |
 
 Canonical plugin runners support the native macOS, Linux and Windows distributions;
-Devin Cloud uses Linux. This does not expand setup availability: new personal
-setup currently offers Codex, Claude Code and Cursor on macOS. Other saved
+Devin Cloud uses Linux. Personal setup offers Codex, Claude Code, Antigravity
+and Cursor on macOS and Linux (glibc, x64 or ARM64). Other saved
 installations retain their existing availability and native policy controls.
 Grok Bot has no prompt-context adapter. Imported Claude/Codex hooks in Cursor
 and subagent tasks are ignored.

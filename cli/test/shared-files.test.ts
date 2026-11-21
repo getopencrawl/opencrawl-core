@@ -42,9 +42,8 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     const open = (session:string) => [...entry,'files','open','--api',api,'--session',session];
     // Setup may predate the workspace rollout. Stock Git is the first client
     // command after enablement: no new setup, startup hook or files command.
-    // macOS also admits a new human profile. On Windows/Linux, native setup
-    // requires a registered agent or a previously enrolled installation.
-    const setupToken=process.platform==='darwin'?token:'fixture-token-registered';
+    // Exercise fresh personal setup on macOS and Linux, machine enrollment on Windows.
+    const setupToken=process.platform==='win32'?'fixture-token-registered':token;
     if(setupToken!==token){
       const profile=join(home,'config','opencrawl');
       await mkdir(profile,{recursive:true});

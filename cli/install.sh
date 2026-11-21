@@ -39,8 +39,14 @@ if [ ! -s "$scratch/package/bin/opencrawl" ]; then echo 'OpenCrawl archive has n
 chmod 755 "$scratch/package/bin/opencrawl"
 "$scratch/package/bin/opencrawl" install
 
+# main/install.sh can install older pinned releases and runs before a new
+# stable binary is promoted. Use the capability of the downloaded package.
+legacy_connect=false
+if [ "$handoff" = --connect ] && [ "$os" = linux ] && ! grep -Eq '"opencrawlGuidedSetup"[[:space:]]*:[[:space:]]*true' "$scratch/package/package.json"; then
+  legacy_connect=true
+fi
 connect_agent() {
-  if [ "$handoff" = --connect ] && [ "$os" = linux ]; then
+  if [ "$legacy_connect" = true ]; then
     "$entry" login && "$entry" collect install
   else
     "$entry" setup
@@ -60,7 +66,7 @@ if [ -n "$handoff" ]; then
     if [ "$handoff" = --connect ] && [ -n "${OPENCRAWL_API_URL:-}" ]; then
       printf 'Use --api %s on the following commands.\n' "$OPENCRAWL_API_URL"
     fi
-    if [ "$handoff" = --connect ] && [ "$os" = linux ]; then
+    if [ "$legacy_connect" = true ]; then
       echo 'Run opencrawl login and then opencrawl collect install in a terminal to continue.'
     else
       echo 'Run opencrawl setup in a terminal to continue.'

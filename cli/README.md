@@ -26,13 +26,14 @@ Or with npm (Node.js 22.15+; allow install scripts and optional dependencies):
 npm install -g @getopencrawl/cli
 ```
 
-## Set up on macOS
+## Set up on macOS or Linux
 
-Run `opencrawl` in a terminal to start setup. Until you finish, reopening the CLI
-brings you back to setup. Afterward it shows help. You can also run
-`opencrawl setup` directly. Choose OpenCrawl Cloud or enter your self-hosted workspace
-address, then follow the browser sign-in. Use the arrow keys to move, Space to
-toggle a checkbox, and Enter to select a button.
+Linux setup supports x64 and ARM64 systems with glibc.
+
+Run `opencrawl` in a terminal to start or resume setup. After setup it shows help.
+You can reopen setup with `opencrawl setup`. Choose OpenCrawl Cloud or enter your
+self-hosted workspace address, then sign in through your browser. Use the arrow
+keys to move, Space to toggle a checkbox, and Enter to select a button.
 
 Choose the agents whose new sessions you want to record. To skip recording,
 choose **Do not record any sessions on this machine**. Setup asks about importing

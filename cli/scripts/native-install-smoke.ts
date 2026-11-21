@@ -55,13 +55,17 @@ try{
   if (!windows) {
     const connect = ['/bin/sh', join(root, 'install.sh'), '--connect', '--api', server.url.origin, pkg.version];
     const output = await run(connect, {OPENCRAWL_DOWNLOAD_BASE: server.url.origin});
-    const next = process.platform === 'linux' ? 'opencrawl login and then opencrawl collect install' : 'opencrawl setup';
-    if (!output.includes(next) || !output.includes(server.url.origin) || snapshot(sharedPaths) !== beforeInstall)
+    if (!output.includes('Run opencrawl setup in a terminal') || !output.includes(server.url.origin) || snapshot(sharedPaths) !== beforeInstall)
       throw new Error('Unattended connect must preserve existing agents and show the workspace and next command.');
   }
   const entry=join(env.OPENCRAWL_INSTALL_DIR,windows?'opencrawl.cmd':'opencrawl');
   if(!existsSync(entry))throw new Error('Installer did not create its command: '+installed);
   const command=(args:string[])=>windows?[powershell,'-NoProfile','-Command',`& '${entry.replace(/'/g,"''")}' ${args.map(v=>"'"+v.replace(/'/g,"''")+"'").join(' ')}`]:[entry,...args];
+  if(process.platform==='linux'){
+    const result=JSON.parse(await run(command(['setup','--api',server.url.origin,'--json'])));
+    if(result.data?.status!=='action_required'||result.data.humanTasks?.[0]?.id!=='cli-login')
+      throw new Error('Fresh Linux setup must reach workspace sign-in.');
+  }
   if(!windows){
     const guidedPipe=['/bin/sh','-c','/bin/cat "$1" | /bin/sh -s -- --setup "$2"','sh',join(root,'install.sh'),pkg.version];
     for(const invocation of [guidedPipe,[entry]]){

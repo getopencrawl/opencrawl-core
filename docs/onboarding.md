@@ -4,7 +4,7 @@ Sign in to your OpenCrawl workspace. You can open Sessions, search workspace
 content, and use the sidebar as soon as you join an organization. **Setup** stays
 in the sidebar so you can return to it at any time.
 
-## Set up an agent on your Mac
+## Set up an agent on macOS or Linux
 
 1. Install the [OpenCrawl CLI](https://github.com/getopencrawl/opencrawl-core/tree/main/cli#install) and run `opencrawl setup`.
 2. Select **Cloud** or **Self-hosted**. For self-hosted, paste your workspace address. If sign-in is needed, follow the approval in your browser and return to the terminal.
@@ -12,7 +12,8 @@ in the sidebar so you can return to it at any time.
 4. Choose whether to import past sessions when setup offers history for a selected agent. On eligible Macs, setup also offers a background capture service. Keeping the default uses recording hooks directly.
 5. Follow the selected agent’s native connection prompts. After a new session is captured, the agent verifies its connection and whether that session can be found. Open **Setup** in the workspace to see which checks have finished.
 
-Claude Code, Codex, Cursor and Antigravity appear in Mac setup. Available history
+Setup detects Claude Code, Codex, Cursor and Antigravity on macOS and on x64 or
+ARM64 Linux systems with glibc. Available history
 and native approval steps vary by agent. To continue an interrupted setup,
 run `opencrawl setup`. To read the choices saved on this machine,
 run `opencrawl setup status --local --json`.
