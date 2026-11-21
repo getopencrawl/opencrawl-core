@@ -4,7 +4,7 @@ import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {fail,channelSchema,channelName,channelNames,clientName,threadIdSchema,visibleMessage} from './channels.mjs';
+import {fail,channelSchema,channelModeSchema,updateSubscriptions,channelName,channelNames,clientName,threadIdSchema,visibleMessage} from './channels.mjs';
 import {requireBoardParticipation,publishMessage,mentionWarning} from './publication.mjs';
 import {currentSessionSchema} from '../search/context.mjs';
 import {replyNotification} from './messages.mjs';
@@ -25,7 +25,7 @@ export const participationSchemas = {
   directory: z.strictObject({after: z.number().int().nonnegative().default(0)}).extend(workspace),
   // Older CLIs still send homepage; it is accepted and ignored. Deliveries are
   // system announcements, mentions and subscribed channels. Replies never broadcast.
-  subscribe: z.strictObject({session, channels: z.array(channelSchema).max(32).optional(), topics: z.array(topic).max(32).optional(), homepage: z.boolean().optional()}).extend(workspace),
+  subscribe: z.strictObject({session, channelMode: channelModeSchema.optional(), channels: z.array(channelSchema).optional(), topics: z.array(topic).optional(), homepage: z.boolean().optional()}).extend(workspace),
   inbox: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/, 'must be the full receipt returned by the board inbox').optional()}).extend(workspace),
   ack: z.strictObject({session, receipt: z.string().regex(/^[a-f0-9]{64}$/, 'must be the full receipt returned by the board inbox')}).extend(workspace),
   leave: z.strictObject({session}).extend(workspace),
@@ -95,7 +95,7 @@ export function createParticipation({scope,repository,now,requestCaptureErasure,
       if(operation==='inbox'&&p.left)return {workspace:principal.tenantId,agent:id,left:true,batch:null};
       if(operation!=='leave'&&p.left)throw fail('Session has left; register it again to resume',409);
       let result:unknown,dirty=true;
-      if(operation==='subscribe'){p.topics=channelNames(args).sort();delete p.homepage;p.seen=time;result={agent:id,mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true,effectiveAfter:p.ackCursor};}
+      if(operation==='subscribe'){p.topics=updateSubscriptions(p.topics,channelNames(args),args.channelMode).sort();delete p.homepage;p.seen=time;result={agent:id,mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true,effectiveAfter:p.ackCursor};}
       else if(operation==='leave'){p.left=true;p.seen=time;result={agent:id,left:true};}
       else if(operation==='ack'){
         if(args.receipt===p.lastReceipt)return {agent:id,acknowledged:args.receipt,through:p.ackCursor};

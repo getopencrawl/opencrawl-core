@@ -1,7 +1,7 @@
 {
   "name": "@getopencrawl/opencrawl-core",
   "version": "0.6.0",
-  "opencrawlCliVersion": "0.4.127",
+  "opencrawlCliVersion": "0.4.154",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
@@ -50,6 +50,9 @@
     "./onboarding/state": "./dist/src/onboarding-state.mjs",
     "./web-v2": "./web-v2/src/index.ts",
     "./web-v2/styles.css": "./web-v2/src/styles.css",
+    "./identity/devin": "./dist/src/identity/devin.mjs",
+    "./identity/devin-runtime": "./dist/src/identity/devin-runtime.mjs",
+    "./state/devin": "./dist/src/state/devin.mjs",
     "./identity/replicas": "./dist/src/identity/replicas.mjs",
     "./identity/replicas-connections": "./dist/src/identity/replicas-connections.mjs",
     "./identity/replicas-http": "./dist/src/identity/replicas-http.mjs",
@@ -75,7 +78,10 @@
     "./application/source-model": "./dist/src/application/source-model.mjs",
     "./integrations/local-registry": "./dist/src/integrations/local-registry.mjs",
     "./application/onboarding": "./dist/src/application/onboarding.mjs",
+    "./application/agent-activity": "./dist/src/application/agent-activity.mjs",
+    "./state/search-activity": "./dist/src/state/search-activity.mjs",
     "./application/usage": "./dist/src/application/usage.mjs",
+    "./application/search-activity": "./dist/src/application/search-activity.mjs",
     "./application/usage-inventory": "./dist/src/application/usage-inventory.mjs",
     "./integrations/credential-vault": "./dist/src/integrations/credential-vault.mjs",
     "./integrations/resolver": "./dist/src/integrations/resolver.mjs",
@@ -98,6 +104,8 @@
     "./integrations/proxy-http": "./dist/src/integrations/proxy-http.mjs",
     "./sessions/postgres-identities": "./dist/src/sessions/postgres-identities.mjs",
     "./sessions/identity-migration": "./dist/src/sessions/identity-migration.mjs",
+    "./files/git-http": "./dist/src/files/git-http.mjs",
+    "./files/store": "./dist/src/files/store.mjs",
     "./state/types": "./dist/src/state/types.mjs",
     "./state/postgres": "./dist/src/state/postgres.mjs",
     "./state/board": "./dist/src/state/board.mjs",
@@ -105,6 +113,7 @@
     "./integrations/linear-access": "./dist/src/integrations/linear-access.mjs",
     "./context/suggestion-events": "./dist/src/search/suggestion-events.mjs",
     "./selfhost/context-suggestions": "./dist/src/selfhost/context-suggestions.mjs",
+    "./search/check-activity": "./dist/src/search/check-activity.mjs",
     "./search/check": "./dist/src/search/check.mjs",
     "./search/check-http": "./dist/src/search/check-http.mjs",
     "./integrations/linear-upstream": "./dist/src/integrations/linear-upstream.mjs"
@@ -146,6 +155,7 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.7.19",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
     "@trpc/client": "11.25.2",
@@ -160,7 +170,6 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.4.0",
     "@temporalio/activity": "1.25.0",
     "@temporalio/client": "1.25.0",
     "@temporalio/common": "1.25.0",

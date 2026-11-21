@@ -1,4 +1,5 @@
-import {manifests,extraAssets} from '../../../plugins/opencrawl-sessions/assets.ts';
+import {isRegistrationMcp} from './registration-mcp.ts';
+import {devinManifest,readme,devinGuide} from '../../../plugins/opencrawl-sessions/assets.ts';
 import {existsSync, lstatSync, readFileSync, mkdirSync, unlinkSync, chmodSync, renameSync, mkdtempSync} from 'node:fs';
 import {join, dirname, resolve, isAbsolute, posix} from 'node:path';
 import {homedir} from 'node:os';
@@ -22,7 +23,7 @@ export type PluginClient = 'claude-code' | 'codex' | 'cursor' | 'antigravity' | 
 export type PluginHumanTask = {id:string;kind:'mcp_auth'|'restart'|'plugin_install';client:PluginClient;title:string;instruction:string;url?:string};
 export type PluginResult = {client:PluginClient;status:'installed'|'unchanged'|'prepared'|'pending'|'error';message?:string;pluginId?:string;directory?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PublishedPackage['source']};
 type CommandResult = {code:number;stdout?:string;timedOut?:boolean};
-export type PluginOptions = {onProgress?:(message:string)=>void;validateBinding?:()=>void;cursorCapture?:{installationId:string;observedAt:string};captureMode?:CaptureMode;bundles?:Partial<Record<LocalPluginClient,PublishedPackage>>;command?:string[];home?:string;env?:NodeJS.ProcessEnv;which?:(name:string)=>string|null;runner?:(command:string,args:string[],env:NodeJS.ProcessEnv)=>Promise<CommandResult>};
+export type PluginOptions = {onProgress?:(message:string)=>void;validateBinding?:()=>void;cursorCapture?:{installationId:string;observedAt:string};captureMode?:CaptureMode;bundles?:Partial<Record<LocalPluginClient,PublishedPackage | {files:Record<string,string>;source?:undefined}>>;command?:string[];home?:string;env?:NodeJS.ProcessEnv;which?:(name:string)=>string|null;runner?:(command:string,args:string[],env:NodeJS.ProcessEnv)=>Promise<CommandResult>};
 const clients:PluginClient[] = ['claude-code','codex','cursor','antigravity','devin'];
 export const labels:Record<PluginClient,string> = {'claude-code':'Claude Code',codex:'Codex',cursor:'Cursor',antigravity:'Antigravity',devin:'Devin Cloud'};
 const marker = '.opencrawl-setup-plugin.json';
@@ -104,34 +105,23 @@ export async function recordingInstallState(api:string,client:LocalPluginClient,
   }catch{return 'repair';}
 }
 type BundleOptions={command?:string[];configHome?:string;env?:NodeJS.ProcessEnv;recording?:boolean};
-/** Bundled in the executable: native plugins own hooks, MCP and agent guidance. */
-export function setupPluginFiles(client:PluginClient,api:string,options:BundleOptions={}):Record<string,string> {
-  const identity=client==='devin'?scopedPluginIdentity(api):setupPluginIdentity(api),origin=identity.api,url=origin+'/mcp';
-  const command=options.command??setupCommandForSelf(),configHome=(client==='devin'?posix: {resolve}).resolve(options.configHome??process.env.OPENCRAWL_CONFIG_HOME??process.env.XDG_CONFIG_HOME??join(homedir(),'.config'));
-  const definition=manifests[client];
-  const files:Record<string,string>={
-    ...pluginHookFiles(client,{command,configHome,api:origin,pluginName:identity.name,env:options.env},client==='devin'?'linux':process.platform),
-    [definition.path]:json({...definition.value,name:identity.name,version}),
-    'README.md':extraAssets.readme,
+function devinPluginFiles(api:string,options:Required<Pick<BundleOptions,'command'|'configHome'|'recording'>>) {
+  const identity=scopedPluginIdentity(api);
+  return {
+    ...pluginHookFiles('devin',{command:options.command,configHome:options.configHome,api:identity.api,pluginName:identity.name},'linux'),
+    [devinManifest.path]:json({...devinManifest.value,name:identity.name,version}),
+    'README.md':readme,
+    '.mcp.json':json({mcpServers:{[identity.name]:{command:'/bin/sh',args:['${PLUGIN_ROOT}/scripts/opencrawl-hook.sh','mcp']}}}),
+    '.opencrawl-devin.json':json({schemaVersion:1,api:identity.api,configHome:options.configHome,command:options.command,recording:options.recording}),
+    'AGENTS.md':devinGuide,
   };
-  if(client==='devin'){
-    files['.mcp.json']=json({mcpServers:{[identity.name]:{command:'/bin/sh',args:['${PLUGIN_ROOT}/scripts/opencrawl-hook.sh','mcp']}}});
-    files['.opencrawl-devin.json']=json({schemaVersion:1,api:origin,configHome,command,recording:options.recording===true});
-    files['AGENTS.md']=extraAssets.devinGuide;
-  }else{
-    files['assets/icon.svg']=client==='codex'?extraAssets.codexIcon:extraAssets.desktopIcon;
-    const file=client==='codex'||client==='claude-code'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
-    files[file]=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:{...(client==='codex'||client==='claude-code'?{type:'http'}:{}),url}}});
-  }
-  if(client==='cursor')files['rules/opencrawl.mdc']=extraAssets.cursorRule;
-  return files;
 }
 
 /** Export only public configuration. Every fresh Cloud VM binds its own owner
  * and installation at runtime; no local installation or token enters the bundle. */
 export function writeDevinPlugin(directory:string,api:string,options:Required<Pick<BundleOptions,'command'|'configHome'|'recording'>>){
   if(!isAbsolute(directory)||!posix.isAbsolute(options.configHome)||options.command.length!==1||!posix.isAbsolute(options.command[0]!))throw new CliError('INVALID_PLUGIN_BINDING','Supply an absolute bundle directory, Linux native command and Cloud configuration home.');
-  const identity=scopedPluginIdentity(api),files=setupPluginFiles('devin',identity.api,options);
+  const identity=scopedPluginIdentity(api),files=devinPluginFiles(identity.api,options);
   writeBundle(resolve(directory),files,'devin',identity.api,identity.name,posix.resolve(options.configHome),dirname(resolve(directory)));
   return {client:'devin' as const,api:identity.api,pluginName:identity.name,directory:resolve(directory),digest:hash(json(files)),recording:options.recording,installed:false};
 }
@@ -230,6 +220,7 @@ function nativeBindingMatches(row:Record<string,unknown>,client:PluginClient,dir
   try{if(verifyPluginBundle({api,client,pluginName:name,configHome,nativeRoot:root}).digest!==digest)return false;}catch{return false;}
   const file=client==='claude-code'||client==='codex'?'.mcp.json':client==='antigravity'?'mcp_config.json':'mcp.json';
   const servers=read(join(root,file))?.mcpServers,server=servers?.[client==='codex'?name:'opencrawl'];
+  if(Object.keys(servers??{}).length===1&&isRegistrationMcp(server,api,configHome))return true;
   return server?.url===api+'/mcp'&&(client!=='codex'||Object.keys(servers).length===1&&server.type==='http');
 }
 /** Keep the old receipt until the new installation has been verified and its
@@ -335,7 +326,10 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         const result=await (await import('./devin-plugin.ts')).adoptDevinPlugin(origin,{configHome,env});
         results.push(result);continue;
       }
-      const published=options.bundles?.[client],bundle:BundleFiles=published?{...published.files,...published.binaries}:setupPluginFiles(client,origin,{command,configHome,env});
+      const prepared=options.bundles?.[client];
+      if(!prepared)throw new CliError('PLUGIN_PACKAGE_INVALID','A verified package is required for '+client+'.');
+      const published=prepared.source?prepared:undefined;
+      const bundle:BundleFiles={...prepared.files,...published?.binaries};
       const cursorArchive=client==='cursor'&&Boolean(published?.source.archive);
       const cursorProfile=resolve(env.CURSOR_CONFIG_DIR||join(home,'.cursor'));
       const marketRoot=join(root,client,identity.key),pathRoot=client==='cursor'?(cursorArchive?resolve(home,'.cursor'):cursorProfile):configHome;
@@ -437,10 +431,12 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         results.push({client,status:active?(unchanged?'unchanged':'installed'):'prepared',pluginId,directory,...(cursor?{preparedAt:cursor.preparedAt}:{}),...(!active?{message:waiting}:{})});
         if(cursor&&!active)humanTasks.push({id:'cursor:restart',kind:'restart',client,title:'Open Cursor',instruction:`Start a new Cursor session and select ${identity.name} for ${origin}. Use its OpenCrawl setup skill to finish verification.`});
         if(!active&&!published)humanTasks.push({id:client+':restart',kind:'restart',client,title:'Load OpenCrawl in '+labels[client],instruction:`Open or reload ${labels[client]} and select the ${identity.name} plugin for ${origin}. Review any native plugin-hook trust request. ${client==='cursor'?'In Customize or /plugin list, confirm this deployment-specific local plugin loads; if local imports are blocked, ask the administrator to allow it. ':''}Run setup again after its native startup hook runs. Do not use a session-only --plugin-dir override as installation proof.`});
-        humanTasks.push({id:client+':mcp_auth',kind:'mcp_auth',client,title:'Connect OpenCrawl in '+labels[client],instruction:`Use the ${identity.name} plugin's native connection flow for ${origin}. Complete requested MCP authentication in this client and run its native verification. Preserve other deployments and never copy CLI credentials.`,url:origin+'/mcp'});
+        const mcpFile=client==='cursor'?'mcp.json':client==='antigravity'?'mcp_config.json':'.mcp.json';
+        const boundMcp=read(join(directory,mcpFile))?.mcpServers?.[client==='codex'?identity.name:'opencrawl'];
+        if(!isRegistrationMcp(boundMcp,origin,configHome))humanTasks.push({id:client+':mcp_auth',kind:'mcp_auth',client,title:'Connect OpenCrawl in '+labels[client],instruction:`Use the ${identity.name} plugin's native connection flow for ${origin}. Complete requested MCP authentication in this client and run its native verification. Preserve other deployments and never copy CLI credentials.`,url:origin+'/mcp'});
       }catch(error){results.push({client,status:'error',message:error instanceof CliError?error.message:'Could not install the plugin. Check native access and retry.'});humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Resolve '+labels[client]+' plugin installation',instruction:'Read the reported installation error, preserve existing configuration, and resolve only the required access or conflict before retrying.'});}
     }
-    return {results:results.map(row=>{const source=row.client==='devin'?undefined:options.bundles?.[row.client];return source?{...row,captureAvailable:source.captureAvailable,daemonHandoff:source.daemonHandoff,source:source.source}:row;}),humanTasks};
+    return {results:results.map(row=>{const source=row.client==='devin'?undefined:options.bundles?.[row.client];return source?.source?{...row,captureAvailable:source.captureAvailable,daemonHandoff:source.daemonHandoff,source:source.source}:row;}),humanTasks};
   };
   return withSessionLock('setup:plugins',perform);
 }

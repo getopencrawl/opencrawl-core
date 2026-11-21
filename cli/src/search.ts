@@ -41,7 +41,7 @@ export function searchInput(query: string | undefined, values: Record<string, un
   if(!filters||typeof filters!=='object'||Array.isArray(filters))throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);
   for(const key of ['after','before'])if(values[key]!==undefined)filters[key]=values[key];
   if(values.role!==undefined)filters.roles=[values.role];
-  const arrays=['authors','kinds','excludeKinds','roles','harnesses','origins','sessionIds','providers','repositories','projects','paths','toolNames'];
+  const arrays=['authors','kinds','excludeKinds','roles','harnesses','origins','clientApps','sessionIds','providers','repositories','projects','paths','toolNames'];
   for(const [key,value] of Object.entries(filters)){
     const valid=arrays.includes(key)?Array.isArray(value)&&value.length>0&&value.length<=20&&value.every(x=>typeof x==='string'&&x.length>0&&x.length<=(key==='sessionIds'?200:500)):
       ['after','before'].includes(key)&&typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
@@ -61,7 +61,7 @@ export function searchInput(query: string | undefined, values: Record<string, un
   for(const [flag,key] of [['include-current-session','includeCurrentSession'],['include-tool-outputs','includeToolOutputs']] as const){
     if(values[flag]!==undefined){if(typeof values[flag]!=='boolean')throw new CliError('INVALID_USAGE','Invalid --'+flag+'.',64);extra[key]=values[flag];}
   }
-  for(const [flag,key,allowed] of [['select','select',['title','text','url','provenance']],['facets','facets',['source','kind','author','harness','origin','provider','repository','project','path','role','sessionId']]] as const){
+  for(const [flag,key,allowed] of [['select','select',['title','text','url','provenance']],['facets','facets',['source','kind','author','harness','origin','clientApp','provider','repository','project','path','role','sessionId']]] as const){
     if(values[flag]===undefined)continue;const selected=String(values[flag]).split(',').filter(Boolean);
     if(selected.some(v=>!(allowed as readonly string[]).includes(v))||selected.length>allowed.length)throw new CliError('INVALID_USAGE','Invalid --'+flag+'.',64);extra[key]=selected;
   }

@@ -40,15 +40,19 @@ export function oauthDestination(value: string): string {
   return url.href;
 }
 
-export function promptModel({mcpUrl, setupPrompt, windows=typeof navigator!=='undefined'&&/Windows/.test(navigator.userAgent)}: {mcpUrl: string; setupPrompt: string; windows?:boolean}) {
+export function connectionCommands(mcpUrl: string, windows: boolean) {
   const api = new URL(mcpUrl).origin;
   const deploymentArgs = api === 'https://app.getopencrawl.com' ? '' : ` --api ${api}`;
   return {
-    commands: {
-      cli: `${nativeInstallCommand(windows)}\n${nativePathCommand(windows)}\nopencrawl login${deploymentArgs}`,
-      recording: `opencrawl collect install${deploymentArgs}`,
-      history: `opencrawl collect backfill${deploymentArgs}`,
-    },
+    cli: `${nativeInstallCommand(windows)}\n${nativePathCommand(windows)}\nopencrawl login${deploymentArgs}`,
+    recording: `opencrawl collect install${deploymentArgs}`,
+    history: `opencrawl collect backfill${deploymentArgs}`,
+  };
+}
+
+export function promptModel({mcpUrl, setupPrompt, windows=typeof navigator!=='undefined'&&/Windows/.test(navigator.userAgent)}: {mcpUrl: string; setupPrompt: string; windows?:boolean}) {
+  return {
+    commands: connectionCommands(mcpUrl, windows),
     prompts: {
       connect: {label: 'Copy setup prompt', name: 'setup', text: setupPrompt},
       session: {label: 'Copy a small task', name: 'task', text: 'Tell me which project we are working in and briefly describe its purpose.'},

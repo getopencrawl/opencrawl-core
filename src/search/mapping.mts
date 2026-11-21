@@ -2,9 +2,9 @@ import type {Mapping} from './types.mjs';
 export const passageFields={passageVersion:{type:'integer'},textStart:{type:'integer'},textEnd:{type:'integer'},chunkCount:{type:'integer'}};
 export const memoryProjectionFields={projectionId:{type:'keyword'}};
 export const sessionSearchContextFields={containsToolOutput:{type:'boolean'}};
-export const sessionCaptureFields={captureMode:{type:'keyword'}};
+export const sessionCaptureFields={captureHash:{type:'keyword',index:false,doc_values:false},captureMode:{type:'keyword'},clientApp:{type:'keyword'}};
 export const sessionTokenFields={capturedTokens:{type:'long'}};
-export const sessionParticipantFields={participantVersion:{type:'integer'},participantId:{type:'keyword'},participantName:{type:'keyword',ignore_above:320},participantUnknown:{type:'boolean'}};
+export const sessionParticipantFields={participantEmailKey:{type:'keyword'},participantVersion:{type:'integer'},participantId:{type:'keyword'},participantName:{type:'keyword',ignore_above:320},participantUnknown:{type:'boolean'}};
 export const connectorMapping = {dynamic: 'strict', properties: {
   ...Object.fromEntries(['tenantId', 'connectionId', 'workspaceId', 'provider', 'kind', 'sourceId', 'channelId', 'threadTs', 'timestamp', 'authorId', 'contentHash', 'parentId', 'parentKind', 'resourceVersion', 'relatedId', 'discussionId', 'repository', 'state', 'speakers', 'startTime', 'endTime', 'fileId', 'extractionStatus', 'partPath'].map(key => [key, {type: 'keyword'}])),
   title: {type: 'text'}, text: {type: 'text'}, extractedAt: {type: 'long'}, deleted: {type: 'boolean'}, publicChannel: {type: 'boolean'},

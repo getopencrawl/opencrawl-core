@@ -59,7 +59,7 @@ test('independent source failures are reported, and a display-name failure canno
   const report=await usageReport({principal,directory:{...directory,organizations:{getOrganization:failure}},captured:async()=>({tokens:42,since:'2026-11-01'}),
     integrations:{list:failure},values:{read:failure},search:{usage:failure,overlap:async()=>({timeZone:'UTC',measuredAt:new Date().toISOString(),sessions:1,daily:[]})}});
   assert.equal(report.capture.tokens,42);assert.equal(report.overlap.sessions,1);assert.equal(report.agents,null);
-  assert.deepEqual(report.failedSources,['integrations','organization','sessions','value']);
+  assert.deepEqual(report.failedSources,['integrations','organization','sessions']);
 });
 
 test('console logs the private cause without exposing it, and revalidates partial reports', async () => {
@@ -92,7 +92,7 @@ test('Usage highlights and details partition the reads for a full report', async
     integrations: {list: read('integrations', [])}, connectors: {count: read('connectors', {total: 0, kinds: {}, providers: {}, connections: {}})},
     onboarding: {read: read('onboarding', {})}, search: {usage: read('activity', activity), overlap: read('overlap', {sessions: 1, daily: []})}};
   const highlights = await usageReport({...options, part: 'highlights'});
-  assert.deepEqual(calls.sort(), ['capture', 'organization', 'value']);
+  assert.deepEqual(calls.sort(), ['capture', 'organization']);
   assert.equal(highlights.capture.tokens, 42);
   calls.length = 0;
   const details = await usageReport({...options, part: 'details'});
@@ -124,13 +124,18 @@ test('both Usage reads require fresh final access and accept only trusted scope'
       [part]: async scope => {calls.push(scope); return {privateMeasurement: 42};},
     }});
     const context = {principal, user:{id:principal.userId}, member:{}, cacheScope:'session-a', admitted:true};
-    const denied = await api({url: route}, route, {...context, revalidate: async () => false});
+    const request = (url, body = '') => ({url, async *[Symbol.asyncIterator]() {if (body) yield Buffer.from(body);}});
+    const denied = await api(request(route), route, {...context, revalidate: async () => false});
     assert.equal(denied.status, 403);
     assert.doesNotMatch(JSON.stringify(denied.body), /privateMeasurement/);
-    const allowed = await api({url: route}, route, {...context, revalidate: async () => true});
+    const allowed = await api(request(route), route, {...context, revalidate: async () => true});
     assert.deepEqual(allowed.body, {privateMeasurement:42, cacheScope:'session-a'});
-    const forged = await api({url: route+'?tenantId=another'}, route, {...context, revalidate: async () => true});
+    const forged = await api(request(route+'?tenantId=another'), route, {...context, revalidate: async () => true});
     assert.equal(forged.status, 400);
+    const badRange = await api(request(route, JSON.stringify({range: '90d'})), route, {...context, revalidate: async () => true});
+    assert.equal(badRange.status, 400);
+    const extra = await api(request(route, JSON.stringify({range: '7d', tenantId: 'another'})), route, {...context, revalidate: async () => true});
+    assert.equal(extra.status, 400);
     assert.deepEqual(calls, [principal, principal]);
   }
 });

@@ -1,3 +1,6 @@
+import {historyRequest,type SearchActivityPage,type CallTotals} from './search-activity.mjs';
+import {usageRange, tokenSessionsRequest, type TokenUsage, type TokenSessionPage} from './usage-range.mjs';
+import {replicasImportInput} from './replicas-import-http.mjs';
 import type {IncomingMessage} from 'node:http';
 import {initTRPC, TRPCError, type AnyRouter} from '@trpc/server';
 import {fetchRequestHandler} from '@trpc/server/adapters/fetch';
@@ -15,6 +18,7 @@ export const webRpc = initTRPC.context<WebContext>().create({errorFormatter: ({s
 const t = webRpc;
 const p = t.procedure;
 export const empty = z.object({}).strict().optional();
+const rangeOnly = z.strictObject({range: usageRange.optional()}).optional().transform(value => value ?? {});
 const provider = z.string().regex(/^[a-z0-9-]{1,40}$/);
 const email = z.object({email: z.string().max(254)}).strict();
 export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamReport = TeamReport>() {return {
@@ -28,7 +32,11 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
       return report;
     }),
     usageHighlights: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageHighlights & {cacheScope: string}>('/api/console/usage/highlights')),
-    usageDetails: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details')),
+    callTotals:p.input(rangeOnly).query(({ctx,input})=>ctx.invoke<CallTotals & {cacheScope:string}>('/api/console/usage/calls','POST',input)),
+    usageTokens:p.input(z.strictObject({range:usageRange})).query(({ctx,input})=>ctx.invoke<TokenUsage & {cacheScope:string}>('/api/console/usage/tokens','POST',input)),
+    tokenSessions:p.input(tokenSessionsRequest).query(({ctx,input})=>ctx.invoke<TokenSessionPage & {cacheScope:string}>('/api/console/usage/token-sessions','POST',input)),
+    searchHistory:p.input(historyRequest).query(({ctx,input})=>ctx.invoke<SearchActivityPage & {cacheScope:string}>('/api/console/usage/search-history','POST',input)),
+    usageDetails: p.input(rangeOnly).query(({ctx,input}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details','POST',input)),
     sources: p.input(empty).query(({ctx}) => ctx.invoke<{items: SourceCard[]}>('/api/console/sources')),
     team: p.input(empty).query(({ctx}) => ctx.invoke<T>('/api/console/team')),
     invite: p.input(email).mutation(({ctx,input}) => ctx.invoke<{ok: true; inviteUrl?: string}>('/api/console/team/invite','POST',input)),
@@ -71,7 +79,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     finish: p.input(empty).mutation(({ctx})=>ctx.invoke<{workspaceUrl:string}>('/api/onboarding/finish','POST',{})),
   }),
   integrations: t.router({
-    replicasHistory:p.input(z.object({action:z.literal('connect'),apiKey:z.string().min(1).max(4000)}).strict()).mutation(({ctx,input})=>ctx.invoke<import('../integrations/replicas-import.mjs').ReplicasImportStatus>('/api/integrations/replicas/history','POST',input)),
+    replicasHistory:p.input(replicasImportInput).mutation(({ctx,input})=>ctx.invoke<import('../integrations/replicas-import.mjs').ReplicasImportStatus>('/api/integrations/replicas/history','POST',input)),
     connect: p.input(z.object({provider,apiKey:z.string().max(4000).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok?:boolean;redirectUrl?:string}>('/api/integrations/'+input.provider+'/connect','POST',{apiKey:input.apiKey})),
     retry: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/retry','POST',{})),
     disconnect: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/disconnect','POST',{})),
@@ -101,7 +109,9 @@ export async function handleProductRpc<R extends AnyRouter>(req: IncomingMessage
   // The internal HTTP method distinguishes writes from tRPC's POST transport.
   const invoke: WebContext['invoke'] = async <T,>(path: string, method?: 'GET' | 'POST', input?: object) => {
     const write = binding && method === 'POST' && path !== '/api/debug/search'
-      && path !== '/api/console/library/privacy/status' && path !== '/api/console/library/recording/status' && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path);
+      && path !== '/api/console/library/privacy/status' && path !== '/api/console/library/recording/status' && !/^\/api\/console\/library\/(sessions|memories)\/(list|read)$/.test(path)
+      // Usage reads send their range and page in a POST body; they change nothing.
+      && !/^\/api\/console\/usage(\/[a-z-]+)?$/.test(path);
     if (write) binding.cache.invalidate(binding.tenant);
     try {return await context.invoke<T>(path, method, input);}
     finally {if (write) binding.cache.invalidate(binding.tenant);}
@@ -113,7 +123,11 @@ export async function handleProductRpc<R extends AnyRouter>(req: IncomingMessage
     const error={error:{message:'Workspace access changed. Sign in again.',code:-32003,data:{code:'FORBIDDEN',httpStatus:403}}};
     return {status:403,body:JSON.stringify(url.searchParams.get('batch')==='1'?url.pathname.slice('/api/trpc/'.length).split(',').map(()=>error):error)};
   }
-  if (remember && response.status === 200) remember(body.length <= maxReloadReportBytes + 64 ? JSON.parse(body).result?.data : undefined);
+  if (remember && response.status === 200) {
+    const data = body.length <= maxReloadReportBytes + 64 ? JSON.parse(body).result?.data : undefined;
+    // A reload opens Usage on its default range; another range's report must not stand in for it.
+    if (operation !== 'console.usageDetails' || data?.days === 30) remember(data);
+  }
   if (binding && [401,402,403,404,409].includes(response.status)) binding.cache.invalidate(binding.tenant);
   return {status:response.status,body};
 }

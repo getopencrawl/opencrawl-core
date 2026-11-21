@@ -9,13 +9,13 @@ export const suggestionEventSchema=z.discriminatedUnion('stage',[
   z.object({...common,...identity,stage:z.literal('observed')}).strict(),
   z.object({...common,...identity,stage:z.enum(['skipped','dropped']),reason,checkId:checkId.optional()}).strict(),
   z.object({...common,...identity,stage:z.literal('requested'),replay:z.boolean()}).strict(),
-  z.object({...common,...identity,stage:z.literal('received'),checkId:checkId.optional(),results:z.number().int().min(0).max(5),outputTokens:z.number().int().min(0).max(1600),latencyMs:z.number().int().min(0).max(30000),replay:z.boolean()}).strict(),
+  z.object({...common,...identity,stage:z.literal('received'),checkId:checkId.optional(),results:z.number().int().min(0).max(5),outputTokens:z.number().int().min(0).max(1600),latencyMs:z.number().int().nonnegative(),replay:z.boolean()}).strict(),
   z.object({...common,...identity,stage:z.literal('handoff'),checkId:checkId.optional(),results:z.number().int().min(1).max(5)}).strict(),
   z.object({...common,stage:z.literal('feedback'),checkId,rating:z.enum(['useful','irrelevant','distracting','stale','duplicate']),source:z.enum(['user','agent']),resultIndex:z.number().int().min(0).max(4).optional()}).strict(),
 ]);
 export type SuggestionEvent=z.infer<typeof suggestionEventSchema>;
 export type SuggestionObserver=(principal:Principal,events:SuggestionEvent[])=>Promise<void>;
-export const suggestionEventsSchema=z.object({events:z.array(suggestionEventSchema).min(1).max(24)}).strict();
+export const suggestionEventsSchema=z.object({events:z.array(suggestionEventSchema).min(1)}).strict();
 
 /** Deployment-owned observation. Identity comes from authentication, never the payload.
  * Events are client reports, not proof that the model consumed or benefited from text. */
@@ -25,7 +25,7 @@ export function createSuggestionEvents({authorize,observe,now=Date.now}:{authori
     const parsed=suggestionEventsSchema.safeParse(raw);
     if(!parsed.success)throw Object.assign(Error('Invalid suggestion events'),{status:400});
     const events=parsed.data.events,time=now();
-    if(events.some(e=>Date.parse(e.at)<time-86400000||Date.parse(e.at)>time+300000)||new Set(events.map(e=>e.id)).size!==events.length)throw Object.assign(Error('Invalid event window'),{status:400});
+    if(events.some(e=>Date.parse(e.at)>time+300000)||new Set(events.map(e=>e.id.toLowerCase())).size!==events.length)throw Object.assign(Error('Invalid event window'),{status:400});
     await authorize(p);
     await observe?.(p,events);
     await authorize(p);

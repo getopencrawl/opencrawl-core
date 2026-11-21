@@ -1,20 +1,20 @@
+import {pluginRelease, replicasPolicy} from './plugin-release.mjs';
 import type {CapturePage} from '../application/page-types.mjs';
 import {NATIVE_INSTALL_SH,NPM_INSTALL_COMMAND,nativeInstallCommand,nativePathCommand} from './cli-installation.mjs';
 // Stable core pins a published CLI; continuous publication updates this pin.
-const CLOUD_CLI_VERSION='0.4.127';
+const CLOUD_CLI_VERSION='0.4.154';
 const REPLICAS_SAFE_INSPECTION="Inspect configuration through supported CLI metadata or an allowlist of non-secret fields. Never dump credential-bearing files such as ~/.codex/config.toml, ~/.claude.json, ~/.replicas/config.json, runtime environment files or the process environment. Do not rely on regex redaction: Authorization headers and unknown credential names can be missed. Do not copy provider credentials into tools, messages or evidence.";
-const REPLICAS_RELEASE='https://github.com/getopencrawl/opencrawl-plugins/releases/download/replicas-v0.2.2';
-const replicasAssets=[
-  ['opencrawl-local-claude-code-replicas-0.2.2-linux-x64.zip','b8d7892edff36225312551d3965b81be228d74d6507352a1afe8914707d98728'],
-  ['opencrawl-local-codex-replicas-0.2.2-linux-x64.zip','6c8b0e5a08bcd329519e6769708eee714e0270a823fe49965ddb2602d2c61d39'],
-  ['replicas-codex-policy.mjs','f360fdc73d91b506e369a325219719fc33fb3a96951b807f2f2ad7bda272bcc5'],
-] as const;
+const replicasAssets = ['claude-code','codex'].map(harness => {
+  const archive = pluginRelease.packages.find(pkg => pkg.harness === harness)?.archives?.['linux-x64'];
+  if (!archive) throw new Error('Missing Replicas plugin for '+harness);
+  return archive;
+});
 function replicasPluginSetup(api:string) {
   return `For a fresh Linux x86_64 Replicas workspace, install the released Claude Code and Codex plugins. Their packaged bin/opencrawl-hook reads native sessions and uploads with the workspace identity. No OpenCrawl CLI or daemon runs in the hook. New shared chats are recorded, including user messages, visible intermediate and final assistant messages, tool inputs and outputs. Incognito is unavailable here. Embedded text can contain secrets. File contents, native memories and provider-supplied author IDs are outside this capture guarantee.
 
 Warm preparation: download these files and verify each SHA-256 before extraction or execution:
-${replicasAssets.map(([name,sha])=>sha+'  '+REPLICAS_RELEASE+'/'+name).join('\n')}
-Install the full packages, including their skills, through each harness's workspace-local marketplace as the runtime agent user with its actual HOME. Preserve executable permissions. Keep the verified original contents for idempotent setup. Snapshot only static files. If a working legacy collector is present, preserve its hooks, pending data and original ownership; do not activate a second collector for the same harness. On an unsupported platform report the install pending.
+${[...replicasAssets,replicasPolicy].map(asset=>asset.sha256+'  '+asset.url).join('\n')}
+Install the full packages, including their skills, through each harness's workspace-local marketplace as the runtime agent user with its actual HOME. In each workspace-specific copy, omit the oc-incognito, oc-private, opencrawl-private and oc-readonly skill directories and clear the packaged MCP servers so Replicas supplies the single workspace connection. Preserve executable permissions. Keep the verified original contents for idempotent setup. Snapshot only static files. If a working legacy collector is present, preserve its hooks, pending data and original ownership; do not activate a second collector for the same harness. On an unsupported platform report the install pending.
 
 For Claude, enable the package's native hooks. For administrator-managed headless Codex, run node replicas-codex-policy.mjs <absolute-unpacked-codex-root> <absolute-root-owned-copy-of-bin/opencrawl-hook> <absolute-bound-codex-root> on the verified original. Merge the rendered groups once into root-owned /etc/codex/hooks.json. Preserve unrelated policy and replace only OpenCrawl groups from this installation on re-run. In the workspace-specific active Codex plugin copy only, set hooks/hooks.json to {"hooks":{}} after rendering. Keep its skills and metadata. Use the supported administrator review for the protected policy; never write user hook trust. Confirm each event runs each packaged action once.
 

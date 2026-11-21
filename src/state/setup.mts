@@ -4,7 +4,7 @@ import {validateSetupState,type SetupStateRecord,type SetupScope} from '../setup
 import type {ApplicationDatabase} from './postgres.mjs';
 
 export interface SetupState {
-  read(scope:SetupScope):Promise<{record:SetupStateRecord|null;version:string|null}>;
+  read(scope:SetupScope):Promise<{record:SetupStateRecord|null;version:string|null;devinInitialForward?:{installationId:string;forwardSince:string}|null}>;
   save(scope:SetupScope,version:string|null,record:SetupStateRecord):Promise<boolean>;
 }
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -25,26 +25,60 @@ export function createSetupState(database:ApplicationDatabase):SetupState & {rea
             PRIMARY KEY(namespace,tenant_id,user_id),
             CHECK((record->'scope'->>'tenantId') IS NOT NULL AND record->'scope'->>'tenantId'=tenant_id),
             CHECK((record->'scope'->>'userId') IS NOT NULL AND record->'scope'->>'userId'=user_id))`);
+          // Older services strictly validate the v1 record. Keep optional contact times alongside it.
+          await client.query("ALTER TABLE opencrawl_setup_status ADD COLUMN IF NOT EXISTS agent_last_seen jsonb NOT NULL DEFAULT '{}'");
+          await client.query("ALTER TABLE opencrawl_setup_status ADD COLUMN IF NOT EXISTS devin_initial_forward jsonb");
         });
       })().catch(error=>{preparing=undefined;throw error;});
       await preparing;
     },
     async read(input){
       const scope={tenantId:input.tenantId,userId:input.userId};sessionScope(scope);
-      const {rows}=await database.pool.query('SELECT record,revision FROM opencrawl_setup_status WHERE namespace=$1 AND tenant_id=$2 AND user_id=$3',[namespace,scope.tenantId,scope.userId]);
+      const {rows}=await database.pool.query('SELECT record,revision,agent_last_seen,devin_initial_forward FROM opencrawl_setup_status WHERE namespace=$1 AND tenant_id=$2 AND user_id=$3',[namespace,scope.tenantId,scope.userId]);
       if(!rows.length)return {record:null,version:null};
       const row=rows[0];
       if(typeof row.revision!=='string'||!uuid.test(row.revision))throw new Error('Invalid setup revision');
-      return {record:validateSetupState(row.record,scope),version:row.revision};
+      const record = validateSetupState(row.record, scope);
+      for (const installation of record.installations) {
+        for (const client of installation.clients) {
+          const seen = row.agent_last_seen[installation.installationId]?.[client.client];
+          if (typeof seen === 'string' && Number.isFinite(Date.parse(seen))) client.lastSeenAt = seen;
+        }
+      }
+      const initial=row.devin_initial_forward;
+      return {record,version:row.revision,...(scope.userId.startsWith('workload_devin_') &&
+        {devinInitialForward:initial && typeof initial.installationId==='string' && typeof initial.forwardSince==='string' ? initial : null})};
     },
     async save(input,version,value){
       const scope={tenantId:input.tenantId,userId:input.userId};sessionScope(scope);
       if(version!==null&&!uuid.test(version))throw new Error('Invalid setup revision');
       const record=validateSetupState(value,scope);
-      const args=[namespace,scope.tenantId,scope.userId,JSON.stringify(record),randomUUID()];
+      const contacts:Record<string,Record<string,string>> = Object.create(null);
+      for (const installation of record.installations) {
+        for (const client of installation.clients) {
+          if (client.lastSeenAt) {
+            const byAgent = contacts[installation.installationId] ??= {};
+            byAgent[client.client] = client.lastSeenAt;
+            delete client.lastSeenAt;
+          }
+        }
+      }
+      const args=[namespace,scope.tenantId,scope.userId,JSON.stringify(record),randomUUID(),JSON.stringify(contacts)];
+      // The first observed selection is immutable across reconfiguration. A
+      // pre-upgrade installation cannot acquire first-turn consent retroactively.
+      const devin=scope.userId.startsWith('workload_devin_')?record.installations.flatMap(i=>i.clients.filter(c=>c.client==='devin').map(c=>({i,c}))):[];
+      const first=devin[0];
+      const initial=first ? JSON.stringify(devin.length===1 && first.c.installed && first.c.forward && first.c.forwardSince ?
+        {installationId:first.i.installationId,forwardSince:first.c.forwardSince} : {}) : null;
       const result=version===null
-        ?await database.pool.query('INSERT INTO opencrawl_setup_status(namespace,tenant_id,user_id,record,revision) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING',args)
-        :await database.pool.query('UPDATE opencrawl_setup_status SET record=$4::jsonb,revision=$5 WHERE namespace=$1 AND tenant_id=$2 AND user_id=$3 AND revision=$6',[...args,version]);
+        ?await database.pool.query('INSERT INTO opencrawl_setup_status(namespace,tenant_id,user_id,record,revision,agent_last_seen,devin_initial_forward) VALUES($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7::jsonb) ON CONFLICT DO NOTHING',[...args,initial])
+        :await database.pool.query(`UPDATE opencrawl_setup_status SET record=$4::jsonb,revision=$5,agent_last_seen=$6::jsonb,
+          devin_initial_forward=CASE
+            WHEN devin_initial_forward IS NOT NULL AND devin_initial_forward IS DISTINCT FROM $8::jsonb THEN '{}'::jsonb
+            WHEN devin_initial_forward IS NOT NULL THEN devin_initial_forward
+            WHEN jsonb_path_exists(record,'$.installations[*].clients[*] ? (@.client == "devin")') THEN '{}'::jsonb
+            ELSE $8::jsonb END
+          WHERE namespace=$1 AND tenant_id=$2 AND user_id=$3 AND revision=$7`,[...args,version,initial]);
       return result.rowCount===1;
     },
   };

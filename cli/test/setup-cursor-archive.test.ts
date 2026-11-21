@@ -13,12 +13,14 @@ import type {SetupState} from '../src/setup/state.ts';
 const api='https://cursor-fixture.example',scope={api,tenantId:'fixture-tenant',userId:'fixture-user'};
 const installationId='cursor-fixture-installation';
 const platform='darwin-arm64';
-const entry=packageRelease('cursor')!;
-const pin=entry.archives![platform]!;
 const realDir=process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR;
+const published=packageRelease('cursor')!;
+// The checked-in test ZIP keeps its manifest version when the public pin advances.
+const entry=realDir?published:{...published,version:'0.3.0'};
+const pin=published.archives![platform]!;
 const archive=readFileSync(realDir?join(realDir,basename(pin.url)):new URL('./fixtures/published-cursor-test.zip',import.meta.url));
 const metadata=realDir?readFileSync(join(realDir,basename(pin.metadataUrl))):Buffer.from(JSON.stringify({
- schemaVersion:1,harness:'cursor',name:entry.name,version:entry.version,platform,filename:basename(pin.url),
+ schemaVersion:1,harness:'cursor',name:entry.name,version:entry.version,platform,filename:`opencrawl-cursor-${entry.version}-${platform}.zip`,
  sha256:fileHash(archive),executable:'bin/opencrawl-hook',source:['auth.mjs','capture.mjs','io.mjs','lifecycle.mjs','main.mjs','privacy.mjs','redact.mjs','THIRD_PARTY_NOTICES.txt'].map(name=>'runtime/'+name)
 }));
 const release:PluginRelease=realDir?pluginRelease:{...pluginRelease,packages:[{...entry,archives:{[platform]:{...pin,sha256:fileHash(archive),metadataSha256:fileHash(metadata)}}}]};
@@ -73,15 +75,18 @@ test('Cursor offers use the same native version requirement as the archive insta
 test('Cursor selection installs the pinned archive offline, binds both MCP files and resumes on current capture',()=>fixture(async f=>{
  const inventory=setupInventory({...f.options,api,platform:'darwin'});
  expect(inventory.find(row=>row.id==='cursor')).toMatchObject({detected:true,plugin:true,forward:true});
- expect(entry.version).toBe('0.2.2');
+ expect(entry.path).toBe('plugins/cursor');
  const first=await f.install(),row=first.results[0]!;
- expect(row).toMatchObject({client:'cursor',status:'prepared',captureAvailable:true,daemonHandoff:true,source:{ref:entry.ref,version:entry.version}});
+ expect(row).toMatchObject({client:'cursor',status:'prepared',captureAvailable:true,daemonHandoff:true,source:{ref:entry.ref??pluginRelease.ref,version:entry.version}});
  expect(first.humanTasks.map(task=>task.kind)).toEqual(['restart','mcp_auth']);
  for(const name of ['mcp.json','.mcp.json'])expect(read(join(f.dir,name)).mcpServers.opencrawl.url).toBe(api+'/mcp');
  expect(read(join(f.dir,'.opencrawl-binding.json'))).toEqual({schemaVersion:1,api,client:'cursor',owner:f.owner,installationId,configHome:f.configHome,captureMode:'hook'});
  expect(read(join(f.dir,'.cursor-plugin/plugin.json'))).toMatchObject({name:setupPluginIdentity(api).name,hooks:'./hooks/hooks.json',mcpServers:'./mcp.json'});
  for(const alias of ['oc-incognito','oc-private','opencrawl-private','oc-readonly'])expect(readFileSync(join(f.dir,'skills',alias,'SKILL.md'),'utf8')).toContain('MUST NOT communicate with other agents');
  expect(readFileSync(join(f.dir,'skills/oc-import-memories/SKILL.md'),'utf8')).toContain('name: oc-import-memories');
+ const continuation = readFileSync(join(f.dir,'skills/oc-continue/SKILL.md'),'utf8');
+ const canonical = readFileSync(new URL('../../plugins/opencrawl-sessions/shared/skills/oc-continue/SKILL.md',import.meta.url),'utf8');
+ expect(continuation.replaceAll('\r\n','\n')).toBe(canonical.replaceAll('\r\n','\n'));
  const listing=read(join(f.dir,'.cursor-plugin/plugin.json'));
  expect(listing.name).toBe('opencrawl');
  expect(listing.description).toContain('OpenCrawl');

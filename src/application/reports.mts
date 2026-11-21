@@ -30,7 +30,8 @@ export type UsageSection = 'workspace' | 'agents' | 'overlap' | 'ingestion' | 'm
 interface UsageReportBase {
   workspace: string | null;
   team?: boolean;
-  days: number;
+  /** null: every captured day. */
+  days: number | null;
   generatedAt: string;
   /** Failed reads are distinct from an unconfigured service or a measured zero. */
   failedSources?: UsageSource[];
@@ -40,11 +41,11 @@ interface UsageReportBase {
     sources: Array<{name: string; icon: string; account?: string | null; state: string; records: number | null; indexed: number | null; indexedSpecies?: NamedCount[]; lastSyncedAt: string | null; connectedBy?: string | null; units?: [string, string]; rows?: Array<{label: string; count: number}>}>;
     index: null | {sessionEvents: number | null; connectorDocuments: number | null; sources: NamedCount[]; searchMs: number | null; probes?: number[]};
   };
-  /** Measured value; absent until the workspace has been measured. */
+  /** Legacy compatibility field. Current reports return null. */
   value?: ValueReport | null;
   /** Agent-session tokens captured this billing period, when the deployment meters them. */
   capture?: {tokens: number; since: string} | null;
-  members: Array<{name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {shared?: {name: string; observedAt: string}; cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
+  members: Array<{userId?: string; name: string | null; email: string; you: boolean; sources: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; weekEvents: number; lastAt: string | null; setup: {shared?: {name: string; observedAt: string}; cli?: unknown; mcp?: unknown; session?: unknown; client?: string | null}}>;
 }
 interface AgentUsage {
   events: number; lifetimeEvents: number; sessions: number; subagentSessions?: number; messages: number; toolCalls: number; machines: number; opencrawlCalls: number;
@@ -81,8 +82,12 @@ export interface BoardReport {
   next: number | null;
 }
 export interface ConsoleDataAdapter {
+  callTotals?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
+  usageTokens?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenUsage & {cacheScope:string}>;
+  tokenSessions?(input:import('./usage-range.mjs').TokenSessionsRequest,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenSessionPage & {cacheScope:string}>;
+  searchHistory?(input:import('./search-activity.mjs').HistoryRequest,signal:AbortSignal):Promise<import('./search-activity.mjs').SearchActivityPage & {cacheScope:string}>;
   usageHighlights?(signal: AbortSignal): Promise<UsageHighlights & {cacheScope: string}>;
-  usageDetails?(signal: AbortSignal): Promise<UsageDetails & {cacheScope: string}>;
+  usageDetails?(signal: AbortSignal, range?: import('./usage-range.mjs').UsageRange): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;
   search(query: string, signal: AbortSignal, page?: number): Promise<DiagnosticSearch>;
   board(input: {channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;

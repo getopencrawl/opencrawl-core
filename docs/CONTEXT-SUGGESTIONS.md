@@ -61,21 +61,20 @@ core's input/output bounds alone do not cap a provider's internal spend.
 Core retains current-chat exclusion, source visibility checks, exact-quote
 validation and final authorization. An adapter cannot grant access to sources.
 
-## Enable and study suggestions
+## Configure and study suggestions
 
-Install the selected harness plugin, finish its native trust review, then run
-`opencrawl context-suggestions enable --harness claude-code --api https://your-host`.
-Use `status` or `disable` with the same endpoint. Suggestions remain opt-in and
-preserve existing capture choices. Native hooks call the selected deployment;
-there is no default-cloud fallback in the extension.
+Supported clients selected to record new sessions run the trusted plugin's
+suggestion hook by default. Run `opencrawl context-suggestions status --api https://your-host`
+to inspect the effective clients. Use `disable --harness claude-code` or
+`enable --harness claude-code` on the same command and endpoint to override that
+client. Existing saved selections survive the upgrade.
 
 `POST /api/context/suggestions/events` accepts bounded metadata batches through
 the same authentication boundary. `observe` receives observed/skipped/requested/
 received/handoff/dropped events and optional feedback. No prompt, quotation,
 credential or arbitrary log attributes belong in this contract. Without an
-observer, self-host acknowledges and discards reports. The client outbox retains
-at most 512 events for 24 hours and retries on eligible hooks; telemetry is best
-effort. Disabled, excluded, unsupported and untrusted hooks are outside its
+observer, self-host acknowledges and discards reports. The private client outbox retains pending reports across offline periods and
+retries on eligible hooks while their harness remains enabled. Disabled, excluded, unsupported and untrusted hooks are outside its
 observation denominator. A `handoff` means stdout was written for the harness;
 it does not prove model consumption or usefulness. Unreported outcomes are unknown.
 

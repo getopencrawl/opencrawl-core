@@ -9,11 +9,22 @@ import type {ValueReports} from './value-report.mjs';
 import type {SessionOverlap, UsageSource, UsageHighlights, UsageDetails, UsageReport} from './reports.mjs';
 import {consoleFailure} from './console.mjs';
 import {dailyOverlap} from '../sessions/overlap.mjs';
-type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'>;
+type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'> & Partial<Pick<ReturnType<typeof createSessionSearch>, 'tokenTotals' | 'tokenSessions'>>;
+import {rangeDays, tokenSessionsRequest, type UsageRange, type TokenUsage, type TokenSessionPage, type DailyCount, type TokenSession} from './usage-range.mjs';
+import type {SearchActivityRow} from './search-activity.mjs';
+/**
+ * A deployment's usage meter: the stored tokens it charges for, as the level on each UTC
+ * day (total is the level now; a day it did not measure is null). Without one, Usage sums
+ * captured tokens in the index by the day each event happened.
+ */
+export interface TokenLedger {
+  usage(principal: Principal, range: UsageRange, now: number): Promise<{total: number; daily: DailyCount[]; memories?: number}>;
+}
+type Visible = (principal: Principal, rows: SearchActivityRow[]) => Promise<SearchActivityRow[]>;
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
-export interface UsageOptions {principal: Principal; directory: IdentityDirectory; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; values?: ValueReports | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number; log?: Log}
+export interface UsageOptions {principal: Principal; directory: IdentityDirectory; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; values?: ValueReports | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number | null; log?: Log; tokens?: TokenLedger | null; visible?: Visible | null}
 interface IndexReport {sessionEvents: number | null; connectorDocuments: number | null; connectorKinds: Record<string, number>; sources: Array<{name: string; count: number}>; searchMs: number | null; probes: number[]}
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
@@ -27,7 +38,7 @@ const missing = (error: unknown) => errorInfo(error).type === 'index_not_found_e
 export function usageReport(options: UsageOptions & {part: 'highlights'}): Promise<UsageHighlights>;
 export function usageReport(options: UsageOptions & {part: 'details'}): Promise<UsageDetails>;
 export function usageReport(options: UsageOptions): Promise<UsageReport>;
-export async function usageReport({principal, directory, integrations, search, connectors, onboarding, values, captured, tab, days = 30, log = () => {}, part}: UsageOptions & {part?: 'highlights' | 'details'}): Promise<UsageHighlights | UsageDetails | UsageReport> {
+export async function usageReport({principal, directory, integrations, search, connectors, onboarding, captured, tab, days = 30, log = () => {}, part}: UsageOptions & {part?: 'highlights' | 'details'}): Promise<UsageHighlights | UsageDetails | UsageReport> {
   const team = principal.tenantId.startsWith('org_');
   const memberScope = (userId: string) => ({tenantId: principal.tenantId, userId});
   const failedSources = new Set<UsageSource>();
@@ -45,12 +56,11 @@ export async function usageReport({principal, directory, integrations, search, c
   }
 
   async function highlights() {
-    const [organization, value, capture] = await Promise.all([
+    const [organization, capture] = await Promise.all([
       team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
-      values ? soft('value', () => values.read(principal.tenantId)) : null,
       team && captured ? soft('capture', () => captured(principal)) : null,
     ]);
-    return {workspace: organization?.name || (team ? null : 'Personal workspace'), value,
+    return {workspace: organization?.name || (team ? null : 'Personal workspace'), value: null,
       capture: capture ? {tokens: capture.tokens, since: capture.since} : null};
   }
 
@@ -81,8 +91,8 @@ export async function usageReport({principal, directory, integrations, search, c
         if (!search) return {agents: null, overlap: null};
         const now = Date.now();
         const [agents, overlap] = await Promise.all([
-          soft('sessions', () => search.usage(principal, {team: true, days, now}), empty()),
-          soft('overlap', () => search.overlap(principal, {days, now}), {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days, now)} satisfies SessionOverlap),
+          soft('sessions', async () => search.usage(principal, {team: true, days, now, members: (await userRead) ?? []}), empty()),
+          soft('overlap', () => search.overlap(principal, {days: days ?? 365, now}), {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days ?? 365, now)} satisfies SessionOverlap),
         ]);
         return {agents, overlap};
       })(),
@@ -111,7 +121,7 @@ export async function usageReport({principal, directory, integrations, search, c
       ingestion: cards ? {sources, index} : null, ...sessions,
       members: members.map((user, i) => {
         const a: Partial<Usage['people'][number]> = activity.get(user.id) || {};
-        return {name: displayName(user, null), email: user.email, you: user.id === principal.userId,
+        return {userId: user.id, name: displayName(user, null), email: user.email, you: user.id === principal.userId,
           sources: sources.filter(s => s.connectedById === user.id).length,
           sessions: a.sessions || 0, subagentSessions: a.subagentSessions || 0, messages: a.messages || 0, toolCalls: a.toolCalls || 0, weekEvents: a.weekEvents || 0, lastAt: a.lastAt || null, setup: setup[i]};
       }),
@@ -130,13 +140,40 @@ function displayName(user: HostedUser, fallback: string | null = user.email) {
   return [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || fallback;
 }
 
-/** Bind both console read paths to the same trusted deployment adapters. */
+/** Session tokens for Usage: the deployment's meter when it has one, else captured tokens in the index. */
+export async function tokenUsage({principal, search, tokens}: UsageOptions, range: UsageRange, now = Date.now()): Promise<TokenUsage> {
+  if (tokens) return {source: 'meter', range, ...await tokens.usage(principal, range, now)};
+  if (!search?.tokenTotals) throw consoleFailure(503, 'Token usage is unavailable on this deployment.');
+  const {total, daily} = await search.tokenTotals(principal, {team: principal.tenantId.startsWith('org_'), days: rangeDays(range), now});
+  return {source: 'index', range, total, daily};
+}
+
+/** One page of sessions by recent activity. Rows the viewer may not read are left out; totals still count them. */
+export async function tokenSessionPage({principal, search, visible}: UsageOptions, input: unknown, now = Date.now()): Promise<TokenSessionPage> {
+  const {range, offset = 0} = tokenSessionsRequest.parse(input);
+  // Sessions and their tokens always come from the index, which is what a meter measures.
+  if (!search?.tokenSessions) throw consoleFailure(503, 'Token usage is unavailable on this deployment.');
+  const page = await search.tokenSessions(principal, {team: principal.tenantId.startsWith('org_'), days: rangeDays(range), now, offset});
+  if (page.rows.length > 25) throw new Error('Oversized token session page');
+  const asRows = page.rows.map((row, i): SearchActivityRow => ({id: String(i), at: row.lastAt ?? '', userId: row.userId, operation: '', queries: [], harness: row.harness, sessionId: row.sessionId,
+    messageId: null, message: null, returned: null, outcome: 'unknown', delivered: false}));
+  // Without a visibility check to ask, only the viewer's own sessions are listed.
+  const allowed = new Set((visible ? await visible(principal, asRows) : asRows.filter(row => row.userId === principal.userId)).map(row => row.id));
+  return {rows: page.rows.filter((_, i) => allowed.has(String(i))), next: page.more ? offset + 25 : null};
+}
+
+/** Bind every console read path to the same trusted deployment adapters. */
 export function usageServices(options: (principal: Principal) => UsageOptions) {
   return {
     usage: (principal: Principal) => usageReport(options(principal)),
     usageParts: {
       highlights: (principal: Principal) => usageReport({...options(principal), part: 'highlights'}),
-      details: (principal: Principal) => usageReport({...options(principal), part: 'details'}),
+      details: (principal: Principal, range: UsageRange = '30d') => usageReport({...options(principal), days: rangeDays(range), part: 'details'}),
+    },
+    usageTokens: {
+      usage: (principal: Principal, range: UsageRange) => tokenUsage(options(principal), range),
+      sessions: (principal: Principal, input: unknown) => tokenSessionPage(options(principal), input),
     },
   };
 }
+export {rangeDays, type UsageRange, type TokenUsage, type TokenSession} from './usage-range.mjs';

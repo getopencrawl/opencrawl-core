@@ -2,6 +2,7 @@ import type {TenantPrincipal, JsonValue, ObjectStore, SessionBatch} from './type
 import type {DocumentItem, SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
 import {gunzipSync} from 'node:zlib';
+import {expandReplicasPayload} from './replicas-payload.mjs';
 import {MAX_BATCH_BYTES,digest} from './ingest.mjs';
 import {batchDocuments,sourceBatchIdentity} from './indexer.mjs';
 import {withSessionDocumentWrites} from './write-barrier.mjs';
@@ -59,7 +60,8 @@ export async function migrateSessionProjection({realm, principal, store, prefix,
           } else {
             const bytes=sources.get(doc.sourceKey);
             if(!bytes)throw new Error('Session source unavailable; projection preserved');
-            const batch=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}).toString('utf8')) as SessionBatch;
+            const raw=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_BATCH_BYTES+1024*1024}).toString('utf8')) as SessionBatch;
+            const batch=await expandReplicasPayload(store,prefix,{tenantId:principal.tenantId,userId:doc.userId},doc.sourceKey,raw);
             cached=batchDocuments({prefix,key:doc.sourceKey,batch,principal:{tenantId:principal.tenantId,userId:doc.userId}});
             cachedKey=doc.sourceKey;stored=batch;
           }

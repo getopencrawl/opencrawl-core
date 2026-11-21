@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<{children: ReactNode}, {failed: boolean}> 
   render() {return this.state.failed ? <FocusedFrame footer={<SignOut/>}><Notice tone="danger" title="This page couldn’t load">Reload your workspace to try again.</Notice><LinkButton to="/" reloadDocument>Reload workspace</LinkButton></FocusedFrame> : this.props.children;}
 }
 function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {
-  const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board}), [api]);
+  const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({callTotals:api.callTotals,searchHistory:api.searchHistory,usageTokens:api.usageTokens,tokenSessions:api.tokenSessions,usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board}), [api]);
   const libraryAdapter = api.library;
   const onboardingAdapter = useMemo<OnboardingAdapter>(() => ({
     replicasSetup: api.replicasSetup,
@@ -71,7 +71,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     'console.team': consoleResourceKey(api.team), 'console.sources': consoleResourceKey(api.sources),
     'console.usage': consoleResourceKey(dataAdapter, 'usage'),
     'console.usageHighlights': consoleResourceKey(dataAdapter, 'usage-highlights'),
-    'console.usageDetails': consoleResourceKey(dataAdapter, 'usage-details'), ...extensions?.reloadKeys,
+    'console.usageDetails': [...consoleResourceKey(dataAdapter, 'usage-details'), '30d'], ...extensions?.reloadKeys,
   };
   const seeds = data && data.cacheScope === snapshot?.bootstrap.cacheScope
     ? Object.entries(snapshot.reports).flatMap(([name, value]) => reportKeys[name] ? [{key:reportKeys[name], data:value}] : []) : [];
@@ -86,8 +86,8 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const machineSetup = data ? Boolean(data.setup) : document.getElementById('root')?.dataset.setupMode !== 'guided';
   const canSetUpReplicas = data?.workspace.role === 'admin' && data.canInstallReplicas === true && Boolean(api.replicasSetup);
   const routes: ConsoleRoute[] = [
-    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage key={data.cacheScope} status={data.setup} error={error} replicasSetup={canSetUpReplicas ? api.replicasSetup : undefined}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
-    {path:'/',label:'Usage',icon:'usage',element:<UsagePage adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
+    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error} replicasSetup={canSetUpReplicas ? api.replicasSetup : undefined}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
+    {path:'/',label:'Usage',icon:'usage',element:<UsagePage showActivity={data?.searchActivity?data.cacheScope:undefined} adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
     {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canSetUpReplicas={canSetUpReplicas} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},

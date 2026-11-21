@@ -21,6 +21,12 @@ export function projectPath(value:string) {
     }
   }
 }
+export function inHistoryProject(cwd:unknown, project:string|null) {
+  if(project===null)return true;
+  if(typeof cwd!=='string'||!isAbsolute(cwd))return false;
+  const dir=projectPath(cwd);
+  return dir===project||dir.startsWith(project.endsWith(sep)?project:project+sep);
+}
 export function captureExcluded(config:{exclusions?:CaptureExclusions}&Partial<PrivacyOwner>, meta:{harness?:string,sessionId?:string,cwd?:string}) {
   if(config.api&&config.owner&&meta.harness&&meta.sessionId&&sessionPrivate({api:config.api,owner:config.owner},{harness:meta.harness,sessionId:meta.sessionId}))return true;
   const exclusions=config.exclusions;

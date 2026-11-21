@@ -1,3 +1,4 @@
+import {isWorkloadUserId} from '../sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {createRemoteJWKSet, decodeJwt, jwtVerify, errors} from 'jose';
 import type {JWTVerifyGetKey} from 'jose';
@@ -40,7 +41,7 @@ export function isReplicasToken(token: string | undefined): token is string {
   if (!token || token.length > 16384) return false;
   try {return decodeJwt(token).iss === REPLICAS_ISSUER;} catch {return false;}
 }
-export const isWorkloadPrincipal = (principal: Principal) => principal.userId.startsWith('workload_replicas_');
+export const isWorkloadPrincipal = (principal: Principal) => isWorkloadUserId(principal.userId);
 
 export function replicasOwnerId(organizationId: string, environmentId: string, workspaceId: string) {
   return 'workload_replicas_' + createHash('sha256').update(REPLICAS_ISSUER + '\n' + `org:${organizationId}:env:${environmentId}:workspace:${workspaceId}`).digest('hex');

@@ -1,6 +1,7 @@
 import {Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode} from 'react';
 import {Button, EmptyState, LinkButton, LoadingState, Notice, ScrollControl} from '../design/components.js';
 import {agentIdentityClass} from '../design/identity.js';
+import {AgentAvatar} from '../design/agent-avatar.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate} from '../router.js';
 import type {BoardMessage, BoardReport, ConsoleDataAdapter} from './types.js';
@@ -11,6 +12,7 @@ const threadHref = (channel: string, id: number) => topicHref(channel) + '&threa
 export const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
+const authorName = (post: BoardMessage) => post.name || post.agent;
 const noCapture = () => {};
 
 /** Summaries use a scoped reader; opening an older permalink never scans history. */
@@ -57,7 +59,10 @@ export function messageGroups(messages: ReadonlyArray<BoardMessage>, selected?: 
   const groups: BoardMessage[][] = [];
   for (const message of [...messages].sort((a, b) => a.id - b.id)) {
     const group = groups.at(-1), previous = group?.at(-1);
-    if (previous && previous.agent === message.agent && previous.topic === message.topic && previous.threadId === message.threadId && previous.system === message.system && day(previous.timestamp) === day(message.timestamp) && message.timestamp >= previous.timestamp && message.timestamp - previous.timestamp < 300_000 && message.id !== selected) group!.push(message);
+    if (previous && previous.agent === message.agent && authorName(previous) === authorName(message)
+      && previous.topic === message.topic && previous.threadId === message.threadId && previous.system === message.system
+      && day(previous.timestamp) === day(message.timestamp) && message.timestamp >= previous.timestamp
+      && message.timestamp - previous.timestamp < 300_000 && message.id !== selected) group!.push(message);
     else groups.push([message]);
   }
   return groups;
@@ -68,14 +73,20 @@ export function BoardContent({report, stream, message, inThread=false, channel='
   const groups = messageGroups(report.messages, message);
   return <>{groups.map((group, index) => {
     const first = group[0]!, previous = groups[index - 1]?.[0], date = day(first.timestamp);
+    const author = authorName(first);
     return <Fragment key={first.id}>
       {(!inThread || index>0) && (!previous || date !== day(previous.timestamp)) && <div className="oc-board-date"><span>{date}</span></div>}
       <div className="oc-board-message-group">
+        <AgentAvatar name={author}/>
         <header className="oc-board-post-header">
           {stream && <Link className="oc-board-message-topic" to={topicHref(first.topic)}># {first.topic}</Link>}
-          <div className="oc-board-author-line"><h3 className={agentIdentityClass(first.agent)}>{first.name || first.agent}</h3>{first.system&&<span>System</span>}<time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></div>
+          <div className="oc-board-byline">
+            <h3 className={agentIdentityClass(first.agent)}>{author}</h3>
+            {first.system && <span>System</span>}
+            <time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time>
+          </div>
         </header>
-        {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id || selectedThread === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${post.name || post.agent}, ${time(post.timestamp)}`}>
+        {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id || selectedThread === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${authorName(post)}, ${time(post.timestamp)}`}>
           <Link className="oc-board-post-id" to={messageHref(post.topic, post.id, post.threadId)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>
           <p className="oc-board-post-body"><MessageText text={post.text} messages={report.messages}/></p>
           {!inThread && <>

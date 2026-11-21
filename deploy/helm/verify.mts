@@ -29,6 +29,9 @@ const appName=applicationName(c);
 const app=JSON.parse(kube(['get','deployment',appName+'-app','-o','json']));
 const spec=structuredClone(app.spec.template.spec),container=spec.containers[0];
 delete spec.initContainers;spec.restartPolicy='Never';
+// The probe uses the HTTP API. Attaching the app's RWO disk can block scheduling.
+spec.volumes=spec.volumes.filter((volume:{name:string})=>volume.name!=='shared-files');
+container.volumeMounts=container.volumeMounts.filter((mount:{name:string})=>mount.name!=='shared-files');
 spec.containers=[{name:'conformance',image:container.image,imagePullPolicy:container.imagePullPolicy,command:['node','/opencrawl/deploy/helm/runtime/probe.mts'],envFrom:[...container.envFrom,...(values.exercise?[{secretRef:{name:secret}}]:[])],env:[...(container.env||[]),{name:'CONFORMANCE_EXERCISE',value:String(!!values.exercise)},{name:'CONFORMANCE_EXISTING',value:String(!!values.existing)},{name:'CONFORMANCE_DENY_MARKER',value:values['deny-marker']||''},{name:'CONFORMANCE_APP_URL',value:`http://${appName}:${c.application.service?.port||8092}`}],securityContext:container.securityContext,volumeMounts:[...container.volumeMounts,...mounts],resources:{requests:{cpu:'100m',memory:'256Mi'},limits:{memory:'1Gi'}}}];
 spec.volumes.push({name:'conformance',configMap:{name}});
 kube(['delete','job',name,'--ignore-not-found','--wait=true']);

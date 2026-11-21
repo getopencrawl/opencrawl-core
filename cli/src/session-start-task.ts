@@ -5,14 +5,15 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {atomicJson,configDir,withSessionLock} from './session.ts';
 import {apiOrigin,CliError} from './oauth.ts';
 import {boardRequest,saveBoardRegistration} from './board.ts';
-import {captureDir,readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
+import {captureDevinStartup,captureDir,readCaptureConfig,type CaptureConfig} from './capture/runtime.ts';
 import {readSetupState} from './setup/state.ts';
+import {repairFilesGit} from './shared-files.ts';
 
 type StartupHarness='codex'|'claude-code'|'cursor'|'antigravity'|'devin';
 type Binding={api:string;installationId:string;owner:{tenantId:string;userId:string};harness:StartupHarness;sessionId:string};
 type StartupPayload={hook_event_name:'SessionStart';source:string}|{hook_event_name:'sessionStart'}|{hookEventName:'SessionStart'};
 export type SessionStartTask=Binding&{kind:'session-start';id:string;at:number;payload:StartupPayload};
-type Registration={workspace:string;agent:string;session:string;name:string|null;task:string|null};
+type Registration={sharedFiles?:boolean;workspace:string;agent:string;session:string;name:string|null;task:string|null};
 export type StartupObservation={observedAt:number;registration:Registration};
 type State={schemaVersion:1;binding:Binding;pending?:{id:string;at:number};confirmed?:StartupObservation};
 const nativeId=/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/;
@@ -65,7 +66,7 @@ export const startupObservation=(api:string,harness:string,sessionId:string)=>re
 
 /** Normal board commands may wait for the already queued startup; hooks never
  * wait here. Inspect only the five exact current-profile keys, never a directory. */
-export async function waitForStartupRegistration(api:string,sessionId:string,{timeoutMs,signal,check=()=>{}}:{timeoutMs:number;signal?:AbortSignal;check?:()=>void}):Promise<boolean> {
+export async function waitForStartupRegistration(api:string,sessionId:string,{timeoutMs,signal,check=()=>{},onConfirmed}:{timeoutMs:number;signal?:AbortSignal;check?:()=>void;onConfirmed?:(result:StartupObservation,binding:Binding)=>void}):Promise<boolean> {
   const config=readCaptureConfig();
   if(!config?.backgroundStartup||config.api!==api)return true;
   if(!nativeId.test(sessionId)||!Number.isSafeInteger(timeoutMs)||timeoutMs<0)throw invalid();
@@ -82,13 +83,13 @@ export async function waitForStartupRegistration(api:string,sessionId:string,{ti
     const state=readState(binding);
     // A resumed session can have left the server. An old observation does not
     // complete its newer pending bootstrap request.
-    if(!state.pending&&state.confirmed)return true;
+    if(!state.pending&&state.confirmed){onConfirmed?.(state.confirmed,binding);return true;}
     if(!state.pending)throw invalid();
     if(!existsSync(taskFile(state.pending.id))){
       // Success commits the observation before the worker removes its task.
       // Re-read to avoid mistaking that normal completion race for a hold.
       const latest=readState(binding);assertCurrent(binding);
-      if(!latest.pending&&latest.confirmed)return true;
+      if(!latest.pending&&latest.confirmed){onConfirmed?.(latest.confirmed,binding);return true;}
       if(latest.pending?.id!==state.pending.id)continue;
       throw new CliError('BOARD_STARTUP_UNAVAILABLE','Background registration could not complete. Continue your task and inspect OpenCrawl setup and worker status; do not register again.');
     }
@@ -137,14 +138,28 @@ export async function processSessionStartTask(config:CaptureConfig,task:unknown,
   const binding:Binding={api:task.api,installationId:task.installationId,owner:{...task.owner},harness:task.harness,sessionId:task.sessionId};
   if((await import('./incognito-state.ts')).sessionPrivate(config,binding))return;
   const guard=()=>assertCurrent(binding,config);guard();
+  let captureError:unknown;
+  if(task.harness==='devin' && 'source' in task.payload && task.payload.source==='startup') {
+    try {await captureDevinStartup(config,task.sessionId);} catch(error){captureError=error;}
+    guard();
+    if((await import('./incognito-state.ts')).sessionPrivate(config,binding))return;
+    const state=readState(binding);
+    if(state.confirmed && state.confirmed.observedAt>=task.at && state.pending?.id!==task.id) {
+      if(captureError)throw captureError;
+      return;
+    }
+  }
   const result:unknown=await boardRequest(task.api,'bootstrap',{session:task.sessionId,harness:task.harness,workspace:task.owner.tenantId},fetcher,
     {signal:AbortSignal.timeout(10_000),expectedOwner:task.owner,validateBinding:guard});
   guard();if(!registration(result,binding))throw new CliError('BOARD_PROTOCOL_ERROR','Background startup did not confirm the bound native session.');
+  if ((await import('./incognito-state.ts')).sessionPrivate(config,binding)) return;
+  if (result.sharedFiles === true) await repairFilesGit(task.api,task.sessionId);
   await withSessionLock('startup:'+key(binding),async()=>{
     guard();const state=readState(binding);
-    const confirmed:StartupObservation={observedAt:Date.now(),registration:{workspace:result.workspace,agent:result.agent,session:result.session,name:result.name,task:result.task}};
+    const confirmed:StartupObservation={observedAt:Date.now(),registration:{workspace:result.workspace,agent:result.agent,session:result.session,name:result.name,task:result.task,...(result.sharedFiles===true?{sharedFiles:true}:{})}};
     saveBoardRegistration(task.api,task.sessionId,result);
     atomicJson(stateFile(binding),{schemaVersion:1,binding,...(state.pending&&state.pending.id!==task.id?{pending:state.pending}:{}),confirmed});
   });
   guard();
+  if(captureError)throw captureError;
 }

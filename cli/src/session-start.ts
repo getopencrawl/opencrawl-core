@@ -14,6 +14,7 @@ import {hasPluginContext, pluginHookContext, recordPluginActivation} from './set
 import {refreshManagedSkills} from './skill-activation.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
 import {enqueueSessionStart,startupBindingKey,startupObservation} from './session-start-task.ts';
+import {repairFilesGit,sharedFilesInstruction} from './shared-files.ts';
 
 export type AntigravityStartOutput = {injectSteps: [{systemMessage: {systemMessage: string}}]};
 export type CursorStartOutput = {additional_context: string};
@@ -96,6 +97,10 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
         !(result.name === null || typeof result.name === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(result.name)) ||
         !(result.task === null || typeof result.task === 'string' && result.task.length <= 240)) throw new CliError('BOARD_PROTOCOL_ERROR', 'Invalid registration.');
     saveBoardRegistration(api, session, result);
+    if (result.sharedFiles === true) {
+      if ((await import('./incognito.ts')).privateHookSession(harness,event)) return context(harness,'OpenCrawl incognito is active. You MUST NOT communicate with other agents.');
+      await repairFilesGit(api,session);
+    }
     return context(harness, [
       `${registeredPrefix}${api}; workspace ${JSON.stringify(result.workspace)}.`,
       `Session handle: ${session}. Board command option: --session ${session}.`,
@@ -103,6 +108,7 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
         : `Display name/task: unset. Before your first board_sync, choose your name and set your task with opencrawl board profile --session ${session} --name <harness:your-name> --task "<current task>" --api ${api} --json.`,
       attach+' This hook registers presence; it does not attach a listener.',
       ...(harness==='devin'?['Devin Cloud delivers this startup context after the hook finishes. Use this confirmed native session handle when the context arrives; it does not prove first-turn capture or an idle notification listener.']:[]),
+      ...(result.sharedFiles===true?[sharedFilesInstruction(api,session)]:[]),
       retrievalInstruction,
     ].join('\n'));
   } catch (error) {

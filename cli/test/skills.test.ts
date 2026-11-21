@@ -249,7 +249,7 @@ test('approved capture setup installs skills without replacing existing hooks or
   expect(result.backfill.status).toBe('skipped');
 }));
 
-test('companion skill is delivered on upgrade and an unrelated local skill is preserved',()=>fixture(async home=>{
+test('refresh installs companion skills and preserves each local conflict independently',()=>fixture(async home=>{
   const options={home,env:{},clients:['gemini'],which:()=>null},api='https://self-host.example';
   const parent=join(home,'.agents','skills');
   mkdirSync(join(parent,'opencrawl'),{recursive:true});
@@ -257,7 +257,15 @@ test('companion skill is delivered on upgrade and an unrelated local skill is pr
   const skill=join(parent,'oc-import-memories','SKILL.md');
   expect(readFileSync(skill,'utf8')).toContain('name: oc-import-memories');
   expect((await agentSkills('status',api,options)).results[0]?.status).toBe('current');
+  const continuation = join(parent, 'oc-continue');
+  const canonical = readFileSync(resolve(import.meta.dir, '../../plugins/opencrawl-sessions/shared/skills/oc-continue/SKILL.md'), 'utf8');
+  expect(readFileSync(join(continuation, 'SKILL.md'), 'utf8')).toBe(canonical);
+  rmSync(continuation, {recursive: true});
   writeFileSync(skill,'my personal skill');
   expect((await agentSkills('install',api,options)).results[0]?.status).toBe('conflict');
   expect(readFileSync(skill,'utf8')).toBe('my personal skill');
+  expect(readFileSync(join(continuation, 'SKILL.md'), 'utf8')).toBe(canonical);
+  writeFileSync(join(continuation, 'SKILL.md'), 'locally edited continuation');
+  expect((await agentSkills('refresh', api, options)).results[0]?.status).toBe('conflict');
+  expect(readFileSync(join(continuation, 'SKILL.md'), 'utf8')).toBe('locally edited continuation');
 }));

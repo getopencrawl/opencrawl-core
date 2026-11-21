@@ -1,8 +1,14 @@
 #!/bin/sh
-# Native install; --setup opens the setup wizard after a successful install.
+# Native install with an optional interactive handoff after installation.
 set -eu
-setup=false
-if [ "${1:-}" = --setup ]; then setup=true; shift; fi
+handoff=
+case "${1:-}" in
+  --setup|--connect|--capture-new) handoff=$1; shift ;;
+esac
+if [ "$handoff" = --connect ] && [ "${1:-}" = --api ]; then
+  export OPENCRAWL_API_URL="${2:?Missing workspace address after --api}"
+  shift 2
+fi
 version=${1:-latest}
 case "$version" in
   latest|next)
@@ -11,7 +17,7 @@ case "$version" in
     ;;
 esac
 if ! printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
-  echo 'Usage: install.sh [--setup] [latest|VERSION]' >&2; exit 1
+  echo 'Usage: install.sh [--setup | --connect [--api URL] | --capture-new] [latest|VERSION]' >&2; exit 1
 fi
 case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) echo 'Use install.ps1 on Windows.' >&2; exit 1 ;; esac
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=x64 ;; *) echo 'Unsupported CPU architecture.' >&2; exit 1 ;; esac
@@ -33,14 +39,34 @@ if [ ! -s "$scratch/package/bin/opencrawl" ]; then echo 'OpenCrawl archive has n
 chmod 755 "$scratch/package/bin/opencrawl"
 "$scratch/package/bin/opencrawl" install
 
-if [ "$setup" = true ]; then
-  entry="${OPENCRAWL_INSTALL_DIR:-$HOME/.local/bin}/opencrawl"
-  if [ -t 0 ] && [ -t 2 ]; then
+connect_agent() {
+  if [ "$handoff" = --connect ] && [ "$os" = linux ]; then
+    "$entry" login && "$entry" collect install
+  else
     "$entry" setup
+  fi
+}
+
+if [ -n "$handoff" ]; then
+  entry="${OPENCRAWL_INSTALL_DIR:-$HOME/.local/bin}/opencrawl"
+  if [ "$handoff" = --capture-new ]; then
+    "$entry" provision --capture-new --json
+  elif [ -t 0 ] && [ -t 2 ]; then
+    connect_agent
   elif [ -t 2 ] && terminal=$(tty <&2) && [ -r "$terminal" ]; then
     # Bun needs the actual terminal device for keyboard input on macOS.
-    "$entry" setup <"$terminal"
+    connect_agent <"$terminal"
   else
-    echo 'Run opencrawl setup in a terminal to continue.'
+    if [ "$handoff" = --connect ] && [ -n "${OPENCRAWL_API_URL:-}" ]; then
+      printf 'Use --api %s on the following commands.\n' "$OPENCRAWL_API_URL"
+    fi
+    if [ "$handoff" = --connect ] && [ "$os" = linux ]; then
+      echo 'Run opencrawl login and then opencrawl collect install in a terminal to continue.'
+    else
+      echo 'Run opencrawl setup in a terminal to continue.'
+      echo 'For unattended OpenCrawl Cloud installation, follow https://getopencrawl.com/agents.md and use opencrawl signup --json on a blank profile.'
+    fi
   fi
+elif [ ! -t 2 ]; then
+  echo 'For a request to connect all agents and capture future sessions, run opencrawl provision --capture-new --json. It reuses the current workspace or creates a private one on a blank host. Guide: https://getopencrawl.com/agents.md'
 fi

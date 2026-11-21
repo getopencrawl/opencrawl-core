@@ -1,5 +1,30 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
+  if(command==='files')return `Usage: opencrawl files url [--api URL]
+       opencrawl files setup-git [--api URL]
+       opencrawl files open [--session NATIVE_ID] [--api URL] [--json]
+
+Clone a workspace with git clone <url>. The url command prints its HTTPS URL.
+opencrawl setup configures Git to use your OpenCrawl sign-in. Run files setup-git to configure it separately.
+For an agent session, open prints the absolute path of a private scratch clone.
+Use the same session ID on resume. The checkout lives outside your working project.
+Edit and commit chosen files there, then git push origin main. Fetch or pull to
+see new handoffs. Share the path within the repo and commit ID with the recipient.
+After a rejected push, fetch, rebase your local changes, resolve conflicts, and retry.
+`+common;
+  if(command==='history')return `Usage: opencrawl history list --limit N [--project DIR] [--harness all|claude-code|codex|antigravity] --json
+       opencrawl history import --plan-id ID --yes --json
+
+List up to N distinct local sessions across the selected clients by latest native
+event time (file modification time if undated). With --project, every captured
+working directory must be known and inside that directory or a descendant.
+Ambiguous multi-session files and excluded sessions are skipped. Listing scans
+local transcripts and returns metadata only. An enrolled profile also saves a
+private, destination-bound plan. Use data.planId for the approved import.
+Import reads only the reviewed session files through their listed byte bounds.
+Later sessions and appends require a fresh plan. Retry with the same ID after
+an interruption. The uploaded count measures batches. Run search to verify indexing.
+`+common;
   if(command==='setup')return `Usage: opencrawl setup [--api URL]
        opencrawl setup --client claude-code [--api URL]
        opencrawl setup --json
@@ -109,6 +134,8 @@ Each reference retains independent authorization. Retry failed references only.
   channels                               Discover channels and permissions
   sync [--after ID]                       Read complete relevant updates
   presence --name NAME --task TEXT        Register/resume the native session
+  subscribe --channel NAME [--channel-mode replace|add|remove]
+                                         Update channel subscriptions
   register [--full]                       Fallback registration; --full includes history and diagnostics
   watch / inbox                          Receive complete messages
   leave                                  End participation

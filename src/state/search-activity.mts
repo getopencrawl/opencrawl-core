@@ -1,0 +1,233 @@
+import {createHash,randomUUID,randomBytes,createCipheriv,createDecipheriv} from 'node:crypto';
+import type {ApplicationDatabase} from './postgres.mjs';
+import type {Principal} from '../identity/types.mjs';
+import {historyRequest,type HistoryRequest,type SearchActivityPage,type CallTotals,type SearchActivityRow} from '../application/search-activity.mjs';
+import {usageRange,type UsageRange} from '../application/usage-range.mjs';
+import {isSessionHarness} from '../sessions/types.mjs';
+import {maskPatterns} from '../sessions/credential-patterns.mjs';
+
+const windowStart = "((now() at time zone 'UTC')::date - 29)";
+const pageSize=25;
+const scope=(p:Principal)=>{
+  if(!p?.tenantId || !p.userId) throw Error('Verified activity scope required');
+  return [p.tenantId,p.userId];
+};
+function readScope(p:Principal){
+  if(p?.captureAccess!==undefined)throw Object.assign(Error('Workspace membership required'),{status:403});
+  return scope(p);
+}
+const record=(v:unknown):Record<string,unknown> => v && typeof v==='object' ? v as Record<string,unknown> : {};
+const text=(s:unknown,limit:number)=>typeof s==='string'?maskPatterns(s.replaceAll('\0','')).slice(0,limit):null;
+export function searchDetail(input:unknown){
+  const args=record(input), current=record(args.currentSession);
+  return {query:text(args.query,4000),harness:isSessionHarness(current.harness)?current.harness:null,
+    sessionId:typeof current.sessionId==='string'&&current.sessionId.length<=200&&!current.sessionId.includes('\0')?current.sessionId:null};
+}
+export const checkEventKey=(harness:string,sessionId:string,eventId:string)=>createHash('sha256').update(JSON.stringify([harness,sessionId,eventId])).digest('hex');
+export interface SearchEntry {
+  kind:'agent'|'proactive'; operation:string; queries:string[]; harness?:string|null; sessionId?:string|null;
+  eventKey?:string; messageId?:string; message?:string; returned?:number; failed?:boolean;
+}
+export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'namespace'|'transaction'>) {
+  const {pool,namespace}=database;
+  let cursorKey:Buffer;
+  function cursor(position:{at:string;id:string},audience:string){
+    const nonce=randomBytes(12),cipher=createCipheriv('aes-256-gcm',cursorKey,nonce);
+    cipher.setAAD(Buffer.from(audience));
+    const body=Buffer.concat([cipher.update(JSON.stringify([position.at,position.id])),cipher.final()]);
+    return Buffer.concat([nonce,cipher.getAuthTag(),body]).toString('base64url');
+  }
+  function position(token:string,audience:string):[string,string]{
+    try{
+      const bytes=Buffer.from(token,'base64url');
+      const cipher=createDecipheriv('aes-256-gcm',cursorKey,bytes.subarray(0,12));
+      cipher.setAAD(Buffer.from(audience));cipher.setAuthTag(bytes.subarray(12,28));
+      return JSON.parse(Buffer.concat([cipher.update(bytes.subarray(28)),cipher.final()]).toString());
+    }catch{throw Object.assign(Error('Invalid search history cursor'),{status:400,expose:true});}
+  }
+  const dayUpsert=`insert into opencrawl_call_days(namespace,tenant_id,day,calls)
+    values ($1,$2,(now() at time zone 'UTC')::date,1)
+    on conflict(namespace,tenant_id,day) do update set calls=opencrawl_call_days.calls+1`;
+  const activity = {
+    async ready(){
+      await database.transaction(async db=>{
+        await db.query("select pg_advisory_xact_lock(hashtextextended('oc:search-activity-schema',0))");
+        await db.query(`create table if not exists opencrawl_activity_start(namespace text primary key,cursor_key bytea not null,started_at timestamptz not null default now());
+          create table if not exists opencrawl_call_days(namespace text not null,tenant_id text not null,day date not null,calls bigint not null,primary key(namespace,tenant_id,day));
+          alter table opencrawl_call_days add column if not exists earlier_calls bigint not null default 0;
+          create table if not exists opencrawl_prior_call_receipts(namespace text not null,tenant_id text not null,id uuid not null,at timestamptz not null,
+            primary key(namespace,tenant_id,id));
+          create index if not exists opencrawl_prior_call_expiry on opencrawl_prior_call_receipts(namespace,at);
+          create table if not exists opencrawl_activity_session_gates(namespace text not null,tenant_id text not null,user_id text not null,
+            session_hash text not null,erased boolean not null default false,primary key(namespace,tenant_id,user_id,session_hash));
+          create table if not exists opencrawl_search_history(namespace text not null,tenant_id text not null,user_id text not null,
+            kind text not null, id uuid primary key, at timestamptz(3) not null default clock_timestamp(),
+            operation text not null, queries text[] not null, harness text, session_id text, event_key text, message_id text, message text,
+            returned integer, failed boolean not null, delivered boolean not null default false,
+            unique(namespace,tenant_id,user_id,event_key));
+          alter table opencrawl_search_history alter column failed drop not null;
+          create index if not exists opencrawl_search_history_linked on opencrawl_search_history(namespace,tenant_id,kind,at desc,id desc) where session_id is not null and harness is not null;
+          create index if not exists opencrawl_search_history_personal on opencrawl_search_history(namespace,tenant_id,user_id,kind,at desc,id desc) where session_id is null or harness is null;
+          create index if not exists opencrawl_search_history_expiry on opencrawl_search_history(namespace,at);
+          create index if not exists opencrawl_search_history_session on opencrawl_search_history(namespace,tenant_id,user_id,harness,session_id);
+          create table if not exists opencrawl_search_days(namespace text not null,tenant_id text not null,day date not null,
+            agent bigint not null default 0,proactive bigint not null default 0,non_silent bigint not null default 0,delivered bigint not null default 0,
+            primary key(namespace,tenant_id,day));`);
+        await db.query('insert into opencrawl_activity_start(namespace,cursor_key) values($1,$2) on conflict do nothing',[namespace,randomBytes(32)]);
+        cursorKey=(await db.query('select cursor_key from opencrawl_activity_start where namespace=$1',[namespace])).rows[0].cursor_key;
+      });
+    },
+    async agentCall(p:Principal,entry?:SearchEntry){
+      if(entry)await activity.search(p,entry);
+      else await pool.query(dayUpsert,[namespace,scope(p)[0]]);
+    },
+    async search(p:Principal,entry:SearchEntry){
+      const args=[namespace,...scope(p),entry.kind,randomUUID(),entry.operation,entry.queries.slice(0,3).map(q=>text(q,4000)),
+        entry.harness??null,entry.sessionId??null,entry.eventKey??null,text(entry.messageId,200),text(entry.message,500),entry.returned??null,entry.failed??false,
+        entry.harness&&entry.sessionId?checkEventKey(entry.harness,entry.sessionId,''):null];
+      // The receipt and its daily totals commit together. Native-event replays increment neither.
+      await pool.query(`with session_gate as (
+        insert into opencrawl_activity_session_gates(namespace,tenant_id,user_id,session_hash)
+        select $1,$2,$3,$15::text where $15 is not null
+        on conflict(namespace,tenant_id,user_id,session_hash) do update set erased=opencrawl_activity_session_gates.erased
+        returning erased), counted as (
+        insert into opencrawl_call_days(namespace,tenant_id,day,calls)
+        select $1,$2,(now() at time zone 'UTC')::date,1 where $4='agent'
+        on conflict(namespace,tenant_id,day) do update set calls=opencrawl_call_days.calls+1), added as (
+        insert into opencrawl_search_history(namespace,tenant_id,user_id,kind,id,operation,queries,harness,session_id,event_key,message_id,message,returned,failed)
+        select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14 where not exists(select 1 from session_gate where erased)
+        on conflict(namespace,tenant_id,user_id,event_key) do nothing returning at,kind,returned)
+        insert into opencrawl_search_days(namespace,tenant_id,day,agent,proactive,non_silent)
+        select $1,$2,(at at time zone 'UTC')::date,(kind='agent')::int,(kind='proactive')::int,
+          (kind='proactive' and coalesce(returned,0)>0)::int from added
+        on conflict(namespace,tenant_id,day) do update set agent=opencrawl_search_days.agent+excluded.agent,
+          proactive=opencrawl_search_days.proactive+excluded.proactive,non_silent=opencrawl_search_days.non_silent+excluded.non_silent`,args);
+    },
+    async trackingStart():Promise<string>{
+      const result=await pool.query('select started_at from opencrawl_activity_start where namespace=$1',[namespace]);
+      return result.rows[0].started_at.toISOString();
+    },
+    /** Import source receipts from before live tracking. Old tool requests have
+     * no verified session, query text or outcome. Their rows are owner-only. */
+    async importAgentCalls(tenantId:string,calls:PriorAgentCall[]){
+      if(!tenantId||calls.length>256)throw Error('Invalid prior call batch');
+      if(!calls.length)return;
+      await pool.query(`with inputs as materialized (
+        select distinct on (id) id,at,owner,operation from jsonb_to_recordset($3::jsonb)
+          as r(id uuid,at timestamptz,owner text,operation text)
+        where owner<>'' and at>=${windowStart} at time zone 'UTC'
+          and at<(select started_at from opencrawl_activity_start where namespace=$1)
+      ), accepted as (
+        insert into opencrawl_prior_call_receipts(namespace,tenant_id,id,at)
+        select $1,$2,id,at from inputs order by id on conflict do nothing returning id
+      ), receipts as materialized (
+        select inputs.*,(at at time zone 'UTC')::date as day from inputs join accepted using(id)
+      ), counted as (
+        insert into opencrawl_call_days(namespace,tenant_id,day,calls,earlier_calls)
+        select $1,$2,day,count(*),count(*) from receipts group by day order by day
+        on conflict(namespace,tenant_id,day) do update set calls=opencrawl_call_days.calls+excluded.calls,
+          earlier_calls=opencrawl_call_days.earlier_calls+excluded.earlier_calls
+      ), searches as (
+        insert into opencrawl_search_history(namespace,tenant_id,user_id,kind,id,at,operation,queries,failed)
+        select $1,$2,owner,'agent',gen_random_uuid(),at,operation,array[]::text[],null from receipts where operation is not null
+        returning at
+      )
+      insert into opencrawl_search_days(namespace,tenant_id,day,agent)
+        select $1,$2,(at at time zone 'UTC')::date,count(*) from searches group by 3 order by 3
+        on conflict(namespace,tenant_id,day) do update set agent=opencrawl_search_days.agent+excluded.agent`,[namespace,tenantId,JSON.stringify(calls)]);
+    },
+    /** Old completed checks may only retain counts and the native-event digest.
+     * Without a verified source session these receipts are readable only by the owner. */
+    async importChecks(tenantId:string,checks:PriorCheck[]){
+      if(!tenantId||checks.length>256)throw Error('Invalid receipt batch');
+      if(!checks.length)return;
+      await pool.query(`with added as (
+        insert into opencrawl_search_history(namespace,tenant_id,user_id,kind,id,at,operation,queries,event_key,returned,failed)
+        select $1,$2,c.owner,'proactive',c.id,c.at,'Context check',array[]::text[],c.key,c.returned,false
+        from jsonb_to_recordset($3::jsonb) as c(owner text,id uuid,at timestamptz,key text,returned int)
+        where c.at>=${windowStart} at time zone 'UTC' and c.owner<>'' and c.key~'^[a-f0-9]{64}$'
+          and c.returned between 0 and 5
+        on conflict do nothing returning at,returned)
+        insert into opencrawl_search_days(namespace,tenant_id,day,proactive,non_silent)
+        select $1,$2,(at at time zone 'UTC')::date,count(*),count(*) filter(where returned>0) from added group by 3
+        on conflict(namespace,tenant_id,day) do update set proactive=opencrawl_search_days.proactive+excluded.proactive,
+          non_silent=opencrawl_search_days.non_silent+excluded.non_silent`,[namespace,tenantId,JSON.stringify(checks)]);
+    },
+    async handoffs(p:Principal,keys:string[]){
+      if(!keys.length)return;
+      await pool.query(`with marked as (
+        update opencrawl_search_history set delivered=true where namespace=$1 and tenant_id=$2 and user_id=$3
+        and kind='proactive' and returned>0 and event_key=any($4::text[]) and not delivered returning (at at time zone 'UTC')::date as day)
+        update opencrawl_search_days d set delivered=d.delivered+m.n from (select day,count(*) n from marked group by day) m
+        where d.namespace=$1 and d.tenant_id=$2 and d.day=m.day`,[namespace,...scope(p),keys]);
+    },
+    /** Daily counters are kept indefinitely; only individual searches expire after 30 days. */
+    async totals(p:Principal,range:UsageRange='30d'):Promise<CallTotals>{
+      const window=usageRange.parse(range);
+      const {rows}=await pool.query(`with b as (
+          select s.started_at,(now() at time zone 'UTC')::date as today,
+            least(s.started_at::date,(select min(day) from opencrawl_search_days where namespace=$1 and tenant_id=$2),
+              (select min(day) from opencrawl_call_days where namespace=$1 and tenant_id=$2)) as tracked
+          from opencrawl_activity_start s where s.namespace=$1
+        ), r as (select *,case $3 when '7d' then today-6 when '30d' then today-29 else tracked end as from_day from b),
+        sd as (select day,agent,proactive,non_silent,delivered from opencrawl_search_days where namespace=$1 and tenant_id=$2 and day>=(select from_day from r)),
+        cd as (select day,calls,earlier_calls from opencrawl_call_days where namespace=$1 and tenant_id=$2 and day>=(select from_day from r))
+        select to_char(r.tracked,'YYYY-MM-DD') as tracked,
+          (select coalesce(sum(calls),0) from cd) as calls,(select coalesce(sum(earlier_calls),0) from cd) as earlier,
+          (select coalesce(sum(agent),0) from sd) as agent,(select coalesce(sum(proactive),0) from sd) as proactive,
+          (select coalesce(sum(non_silent),0) from sd) as non_silent,(select coalesce(sum(delivered),0) from sd) as delivered,
+          (select coalesce(jsonb_agg(jsonb_build_array(to_char(g.day,'YYYY-MM-DD'),case when g.day<r.tracked then null else coalesce(sd.agent,0) end,
+            case when g.day<r.tracked then null else coalesce(sd.non_silent,0) end) order by g.day),'[]')
+            from (select generate_series(r.from_day,r.today,interval '1 day')::date as day) g left join sd using(day)) as daily
+        from r`,[namespace,readScope(p)[0],window]);
+      const r=rows[0];
+      const value=(v:unknown)=>v==null?null:Number(v);
+      return {since:r.tracked+'T00:00:00.000Z',...(Number(r.earlier)>0?{includesEarlierCalls:true}:{}),calls:Number(r.calls),agentSearches:Number(r.agent),proactiveChecks:Number(r.proactive),nonSilent:Number(r.non_silent),delivered:Number(r.delivered),
+        daily:(r.daily as [string,unknown,unknown][]).map(([date,agent,edits])=>({date,agentSearches:value(agent),nonSilent:value(edits)}))};
+    },
+    async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
+      const {kind,before,range,edits}=historyRequest.parse(input);
+      const owner=readScope(p);
+      const audience=JSON.stringify([namespace,...owner,kind,range??'30d',Boolean(edits)]);
+      const start=range==='7d'?"((now() at time zone 'UTC')::date - 6)":windowStart;
+      const window=`namespace=$1 and tenant_id=$2 and kind=$4 and at>=${start} at time zone 'UTC' ${edits?"and kind='proactive' and returned>0":''}
+        ${before?'and (at,id)<($5::timestamptz,$6::uuid)':''}`;
+      const end=`order by at desc,id desc limit ${pageSize+1}`;
+      // Two disjoint index seeks. A workspace's unlinked searches cannot force a
+      // scan through someone else's private history to reach the caller's next page.
+      const {rows}=await pool.query<SearchActivityRow>(`select id,at,user_id as "userId",operation,queries,harness,session_id as "sessionId",
+        message_id as "messageId",message,returned,case when failed is null then 'unknown' when failed then 'failed' else 'complete' end as outcome, delivered
+        from ((select * from opencrawl_search_history where ${window} and session_id is not null and harness is not null ${end})
+          union all (select * from opencrawl_search_history where ${window} and user_id=$3 and (session_id is null or harness is null) ${end})) candidates
+        ${end}`,[namespace,...owner,kind,...before?position(before,audience):[]]);
+      const page=rows.slice(0,pageSize).map(row=>({...row,at:new Date(row.at).toISOString()}));
+      const last=page.at(-1);
+      return {rows:await visible(p,page),next:rows.length>pageSize&&last?cursor(last,audience):null};
+    },
+    async forget(p:Principal,key:{harness:string;sessionId:string}){
+      const owner=[namespace,...scope(p)];
+      await database.transaction(async db=>{
+        await db.query(`insert into opencrawl_activity_session_gates(namespace,tenant_id,user_id,session_hash,erased) values($1,$2,$3,$4,true)
+          on conflict(namespace,tenant_id,user_id,session_hash) do update set erased=true`,[...owner,checkEventKey(key.harness,key.sessionId,'')]);
+        await db.query('delete from opencrawl_search_history where namespace=$1 and tenant_id=$2 and user_id=$3 and harness=$4 and session_id=$5',[...owner,key.harness,key.sessionId]);
+      });
+    },
+    async prune(){
+      await pool.query(`delete from opencrawl_prior_call_receipts where namespace=$1 and (tenant_id,id) in
+        (select tenant_id,id from opencrawl_prior_call_receipts where namespace=$1 and at<${windowStart} at time zone 'UTC'
+          order by at limit 2000 for update skip locked)`,[namespace]);
+      await pool.query(`delete from opencrawl_search_history where id in (select id from opencrawl_search_history where namespace=$1 and at<${windowStart} at time zone 'UTC' order by at limit 2000 for update skip locked)`,[namespace]);
+    },
+  };
+  return activity;
+}
+export interface PriorAgentCall {owner:string;id:string;at:string;operation:string|null}
+export interface PriorCheck {owner:string;id:string;at:string;key:string;returned:number}
+export type SearchActivity=ReturnType<typeof createSearchActivity>;
+
+export function startActivityRetention(activity:SearchActivity){
+  let pass:Promise<void>|undefined;
+  const sweep=()=>{pass??=activity.prune().catch(()=>console.error(JSON.stringify({event:'usage.retention_failed'}))).finally(()=>{pass=undefined;});};
+  const timer=setInterval(sweep,60_000);timer.unref();sweep();
+  return async()=>{clearInterval(timer);await pass;};
+}

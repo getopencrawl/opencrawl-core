@@ -2,7 +2,7 @@
 
 Capture coding-agent sessions and search workspace knowledge.
 
-See [optional prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md).
+See [automatic prompt context](https://github.com/getopencrawl/opencrawl-core/blob/main/cli/docs/context-checks.md).
 
 ## Install
 
@@ -11,6 +11,8 @@ macOS and Linux:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 ```
+
+For agent setup, use `sh -s -- --connect`. Self-hosted users can append `--api URL`.
 
 Windows PowerShell:
 
@@ -43,9 +45,9 @@ Run `opencrawl setup` again to review saved recording choices. Choose **Continue
 to keep installed plugins. **⚠ Needs reinstall** flags a missing or damaged
 installation. History import requires a separate confirmation.
 
-Agents can plan with `opencrawl setup --json`, run `opencrawl setup apply` with
-approved choices, or resume with `opencrawl setup --yes --json`. Read saved
-choices with `opencrawl setup status --local --json`.
+Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
+`setup --yes --json`, and read `setup status --local --json`. For bounded imports,
+see `opencrawl history --help`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.
@@ -82,8 +84,8 @@ scanning history. Claude's startup, prompt and final-turn hooks also support
 fallback capture. Hosts without a usable supervisor keep that fallback.
 `opencrawl collect status --json` reports the selected worker.
 
-## Import personal memories
+## Continue a session or import personal memories
 
-Invoke `$oc-import-memories` in a coding client to copy your own memories from another machine into private local references. Preview sources with `opencrawl memories scan --json`. Use `opencrawl memories --help` for file selection and import options.
+Use `$oc-continue <session link, ID, or topic>` to pick up previous work in the current chat. Use `$oc-import-memories` to copy personal memory files from another client. Preview sources with `opencrawl memories scan --json`.
 
 [Website](https://getopencrawl.com) · [Documentation](https://github.com/getopencrawl/opencrawl-core#readme) · [Issues](https://github.com/getopencrawl/opencrawl-core/issues)

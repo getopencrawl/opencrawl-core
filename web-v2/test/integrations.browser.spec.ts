@@ -19,13 +19,18 @@ for (const viewport of [{width: 1920, height: 900}, {width: 1440, height: 900}, 
     const initialTop = await titleTop();
     expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
     const pane = page.locator('.oc-page-scroll');
-    const box = await pane.boundingBox();
-    if (!box) throw new Error('Expected a visible workspace scroll pane');
-    // The gutter targets the page, including when a card has its own metric scroller.
+    const box = await page.getByRole('main').boundingBox();
+    if (!box) throw new Error('Expected a visible workspace');
+    // Both outer margins of the workspace accept wheel input.
     await page.mouse.move(box.x + 4, box.y + box.height / 2);
     await page.mouse.wheel(0, 500);
     await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBeGreaterThan(300);
     await expect(cards.first()).not.toBeInViewport();
+    expect(await titleTop()).toBe(initialTop);
+
+    await page.mouse.move(box.x + box.width - 4, box.y + box.height / 2);
+    await page.mouse.wheel(0, -500);
+    await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBe(0);
     expect(await titleTop()).toBe(initialTop);
 
     const lastAction = cards.last().getByRole('button', {name: 'Manage'});
@@ -277,7 +282,7 @@ test('the first background measurement appears without waiting for the normal po
   expect(reads).toBe(2);
 });
 
-for(const width of [1440,320]) test(`shared Usage and integration cards keep long metrics inside equal tiles at ${width}px`,async({page})=>{
+for(const width of [1440,320]) test(`integration cards keep long metrics inside equal tiles at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900});
   const rows=Array.from({length:20},(_,i)=>({label:`Collection ${i+1}`,count:i,done:true}));
   const items=[{...source(1),name:'Long breakdown',rows},{...source(2),name:'Short breakdown',rows:[rows[0]!]}];
@@ -297,14 +302,5 @@ for(const width of [1440,320]) test(`shared Usage and integration cards keep lon
   expect(await page.getByRole('article',{name:'Short breakdown'}).evaluate(e=>e.getBoundingClientRect().height)).toBe(height);
   await scroll.press('Tab');
   await expect(imported.getByRole('button',{name:'Manage Long breakdown'})).toBeFocused();
-  await page.route('**/api/console/usage',route=>route.fulfill({json:{workspace:'Example',days:30,generatedAt:new Date().toISOString(),members:[],agents:null,ingestion:{index:null,sources:items.map(item=>({name:item.name,icon:'/assets/connectors/slack.svg',account:'Hidden account subtitle',state:'synced',records:999,rows:[{label:'Importer-only count',count:999}],indexedSpecies:item.rows?.map(row=>({name:row.label,count:row.count})),lastSyncedAt:'2026-11-17T12:00:00Z'}))}}}));
-  await page.goto('/usage');
-  const indexed=page.getByRole('article',{name:'Long breakdown'});
-  await expect(indexed).toHaveClass('oc-integration-card');
-  expect(await indexed.evaluate(e=>e.getBoundingClientRect().height)).toBe(height);
-  await expect(indexed.getByRole('region',{name:'Content in Long breakdown',exact:true})).toHaveAttribute('tabindex','0');
-  await expect(indexed).not.toContainText('Hidden account subtitle');
-  await expect(indexed).not.toContainText('Importer-only count');
-  await expect(indexed.locator('.oc-integration-metrics li')).toHaveCount(20);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

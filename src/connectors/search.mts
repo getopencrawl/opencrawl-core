@@ -182,32 +182,36 @@ export function createConnectorSearch(options: RealmOptions & {tenantId: string}
     /** Exact attribution for one bounded group of authorized connections. */
     async countByConnection(principal: ConnectorPrincipal, bindings: ConnectorBinding[]): Promise<Record<string, ConnectionCount>> {
       if (!Array.isArray(bindings) || new Set(bindings.map(binding => binding.connectionId)).size !== bindings.length) throw new Error('Distinct authorized connections required');
+      // Inventory needs every key. Sorting by frequency can report a nonzero
+      // overall error bound across shards even when every bucket is exact.
       const result = await countQuery(principal, bindings, {connections: {
-        terms: {field: f('connectionId'), size: bindings.length, shard_size: bindings.length, show_term_doc_count_error: true},
-        aggs: {kinds: {terms: {field: f('kind'), size: 30, shard_size: 30, show_term_doc_count_error: true}}},
+        terms: {field: f('connectionId'), size: bindings.length, shard_size: bindings.length, order: {_key: 'asc'}, show_term_doc_count_error: true},
+        aggs: {kinds: {terms: {field: f('kind'), size: 30, shard_size: 30, order: {_key: 'asc'}, show_term_doc_count_error: true}}},
       }});
-      const invalid = () => new Error('Incomplete connector connection counts');
-      const exact = (aggregation: Aggregation | undefined): CountBucket[] => {
-        if (!aggregation || !Array.isArray(aggregation.buckets) || aggregation.doc_count_error_upper_bound !== 0 || aggregation.sum_other_doc_count !== 0) throw invalid();
+      const invalid = (reason: string) => new Error('Incomplete connector connection counts: ' + reason);
+      const exact = (aggregation: Aggregation | undefined, group: string): CountBucket[] => {
+        if (!Array.isArray(aggregation?.buckets)) throw invalid('missing ' + group + ' buckets');
+        if (aggregation.sum_other_doc_count !== 0) throw invalid('omitted ' + group + ' items');
+        if (aggregation.doc_count_error_upper_bound !== 0) throw invalid('uncertain ' + group + ' counts');
         const seen = new Set<string>();
         for (const bucket of aggregation.buckets) {
-          if (!bucket || typeof bucket.key !== 'string' || !bucket.key || seen.has(bucket.key) || !Number.isSafeInteger(bucket.doc_count) || bucket.doc_count < 0 || (bucket.doc_count_error_upper_bound ?? 0) !== 0) throw invalid();
+          if (!bucket || typeof bucket.key !== 'string' || !bucket.key || seen.has(bucket.key) || !Number.isSafeInteger(bucket.doc_count) || bucket.doc_count < 0 || (bucket.doc_count_error_upper_bound ?? 0) !== 0) throw invalid('invalid ' + group + ' bucket');
           seen.add(bucket.key);
         }
         return aggregation.buckets;
       };
       const total = result.hits.total;
-      if (total?.relation !== 'eq' || !Number.isSafeInteger(total.value) || total.value < 0) throw invalid();
+      if (total?.relation !== 'eq' || !Number.isSafeInteger(total.value) || total.value < 0) throw invalid('inexact search total');
       const counts: Record<string, ConnectionCount> = Object.fromEntries(bindings.map(binding => [binding.connectionId, {total: 0, kinds: {}}]));
       let counted = 0;
-      for (const bucket of exact(result.aggregations?.connections)) {
-        if (!Object.hasOwn(counts, bucket.key)) throw invalid();
-        const kinds = exact(bucket.kinds);
-        if (kinds.reduce((sum, kind) => sum + kind.doc_count, 0) !== bucket.doc_count) throw invalid();
+      for (const bucket of exact(result.aggregations?.connections, 'connection')) {
+        if (!Object.hasOwn(counts, bucket.key)) throw invalid('unexpected connection');
+        const kinds = exact(bucket.kinds, 'item type');
+        if (kinds.reduce((sum, kind) => sum + kind.doc_count, 0) !== bucket.doc_count) throw invalid('item types do not sum to connection total');
         counts[bucket.key] = {total: bucket.doc_count, kinds: Object.fromEntries(kinds.map(kind => [kind.key, kind.doc_count]))};
         counted += bucket.doc_count;
       }
-      if (counted !== total.value) throw invalid();
+      if (counted !== total.value) throw invalid('connections do not sum to search total');
       return counts;
     },
     refresh: () => realm.refresh(principal),

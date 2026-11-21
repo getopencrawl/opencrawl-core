@@ -12,7 +12,7 @@ import {pluginHookContext,recordPluginActivation} from './setup/plugin-context.t
 import {configuredToken,workspaceIdentityEnabled} from './workspace-identity.ts';
 import {readSearchContextEvent} from './search-context.ts';
 import {CHECK_HARNESSES,object,hash,checkEvent,checkOutput,type CheckHarness} from './context-check-events.ts';
-import {CheckStore,checkBinding,checkSettings,saveCheckSettings,assertCheckSettings,type CheckTask,type CheckSettings,type CheckInput} from './context-check-state.ts';
+import {CheckStore,checkBinding,checkSettings,updateCheckSettings,assertCheckSettings,type CheckTask,type CheckSettings,type CheckInput} from './context-check-state.ts';
 
 const unavailable=()=>new CliError('CHECK_UNAVAILABLE','Context check unavailable; the agent continues.');
 async function readJson(response:Response):Promise<unknown>{
@@ -91,13 +91,13 @@ async function execute(store:CheckStore,task:CheckTask,checkPlugin:()=>void,{rep
   const text=formatCheck(response);guard();
   if(!object(response)||!Array.isArray(response.results))throw unavailable();
   const checkId=typeof response.checkId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(response.checkId)?response.checkId:undefined;
-  store.record(task,{stage:'received',checkId,results:response.results.length,outputTokens:Number(response.outputTokens),latencyMs:Math.min(30000,Date.now()-started),replay});
+  store.record(task,{stage:'received',checkId,results:response.results.length,outputTokens:Number(response.outputTokens),latencyMs:Math.max(0,Date.now()-started),replay});
   return {text,checkId,results:response.results.length};
 }
 
-/** Opt-in commands are separate from installation, login and capture consent. */
+/** A saved suggestion preference overrides the recording default for its client. */
 export async function contextCheckCommand(args:string[],input:Readable=process.stdin,output:Pick<NodeJS.WriteStream,'write'>=process.stdout):Promise<number>{
-  if(args.includes('--help')){output.write('Usage: opencrawl context-suggestions enable|disable|status|feedback [--harness NAME] [--api ORIGIN] [--json]\nRepeat --harness to select clients. Enable sends redacted prompt text and bounded recent context to your selected deployment, using its credit policy. Disabled by default. Native plugin installation and hook trust review are required.\n');return 0;}
+  if(args.includes('--help')){output.write('Usage: opencrawl context-suggestions enable|disable|status|feedback [--harness NAME] [--api ORIGIN] [--json]\nRepeat --harness to select clients. Suggestions are on by default for clients recording new sessions. Their trusted native hooks send redacted prompts and bounded recent context to the selected deployment under its credit policy. Disable without --harness to turn off all clients.\n');return 0;}
   const silent=args[0]==='hook'||args[0]==='run';let store:CheckStore|undefined,telemetryGuard:()=>void=()=>{};
   try{
     const {values,positionals}=parseArgs({args,allowPositionals:true,options:{api:{type:'string'},harness:{type:'string',multiple:true},task:{type:'string'},check:{type:'string'},rating:{type:'string'},source:{type:'string'},result:{type:'string'},json:{type:'boolean'},help:{type:'boolean'}}});
@@ -106,23 +106,23 @@ export async function contextCheckCommand(args:string[],input:Readable=process.s
     if(['enable','disable','status'].includes(action!)){
       const selected=values.harness??[];
       if(selected.some(h=>!CHECK_HARNESSES.includes(h as CheckHarness))||action==='enable'&&!selected.length)throw new CliError('INVALID_USAGE','Use context-suggestions enable --harness codex|claude-code|cursor|antigravity|devin. Repeat --harness as needed.',64);
-      const existing=checkSettings(binding);
       if(action==='enable'&&config?.hookOwnership!=='plugin')throw new CliError('CHECK_PLUGIN_REQUIRED','Run opencrawl setup to install the native plugin before enabling prompt checks.');
-      const settings=action==='status'?existing:saveCheckSettings(binding,action==='enable'?[...existing?.harnesses??[],...selected as CheckHarness[]]:selected.length?(existing?.harnesses??[]).filter(h=>!selected.includes(h)):[]);
-      const data={api,harnesses:settings?.harnesses??[],enabled:Boolean(settings?.harnesses.length)};
+      const settings=action==='status' ? checkSettings(binding,config!)
+        : await updateCheckSettings(binding,selected.length?selected as CheckHarness[]:CHECK_HARNESSES,action==='enable');
+      const data={api,harnesses:settings.harnesses,enabled:settings.harnesses.length>0};
       output.write(values.json?JSON.stringify({schemaVersion:1,data})+'\n':`Context suggestions ${data.enabled?'enabled for '+data.harnesses.join(', '):'disabled'} at ${api}.\n`+(action==='enable'?'Checks use this deployment’s credit policy. Run opencrawl setup, review any native hook trust prompt, then start a fresh session. Existing recording choices are unchanged.\n':''));return 0;
     }
     if(action==='feedback'){
-      const harness=values.harness?.[0] as CheckHarness,settings=checkSettings(binding);
-      if(values.harness?.length!==1||!settings?.harnesses.includes(harness)||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(values.check??'')||!['useful','irrelevant','distracting','stale','duplicate'].includes(values.rating??'')||!['user','agent'].includes(values.source??'')||values.result!==undefined&&!/^[0-4]$/.test(values.result))throw new CliError('INVALID_USAGE','Use context-suggestions feedback --harness NAME --check ID --rating useful|irrelevant|distracting|stale|duplicate --source user|agent [--result 0..4].');
+      const harness=values.harness?.[0] as CheckHarness,settings=checkSettings(binding,config!);
+      if(values.harness?.length!==1||!settings.harnesses.includes(harness)||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(values.check??'')||!['useful','irrelevant','distracting','stale','duplicate'].includes(values.rating??'')||!['user','agent'].includes(values.source??'')||values.result!==undefined&&!/^[0-4]$/.test(values.result))throw new CliError('INVALID_USAGE','Use context-suggestions feedback --harness NAME --check ID --rating useful|irrelevant|distracting|stale|duplicate --source user|agent [--result 0..4].');
       store=new CheckStore(settings,harness);telemetryGuard=()=>assertCheckSettings(settings,harness);
       const event:SuggestionEvent={id:randomUUID(),at:new Date().toISOString(),harness,stage:'feedback',checkId:values.check!,rating:values.rating as Extract<SuggestionEvent,{stage:'feedback'}>['rating'],source:values.source as 'user'|'agent',...(values.result!==undefined?{resultIndex:Number(values.result)}:{})};
       store.queue(event);const report=await flushSuggestionEvents(store,telemetryGuard);
-      output.write(JSON.stringify({schemaVersion:1,data:{feedbackId:event.id,status:report?.accepted.includes(event.id)?'submitted':report?.rejected?'rejected':'queued'}})+'\n');return report?.rejected?1:0;
+      output.write(JSON.stringify({schemaVersion:1,data:{feedbackId:event.id,status:report?.accepted.includes(event.id)?'submitted':report?.rejected.includes(event.id)?'rejected':'queued'}})+'\n');return report?.rejected.includes(event.id)?1:0;
     }
     if(action!=='hook'&&action!=='run'||values.harness?.length!==1||!CHECK_HARNESSES.includes(values.harness[0] as CheckHarness))throw unavailable();
-    const harness=values.harness[0] as CheckHarness,settings=checkSettings(binding);
-    if(!settings?.harnesses.includes(harness))return 0;
+    const harness=values.harness[0] as CheckHarness,settings=checkSettings(binding,config!);
+    if(!settings.harnesses.includes(harness))return 0;
     const plugin=pluginHookContext(api,harness);if(!plugin)return 0;
     const fingerprint=hash(JSON.stringify(plugin)),checkPlugin=()=>{if(hash(JSON.stringify(pluginHookContext(api,harness)))!==fingerprint)throw unavailable();};
     store=new CheckStore(settings,harness);telemetryGuard=checkPlugin;

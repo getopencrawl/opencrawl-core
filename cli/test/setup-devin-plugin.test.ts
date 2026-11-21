@@ -4,12 +4,14 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {scopedPluginIdentity as setupPluginIdentity} from '../src/setup/plugin-identity.ts';
-import {writeDevinPlugin,setupPluginFiles} from '../src/setup/plugins.ts';
+import {setupPluginFiles} from './fixtures/legacy-plugins/prepare.ts';
+import {writeDevinPlugin} from '../src/setup/plugins.ts';
 import {readDevinPlugin,startDevinPlugin} from '../src/setup/devin-plugin.ts';
 import {pluginHookContext,recordPluginActivation} from '../src/setup/plugin-context.ts';
 import {setupCommand} from '../src/setup/command.ts';
 import {readSetupState,updateSetupState} from '../src/setup/state.ts';
-import {readCaptureConfig,captureDir} from '../src/capture/runtime.ts';
+import {literal} from '../src/hook-runner.ts';
+import {captureDevinStartup,readCaptureConfig,captureDir} from '../src/capture/runtime.ts';
 import {atomicJson} from '../src/session.ts';
 import {withEnvironmentTokenOrigin} from '../src/environment-token.ts';
 
@@ -29,6 +31,7 @@ async function fixture(run:(f:Fixture)=>Promise<void>,recording=true){
   calls.push(req.url??'');
   if(req.headers.authorization!=='Bearer '+token){res.writeHead(401);res.end('{}');return;}
   const send=(data:unknown)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({schemaVersion:1,data}));};
+  if(req.url==='/api/files'){send({tenantId:'fixture-tenant',userId,remotePath:'/api/files/'+'a'.repeat(64)+'.git',clonePath:'/git/fixture-tenant/files.git'});return;}
   if(req.url==='/api/sessions/identity'){if(++identityCalls===2&&changeAt==='capture')sessionId='devin-changed-session';send({principal:principal(),capabilities:{harnesses:['devin']}});return;}
   if(req.url==='/api/setup'){if(changeAt==='setup')userId='changed-after-startup';send({scope:{tenantId:'fixture-tenant',userId},pluginStateSupported:true,firstWin:null,installations});return;}
   if(req.url==='/api/setup/installation'){
@@ -64,6 +67,10 @@ test('Cloud bundle exports on any host with Linux target paths and public config
  expect(result).toMatchObject({client:'devin',api,directory:bundle,recording:true,installed:false});
  for(const [name,content] of Object.entries(files))expect(readFileSync(join(bundle,name),'utf8')).toBe(content);
  expect(JSON.parse(files['.opencrawl-devin.json']!)).toEqual({schemaVersion:1,api,...options});
+ const binding=JSON.parse(files['.opencrawl-binding.json']!);
+ expect(binding.dataHome).toBe(options.configHome+'/data');expect(binding.cacheHome).toBe(options.configHome+'/cache');
+ const otherMachine=setupPluginFiles('devin',api,{...options,env:{XDG_DATA_HOME:'/private/exporter/data',XDG_CACHE_HOME:'/private/exporter/cache'}});
+ expect(otherMachine).toEqual(files);
  expect(JSON.parse(files['.devin-plugin/plugin.json']!).platforms).toEqual(['cloud']);
  expect(JSON.parse(files['.mcp.json']!).mcpServers[setupPluginIdentity(api).name]).toEqual({command:'/bin/sh',args:['${PLUGIN_ROOT}/scripts/opencrawl-hook.sh','mcp']});
  const hooks=JSON.parse(files['hooks.json']!);expect(Object.keys(hooks).sort()).toEqual(['PostCompaction','PostToolUse','SessionStart','Stop','UserPromptSubmit']);
@@ -92,10 +99,27 @@ cloudRuntimeTest('fresh Cloud startup binds the verified native owner through sh
  const state=readSetupState({api:f.api,tenantId:'fixture-tenant',userId:'workload_devin_fixture'})!;
  expect(state.selections).toEqual({plugins:{devin:true},forward:{devin:true},history:{devin:false}});
  expect(state.pluginResults).toMatchObject([{client:'devin',status:'installed'}]);
+ expect(f.observations[0]).toMatchObject({clients:[{client:'devin',installed:true,forward:true}]});
  expect(f.observations.at(-1)).toMatchObject({clients:[{client:'devin',installed:true,forward:true,hookTrust:'not_required'}]});
  const inbox=readdirSync(join(captureDir(),'daemon','inbox'));expect(inbox.some(name=>name.startsWith('startup-'))).toBe(true);expect(inbox.some(name=>!name.startsWith('startup-'))).toBe(true);
  expect(readFileSync(join(captureDir(),'config.json'),'utf8')).not.toContain('synthetic.');
  for(const client of ['claude','codex','cursor','agy','desktop'])expect(existsSync(join(f.dir,client))).toBe(false);
+}));
+
+cloudRuntimeTest('ordinary Git keeps the enrolled workload identity in a fresh shell',()=>fixture(async f=>{
+ const cli=[process.execPath,join(import.meta.dir,'../src/cli.ts')].map(word=>literal(word,false)).join(' ');
+ writeFileSync(join(f.dir,'opencrawl'),'#!/bin/sh\nexec '+cli+' "$@"\n',{mode:0o700});
+ process.env.GIT_CONFIG_GLOBAL=join(f.dir,'gitconfig');
+ await f.start();
+ const git=Bun.spawn(['git','credential','fill'],{
+  env:{HOME:f.dir,PATH:process.env.PATH,GIT_CONFIG_GLOBAL:process.env.GIT_CONFIG_GLOBAL,GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0'},
+  stdin:new Blob(['url='+f.api+'/git/fixture-tenant/files.git\n\n']),stdout:'pipe',stderr:'pipe'
+ });
+ const output=await new Response(git.stdout).text();
+ expect(await git.exited).toBe(0);
+ expect(output).toContain('username=opencrawl');
+ expect(output).toContain('password=synthetic.');
+ expect(f.calls).toContain('/api/files');
 }));
 
 cloudRuntimeTest('search-only Cloud startup keeps recording off and creates no capture notice',()=>fixture(async f=>{
@@ -145,4 +169,33 @@ cloudRuntimeTest('interrupted server publication resumes the same installation a
  expect(()=>recordPluginActivation(context,{...startup,session_id:'devin-foreign'})).toThrow();
  const before=readFileSync(join(captureDir(),'config.json'),'utf8');
  process.env.OPENCRAWL_PLUGIN_API='https://different.example';await expect(f.start()).rejects.toMatchObject({code:'DEVIN_PLUGIN_INVALID'});expect(readFileSync(join(captureDir(),'config.json'),'utf8')).toBe(before);
+}));
+
+cloudRuntimeTest('pre-install Devin events use the normal redacted wire queue, retries and opt-out',()=>fixture(async f=>{
+ await f.start();
+ const config=readCaptureConfig()!;
+ config.installedAt=new Date(Date.now()-60000).toISOString();
+ const file=join(captureDir(),'config.json');atomicJson(file,config);
+ const fixtureSecret='ghp_'+'a'.repeat(36);
+ const event={id:'devin-event:event-synthetic',nativeId:'event-synthetic',kind:'message',timestamp:config.installedAt,
+   data:{role:'user',content:[{type:'text',text:'early marker '+fixtureSecret}]}};
+ const calls:string[]=[];
+ const read=async(api:string,path:string,init:RequestInit={})=>{
+   calls.push(path);expect(api).toBe(f.api);
+   expect(JSON.parse(String(init.body))).toEqual({installationId:config.installationId,through:config.installedAt});
+   return {sessionId:nativeSession,events:[event]};
+ };
+ await captureDevinStartup(config,nativeSession,read);
+ await captureDevinStartup(config,nativeSession,read);
+ const queued=readdirSync(join(captureDir(),'queue')).map(name=>JSON.parse(readFileSync(join(captureDir(),'queue',name),'utf8')));
+ const copies=queued.flatMap(batch=>batch.events).filter(e=>e.nativeId==='event-synthetic');
+ expect(copies).toHaveLength(1);expect(copies[0].data.role).toBe('user');expect(JSON.stringify(copies)).toContain('early marker');
+ expect(JSON.stringify(copies)).not.toContain(fixtureSecret);
+ expect(calls).toEqual(['/api/cli/workloads/devin/startup-events','/api/cli/workloads/devin/startup-events']);
+ await captureDevinStartup(config,nativeSession,async()=>{
+   throw Object.assign(new Error('denied'),{httpStatus:403,responseCode:'DEVIN_RECORDING_CREDENTIAL_REQUIRED'});
+ });
+ expect(JSON.parse(readFileSync(join(captureDir(),'last-error.json'),'utf8')).code).toBe('DEVIN_RECORDING_CREDENTIAL_REQUIRED');
+ atomicJson(file,{...config,disabled:true});
+ await captureDevinStartup(config,nativeSession,read);expect(calls).toHaveLength(2);
 }));

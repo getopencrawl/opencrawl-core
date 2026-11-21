@@ -1,3 +1,4 @@
+import {isRegistrationMcp} from './registration-mcp.ts';
 import {createHash} from 'node:crypto';
 import {readFileSync, lstatSync, realpathSync} from 'node:fs';
 import {isAbsolute, join, relative, resolve, sep} from 'node:path';
@@ -98,7 +99,7 @@ function installedBundle(binding:PluginBinding,bundle:VerifiedPluginBundle):void
     const mcp=readJson(bundleFile(bundle.root,'.mcp.json'));
     const servers=object(mcp)&&object(mcp.mcpServers)?mcp.mcpServers:null;
     const server=servers?.[binding.pluginName];
-    if(!servers||Object.keys(servers).length!==1||!object(server)||server.type!=='http'||server.url!==binding.api+'/mcp')throw invalid();
+    if(!servers||Object.keys(servers).length!==1||!object(server)||(!isRegistrationMcp(server,binding.api,binding.configHome)&&(server.type!=='http'||server.url!==binding.api+'/mcp')))throw invalid();
   }
 }
 

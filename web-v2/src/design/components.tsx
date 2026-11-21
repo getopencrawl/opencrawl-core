@@ -111,8 +111,11 @@ export function Section({title, description, actions, children, className = '', 
   const Heading = headingLevel === 3 ? 'h3' : 'h2';
   return <section {...props} className={`oc-section ${className}`} aria-labelledby={title ? id : props['aria-labelledby']}>{(title || description || actions) && <div className="oc-section-heading"><div>{title && <Heading id={id}>{title}</Heading>}{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>}{children}</section>;
 }
-export function Notice({tone = 'info', title, children, className = ''}: {tone?: 'info' | 'success' | 'warning' | 'danger'; title?: string; children: ReactNode; className?: string}) {
-  return <div className={`oc-notice oc-notice-${tone} ${className}`} role={tone === 'danger' ? 'alert' : 'status'}>{title && <strong>{title}</strong>}<div>{children}</div></div>;
+export function Notice({tone = 'info', title, children, actions, className = ''}: {tone?: 'info' | 'success' | 'warning' | 'danger'; title?: string; children: ReactNode; actions?: ReactNode; className?: string}) {
+  return <div className={`oc-notice oc-notice-${tone} ${className}`} role={tone === 'danger' ? 'alert' : 'status'}>
+    {title && <strong>{title}</strong>}
+    {actions ? <div className="oc-notice-actions"><div>{children}</div>{actions}</div> : <div>{children}</div>}
+  </div>;
 }
 export function StatusBadge({tone = 'neutral', children, className = '', variant = 'default'}: {tone?: 'neutral' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string; variant?: 'default' | 'pill'}) {
   return <span className={`oc-badge oc-badge-${tone}${variant === 'pill' ? ' oc-status-pill' : ''} ${className}`}>{children}</span>;
@@ -170,8 +173,9 @@ export function IntegrationCard({name, icon, compact = false, status, metrics, m
 export function EmptyState({title, description, action, actions}: {title: string; description?: ReactNode; action?: ReactNode; actions?: ReactNode}) {
   return <div className="oc-empty"><h3>{title}</h3>{description && <p>{description}</p>}{(action || actions) && <div className="actions">{action || actions}</div>}</div>;
 }
-export function LoadingState({label = 'Loading workspace…'}: {label?: string}) {
-  return <span className="oc-loading sr-only" role="status">{label}</span>;
+export function LoadingState({label = 'Loading workspace…', spinner = false}: {label?: string; spinner?: boolean}) {
+  if (!spinner) return <span className="oc-loading sr-only" role="status">{label}</span>;
+  return <div className="oc-loading oc-loading-spinner" role="status"><Icon name="loader" className="oc-spin" size={20}/><span className="sr-only">{label}</span></div>;
 }
 export function Table({label, children, className = ''}: {label: string; children: ReactNode; className?: string}) {
   const ref = useRef<HTMLDivElement>(null);
@@ -225,10 +229,75 @@ export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sess
   })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
+const axisNumber = new Intl.NumberFormat('en-US', {notation: 'compact', maximumFractionDigits: 1});
+/** Round gridline steps (1, 2, 2.5, 5 x 10^n) so axis labels read cleanly. */
+function niceTicks(maximum: number) {
+  if (maximum <= 0) return [0, 1];
+  const raw = maximum / 4, magnitude = 10 ** Math.floor(Math.log10(raw)), scaled = raw / magnitude;
+  const step = Math.max(1, (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 2.5 ? 2.5 : scaled <= 5 ? 5 : 10) * magnitude);
+  return Array.from({length: Math.ceil(maximum / step) + 1}, (_, i) => i * step);
+}
+
+/** Daily bars with a y-axis and a hover or keyboard readout for each day. A null day was not tracked. */
+export function DailyBarChart({days, label, unit}: {days: ReadonlyArray<{date: string; value: number | null}>; label: string; unit: (value: number) => string}) {
+  const figure = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(760);
+  const [active, setActive] = useState<number | null>(null);
+  useEffect(() => {
+    const element = figure.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {if (entry) setWidth(Math.max(240, Math.round(entry.contentRect.width)));});
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [days.length]);
+  if (!days.length) return <p className="report-note">Nothing yet.</p>;
+  const ticks = niceTicks(Math.max(0, ...days.map(day => day.value ?? 0)));
+  const top = ticks.at(-1)!, height = 220, left = 52, right = 8, plotTop = 12, plotBottom = 192;
+  const column = (width - left - right) / days.length;
+  const y = (value: number) => plotBottom - value / top * (plotBottom - plotTop);
+  const describe = (day: typeof days[number]) => `${day.date}: ${day.value == null ? 'not tracked' : unit(day.value)}`;
+  const shown = active == null ? null : days[active];
+  const labels = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])];
+  const tip = shown && (() => {
+    const lines = [shown.date, shown.value == null ? 'Not tracked' : unit(shown.value)];
+    const boxWidth = Math.max(...lines.map(line => line.length)) * 7 + 20, center = left + (active! + .5) * column;
+    return {lines, boxWidth, x: Math.min(Math.max(center - boxWidth / 2, left), width - right - boxWidth)};
+  })();
+  return <figure ref={figure} className="report-bar-chart">
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label} tabIndex={0}
+      onMouseLeave={() => setActive(null)} onBlur={() => setActive(null)}
+      onKeyDown={event => {
+        const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        event.preventDefault();
+        setActive(current => Math.min(days.length - 1, Math.max(0, (current ?? (step > 0 ? -1 : days.length)) + step)));
+      }}>
+      {ticks.map(tick => <g key={tick}>
+        <line className="report-bar-grid" x1={left} x2={width - right} y1={y(tick)} y2={y(tick)}/>
+        <text className="report-bar-axis" x={left - 8} y={y(tick) + 4} textAnchor="end">{axisNumber.format(tick)}</text>
+      </g>)}
+      {days.map((day, index) => {
+        const value = day.value ?? 0, barHeight = value ? Math.max(2, plotBottom - y(value)) : 0;
+        return <g key={day.date} className={index === active ? 'is-active' : undefined}>
+          <rect className="report-bar" x={left + index * column + column * .15} y={plotBottom - barHeight} width={Math.max(1, column * .7)} height={barHeight} rx="2"/>
+          <rect className="report-bar-hit" x={left + index * column} y={plotTop} width={column} height={plotBottom - plotTop} onMouseEnter={() => setActive(index)}/>
+        </g>;
+      })}
+      {labels.map(i => <text key={i} className="report-bar-axis" x={left + (i + .5) * column} y={height - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>{days[i]!.date}</text>)}
+      {tip && <g className="report-bar-tip" pointerEvents="none">
+        <rect x={tip.x} y={2} width={tip.boxWidth} height={42} rx="6"/>
+        {tip.lines.map((line, i) => <text key={i} x={tip.x + 10} y={19 + i * 17} className={i ? 'report-bar-tip-value' : undefined}>{line}</text>)}
+      </g>}
+    </svg>
+    <span className="sr-only" role="status">{shown ? describe(shown) : ''}</span>
+  </figure>;
+}
+
 /** Shared daily line chart with per-day hover details. */
 export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: string; average: number; peak: number; partial: boolean}>; label: string}) {
   const figure = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(760);
+  const [active, setActive] = useState<number | null>(null);
   useEffect(() => {
     const element = figure.current;
     if (!element) return;
@@ -248,16 +317,28 @@ export function DailyLineChart({daily, label}: {daily: ReadonlyArray<{date: stri
   const labels = [...new Set([0, Math.floor((daily.length - 1) / 2), daily.length - 1])];
   return <figure ref={figure} className="report-line-chart" aria-label={label}>
     <div className="report-line-legend"><span className="report-line-average">Daily average</span><span className="report-line-peak">Daily peak</span></div>
-    <svg viewBox={`0 0 ${width} 250`} role="img" aria-label={`${label}. ${description(detail)}.`}>
+    <svg viewBox={`0 0 ${width} 250`} role="img" aria-label={`${label}. ${description(detail)}.`} tabIndex={0} onMouseLeave={() => setActive(null)} onBlur={() => setActive(null)}
+      onKeyDown={event => {const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0; if (!step) return; event.preventDefault();
+        setActive(current => Math.min(daily.length - 1, Math.max(0, (current ?? (step > 0 ? -1 : daily.length)) + step)));}}>
       {[0, 1, 2, 3, 4].map(i => <g key={i}><line className="report-line-grid" x1="44" x2={width - 24} y1={y(i * maximum / 4)} y2={y(i * maximum / 4)}/><text x="34" y={y(i * maximum / 4) + 4} textAnchor="end">{number(i * maximum / 4)}</text></g>)}
       <path className="report-line-peak" d={path('peak')}/><path className="report-line-average" d={path('average')}/>
       {daily.map((day, i) => <g key={day.date}>
         <circle className="report-line-peak" cx={x(i)} cy={y(day.peak)} r="3"/>
         <circle className="report-line-average" cx={x(i)} cy={y(day.average)} r="3"/>
-        <rect className="report-line-hit" x={Math.max(40, x(i) - plotWidth / Math.max(1, daily.length - 1) / 2)} y="20" width={plotWidth / Math.max(1, daily.length - 1)} height="200"><title>{description(day)}</title></rect>
+        <rect className="report-line-hit" x={Math.max(40, x(i) - plotWidth / Math.max(1, daily.length - 1) / 2)} y="20" width={plotWidth / Math.max(1, daily.length - 1)} height="200" onMouseEnter={() => setActive(i)}/>
       </g>)}
+      {active != null && daily[active] && (() => {
+        const day = daily[active]!, lines = [day.date + (day.partial ? ' (partial)' : ''), `Average ${number(day.average)}`, `Peak ${number(day.peak)}`];
+        const boxWidth = Math.max(...lines.map(line => line.length)) * 7 + 20, left = Math.min(Math.max(x(active) - boxWidth / 2, 44), width - 24 - boxWidth);
+        return <g className="report-bar-tip" pointerEvents="none">
+          <line className="report-line-grid" x1={x(active)} x2={x(active)} y1="20" y2="216"/>
+          <rect x={left} y={2} width={boxWidth} height={58} rx="6"/>
+          {lines.map((line, n) => <text key={n} x={left + 10} y={19 + n * 17} className={n ? 'report-bar-tip-value' : undefined}>{line}</text>)}
+        </g>;
+      })()}
       {labels.map(i => <text key={i} x={x(i)} y="242" textAnchor={i === 0 ? 'start' : i === daily.length - 1 ? 'end' : 'middle'}>{daily[i]!.date.slice(5)}</text>)}
     </svg>
+    <span className="sr-only" role="status">{active != null && daily[active] ? description(daily[active]!) : ''}</span>
   </figure>;
 }
 

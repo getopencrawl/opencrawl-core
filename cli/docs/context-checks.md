@@ -1,22 +1,21 @@
 # Context suggestions
 
-Context suggestions are optional. They send a redacted, bounded human prompt and recent
-prompt context to the selected deployment, then offer up to five historical
-snippets to the coding agent. They use that deployment's credit policy. Installing
-or updating OpenCrawl does not enable them or change recording consent.
-
-After installing the native OpenCrawl plugin:
+Context suggestions are on by default in supported clients selected to record new
+sessions. After native plugin installation and trust review, start a fresh session.
+Its prompt hook sends a redacted, bounded human prompt and recent prompt context
+to the selected deployment under its credit policy. When useful, it returns
+historical snippets to the agent.
 
 ```sh
-opencrawl context-suggestions enable --harness codex --harness claude-code
-opencrawl setup
 opencrawl context-suggestions status
+opencrawl context-suggestions disable --harness codex
+opencrawl context-suggestions enable --harness codex
 ```
 
-Complete any native hook trust review and start a fresh session. `enable` records
-the choice; it does not bypass the harness's review or prove that a hook ran.
-`opencrawl context-suggestions disable` stops future work and withholds pending output.
-Pass `--harness NAME` to disable just one client, or `--api ORIGIN` for self-host.
+Run `disable` without a harness to turn off all clients and withhold pending
+results. Repeat `--harness` to select several clients, or pass `--api ORIGIN` for
+self-host. Explicit choices override the recording default for that client,
+installation and account. Upgrades preserve existing saved client selections.
 The self-hosted application uses its own reference judgment adapter and has no
 cloud credit dependency.
 
@@ -52,8 +51,8 @@ cancel work at session teardown; their delivery timing is harness-controlled.
 
 ## Bounds and account safety
 
-The client permits two in-flight checks per installed account/profile and makes
-one billable request per admitted native event, with no inference retries. Work
+The client makes one billable request per eligible native event. Concurrent
+checks in other sessions can proceed independently. Work
 has a 25-second network deadline. Late delivery has a 1.8-second network deadline;
 it replays the server receipt to apply fresh source authorization. In cloud that
 replay uses no Jev call or additional credit. The self-host reference adapter may
@@ -73,8 +72,7 @@ are verified before credentials, before the request and before releasing output.
 The server supplies authorization; a local owner ID never grants access.
 
 A private SQLite delivery cache retains redacted input and status, never result
-text or credentials. It holds at most 512 records; records older than 24 hours
-are removed on the next prompt. Disabling checks invalidates pending work without
+text or credentials. On each new prompt it prunes redacted check records older than 24 hours. Pending deliveries stay available until they expire. Disabling checks invalidates pending work without
 altering capture queues, cursors or stored sign-in. Server traces and receipts are
 owned by the deployment.
 
@@ -88,13 +86,12 @@ References: [Codex hooks](https://learn.chatgpt.com/docs/hooks),
 
 Eligible opted-in hooks queue bounded lifecycle metadata for the selected
 deployment: observed, skipped, requested, received, handoff and dropped. The
-private outbox holds at most 512 events for 24 hours; each flush sends at most 24
-and has a 1,500 ms deadline. Failed sends retry on a later eligible hook, with
-stable IDs. No extra model call or credit is used for telemetry.
+private outbox keeps pending metadata across restarts and offline periods. Each
+eligible hook sends batches of 24 within a 1,500 ms deadline. Unacknowledged
+reports retry with stable IDs. Disabling a harness clears its pending reports. No extra model call or credit is used for telemetry.
 
 A handoff means the CLI wrote context to the harness; it does not establish model
-consumption or usefulness. Missing callbacks, disabled/excluded hooks, expired
-outbox records and interrupted processes leave unknown coverage. Model relevance
+consumption or usefulness. Missing callbacks, disabled/excluded hooks and interrupted processes leave unknown coverage. Model relevance
 scores remain separate from explicit user/agent labels. To assess a receipt:
 
 ```sh

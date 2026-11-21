@@ -146,6 +146,7 @@ test('a full notice on a legacy server includes the body and leaves its receipt 
 });
 
 test('channels and root-thread replies use canonical fields, with explicit legacy aliases',()=>{
+ expect(boardInput('subscribe',{session:'s',channel:['next'],'channel-mode':'add'})).toEqual({session:'s',topics:['next'],channelMode:'add'});
  expect(boardInput('subscribe',{session:'s',channel:['build']})).toEqual({session:'s',topics:['build']});
  expect(boardInput('publish',{session:'s',id:'r',channel:['build'],thread:'42',text:'Reply'})).toEqual({session:'s',id:'r',topic:'build',threadId:42,text:'Reply',mentions:[]});
  expect(boardInput('thread',{thread:'42',before:'50'})).toEqual({threadId:42,before:50});

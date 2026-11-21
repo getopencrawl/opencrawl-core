@@ -4,7 +4,8 @@ import {configDir} from '../src/session.ts';
 import {dirname} from 'node:path';
 import {profileSetupCommand,setupCommandForSelf,formatSetupCommand} from '../src/setup/invocation.ts';
 import {skillFiles} from '../src/skills.ts';
-import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
+import {setupPluginFiles} from './fixtures/legacy-plugins/prepare.ts';
+import {setupPluginIdentity} from '../src/setup/plugins.ts';
 
 test('setup guides preserve the actual invocation and quote client/server arguments on both shell platforms',()=>{
  const api='https://knowledge.example';

@@ -3,7 +3,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,realpathSync} fr
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
-import {pluginHookFiles} from '../src/setup/plugin-hooks.ts';
+import {pluginHookFiles} from './fixtures/legacy-plugins/prepare.ts';
 import {inspectCodexHooks,localCodexHookReview} from '../src/capture/codex-hooks.ts';
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 const json=(value:unknown)=>JSON.stringify(value,null,2)+'\n';

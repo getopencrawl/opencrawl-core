@@ -7,8 +7,13 @@ export interface Principal {
   email?: string | null;
   captureAccess?: string;
   /** Authenticated installation ownership; message authors remain independent. */
-  owner?: {kind: 'shared'; provider: 'replicas'; organizationId: string; environmentId: string; workspaceId: string};
+  owner?: {kind: 'shared'; provider: 'replicas'; organizationId: string; environmentId: string; workspaceId: string}
+    | {kind: 'shared'; provider: 'devin'; organizationId: string; sessionId: string};
 }
+export function isWorkloadUserId(userId:string) {
+  return userId.startsWith('workload_replicas_') || userId.startsWith('workload_devin_');
+}
+
 export type TenantPrincipal = Pick<Principal, 'tenantId' | 'captureAccess'>;
 export type Authenticate = (request: IncomingMessage) => Promise<Principal | null>;
 export type HttpHandler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;
@@ -52,6 +57,7 @@ export interface SessionBatch {
   schemaVersion: number; installationId: string; sessionId: string; harness: string; origin: string;
   owner: Principal; events: SessionEvent[]; attachments: Attachment[]; captureMode?: string;
   privacyReview?: true;
+  clientApp?: 't3-code' | 'conductor';
   host?: string | null; receivedAt?: string; title?: string;
   replicasSenders?: import("../integrations/replicas-senders.mjs").SenderEvidence;
   actorProfiles?: Record<string,unknown>;

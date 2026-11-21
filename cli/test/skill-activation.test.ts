@@ -69,6 +69,19 @@ test('a capture-only invocation upgrades revision 11 despite a current-version r
   expect(paths.map(file=>({text:readFileSync(file,'utf8'),mtime:statSync(file).mtimeMs}))).toEqual(before);
 }));
 
+test('upgrading the managed skill removes unconditional file handoffs from existing installations',()=>fixture(async(home,invoke)=>{
+  const client=clients[0]!;
+  oldInstallation(home,[client]);
+  const skill=join(home,client.skill,'SKILL.md');
+  writeFileSync(skill,'For handoffs, run opencrawl files open --session <id>.');
+  mkdirSync(join(home,'config','opencrawl'),{recursive:true});
+  writeFileSync(join(home,'config','opencrawl','skills-update.json'),JSON.stringify({version:'0.4.64',revision:18,complete:true}));
+  await invoke(['collect','hook','--harness','codex']);
+  const current=readFileSync(skill,'utf8');
+  expect(current).toBe(skillFiles()['SKILL.md']);
+  expect(current).not.toContain('files open');
+}));
+
 test('new-session activation requests Claude skill rediscovery and does not wait for a busy installer',()=>fixture(async(home,invoke)=>{
   oldInstallation(home,[clients[1]!]);
   const start=['session','start','--harness','claude-code'];

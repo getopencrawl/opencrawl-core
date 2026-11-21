@@ -10,7 +10,7 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[
     {provider:'github',name:'GitHub',auth:'oauth',scope:'team',state:'disconnected'},
     {provider:'replicas',name:'Replicas',auth:'api-key',scope:'team',state,...state==='disconnected'?{}:{
-      history,rows:[{label:'Sessions',count:history.imported},{label:'Events',count:history.events}],synced:history.processed,total:history.total,units:['conversation record','conversation records'],message:state==='error'?'Reconnect to resume from the last saved page.':undefined}},
+      history,rows:[{label:'Sessions',count:history.imported}],synced:history.imported,units:['session','sessions'],message:state==='error'?'Reconnect to resume from the last saved page.':undefined}},
     {provider:'slack',name:'Slack',auth:'oauth',scope:'team',state:'disconnected'},
   ]}}));
   await page.route('**/api/integrations/replicas/history',async route=>{
@@ -24,17 +24,27 @@ for(const width of [1440,390])test(`Replicas connects with one submission and ru
   await shot('available');await open.click();
   const dialog=page.getByRole('dialog'),key=dialog.getByLabel('Organization API key'),connect=dialog.getByRole('button',{name:'Connect',exact:true});
   await expect(connect).toBeDisabled();await shot('dialog');
+  await expect(dialog.getByText(/turn on.*visibility/i)).toHaveCount(0);
   await key.fill('invalid');await connect.click();await expect(dialog.getByText(/Replicas denied access/)).toBeVisible();await shot('invalid');
   await key.fill('test-org-key');await connect.click();await expect(dialog.getByText('Connecting…')).toBeVisible();await shot('checking');release();
   await expect(dialog).toHaveCount(0);await expect(page.getByText(/Replicas connected/)).toBeVisible();await expect(open).toHaveCount(0);
   const progress=page.getByRole('progressbar');
-  await expect(progress).toHaveCount(0);await expect(page.getByText('0 of 2 conversation records imported')).toBeVisible();await shot('success');
+  await expect(progress).toHaveCount(0);const stats=page.getByLabel('Replicas imported data');await expect(stats.getByText('0',{exact:true})).toBeVisible();await shot('success');
   Object.assign(history,{processed:1,imported:1,events:8});await page.clock.runFor(30_001);
-  await expect(page.getByText('1 of 2 conversation records imported')).toBeVisible();await expect(page.getByLabel('Replicas imported data').locator('.oc-spin')).toHaveCount(2);await shot('progress');
+  await expect(stats.getByText('1',{exact:true})).toBeVisible();await expect(stats.locator('.oc-spin')).toHaveCount(1);await shot('progress');
+  Object.assign(history,{blocked:1449,blockedChats:336,retryAt:'2026-11-20T00:30:00Z',error:'The history step will retry automatically (HTTP 404).'});await page.clock.runFor(30_001);
+  await expect(page.getByText(/catalog records|conversation records|retry automatically|waiting to retry|HTTP 404/)).toHaveCount(0);
+  await expect(stats.getByText('1',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Stop import'})).toBeVisible();
+  Object.assign(history,{waitingForSource:true});await page.clock.runFor(30_001);
+  await expect(stats.locator('.oc-spin')).toHaveCount(0);await expect(stats.getByText('1',{exact:true})).toBeVisible();
+  await expect(page.getByText('Connected',{exact:true}).first()).toBeVisible();await expect(page.getByRole('button',{name:'Stop import'})).toBeVisible();
+  await shot('available-history');
+  Object.assign(history,{blocked:0,waitingForSource:false});
   await page.goto('about:blank');state='synced';Object.assign(history,{phase:'complete',processed:2,imported:2,events:12});
   await page.goto('/integrations-fixture');await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await expect(progress).toHaveCount(0);await shot('complete');
   Object.assign(history,{processed:0,imported:0,events:0,total:0});await page.reload();
-  await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await expect(page.getByLabel('Replicas imported data').getByText('0',{exact:true})).toHaveCount(2);await shot('empty');
+  await expect(page.getByText('Synced',{exact:true}).first()).toBeVisible();await expect(page.getByLabel('Replicas imported data').getByText('0',{exact:true})).toHaveCount(1);await shot('empty');
   state='error';history.phase='failed';
   await page.reload();await expect(open).toBeVisible();await expect(page.getByText('Needs attention',{exact:true}).first()).toBeVisible();await expect(page.getByText('Reconnect to resume from the last saved page.')).toBeVisible();await shot('background-error');
   expect(calls).toEqual(['connect','connect']);expect(await page.evaluate(()=>JSON.stringify([localStorage,sessionStorage]))).not.toContain('test-org-key');

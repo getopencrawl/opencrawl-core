@@ -12,7 +12,6 @@
     "tools/publish-revision.mts",
     "dev/**/*.mts",
     "deploy/helm/**/*.mts",
-    "cli/scripts/**/*.mts",
-    "plugins/scripts/**/*.mts"
+    "cli/scripts/**/*.mts"
   ]
 }

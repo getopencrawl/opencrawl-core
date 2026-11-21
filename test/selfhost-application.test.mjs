@@ -13,11 +13,12 @@ import {createSetupState} from '../dist/src/state/setup.mjs';
 import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
+import {postgresSharedFiles} from '../dist/src/files/store.mjs';
 import {valueReportKey} from '../dist/src/application/value-report.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,replicasBindings,cliSetup,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,cliSetup,files,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
@@ -27,8 +28,9 @@ async function fixture(t,options={}){
   const setupState=cliSetup?createSetupState(database):undefined;await setupState?.ready();
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
-  app=selfhostApplication({settings,store,boardState,setupState,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
+  const settings={sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
+  app=selfhostApplication({settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
     const jar=who?jars.get(who)||new Map():null;
@@ -46,7 +48,7 @@ async function fixture(t,options={}){
     assert.equal((await identity.invitationLinks()).has(email),false);
     return invited;
   };
-  return {request,post,identity,store,prefix,origin,admin,join:join_};
+  return {request,post,identity,store,prefix,origin,admin,settings,join:join_};
 }
 
 test('CLI setup leaves authenticated pages and console operations open before any agent receipt',async t=>{
@@ -186,7 +188,7 @@ test('self-host team integration actions reject members through both HTTP and tR
   assert.deepEqual(calls,['connect','retry','disconnect','disconnect-all']);
 });
 
-test('OSS reads only its configured organization measured report from operator storage',async t=>{
+test('OSS ignores historical judged reports stored for its own and other organizations',async t=>{
   const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
@@ -201,7 +203,7 @@ test('OSS reads only its configured organization measured report from operator s
   assert.equal((await (await f.request('/api/console/usage','admin')).json()).value,null);
   await f.store.put(valueReportKey(f.prefix,org),JSON.stringify(report));
   const response=await f.request('/api/console/usage','admin');assert.equal(response.status,200);
-  const result=await response.json();assert.deepEqual(result.value,report);assert.equal(result.capture,null);
+  const result=await response.json();assert.equal(result.value,null);assert.equal(result.capture,null);
 
 });
 test('OSS withholds a completed tRPC response if membership or admin role changes during its read',async t=>{
@@ -383,8 +385,8 @@ test('bootstrap is consumed once across racing registrations and never reopens a
   assert.equal((await f.post('/auth/signup','third',{setup,workspace:'third',name:'third',email:'third@example.com',password:'a long account password'})).status,403);
 });
 
-test('admin removal immediately denies existing browser, CLI, MCP and capture credentials, preserving other members and stored data',async t=>{
- const f=await fixture(t);await f.admin();await f.join('bob','bob@example.com');
+test('admin removal immediately denies existing browser, CLI, Git, MCP and capture credentials, preserving other members and stored data',async t=>{
+ const f=await fixture(t,{files:true});await f.admin();await f.join('bob','bob@example.com');
  const members=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
  const admin=members.find(m=>m.role.slug==='admin'),bob=members.find(m=>m.role.slug==='member');
  const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix});
@@ -399,10 +401,30 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  const tokens=await (await f.request('/api/cli/token',null,form({client_id:'opencrawl-cli',grant_type:'urn:ietf:params:oauth:grant-type:device_code',device_code:device.device_code}))).json();
  assert.ok(tokens.access_token&&tokens.refresh_token,JSON.stringify(tokens));
  const auth={authorization:'Bearer '+tokens.access_token};
+ const basic = {authorization:'Basic '+Buffer.from('opencrawl:'+tokens.access_token).toString('base64')};
+ const challenge = await f.request('/api/files');
+ assert.equal(challenge.status,401);
+ assert.match(challenge.headers.get('www-authenticate'),/^Basic /);
+ assert.equal((await f.request('/api/files','bob')).status,401);
+ const discovery = await f.request('/api/files',null,{headers:auth});
+ assert.equal(discovery.status,200);
+ const {remotePath,clonePath}=(await discovery.json()).data;
+ assert.equal(clonePath,'/git/'+org+'/files.git');
+ const refs=remotePath+'/info/refs?service=git-upload-pack';
+ f.settings.sharedFilesAccess='read-only';
+ assert.equal((await f.request(clonePath+'/info/refs?service=git-receive-pack',null,{headers:basic})).status,403);
+ assert.equal((await f.request(refs,null,{headers:basic})).status,200);
+ f.settings.sharedFilesAccess='read-write';
+ assert.equal((await f.request(refs,null,{headers:basic})).status,200);
+ assert.equal((await f.request(refs,null,{headers:{...basic,origin:f.origin}})).status,403);
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,200);
  const capture=await (await f.request('/api/sessions/credentials',null,{method:'POST',headers:auth})).json();
  assert.ok(capture.data.token);
+ const namedRefs=await f.request(clonePath+'/info/refs?service=git-upload-pack',null,{headers:basic});
+ assert.equal(namedRefs.headers.get('content-type'),'application/x-git-upload-pack-advertisement');
+ await namedRefs.arrayBuffer();
  const captureAuth={authorization:'Bearer '+capture.data.token};
+ assert.equal((await f.request('/api/files',null,{headers:captureAuth})).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,200);
  const mcp={method:'POST',headers:{...auth,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'removal-test',version:'1'}}})};
  const started=await f.request('/mcp',null,mcp);assert.equal(started.status,200);
@@ -411,6 +433,9 @@ test('admin removal immediately denies existing browser, CLI, MCP and capture cr
  const removed=await f.request('/api/trpc/console.removeMember','admin',json(bob.userId));assert.equal(removed.status,200,await removed.text());
  assert.equal((await f.request('/api/console/bootstrap','bob')).status,401);
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,401);
+ assert.equal((await f.request('/api/files',null,{headers:auth})).status,401);
+ assert.equal((await f.request(refs,null,{headers:basic})).status,401);
+ assert.equal((await f.request(clonePath+'/info/refs?service=git-upload-pack',null,{headers:basic})).status,401);
  assert.equal((await f.request('/mcp',null,mcp)).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
  assert.equal((await f.request('/api/sessions/batches',null,{method:'POST',headers:{...captureAuth,'content-type':'application/json'},body:'{}'})).status,401);
@@ -582,4 +607,10 @@ test('self-host reload bootstraps the last authorized Team read only for the sam
   const loggedOut = await app.request('/settings/team');
   assert.equal(loggedOut.status,303);
   assert.doesNotMatch(await loggedOut.text(),/opencrawl-reload|ada@example.com/);
+});
+
+test('self-host keeps provisioned Git endpoints hidden when access is disabled',async t=>{
+ const f=await fixture(t,{files:'off'});
+ for(const path of ['/api/files','/git/'+org+'/files.git/info/refs?service=git-upload-pack'])
+   assert.equal((await f.request(path)).status,404);
 });

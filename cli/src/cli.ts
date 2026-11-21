@@ -39,7 +39,10 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   verify-installation  Prove a selected client's fresh session is searchable
   login       Sign in with a browser approval and device code
   logout      Remove this deployment's credentials from this machine
+  history     List the last N local sessions and import a reviewed selection
   memories    Scan, verify or import your memory files from another client
+  provision   With --capture-new, connect all detected agents to Cloud and record future sessions only
+  signup      Register this agent and activate its own workspace without a browser
   whoami      Verify your saved session or environment token with the service
   status      Show installation, sign-in and index availability
   search      Search session history and indexed workspace connectors
@@ -48,6 +51,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   workload    Connect a cloud organization with one-time admin approval
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude Code, Codex, Cursor, Antigravity and Grok Bot session capture
+  files       Show the network Git URL, configure Git sign-in, or open an agent clone
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
@@ -98,7 +102,7 @@ Search: opencrawl search "words" --json
   --match any|all|phrase                    Default: any; all requires every term
   --limit 1..40                     Default: 10
   --session-id ID                   Narrow a sessions-only query
-  --filters JSON                   Exact roles/authors/kinds/providers/repositories/harnesses/origins/sessionIds/projects/paths
+  --filters JSON                   Exact roles/authors/kinds/providers/repositories/harnesses/origins/clientApps/sessionIds/projects/paths
   --role user|assistant             Session role filter
   --after ISO --before ISO          Original message/memory time bounds
   --order relevance|newest|oldest    Empty query allowed with time order
@@ -259,6 +263,7 @@ export async function loginIdentity(api:string,options:{organizationId?:string;n
 const hasLocalFlag=(args:string[])=>args.some(arg=>arg==='--local'||arg.startsWith('--local='));
 
 export async function main(args = process.argv.slice(2)) {
+  if(args[0]==='files-credential')return (await import('./shared-files.ts')).sharedFileCredential(args.slice(1));
   if(args[0]==='privacy-hook')return (await import('./incognito.ts')).privacyHook(args.slice(1));
   if(args[0]==='incognito')return (await import('./incognito.ts')).privacyCommand(args.slice(1));
   if(args[0]==='plugin-hook'){try{return await main((await import('./setup/plugin-entrypoint.ts')).pluginInvocation(args.slice(1)));}catch{return 0;}}
@@ -297,7 +302,7 @@ export async function main(args = process.argv.slice(2)) {
       if(await needsFirstRunSetup(process.env.OPENCRAWL_API_URL))args=['setup'];
     }
     let parsed: ReturnType<typeof parseArgs>;
-    try { parsed = parseArgs({args, allowPositionals: true, options: {'text-file':{type:'string'},input:{type:'string'},jsonl:{type:'boolean'},from:{type:'string',multiple:true},agent:{type:'string'},since:{type:'string'},until:{type:'string'},'roots-only':{type:'boolean'},'no-follow':{type:'boolean'},full:{type:'boolean'},all:{type:'boolean'},leave:{type:'boolean'},context:{type:'boolean'},'current-session':{type:'string'},'include-current-session':{type:'boolean'},'include-tool-outputs':{type:'boolean'},'worker-environment':{type:'string'},local:{type:'boolean'},plugins:{type:'string'},forward:{type:'string'},history:{type:'string'},'capture-mode':{type:'string'},'plan-id':{type:'string'},'scope-key':{type:'string'},'installation-id':{type:'string'},organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},'ids-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},channel:{type:'string',multiple:true},thread:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, daemon:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
+    try { parsed = parseArgs({args, allowPositionals: true, options: {'capture-new':{type:'boolean'},email:{type:'string'},'text-file':{type:'string'},input:{type:'string'},jsonl:{type:'boolean'},from:{type:'string',multiple:true},agent:{type:'string'},since:{type:'string'},until:{type:'string'},'roots-only':{type:'boolean'},'no-follow':{type:'boolean'},full:{type:'boolean'},all:{type:'boolean'},leave:{type:'boolean'},context:{type:'boolean'},'current-session':{type:'string'},'include-current-session':{type:'boolean'},'include-tool-outputs':{type:'boolean'},'worker-environment':{type:'string'},local:{type:'boolean'},plugins:{type:'string'},forward:{type:'string'},history:{type:'string'},'capture-mode':{type:'string'},'plan-id':{type:'string'},'scope-key':{type:'string'},'installation-id':{type:'string'},organization:{type:'string'},'env-file':{type:'string'},filters:{type:'string'},before:{type:'string'},role:{type:'string'},order:{type:'string'},facets:{type:'string'},select:{type:'string'},'group-by':{type:'string'},'excerpt-chars':{type:'string'},field:{type:'string'},client:{type:'string',multiple:true},compact:{type:'boolean'},project:{type:'string'},'notify-only':{type:'boolean'},'ids-only':{type:'boolean'},workspace:{type:'string'},session:{type:'string'},name:{type:'string'},task:{type:'string'},channel:{type:'string',multiple:true},'channel-mode':{type:'string'},thread:{type:'string'},topic:{type:'string',multiple:true},mention:{type:'string',multiple:true},id:{type:'string'},text:{type:'string'},receipt:{type:'string'},after:{type:'string'},'timeout-ms':{type:'string'},'no-dedupe':{type:'boolean'},offset:{type:'string'},length:{type:'string'},'content-version':{type:'string'},source:{type:'string'},match:{type:'string'},limit:{type:'string'},'session-id':{type:'string'},cursor:{type:'string'},concurrency:{type:'string'},'batch-delay-ms':{type:'string'},backfill:{type:'string'},'dry-run':{type:'boolean'},'retry-rejected':{type:'boolean'},yes:{type:'boolean'},harness: {type:'string'}, event: {type:'string'}, 'no-background': {type:'boolean'}, managed:{type:'boolean'}, daemon:{type:'boolean'}, 'defer-auth':{type:'boolean'}, json: {type: 'boolean'}, 'no-browser': {type: 'boolean'}, api: {type: 'string'}, version: {type: 'boolean', short: 'v'}, help: {type: 'boolean', short: 'h'}}}); }
     catch { throw new CliError('INVALID_USAGE', 'Invalid arguments. Run opencrawl --help.', 64); }
     json = parsed.values.json === true;
     const command = parsed.positionals[0] ?? 'help';
@@ -308,16 +313,24 @@ export async function main(args = process.argv.slice(2)) {
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
     const manyFetch=command==='fetch'||command==='board'&&parsed.positionals[1]==='fetch';
-    if (!(command==='board'&&agentBoardCommands.has(parsed.positionals[1])) && parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (!(command==='board'&&agentBoardCommands.has(parsed.positionals[1])) && parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup','signup','history','files'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     informational=hasLocalFlag(args)||Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token','files'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && !['skills','setup','verify-installation'].includes(command)) throw new CliError('INVALID_USAGE', 'Use --client with skills or installation verification.', 64);
+    if(command==='history'){
+      informational=true;
+      const explicit=(parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL;
+      const api=apiOrigin(explicit??readCaptureConfig()?.api??DEFAULT_API_ORIGIN);
+      const {historyCommand}=await import('./capture/history.ts');
+      const result=await withEnvironmentTokenOrigin(explicit,()=>historyCommand(parsed.positionals[1],api,parsed.values));
+      emit(result,JSON.stringify(result,null,2));return 0;
+    }
     if(parsed.values.local){const data=localSetupStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
     if(command==='setup'&&parsed.positionals[1]==='hooks'){const data=await setupHookStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
     if(command==='setup'||command==='verify-installation'){
@@ -374,6 +387,23 @@ export async function main(args = process.argv.slice(2)) {
     }
     return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
     if(!pluginHookInvocation&&!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
+    if (command === 'files') {
+      const files = await import('./shared-files.ts');
+      if (parsed.positionals[1] === 'setup-git') {
+        const configured = await files.setupFilesGit(api);
+        emit(configured, 'Git credential helper configured for workspace repositories on '+api);
+        return 0;
+      }
+      if (parsed.positionals[1] === 'url') {
+        const url = await files.sharedFilesUrl(api);
+        emit({url}, url);
+        return 0;
+      }
+      if (parsed.positionals[1] !== 'open') throw new CliError('INVALID_USAGE', 'Use opencrawl files --help.', 64);
+      const data = await files.openSharedFiles(api, parsed.values.session);
+      emit(data, data.path);
+      return 0;
+    }
     if (command === 'board') {
       if(agentBoardCommands.has(parsed.positionals[1])){await agentBoardCommand(parsed.positionals[1],api,parsed.values,parsed.positionals.slice(2));return 0;}
       if(parsed.positionals[1]==='fetch'&&parsed.positionals.length>2){
@@ -416,6 +446,17 @@ export async function main(args = process.argv.slice(2)) {
       const result = await tokenCommand(parsed.positionals[1], api, parsed.positionals[2], parsed.values);
       emit(result.data, result.human);
       return 0;
+    }
+    if (command === 'provision') {
+      if(Object.keys(parsed.values).some(key=>!['api','json','capture-new'].includes(key)))throw new CliError('INVALID_USAGE','Use provision --capture-new [--json] [--api ORIGIN].',64);
+      const {provisionAgentHost}=await import('./agent-provision.ts');
+      const result=await provisionAgentHost(api,parsed.values['capture-new']===true);
+      emit(result,JSON.stringify(result,null,2));return 0;
+    }
+    if (command === 'signup') {
+      const {agentSignup}=await import('./agent-signup.ts');
+      const data=await agentSignup(api,parsed.positionals[1],typeof parsed.values.email==='string'?parsed.values.email:undefined);
+      emit(data,JSON.stringify(data,null,2));return 0;
     }
     if (command === 'logout') { await logout(api); emit({api, authenticated: false, localCredentialsRemoved: true}, 'Removed saved credentials from this machine.'); return 0; }
     if (command === 'login') {

@@ -4,12 +4,13 @@ import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {setTimeout as pause} from 'node:timers/promises';
 import {checkEvent,checkOutput,hash,checkText,type CheckHarness} from '../src/context-check-events.ts';
-import {CheckStore,saveCheckSettings,checkBinding,type CheckInput} from '../src/context-check-state.ts';
+import {CheckStore,checkSettings,updateCheckSettings,checkBinding,type CheckInput} from '../src/context-check-state.ts';
 import {suggestionEventsSchema} from '../../src/search/suggestion-events.mts';
 import {flushSuggestionEvents} from '../src/context-suggestion-telemetry.ts';
 import {requestCheck,formatCheck} from '../src/context-check.ts';
-import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
-import {sessionFile} from '../src/session.ts';
+import {setupPluginFiles} from './fixtures/legacy-plugins/prepare.ts';
+import {setupPluginIdentity} from '../src/setup/plugins.ts';
+import {configDir,sessionFile} from '../src/session.ts';
 import type {CaptureConfig} from '../src/capture/runtime.ts';
 
 const cli=resolve(import.meta.dir,'../src/cli.ts');
@@ -18,7 +19,7 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
   const home=realpathSync(mkdtempSync(join(tmpdir(),'opencrawl-check-'))),configHome=join(home,'profile'),previous=process.env.OPENCRAWL_CONFIG_HOME;
   process.env.OPENCRAWL_CONFIG_HOME=configHome;
   const identity=setupPluginIdentity(api),nativeRoot=join(home,'plugin'),binding={api,client:harness,pluginName:identity.name,configHome,nativeRoot};
-  const config:CaptureConfig={schemaVersion:1,hookOwnership:'plugin',api,installationId:'fixture-install',owner:{tenantId:'tenant-a',userId:'user-a'},harnesses:[],roots:{codex:join(home,'codex'),'claude-code':join(home,'claude'),antigravity:join(home,'gemini')},installedAt:new Date().toISOString(),command:[process.execPath,cli]};
+  const config:CaptureConfig={schemaVersion:1,hookOwnership:'plugin',api,installationId:'fixture-install',owner:{tenantId:'tenant-a',userId:'user-a'},harnesses:[harness],roots:{codex:join(home,'codex'),'claude-code':join(home,'claude'),antigravity:join(home,'gemini')},installedAt:new Date().toISOString(),command:[process.execPath,cli]};
   const write=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,typeof value==='string'?value:json(value));};
   const files=setupPluginFiles(harness,api,{command:[process.execPath,cli],configHome}),digest=hash(json(files));
   for(const [name,text] of Object.entries(files))write(join(nativeRoot,name),text);
@@ -26,7 +27,7 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
   write(join(configHome,'opencrawl/setup-plugins',harness,identity.key,'installed.json'),{schemaVersion:2,...binding,digest});
   const configFile=join(configHome,'opencrawl/capture/config.json');write(configFile,config);
   write(sessionFile(api),{auth:{clientId:'fixture',tokenEndpoint:api+'/token'},accessToken:'fixture-token',refreshToken:'unused-refresh',expiresAt:Date.now()+3600000});
-  const settings=saveCheckSettings(checkBinding(config,api),[harness]);
+  const settings=checkSettings(checkBinding(config,api),config);
   const env:NodeJS.ProcessEnv={...process.env,OPENCRAWL_CONFIG_HOME:configHome,OPENCRAWL_PLUGIN_API:api,OPENCRAWL_PLUGIN_CLIENT:harness,OPENCRAWL_PLUGIN_NAME:identity.name,OPENCRAWL_PLUGIN_ROOT:nativeRoot};
   for(const key of ['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_API_URL'])delete env[key];
   const run=async(event:unknown,native=false)=>{
@@ -38,6 +39,42 @@ function fixture(harness:CheckHarness='codex',api='https://fixture.example'){
 }
 const prompt=(harness:CheckHarness,id='prompt-1',message='Fix the deployment retry policy')=>harness==='cursor'?{hook_event_name:'beforeSubmitPrompt',conversation_id:'native-session',generation_id:id,prompt:message}:{hook_event_name:'UserPromptSubmit',session_id:'native-session',turn_id:id,prompt_id:id,prompt:message};
 const sample={outputTokens:30,results:[{id:'sessions:fixture',title:'Retry decision',text:'Retries use the same request ID.',offset:0,provenance:{role:'user'}}]};
+
+test('status and explicit controls follow recording changes and preserve account-scoped opt-outs',async()=>{
+  const f=fixture();
+  const command=async(...args:string[])=>{
+    const child=Bun.spawn([process.execPath,cli,'context-suggestions',...args,'--json'],{env:f.env,stdout:'pipe',stderr:'pipe'});
+    const [code,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
+    expect({code,err}).toEqual({code:0,err:''});return JSON.parse(out).data.harnesses;
+  };
+  try{
+    expect(await command('status')).toEqual(['codex']);
+    expect(await command('disable','--harness','codex')).toEqual([]);
+    const both={...f.config,harnesses:['codex','claude-code']};
+    f.write(f.configFile,both);expect(await command('status')).toEqual(['claude-code']);
+    f.write(f.configFile,{...both,owner:{tenantId:'other',userId:'other'}});
+    expect(await command('status')).toEqual(['codex','claude-code']);
+    expect(await command('disable')).toEqual([]);
+    f.write(f.configFile,both);expect(await command('status')).toEqual(['claude-code']);
+    f.write(f.configFile,{...both,disabled:true});expect(await command('status')).toEqual([]);
+    expect(await command('enable','--harness','codex')).toEqual(['codex']);
+  }finally{f.close();}
+});
+
+test('upgrades preserve the complete previous selection, including an explicit global disable',async()=>{
+  const f=fixture(),config:CaptureConfig={...f.config,harnesses:['codex','cursor']};
+  try{
+    f.write(f.configFile,config);
+    const file=join(configDir(),'context-checks',hash(f.config.api)+'.json'),binding=checkBinding(f.config,f.config.api);
+    const previousSelections:CheckHarness[][]=[[],['cursor']];
+    for(const harnesses of previousSelections){
+      f.write(file,{schemaVersion:1,...binding,revision:'previous',harnesses});
+      expect(checkSettings(binding,config).harnesses).toEqual(harnesses);
+    }
+    await updateCheckSettings(binding,['claude-code'],true);
+    expect(checkSettings(binding,f.config).harnesses).toEqual(['claude-code','cursor']);
+  }finally{f.close();}
+});
 
 test('native human prompt IDs preserve repeated turns, steering, and imported/subagent exclusions',()=>{
   const f=fixture();try{for(const harness of ['codex','claude-code','cursor','devin'] as const){
@@ -72,14 +109,16 @@ test('Antigravity bills the explicit human transcript boundary, never a model in
   }finally{f.close();}
 });
 
-test('local admission deduplicates across processes, caps concurrency and claims delivery once',()=>{
+test('local admission deduplicates across processes, admits overlapping checks and claims delivery once',()=>{
   const f=fixture();const a=new CheckStore(f.settings,'codex'),b=new CheckStore(f.settings,'codex');
   try{
     const first=checkEvent('codex',prompt('codex'),f.config)!;
     const task=a.enqueue(first)!;expect(task.state).toBe('running');expect(b.enqueue(first)).toBeUndefined();
     expect(a.enqueue(checkEvent('codex',prompt('codex','prompt-2'),f.config)!)).toBeDefined();
     expect(a.current(task)).toBe(false);
-    const third=checkEvent('codex',prompt('codex','prompt-3'),f.config)!;expect(a.enqueue(third)).toBeUndefined();expect(a.find(third)?.state).toBe('failed');
+    const third=checkEvent('codex',{...prompt('codex','prompt-3'),session_id:'another-session'},f.config)!;
+    expect(b.enqueue(third)?.state).toBe('running');
+    expect(a.enqueue(third)).toBeUndefined();
     expect(a.set(task,'ready')).toBe(false);
     expect(JSON.parse(task.input).message).toBe(first.message);expect(task.input).not.toContain('fixture-token');
     const syntheticCredential=['apikey','abcdefghijklmnop'].join('_');
@@ -120,7 +159,7 @@ test('real native CLI hooks charge once, replay-free locally, and honor opt-out 
     expect(await f.run(prompt(harness))).toBe('');expect(checks).toBe(before+1);
     f.write(f.configFile,{...f.config,exclusions:{sessions:['native-session'],projects:[]}});expect(await f.run(prompt(harness,'prompt-2'))).toBe('');
     f.write(f.configFile,{...f.config,exclusions:{sessions:[],projects:[f.home]}});expect(await f.run(prompt(harness,'prompt-3'))).toBe('');
-    f.write(f.configFile,f.config);saveCheckSettings(checkBinding(f.config,f.config.api),[]);expect(await f.run(prompt(harness,'prompt-4'))).toBe('');expect(checks).toBe(before+1);
+    f.write(f.configFile,f.config);await updateCheckSettings(checkBinding(f.config,f.config.api),[harness],false);expect(await f.run(prompt(harness,'prompt-4'))).toBe('');expect(checks).toBe(before+1);
   }finally{f.close();}}}finally{server.stop(true);}
 },15000);
 
@@ -196,3 +235,72 @@ test('telemetry covers measured authorization latency but still bounds a stalled
     expect(performance.now()-start).toBeLessThan(2200);expect(calls).toBe(1);expect(store.pending()).toEqual(pending);
   }finally{store.close();f.close();server.stop(true);}
 },5000);
+
+test('pending reports survive offline backlogs, restart, and enabling another harness',async()=>{
+  const f=fixture();let store=new CheckStore(f.settings,'codex');
+  try{
+    store.enqueue(checkEvent('codex',prompt('codex'),f.config)!);
+    const first=store.pending()[0]!;
+    for(let i=0;i<521;i++)store.queue({...first,id:crypto.randomUUID()});
+    store.db.query('UPDATE suggestion_outbox SET created=?').run(Date.now()-3*86400000);
+    store.queue({...first,id:crypto.randomUUID()});
+    store.close();
+    const settings=await updateCheckSettings(checkBinding(f.config,f.config.api),['cursor'],true);
+    store=new CheckStore(settings,'codex');
+    const accepted=new Set<string>();
+    const fetcher=(async(url,init)=>{
+      if(String(url).endsWith('/identity'))return Response.json({data:{principal:settings.owner}});
+      const ids=JSON.parse(String(init?.body)).events.map((e:{id:string})=>e.id);
+      ids.forEach((id:string)=>accepted.add(id));return Response.json({data:{accepted:ids}});
+    }) as typeof fetch;
+    for(let hook=0;store.pending().length&&hook<30;hook++)await flushSuggestionEvents(store,()=>{},fetcher);
+    expect(accepted.size).toBe(523);expect(accepted.has(first.id)).toBe(true);expect(store.pending()).toHaveLength(0);
+    store.queue(first);store.queue({...first,id:crypto.randomUUID(),harness:'cursor'});
+    const cursor=await updateCheckSettings(checkBinding(f.config,f.config.api),['codex'],false);
+    store.close();store=new CheckStore(cursor,'cursor');
+    expect(store.pending().map(event=>event.harness)).toEqual(['cursor']);
+  }finally{store.close();f.close();}
+});
+
+test('a rejected report is isolated across restarts and revoked access preserves every queued report',async()=>{
+  for(const status of [400,403,409]){
+    const f=fixture();let store=new CheckStore(f.settings,'codex');
+    try{
+      store.enqueue(checkEvent('codex',prompt('codex'),f.config)!);
+      const first=store.pending()[0]!,bad=crypto.randomUUID(),last=crypto.randomUUID();
+      store.queue({...first,id:bad});store.queue({...first,id:last});
+      let revoked=true,disconnect=true;
+      const fetcher=(async(url,init)=>{
+        if(String(url).endsWith('/identity'))return Response.json({data:{principal:f.settings.owner}});
+        if(revoked)return Response.json({error:{code:'CONTEXT_CHECK_UNAVAILABLE'}},{status:403});
+        const ids=JSON.parse(String(init?.body)).events.map((e:{id:string})=>e.id);
+        if(disconnect&&ids.length===1)throw Error('offline');
+        if(ids.includes(bad))return Response.json({error:{code:status===403?'SUGGESTION_RECEIPT_FORBIDDEN':'INVALID'}},{status});
+        return Response.json({data:{accepted:ids}});
+      }) as typeof fetch;
+      await flushSuggestionEvents(store,()=>{},fetcher);expect(store.pending()).toHaveLength(3);
+      revoked=false;await flushSuggestionEvents(store,()=>{},fetcher);store.close();store=new CheckStore(f.settings,'codex');
+      expect(store.pending().map(e=>e.id)).toEqual([first.id]);disconnect=false;
+      expect(await flushSuggestionEvents(store,()=>{},fetcher)).toEqual({accepted:[first.id,last],rejected:[bad]});
+      expect(store.pending()).toEqual([]);
+    }finally{store.close();f.close();}
+  }
+});
+
+test('the next opener finishes an interrupted settings change and reports every expired check',async()=>{
+ const f=fixture();let store=new CheckStore(f.settings,'codex');
+ try{
+   const task=store.enqueue(checkEvent('codex',prompt('codex'),f.config)!)!;
+   const report=store.pending()[0]!;
+   const next=await updateCheckSettings(f.settings,['cursor'],true);
+   store.db.query('UPDATE suggestion_outbox SET binding=?').run(f.settings.revision);
+   store.db.exec('DELETE FROM suggestion_outbox_revision');
+   store.close();store=new CheckStore(next,'codex');
+   expect(store.pending().map(e=>e.id)).toEqual([report.id]);store.acknowledge([report.id]);
+   const insert=store.db.query("INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)");
+   store.db.transaction(()=>{for(let i=0;i<513;i++)insert.run('expired-'+i,'session-'+i,'prompt-'+i,Date.now()-60000,'running',task.input,'[]',next.revision);}).immediate();
+   store.enqueue(checkEvent('codex',prompt('codex','next'),f.config)!);
+   expect(store.db.query("SELECT count(*) AS count FROM suggestion_outbox WHERE json_extract(payload,'$.reason')='expired'").get()).toEqual({count:513});
+   expect(store.db.query("SELECT count(*) AS count FROM checks WHERE id LIKE 'expired-%'").get()).toEqual({count:513});
+ }finally{store.close();f.close();}
+});

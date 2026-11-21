@@ -1,97 +1,100 @@
-import {useState} from 'react';
-import {Button, CopyField, Dialog, Icon, Notice, Page, Section, StatusBadge} from '../design/components.tsx';
+import {useEffect, useState} from 'react';
+import {Button, Dialog, Icon, Notice, Page, Section, Tabs} from '../design/components.tsx';
 import {nativeInstallCommand} from '../../../src/sessions/cli-installation.mjs';
+import {CommandSnippet} from '../onboarding/copy.tsx';
+import {connectionCommands} from '../onboarding/model.ts';
 import {ReplicasCaptureSetup} from '../onboarding/replicas-capture.tsx';
 import type {OnboardingAdapter} from '../onboarding/types.ts';
+import {ago} from '../pages/usage-model.ts';
 import type {Bootstrap} from './api.ts';
 
 const clientNames = {'claude-code':'Claude Code', codex:'Codex', cursor:'Cursor', antigravity:'Antigravity', 'grok-bot':'Grok Bot', devin:'Devin', 'claude-desktop':'Claude Desktop', chatgpt:'ChatGPT'};
 
 type Installation = NonNullable<Bootstrap['setup']>['installations'][number];
-type Client = Installation['clients'][number];
 
-const historyLabels = {
-  not_started: 'Waiting to import past sessions',
-  running: 'Importing past sessions in the background',
-  complete: 'Past sessions imported',
-  failed: 'Past session import needs attention in the CLI',
-};
-const installCommand = nativeInstallCommand() + ' -s -- --setup';
+const platforms = [
+  {value: 'unix', label: 'macOS / Linux'},
+  {value: 'windows', label: 'Windows'},
+];
 
-function MachineInstructions() {
-  return <div className="oc-form-measure stack-sm">
-    <CopyField label="Run in Terminal on the Mac you want to connect" value={installCommand} multiline/>
-    <p className="muted">Already installed? Run <code>opencrawl setup</code> on that machine to resume setup or review your choices.</p>
+function AgentInstructions({mcpUrl}: {mcpUrl: string}) {
+  const [platform, setPlatform] = useState('unix');
+  const workspace = new URL(mcpUrl).origin;
+  const windows = connectionCommands(mcpUrl, true);
+  const apiArg = workspace === 'https://app.getopencrawl.com' ? '' : ` --api '${workspace.replaceAll("'", "'\\''")}'`;
+  const text = platform === 'windows'
+    ? `${windows.cli}\n${windows.recording}`
+    : `${nativeInstallCommand()} -s -- --connect${apiArg}`;
+  return <div className="oc-form-measure oc-install-instructions">
+    <Tabs label="Operating system" items={platforms} value={platform} onChange={setPlatform}/>
+    <CommandSnippet key={platform} label="Copy setup command" text={text}/>
   </div>;
 }
 
-function connectionSelected(client: Client) {
-  return client.forward || client.installed || Boolean(client.pluginState && client.pluginState !== 'not_selected');
+const recentContactWindow = 15 * 60_000;
+
+function LastSeen({at, now, agent}: {at?: string; now: number; agent?: string}) {
+  const seen = Date.parse(at ?? '');
+  const age = now - seen;
+  const exact = Number.isFinite(seen) ? new Date(seen).toLocaleString() : undefined;
+  const recent = exact ? age >= -60_000 && age < recentContactWindow : undefined;
+  const source = agent ? `Last live capture from ${agent} received` : 'Last setup report or live capture received';
+  const time = at && exact
+    ? <time dateTime={at} title={`${source} ${exact}`}>{agent ? '' : 'Seen '}{age < -60_000 ? exact : ago(at, now)}</time>
+    : (agent ? 'No signal yet' : 'Last seen unknown');
+
+  if (agent) return <div className="oc-agent-contact">
+    <dt className="oc-presence" data-recent={recent}>{agent}</dt><dd>{time}</dd>
+  </div>;
+  return <div className="oc-computer-contact oc-presence" data-recent={recent}>{time}</div>;
 }
 
-function connectionProgress(client: Client) {
-  const connected = client.mcp.state === 'authenticated' || (!client.forward && client.mcp.state === 'observed');
-  const searchable = client.proof.state === 'verified';
-  return {connected, searchable, ready: client.installed && connected && (!client.forward || searchable)};
+function ComputerTile({installation, now}: {installation: Installation; now: number}) {
+  const agents = installation.clients.filter(client =>
+    client.installed && (client.mcp.state === 'authenticated' || (!client.forward && client.mcp.state === 'observed')));
+
+  return <li className="oc-computer-tile">
+    <h3>{installation.machine.label}<Icon name="monitor" size={16}/></h3>
+    {agents.length > 0 ? <>
+      <LastSeen at={installation.updatedAt} now={now}/>
+      <dl className="oc-computer-agents" aria-label="Connected agents and their last contact">
+        {agents.map(agent => <LastSeen key={agent.client} agent={clientNames[agent.client]} at={agent.lastSeenAt} now={now}/>)}
+      </dl>
+    </> : <p className="oc-computer-empty">No connected agents</p>}
+  </li>;
 }
 
-function clientSummary(client: Client) {
-  const checks = [];
-  if (connectionSelected(client)) {
-    const {connected, searchable} = connectionProgress(client);
-    if (client.pluginState === 'error') checks.push('Plugin needs attention in the CLI');
-    else if (!client.installed) checks.push('Waiting for plugin installation');
-    if (connected) checks.push('Workspace connection verified');
-    else if (client.installed) checks.push('Waiting for workspace connection');
-    if (!client.forward) checks.push('Recording off');
-    else if (searchable) checks.push('Captured and searchable');
-    else if (connected && client.installed) checks.push('Waiting for a searchable session');
-  }
-  if (client.history === 'import') checks.push(historyLabels[client.historyProgress.state]);
-  return checks.join('. ') + '.';
-}
-
-function MachineRow({installation}: {installation: Installation}) {
-  const clients = installation.clients.filter(client => connectionSelected(client) || client.history === 'import');
-  const connections = clients.filter(connectionSelected);
-  const ready = connections.filter(client => connectionProgress(client).ready).length;
-  const failed = clients.some(client => client.pluginState === 'error' || (client.history === 'import' && client.historyProgress.state === 'failed'));
-  const summary = failed ? 'Needs attention' : connections.length ? `${ready} of ${connections.length} ready` : clients.length ? 'History only' : 'No agents selected';
-  const tone = failed ? 'warning' : ready > 0 && ready === connections.length ? 'success' : 'neutral';
-
-  return <details className="oc-machine-row">
-    <summary>
-      <Icon name="monitor" size={20}/>
-      <span className="oc-machine-identity"><strong>{installation.machine.label}</strong>
-        {clients.length > 0 && <small>{clients.map(client => clientNames[client.client]).join(', ')}</small>}
-      </span>
-      <StatusBadge tone={tone}>{summary}</StatusBadge>
-      <Icon name="chevron-right" size={16}/>
-    </summary>
-    <div className="oc-machine-details">
-      {clients.length > 0 && <ul aria-label={`Agent setup on ${installation.machine.label}`}>
-        {clients.map(client => <li key={client.client}><strong>{clientNames[client.client]}</strong><span>{clientSummary(client)}</span></li>)}
-      </ul>}
-      <p className="muted">Run <code>opencrawl setup</code> on this machine to review its settings or continue setup.</p>
-    </div>
-  </details>;
+function ComputerGrid({installations}: {installations: Installation[]}) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const timer = window.setInterval(tick, 30_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, []);
+  return <ul className="oc-computer-grid" aria-label="Computers">
+    {installations.map(installation => <ComputerTile key={installation.installationId} installation={installation} now={now}/>)}
+  </ul>;
 }
 
 /** Setup is a progress page. Choices and continuation live in the CLI. */
-export function SetupPage({status, error, replicasSetup}: {status: NonNullable<Bootstrap['setup']>; error: string; replicasSetup?: OnboardingAdapter['replicasSetup']}) {
-  const [adding, setAdding] = useState(false);
+export function SetupPage({status, error, replicasSetup, mcpUrl}: {mcpUrl: string; status: NonNullable<Bootstrap['setup']>; error: string; replicasSetup?: OnboardingAdapter['replicasSetup']}) {
+  const [connecting, setConnecting] = useState(false);
   const installations = status?.installations ?? [];
-  return <Page title="Setup" description="Connect a new machine or check setup on an existing one."
-    actions={installations.length > 0 && <Button variant="primary" onClick={() => setAdding(true)}><Icon name="plus" size={16}/>Add machine</Button>}>
-    <div className="stack">
-      {error && <Notice tone="danger">{error} Your saved choices are unchanged.</Notice>}
-      {installations.length > 0
-        ? <Section className="oc-source-section" title="Your machines">
-            <div className="oc-machine-list">{installations.map(installation => <MachineRow key={installation.installationId} installation={installation}/>)}</div>
-          </Section>
-        : <Section className="oc-source-section" title="Add your first machine" description="Install OpenCrawl and choose which agents to connect. Your machine will appear here as setup runs."><MachineInstructions/></Section>}
-      {replicasSetup && <ReplicasCaptureSetup issue={replicasSetup}/>}
-    </div>
-    {(installations.length > 0 || adding) && <Dialog open={adding} onClose={() => setAdding(false)} title="Add a machine" description="Install OpenCrawl and choose which agents to connect."><MachineInstructions/></Dialog>}
+  return <Page className="oc-management-page" title="Setup" description="Connect your coding agents to this workspace.">
+    {error && <Notice tone="danger">{error} Your saved choices are unchanged.</Notice>}
+    {installations.length > 0
+      ? <Section className="oc-source-section oc-computers-section" title="Your computers"
+          actions={<Button variant="primary" onClick={() => setConnecting(true)}><Icon name="plus" size={16}/>Connect an agent</Button>}>
+          <ComputerGrid installations={installations}/>
+        </Section>
+      : <Section className="oc-management-panel" title="Connect your first agent" description="Install OpenCrawl on the computer where your agent runs.">
+          <AgentInstructions mcpUrl={mcpUrl}/>
+        </Section>}
+    {replicasSetup && <ReplicasCaptureSetup issue={replicasSetup}/>}
+    {(installations.length > 0 || connecting) && <Dialog open={connecting} onClose={() => setConnecting(false)} title="Connect an agent" description="Install OpenCrawl on the computer where your agent runs."><AgentInstructions mcpUrl={mcpUrl}/></Dialog>}
   </Page>;
 }

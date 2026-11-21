@@ -1,3 +1,5 @@
+import {registrationMcp} from './registration-mcp.ts';
+import {readSession} from '../session.ts';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {readFileSync} from 'node:fs';
@@ -52,21 +54,25 @@ export function bindPublishedPackage(client:LocalPluginClient,api:string,source:
  const files={...source.files},manifest=client==='claude-code'?'.claude-plugin/plugin.json':client==='codex'?'.codex-plugin/plugin.json':client==='cursor'?'.cursor-plugin/plugin.json':'.antigravity-plugin/plugin.json';
  const json=(value:unknown)=>JSON.stringify(value,null,2)+'\n';
  files[manifest]=json({...JSON.parse(files[manifest]!),name:identity.name});
- const mcp=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:{type:'http',url:origin+'/mcp'}}});
+ const registrationId=owner.userId.startsWith('agent_reg_')?owner.userId:undefined;
+ if(registrationId && readSession(origin)?.registrationId!==registrationId)throw invalid();
+ const transport=registrationId?registrationMcp(command,{api:origin,configHome,installationId,registrationId}):{type:'http',url:origin+'/mcp'};
+ const mcp=json({mcpServers:{[client==='codex'?identity.name:'opencrawl']:transport}});
  for(const name of ['.mcp.json','mcp.json','mcp_config.json'])if(name in files)files[name]=mcp;
  files['.opencrawl-binding.json']=json({schemaVersion:1,client,api:origin,configHome:resolve(configHome),installationId,owner:{tenantId:owner.tenantId,userId:owner.userId},captureMode});
  files['.opencrawl-source.json']=json(source.source);
- files['skills/opencrawl-setup/SKILL.md']=setupAgentGuide(client,origin,profileSetupCommand(command,configHome,env),process.platform,client==='codex'?{name:identity.name,url:origin+'/mcp'}:undefined)+`\nVerify the native MCP connection selected by setup for ${origin}/mcp.\n`;
+ files['skills/opencrawl-setup/SKILL.md']=setupAgentGuide(client,origin,profileSetupCommand(command,configHome,env),process.platform,client==='codex'?{name:identity.name,url:origin+'/mcp'}:undefined,Boolean(registrationId))+`\nVerify the native MCP connection selected by setup for ${origin}/mcp.\n`;
  return {...source,files};
 }
 
 /** Enrollment precedes binding; source package loading never invents an owner. */
 export async function installPublishedSetupPlugins(api:string,selected:string[],options:PluginOptions&{captureMode?:CaptureMode;loadPackage?:typeof loadPublishedPackage}={}){
- if(selected.includes('devin'))return installSetupPlugins(api,selected,options);
+ if(selected.length===1&&selected[0]==='devin')return installSetupPlugins(api,selected,options);
  const config=readCaptureConfig(),origin=apiOrigin(api),configHome=dirname(configDir());
  if(selected.length&&(!config||config.api!==origin||config.authPending||config.installationId==='pending'))throw new CliError('INVALID_PLUGIN_BINDING','Enroll this exact workspace profile before installing its native plugin.');
  const bundles:Partial<Record<LocalPluginClient,PublishedPackage>>={};
  for(const client of selected){
+  if(client==='devin')continue;
   if(!packageRelease(client))throw invalid();
   const source=await (options.loadPackage??loadPublishedPackage)(client as LocalPluginClient);
   bundles[client as LocalPluginClient]=bindPublishedPackage(client as LocalPluginClient,origin,source,{configHome,installationId:config!.installationId,owner:config!.owner,captureMode:options.captureMode??'hook',command:options.command,env:options.env});

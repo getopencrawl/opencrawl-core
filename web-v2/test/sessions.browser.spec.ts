@@ -217,3 +217,41 @@ test('a network failure clears the transcript and retry refetches its initial pa
   await expect(page.getByRole('status')).toContainText('Showing 1 of 1 captured events.');
   expect(starts).toBe(2);
 });
+
+for(const width of [390,1440])test(`linked history opens independently of live capture at ${width}px`,async({page,request})=>{
+  await request.post('/__test/reset',{data:{}});
+  await page.setViewportSize({width,height:900});
+  const history={userId:'workload_replicas_test',harness:'replicas' as const,sessionId:'replicas-chat:test'};
+  await page.route('**/api/library/**',r=>r.fulfill({json:{sessions:[{...base,historyCapture:history}],authors:{alice:'Alice'},limit:50}}));
+  await page.goto('/sessions');
+  await expect(page.locator('.oc-rows .oc-row')).toHaveCount(1);
+  const live=page.getByRole('link',{name:/Single machine/}),archive=page.getByRole('link',{name:'Replicas history',exact:true});
+  await expect(live).toHaveAttribute('href',/harness=codex/);
+  await expect(archive).toHaveAttribute('href',/harness=replicas/);
+  await archive.click();
+  await expect(page).toHaveURL(/harness=replicas/);
+});
+
+for (const width of [1440, 390]) test(`sessions list and transcript show a brand spinner while loading at ${width}px`, async ({page, request}, testInfo) => {
+  await request.post('/__test/reset', {data: {}});
+  await page.setViewportSize({width, height: 900});
+  let release = () => {}, held = Promise.resolve();
+  await page.route('**/api/library/**', async route => {
+    await held;
+    const read = route.request().url().includes('read');
+    await route.fulfill({json: read ? {session: base, events: [], total: 0, next: null, authors: {}} : {sessions, limit: 50}});
+  });
+  for (const [path, label, loaded] of [['/sessions', 'Loading sessions', page.locator('.oc-rows .oc-row').first()], ['/sessions?user=alice&harness=codex&id=single', 'Loading session', page.getByRole('heading', {name: 'Single machine'})]] as const) {
+    held = new Promise<void>(resolve => {release = resolve;});
+    await page.goto(path);
+    const spinner = page.locator('.oc-loading-spinner');
+    await expect(spinner).toBeVisible();
+    await expect(spinner).toHaveCSS('opacity', '1');
+    await expect(page.getByRole('status')).toHaveText(label);
+    await expect(spinner.locator('svg.oc-spin')).toHaveCSS('color', 'rgb(125, 130, 255)');
+    await page.screenshot({path: testInfo.outputPath(`${label.replaceAll(' ', '-').toLowerCase()}-${width}.png`)});
+    release();
+    await expect(loaded).toBeVisible();
+    await expect(spinner).toHaveCount(0);
+  }
+});

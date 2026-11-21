@@ -1,13 +1,43 @@
-> Historical integration: the reconciled server runtime does not include the unfinished Devin account-binding endpoints. Existing CLI plugin tooling remains available, but this server feature is deferred.
-
 # Devin Cloud adapter status
 
-This is an integration under development, not a supported installation or a
-claim of capture parity. The native Cloud probe found a first-turn capture gap.
-An isolated preview has now verified real enrollment, subsequent-session
-startup, later capture, worker crash recovery, native MCP and work-boundary
-board interactions. Production delivery, first-turn completeness, cold-boot
-durability and idle board notifications remain separate, unfinished gates.
+For member search, skills and CLI access, install the [Devin Cloud plugin](https://github.com/getopencrawl/opencrawl-plugins/tree/main/plugins/devin) from `plugins/devin`. The administrator setup below configures a workspace workload identity and optional organization recording.
+
+An administrator can connect a Devin Cloud organization to an OpenCrawl
+workspace using Devin's signed workload identity. Production checks verified
+workspace search, board access and recording. With CLI 0.4.143 and a Devin
+event grant in place before launch, an independent workspace reader also found
+a fresh session's original user prompt, first shell command and its output.
+
+## Administrator setup
+
+1. Prepare the Ubuntu blueprint your team uses. Install OpenCrawl CLI 0.4.143
+   or later and Devin’s official OIDC helper. Build and activate the snapshot.
+   Use an updated CLI on the administrator’s machine as well.
+2. Sign in to the target OpenCrawl workspace as an administrator. Run
+   `opencrawl workload approve --provider devin` with the deployment URL and a
+   private code file. Give the code to one Devin session through its encrypted
+   **This session** secret and run `opencrawl workload connect --code-stdin` there.
+   This binds the Devin organization to that workspace.
+3. Choose whether to record when you generate the plugin. For recording, create
+   a dedicated organization service user in Devin with access to session events.
+   Supply its key to `opencrawl workload bundle --recording on --key-stdin` from
+   a private file or secret manager (full command below). OpenCrawl verifies the
+   credential with Devin and encrypts it in the workspace. Subsequent exports
+   reuse it. Recording includes the opening prompt and early shell activity.
+   For search and board access alone, use `--recording off`.
+4. ZIP the contents of the export directory, including hidden files, with
+   `.devin-plugin/plugin.json` at the expected path inside the archive. In
+   **Customize → Plugins**, choose **Myself** or the organization, upload
+   the ZIP and enable its MCP server.
+5. Start a **fresh** Devin session. Verify workspace search. For recording, run
+   a first command with an unpredictable output, then search from another
+   OpenCrawl session for the original prompt, command and output under that
+   Devin session ID. Include tool outputs when searching for the result.
+
+For an explicitly single-session pilot, add `--one-session` to the recording
+bundle command and bind the fresh session with `workload events --select-session`.
+The pilot used Devin’s Member role, which can also manage organization sessions.
+The service key stays on the receiver. Use `workload events --off` to erase it.
 
 ## Observed Cloud contract
 
@@ -145,12 +175,9 @@ records by provider. A live admin approval is short-lived, hashed at rest and
 claimable by one verified workload; subsequent sessions use the approved
 organization binding. Revocation is checked again at resource access.
 
-The connection registry uses the current `ApplicationState` PostgreSQL port.
-Devin and Replicas share the enrollment implementation but have separate
-provider tables, approval codes and owner namespaces. Existing Replicas table
-names, records and migration behavior stay intact. No Devin approval data has
-been released on the earlier object-store implementation, so it has no legacy
-data migration or object-store fallback.
+Devin connections and single-use approval claims use scoped PostgreSQL tables.
+The signed organization selects its approved workspace, and the signed session
+selects its capture owner. The Devin and Replicas owner namespaces are separate.
 
 The self-host adapter exposes the admin setup and signed-workload claim routes
 and routes admitted identities through the common CLI, capture, MCP and board
@@ -158,10 +185,10 @@ operations. Tests use local Better Auth, PostgreSQL and synthetic signing keys,
 with no hosted credentials, and cover fresh sessions, revocation, scope denial,
 atomic installation writes and provider/installation namespace collisions.
 `OPENCRAWL_AUTH=devin-cloud` selects the official `devin-oidc` token helper in
-the CLI; tokens remain in memory. This is not a completed setup experience:
-the setup endpoint still returns a code, and hosted delivery remains unfinished.
-The live preview acceptance below establishes real Cloud enrollment only in the
-isolated verification deployment.
+the CLI. Tokens remain in memory. A human administrator issues the one-time
+code, and a signed Cloud session claims it. For a hosted installation, use
+Devin's session-specific secret field and select **This session** before
+submitting the code. [Devin session secrets](https://docs.devin.ai/product-guides/secrets#session-specific-secrets)
 
 An admin with an existing CLI sign-in can issue the one-time code without a
 provider-specific setup page:
@@ -170,6 +197,12 @@ provider-specific setup page:
 opencrawl workload approve --provider devin --api https://opencrawl.example \
   --code-file /private/path/devin-approval
 ```
+
+To disconnect, a currently signed-in workspace administrator can send an authenticated
+`POST /api/cli/workloads/devin/disconnect` with `{"organizationId":"<Devin org_id>"}`.
+The operation revokes the binding for future requests from that Devin organization.
+Resuming enrollment requires a fresh administrator approval. Stored captures follow
+the workspace's ordinary retention and deletion settings.
 
 The command requires an explicit deployment and a new private file. It uses
 the saved human sign-in, rechecks current admin membership and prints no code.
@@ -208,23 +241,23 @@ Install the native OpenCrawl CLI and Cognition's official OIDC helper in the
 environment snapshot. A new Cloud session boots a fresh snapshot; changes made
 inside an earlier session do not update it. Add these steps to the Linux
 organization blueprint, preserving existing repository setup. This pinned
-example was verified with CLI 0.4.91; update the version and installer checksum
-together when validating a newer release:
+example was verified with CLI 0.4.143. Check the installer checksum for the
+selected release whenever the pin changes.
 
 ```yaml
 runs-on: linux
 initialize:
   - name: Install Devin OIDC helper
     uses: github.com/CognitionAI/actions/setup-devin-oidc@c63a5d75c304ec2a2e5842ed844ff23763d28379
-  - name: Install OpenCrawl CLI 0.4.91
+  - name: Install OpenCrawl CLI 0.4.143
     run: |
       set -eu
       test "$(id -un)" = ubuntu
       oc_blueprint_tmp=$(mktemp -d /tmp/opencrawl-blueprint.XXXXXX)
       trap 'rm -rf "$oc_blueprint_tmp"' EXIT HUP INT TERM
-      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.91/install.sh -o "$oc_blueprint_tmp/install.sh"
-      printf '%s  %s\n' 80e82261e154fccb634f6ca2ac60fc2211d89811e27d765e8b16cf95603cf7d4 "$oc_blueprint_tmp/install.sh" | sha256sum -c -
-      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.91
+      curl -q --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' https://github.com/getopencrawl/opencrawl-core/releases/download/cli-v0.4.143/install.sh -o "$oc_blueprint_tmp/install.sh"
+      printf '%s  %s\n' 2c5fe2b262a5c5a7345c4abfa21cd89dcc2577e8cbea63d3e0b78ebaf7591101 "$oc_blueprint_tmp/install.sh" | sha256sum -c -
+      env -u OPENCRAWL_DOWNLOAD_BASE -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 sh "$oc_blueprint_tmp/install.sh" 0.4.143
 post-build:
   - name: Verify Devin OIDC helper
     run: test -x /usr/local/bin/devin-oidc
@@ -233,7 +266,7 @@ post-build:
       set -eu
       test -x /home/ubuntu/.local/bin/opencrawl
       oc_blueprint_version=$(env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl --version)
-      test "$oc_blueprint_version" = 0.4.91
+      test "$oc_blueprint_version" = 0.4.143
       env -u OPENCRAWL_AUTH -u OPENCRAWL_TOKEN -u OPENCRAWL_SESSIONS_TOKEN OPENCRAWL_NO_UPDATE=1 PATH=/nonexistent /home/ubuntu/.local/bin/opencrawl workload --help
 ```
 
@@ -302,8 +335,13 @@ opencrawl workload bundle --api https://opencrawl.example \
   --directory /absolute/export/opencrawl-devin \
   --command /home/ubuntu/.local/bin/opencrawl \
   --config-home /home/ubuntu/.config/opencrawl-cloud \
-  --recording on --json
+  --recording on --key-stdin --json < /private/path/devin-service-key
 ```
+
+Omit `--key-stdin` and the redirection on subsequent exports to reuse the
+workspace credential. For a workspace with several connected Devin organizations,
+pass `--organization DEVIN_ORG`. Recording setup verifies the service account
+and checks for Devin's session-events tool before writing the bundle.
 
 Use `--recording off` for search and board access without new capture. The command
 exports only public settings, shared skills, a Cloud-only manifest, native hooks
@@ -328,9 +366,9 @@ services, including interrupted publication and resume. The existing Claude,
 Codex, Cursor and Antigravity bundles remain byte-identical against the frozen
 combined checkpoint. This is source validation. Separate live acceptance below
 establishes installation, native MCP, later capture/index/search and worker
-crash recovery in the isolated preview. Cloud starts SessionStart in the background;
-content hooks arriving before profile enrollment can still be missed. Do not
-describe this implementation as first-turn capture parity.
+crash recovery in the isolated preview. Cloud starts SessionStart in the
+background. For sessions with an event grant, the worker can recover the
+opening prompt and early shell receipts from Devin as described below.
 
 ## Native MCP transport
 
@@ -433,28 +471,58 @@ After acceptance, both temporary personal plugins were deactivated and capture
 was stopped in all four verification VMs without purging pending data. Uploaded
 plugin files and the working snapshot were retained.
 
-Onboarding still has three one-time administrator stages: prepare the organization
-snapshot, approve and bind the Devin organization to the OpenCrawl workspace,
-and activate the reviewed deployment-bound plugin with a recording choice. The
-native CLI can generate the bundle and private approval file; the code still
-needs secure transfer to the Cloud claim step. These are setup stages, not a
-measured click count. Subsequent tested fresh sessions needed no human setup.
+The preview used an organization snapshot, workspace enrollment and a
+deployment-bound plugin. Subsequent tested sessions inherited those settings.
+Current recording setup includes authorization to capture the opening turn.
 
-## Acceptance gates
+## Hosted production acceptance, 2026-11-19
 
-The first-turn gap is a blocker. A setup prompt that asks the agent to repeat
-its history is not authoritative capture. The public session-messages API
-documents chat messages, not a complete tool trace, so adding that API alone
-does not establish parity. The strongest currently observed path is native
-plugin hooks feeding the shared worker, with explicit startup coverage limits.
+The hosted rollout used core revision `01f57f6bdad3`. A separate Cloud
+session claimed a temporary organization connection. A fresh Ubuntu session
+using native CLI 0.4.139 then loaded the personal plugin exported by CLI
+0.4.140. The earlier 0.4.91 snapshot predates the current bundle's
+`plugin-hook` command. Update the snapshot before installing this bundle.
 
-Before claiming parity, prove a fresh session's first prompt and tool trace
-through a supported provider mechanism, idle board delivery and any promised
-cold-boot or replacement-VM durability. Before hosted release, verify the
-exact production runtime and plugin bundle. Large-output recovery and exact
-queued-event survival across a forced crash have regression coverage; equivalent
-end-to-end Cloud receipts remain outstanding. The isolated preview results above are bounded acceptance;
-local fixtures and self-host tests remain separate regression evidence.
+- Both shared skills loaded. Native MCP searched the approved workspace with
+  the calling session excluded, registered board presence and read the inbox.
+  The native installation receipt reached `mcp.state=authenticated` and
+  `proof.state=verified`.
+- An independent workspace search found the second-turn synthetic user message
+  and assistant reply under the verified session, installation and workload
+  owner. It also found call and result evidence for the MCP verification receipt.
+  Exact, session-scoped searches returned zero candidates for the first user
+  prompt and the marker requested for the first shell action. The run did not
+  establish whether that command executed. All four marker queries had ready
+  coverage.
+- `collect uninstall` stopped background startup and preserved queued data.
+  Native MCP search still worked with recording off. Subsequent user and
+  assistant markers had zero matches in the same index. After the admin
+  revoked the binding, the previously authenticated Cloud VM failed its
+  read-only identity check.
+
+## Hosted first-turn verification with CLI 0.4.143
+
+The production test used a personal recording plugin on a fresh Ubuntu VM.
+An administrator enabled a single-session event grant before launch and bound
+it to the new session ID. The opening prompt requested a first shell command
+that generated a timestamp. The assistant replied only with `done`.
+
+Devin’s original events supplied the prompt, command, exit code and stdout.
+A separate OpenCrawl workspace login found one user message, one tool call and
+one tool result matching those events under the same installation and signed
+workload owner. All three indexed identities matched the original provider
+records, including their timestamps. The output also matched the native terminal
+bytes and appeared nowhere in the opening prompt.
+
+After recording stopped, a subsequent user message had zero matches in a
+session-scoped search with ready coverage. The same VM received
+`AUTH_FORBIDDEN` after the administrator disconnected the workspace, and
+Devin rejected the revoked service key with HTTP 401.
+
+Startup recovery covers the original user message and shell process receipts.
+Devin labels its completion output as an excerpt. Other first-tool types, long
+startup output, idle board delivery and replacement-VM durability still need
+production verification.
 
 Primary references, initially checked 2026-11-15; hooks and session APIs rechecked 2026-11-16:
 
@@ -464,6 +532,7 @@ Primary references, initially checked 2026-11-15; hooks and session APIs recheck
 - [Cloud MCP configuration](https://docs.devin.ai/work-with-devin/mcp)
 - [Plugin MCP declarations](https://docs.devin.ai/product-guides/plugin-mcp-setups)
 - [Session messages API](https://docs.devin.ai/api-reference/v3/sessions/get-organizations-session-messages)
+- [Devin MCP and organization service-user credentials](https://docs.devin.ai/work-with-devin/devin-mcp)
 - [Cloud OIDC](https://docs.devin.ai/product-guides/oidc)
 - [Official OIDC installer](https://github.com/CognitionAI/actions/tree/c63a5d75c304ec2a2e5842ed844ff23763d28379/setup-devin-oidc)
 

@@ -106,6 +106,7 @@ async function antigravityHook(api:string,eventFlag?:string,plugin:PluginHookCon
   return null;
 }
 export async function collectCommand(action:string,api:string,values:any) {
+  if(['backfill','install'].includes(action)&&(values.limit!==undefined||values['plan-id']!==undefined))throw new CliError('INVALID_USAGE','For a bounded import use history list --limit N and history import --plan-id ID --yes.',64);
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
   if(values.event!==undefined && action!=='hook')throw new CliError('INVALID_USAGE','Use --event only with collect hook.',64);
   if(values.project!==undefined && action!=='exclude' || values['session-id']!==undefined && action!=='exclude')throw new CliError('INVALID_USAGE','Use --project or --session-id with collect exclude.',64);

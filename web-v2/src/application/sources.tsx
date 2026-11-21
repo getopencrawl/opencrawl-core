@@ -68,6 +68,17 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
     finally {if (current(request)) {mutation.current = null; setPending(null);}}
   }
 
+  function replicasActions(source:SourceCard){
+    const history=source.history;
+    const setup=canSetUpReplicas&&['syncing','synced','connected'].includes(source.state);
+    if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup?<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>:undefined;
+    return <div className="actions">{setup&&<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>}
+      <Button disabled={pending!==null} onClick={()=>void run(source.provider,async request=>{
+        await adapter.replicasHistory!({action:'stop',id:history.id},request.signal);
+        if(current(request))setSuccess('Replicas import stopped. Your progress is saved.');
+      })}>{source.state==='synced'?'Disconnect':'Stop import'}</Button></div>;
+  }
+
   function connect(source: SourceCard, key?: string) {
     if (mutation.current) return;
     if (source.auth === 'api-key' && !key) {setActionError(''); setApiKey(''); setKeySource(source); return;}
@@ -147,7 +158,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
       {showSearch && <div className="oc-source-toolbar"><div className="oc-source-search"><Icon name="search" size={16}/><Input type="search" aria-label="Search integrations" placeholder="Search integrations" value={query} onChange={event=>setQuery(event.target.value)}/></div></div>}
       {groups.filter(group=>group.items.length>0).map(group=><Section key={group.title} title={group.title} className="oc-source-section">
         <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
-          {group.items.map(source => source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={canSetUpReplicas && ['syncing','synced','connected'].includes(source.state) ? <LinkButton to={replicasCapturePath}>Set up capture</LinkButton> : undefined} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+          {group.items.map(source => source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}

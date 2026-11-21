@@ -38,6 +38,9 @@ ingress:
   annotations: {}
   host: ""
   tls: []
+sharedFiles:
+  size: 10Gi
+  existingClaim: ""
 storageClass: ""
 postgresql:
   enabled: true

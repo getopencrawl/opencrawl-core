@@ -1,22 +1,24 @@
 import {ApplicationFailure} from '@temporalio/common';
-import {ReplicasProviderError} from '../../integrations/replicas-api.mjs';
+import {activityInfo} from '@temporalio/activity';
 import type {ReplicasImport,ReplicasJob} from '../../integrations/replicas-import.mjs';
 
-export function replicasActivities(imports:Pick<ReplicasImport,'advance'|'fail'>){
+export function replicasActivities(imports:Pick<ReplicasImport,'runStep'>){
+  async function runReplicasImportStep(job:ReplicasJob){
+    try{return await imports.runStep(job);}
+    catch(error){
+      const info=activityInfo();
+      const code=error instanceof Error&&'code' in error&&typeof error.code==='string'&&/^(?:[0-9A-Z]{5}|ECONNRESET|ETIMEDOUT|ECONNREFUSED)$/.test(error.code)?error.code:undefined;
+      console.warn(JSON.stringify({event:'replicas.import.activity_retry',operation:'checkpoint',tenantId:job.tenantId,importId:job.id,
+        runId:info.workflowExecution?.runId,attempt:info.attempt,activityId:info.activityId,code}));
+      throw ApplicationFailure.retryable('Replicas import checkpoint unavailable','ReplicasUnavailable');
+    }
+  }
   return {
-    async importReplicasPage(job:ReplicasJob){
-      try{return await imports.advance(job);}
-      catch(error){
-        // Upstream bodies, keys and history must never enter Temporal.
-        if(error instanceof ReplicasProviderError&&[400,401,403,404,409,413].includes(error.status)){
-          await imports.fail(job,'Replicas could not read all retained history. Check the organization key and Team workspace visibility, then reconnect to resume.');
-          throw ApplicationFailure.nonRetryable('Replicas history requires attention','ReplicasAccess');
-        }
-        throw ApplicationFailure.retryable('Replicas history page could not be imported','ReplicasUnavailable');
-      }
-    },
-    async markReplicasImportFailed(job:ReplicasJob){
-      await imports.fail(job,'The history import stopped after several retries. Reconnect to resume from the last saved page.');
-    },
+    runReplicasImportStep,
+    // Activities scheduled by pre-upgrade workflow tasks keep their boolean contract.
+    async importReplicasPage(job:ReplicasJob){return (await runReplicasImportStep(job)).done;},
+    // The previous failure handler erased the key. A replay of that command
+    // leaves recovery to the workflow; the row itself owns credential disposal.
+    async markReplicasImportFailed(_job:ReplicasJob){},
   };
 }

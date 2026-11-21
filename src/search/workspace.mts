@@ -1,8 +1,11 @@
+import {matchCaptures,type CaptureFingerprints} from '../sessions/capture-matches.mjs';
+import type {CaptureLookup} from '../integrations/replicas-threads.mjs';
+import {activityInput,admitActivity} from '../application/agent-activity.mjs';
 import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
-interface WorkspaceOptions {sessions?: SearchAdapter & {memories?: SearchAdapter}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
+interface WorkspaceOptions {capturePairs?:CaptureLookup;sessions?: SearchAdapter & {memories?: SearchAdapter;captureFingerprints?:CaptureFingerprints;readableHits?:(principal:Principal,docs:Passage[])=>Promise<boolean[]>}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
 import {serviceError} from '../sessions/types.mjs';
 import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
@@ -55,7 +58,7 @@ const WINDOW = 100, TTL = 5 * 60_000;
  * recognized machine approval records after evidence, unless approvals are queried.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
-export function createWorkspaceSearch({sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
+export function createWorkspaceSearch({capturePairs,sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
   function sign(value: string) {return createHmac('sha256', cursorKey).update(value).digest('base64url');}
   function encode(payload: SearchCursor) {const data = Buffer.from(JSON.stringify(payload)).toString('base64url'); return data + '.' + sign(data);}
   function decode(cursor: string, fingerprint: string): SearchCursor {
@@ -76,6 +79,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
       // Preserve the original dedupe=false inspection contract for older clients.
       if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;
+      if (!query.currentSession && principal.owner?.provider === 'devin')
+        query.currentSession = currentSessionSchema.parse({harness: 'devin', sessionId: principal.owner.sessionId});
       const fingerprint = hash([principal.tenantId, principal.userId, query]);
       const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
       const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];
@@ -91,6 +96,13 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
         return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
       }));
+      const sessionGroup=groups.find(g=>g.source==='sessions');
+      const captures=capturePairs&&sessionGroup&&(query.dedupe||query.groupBy==='session')
+        ?await matchCaptures(principal,sessionGroup.hits,capturePairs,sessions?.captureFingerprints,query.dedupe):undefined;
+      if(captures?.sessions.size&&sessionGroup&&sessions?.readableHits){
+        const allowed=await sessions.readableHits(principal,sessionGroup.hits);
+        sessionGroup.hits=sessionGroup.hits.filter((_,i)=>allowed[i]);
+      }
       const ranked: WorkspaceHit[] = [];
       for (let rank = 0; rank < WINDOW; rank++) for (const group of groups) {
         const hit = group.hits[rank]; if (!hit) continue;
@@ -101,8 +113,8 @@ export function createWorkspaceSearch({sessions, connectors,memories=sessions?.m
         const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
       });
       const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
-      const deduped = query.dedupe ? groupDuplicates(prioritized.results) : {results: prioritized.results, suppressed: 0};
-      const grouped=groupResources(deduped.results,query.groupBy);
+      const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
+      const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
       const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
         const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
         return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
@@ -186,10 +198,12 @@ export function createWorkspaceSearchHandler({search, authenticate, operation = 
       if (req.method !== 'POST') return send(405, {error: {code: 'METHOD_NOT_ALLOWED'}});
       if (req.headers.origin) return send(403, {error: {code: 'BROWSER_REQUEST_DENIED'}});
       const principal = await authenticate(req); sessionScope(principal); if (!principal) fail(401, 'Authentication required');
+      admitActivity(principal);
       if (!search) return send(503, {error: {code: 'SEARCH_NOT_CONFIGURED'}});
       const chunks = []; let size = 0;
       for await (const chunk of req) {size += chunk.length; if (size > 16384) return send(413, {error: {code: 'REQUEST_TOO_LARGE'}}); chunks.push(chunk);}
       let input; try {input = parseJson<unknown>(Buffer.concat(chunks));} catch {return send(400, {error: {code: 'INVALID_JSON'}});}
+      activityInput(input);
       return send(200, {data: await search[operation](principal, input)});
     } catch(caught){const error=serviceError(caught);
       const status = [400, 401, 403, 404, 409].includes(error.status ?? 0) ? error.status! : 503;

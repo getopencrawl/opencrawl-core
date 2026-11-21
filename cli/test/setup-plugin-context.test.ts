@@ -3,7 +3,8 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,
 import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
-import {setupPluginFiles,setupPluginIdentity} from '../src/setup/plugins.ts';
+import {setupPluginFiles} from './fixtures/legacy-plugins/prepare.ts';
+import {setupPluginIdentity} from '../src/setup/plugins.ts';
 import {pluginHookContext,recordPluginActivation,pluginActivationMatches,verifyPluginBundle,type PluginHookClient} from '../src/setup/plugin-context.ts';
 import {sessionFile} from '../src/session.ts';
 

@@ -43,10 +43,90 @@ test('setup records independent choices and fails closed on scope, capture-only 
   await assert.rejects(f.setup.read({...owner,captureAccess:'write'}),{status:403});
   await assert.rejects(f.setup.installation(owner,{...registration(),tenantId:'foreign'}),{status:400});
   await assert.rejects(f.setup.installation(owner,registration([{...observation(),mcp:{state:'authenticated'}}])),{status:400});
+  await assert.rejects(f.setup.installation(owner,registration([observation('codex',{lastSeenAt:new Date().toISOString()})])),{status:400});
   await assert.rejects(f.setup.installation(owner,{...registration(),machine:{id:'different',label:'Changed'}}),{status:409});
   await assert.rejects(f.setup.verify({...owner,userId:'bob'},selection),{status:404});
   const restarted=createSetupStatus({state:stateFor(f.store),search:{search:async()=>({results:[]}),fetch:async()=>null}});
   assert.equal((await restarted.read(owner)).installations[0].installationId,selection.installationId);
+});
+
+test('computer contact follows scoped setup reports and live uploads independently of verification', async () => {
+  const f = await fixture();
+  const other = {...registration(), installationId:'other', machine:{id:'other', label:'My machine'}};
+  await f.setup.installation(owner, other);
+  const contacts = async () => (await f.setup.read(owner)).installations.map(i => i.updatedAt);
+  const initial = await contacts();
+  f.advance(2 * 60_000);
+  const batch = f.batch({harness:'claude-code', events:[{id:'queued', kind:'hook', timestamp:'2020-01-01T00:00:00Z'}]});
+  for (const change of [{captureMode:'history'}, {installationId:'unknown'}, {harness:'devin'}]) {
+    await f.setup.session(owner, {...batch, ...change});
+  }
+  for (const principal of [{...owner, userId:'bob'}, {...owner, tenantId:'other'}]) {
+    await f.setup.session(principal, {...batch, owner:principal});
+  }
+  await f.setup.verify(owner, selection);
+  assert.deepEqual(await contacts(), initial);
+  await f.setup.session({...owner, captureAccess:'write'}, batch);
+  const expected = f.batch().events[0].timestamp;
+  assert.deepEqual(await contacts(), [expected, initial[1]]);
+  const client = (await f.setup.read(owner)).installations[0].clients.find(c => c.client === 'claude-code');
+  assert.equal(client.proof.state, 'pending');
+  assert.equal(client.mcp.state, 'pending');
+  assert.equal(client.captureObservedAt, undefined);
+  assert.equal(client.lastSeenAt, expected);
+
+  const storage = stateFor(f.store).setup;
+  const revision = (await storage.read(owner)).version;
+  f.advance(30_000);
+  await f.setup.session(owner, batch);
+  assert.equal((await storage.read(owner)).version, revision);
+  f.advance(30_000);
+  await f.setup.session(owner, batch);
+  assert.deepEqual(await contacts(), [f.batch().events[0].timestamp, initial[1]]);
+
+  await f.setup.installation(owner, registration([observation('claude-code', {forward:false})]));
+  const unselected = await contacts();
+  f.advance(300_000);
+  await f.setup.session(owner, batch);
+  assert.deepEqual(await contacts(), unselected);
+});
+
+test('live receipts advance only the reporting agent on the reporting computer', async () => {
+  const f = await fixture();
+  const read = async () => (await f.setup.read(owner)).installations.map(i => i.clients.map(c => c.lastSeenAt));
+  await f.setup.installation(owner, {...registration(), installationId:'office', machine:{id:'office', label:'Office'}});
+  await f.setup.session(owner, f.batch({captureMode:'history'}));
+  assert.deepEqual(await read(), [[undefined, undefined], [undefined]]);
+  const codexTime = f.batch().events[0].timestamp;
+  await f.setup.session(owner, f.batch({events:[{id:'event',kind:'hook'}]}));
+  f.advance(1_000);
+  const claudeTime = f.batch().events[0].timestamp;
+  await f.setup.session(owner, f.batch({harness:'claude-code'}));
+  assert.deepEqual(await read(), [[codexTime, claudeTime], [undefined]]);
+  f.advance(60_000);
+  await f.setup.installation(owner, registration());
+  assert.deepEqual(await read(), [[codexTime, claudeTime], [undefined]], 'host reports do not refresh agents');
+  const nextTime = f.batch().events[0].timestamp;
+  await Promise.all([
+    f.setup.session(owner, f.batch({harness:'claude-code'})),
+    f.setup.session(owner, f.batch({installationId:'office'})),
+  ]);
+  assert.deepEqual(await read(), [[codexTime, nextTime], [nextTime]]);
+});
+
+test('older capture receipts supply agent contact before and after a setup change', async () => {
+  const f = await fixture();
+  await f.setup.session(owner, f.batch());
+  const storage = stateFor(f.store).setup;
+  const {record,version} = await storage.read(owner);
+  const old = record.installations[0].clients[0];
+  const seen = old.evidence.capture.observedAt;
+  delete old.lastSeenAt;
+  assert.equal(await storage.save(owner, version, record), true);
+  assert.equal((await f.setup.read(owner)).installations[0].clients[0].lastSeenAt, seen);
+  f.advance(3_600_000);
+  const updated = await f.setup.installation(owner, registration([observation('codex',{forward:false})]));
+  assert.equal(updated.installations[0].clients[0].lastSeenAt, seen);
 });
 
 test('Devin setup uses scoped core proof and workload guidance without inventing native MCP evidence',async()=>{
@@ -104,6 +184,7 @@ test('plugin preparation is an optional local observation, separate from activat
 
 test('a new captured event waits for exact authorized search AND fetch; first win verifies only that client',async()=>{
   const f=await fixture();await f.setup.session(owner,f.batch());
+  assert.equal((await f.setup.read(owner)).installations[0].updatedAt, f.batch().events[0].timestamp, 'a recorded proof receipt can be newer than the setup report');
   let checked=await f.setup.verify(owner,selection);assert.equal(checked.proof.state,'waiting_index');
   assert.ok(checked.captureObservedAt);assert.equal(checked.hookTrust,'pending');assert.equal(checked.humanTasks.some(t=>t.kind==='hook_trust'),false);
   for(const [key,value] of [['userId','bob'],['installationId','another'],['harness','claude-code'],['sessionId','another'],['eventId','other']]) {
@@ -447,6 +528,7 @@ test('search-only and history-only clients can observe MCP without enabling capt
     const checked=await f.setup.verify(owner,selection);assert.equal(checked.proof.state,'not_selected');assert.ok(checked.proof.id);assert.equal(checked.proof.marker,undefined);
     await f.setup.mcp(owner,{...selection,proofId:checked.proof.id});
     const client=(await f.setup.read(owner)).installations[0].clients[0];assert.equal(client.forward,false);assert.equal(client.history,history);assert.equal(client.mcp.state,'observed');
+    assert.equal(client.lastSeenAt, undefined, 'an uncorroborated MCP receipt cannot identify the active agent');
     assert.deepEqual(client.humanTasks,[]);assert.equal((await f.setup.read(owner)).firstWin,null);
   }
 });

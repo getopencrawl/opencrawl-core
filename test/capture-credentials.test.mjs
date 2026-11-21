@@ -1,3 +1,4 @@
+import {pluginRelease,replicasPolicy} from '../dist/src/sessions/plugin-release.mjs';
 import {document} from '../dist/src/application/presentation.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,12 +95,10 @@ test('dedicated Replicas prompt keeps shared setup independent from personal log
 
 test('fresh Replicas setup pins the two standalone plugins and binds them to the signed workspace',()=>{
  const api='https://selfhost.example',prompt=replicasSetupPrompt(api);
- const downloads=[...prompt.matchAll(/^([a-f0-9]{64})  https:\/\/github\.com\/getopencrawl\/opencrawl-plugins\/releases\/download\/replicas-v0\.2\.2\/([^\s]+)$/gm)];
- assert.deepEqual(downloads.map(([,digest,name])=>[name,digest]),[
-   ['opencrawl-local-claude-code-replicas-0.2.2-linux-x64.zip','b8d7892edff36225312551d3965b81be228d74d6507352a1afe8914707d98728'],
-   ['opencrawl-local-codex-replicas-0.2.2-linux-x64.zip','6c8b0e5a08bcd329519e6769708eee714e0270a823fe49965ddb2602d2c61d39'],
-   ['replicas-codex-policy.mjs','f360fdc73d91b506e369a325219719fc33fb3a96951b807f2f2ad7bda272bcc5'],
- ]);
+ const pins=['claude-code','codex'].map(harness=>pluginRelease.packages.find(item=>item.harness===harness).archives['linux-x64']);
+ const downloads=prompt.split('\n').filter(line=>/^[a-f0-9]{64}  https:/.test(line));
+ assert.deepEqual(downloads,[...pins,replicasPolicy].map(pin=>pin.sha256+'  '+pin.url));
+ assert.match(prompt,/omit the oc-incognito/);
  for(const expected of [api+'/api/sessions/identity','data.principal.tenantId','data.principal.userId','captureMode "hook"','/etc/codex/hooks.json','Incognito is unavailable','Integrations → Replicas → Connect'])assert.ok(prompt.includes(expected),expected);
  assert.doesNotMatch(prompt,/opencrawl (collect install|skills install|login|token create)/);
 });

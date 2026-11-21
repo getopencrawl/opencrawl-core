@@ -1,4 +1,4 @@
-import type {Principal, SessionIdentity, SessionBatch, SessionEvent, EventReservationOptions, SourceOptions, ObjectStore, StorePage, StoreVersion} from './types.mjs';
+import type {Principal, SessionIdentity, SessionBatch, SessionEvent, EventReservationOptions, SourceOptions, ObjectStore, StorePage} from './types.mjs';
 import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
 import {createHash} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';

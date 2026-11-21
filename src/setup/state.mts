@@ -18,7 +18,7 @@ const evidence=z.strictObject({proof,
   mcpNative:z.strictObject({sessionId:text,eventId:text,observedAt:date}).optional()});
 const client=z.strictObject({client:z.enum(SETUP_CLIENTS),installed:z.boolean(),pluginState:z.enum(SETUP_PLUGIN_STATES).optional(),forward:z.boolean(),history:z.enum(['skip','import']),
   historyProgress:z.strictObject({state:z.enum(['not_started','running','complete','failed']),completed:z.number().int().nonnegative(),total:z.number().int().nonnegative().optional(),error:z.string().max(240).optional()}),
-  hookTrust:z.enum(['unknown','pending','trusted','not_required']),forwardSince:date.optional(),captureObservedAt:date.optional(),evidence:evidence.optional()});
+  hookTrust:z.enum(['unknown','pending','trusted','not_required']),forwardSince:date.optional(),captureObservedAt:date.optional(),lastSeenAt:date.optional(),evidence:evidence.optional()});
 const installation=z.strictObject({installationId:identifier,machine:z.strictObject({id:identifier,label:z.string().min(1).max(100)}),updatedAt:date,
   clients:z.array(client).max(SETUP_CLIENTS.length).refine(values=>new Set(values.map(value=>value.client)).size===values.length,'Duplicate setup clients')});
 export const setupStateSchema=z.strictObject({schemaVersion:z.literal(1),scope:z.strictObject({tenantId:identifier,userId:identifier}),pluginStateSupported:z.literal(true).optional(),

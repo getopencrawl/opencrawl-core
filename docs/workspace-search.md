@@ -63,7 +63,7 @@ organization realm. Sources retain BM25 order and are interleaved by source rank
 passage; terms in separate messages or chunks do not combine. No stemming,
 semantic model, fuzzy matching or query expansion is added.
 
-`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`, `origins`, `sessionIds` (sessions),
+`filters` accepts exact `authors`, `kinds`, `excludeKinds`, `roles`, `harnesses`, `origins`, `clientApps`, `sessionIds` (sessions),
 `providers`, `repositories`, `projects`, `paths`, and `toolNames`, plus inclusive
 ISO `after`/`before` bounds. Lists are OR; different filters are AND. Roles, origins, session IDs
 and tool names apply to sessions, projects/paths to memories, providers/repositories
@@ -81,7 +81,13 @@ evidence can come from subagents. Search includes every origin by default.
 The field already exists in session projections, so this control needs no
 mapping change or additional backfill.
 
-`facets` requests any of source/kind/author/harness/origin/provider/repository/project/
+Codex and Claude Code capture record `provenance.clientApp` when the native
+launcher identifies T3 Code (`t3-code`) or the native session ID and harness
+match a chat in Conductor on macOS (`conductor`). Standard capture setup
+enables this automatically. Use `filters.clientApps` to find those sessions. Older or
+unidentified captures omit the field.
+
+`facets` requests any of source/kind/author/harness/origin/clientApp/provider/repository/project/
 path/role/sessionId. Counts are computed only after all resource authorization
 checks; `facetScope: authorized_candidate_window` is explicit. They are bounded
 candidate counts, not corpus totals. Each returns up to 20 values and an `other`

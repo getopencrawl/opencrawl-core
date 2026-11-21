@@ -15,6 +15,84 @@ test.beforeEach(async ({page}) => {
   });
 });
 
+test('the same displayed author keeps its pixel tile across registrations and older posts', async ({page}) => {
+  const authors = [
+    {agent: 'first-registration', name: 'codex:one'},
+    {agent: 'codex:one', name: ''},
+    {agent: 'another', name: 'café'},
+    {agent: 'latest', name: ' cafe\u0301 '},
+  ];
+  await page.route('**/api/console/board?*', route => route.fulfill({json: {
+    messages: authors.map((author, i) => ({...messages[i], ...author})).reverse(), next: null, topicSummaries: [],
+  }}));
+  await page.goto(thread);
+  const faces = page.locator('.oc-agent-avatar');
+  await expect(faces).toHaveCount(4);
+  const tiles = await faces.evaluateAll(nodes => nodes.map(node => node.innerHTML));
+  expect(tiles[1]).toBe(tiles[0]);
+  expect(tiles[3]).toBe(tiles[2]);
+  expect(tiles[2]).not.toBe(tiles[0]);
+
+  const rows = await faces.first().evaluate(svg => {
+    const layers = Array.from(svg.querySelectorAll<SVGGeometryElement>('rect, path')).reverse();
+    const symbols: Record<string, string> = {'#241c35': '.', '#b5a0ff': 'x', '#fc8c9a': '+'};
+    return Array.from({length: 12}, (_, y) => Array.from({length: 12}, (_, x) => {
+      const pixel = layers.find(layer => layer.isPointInFill(new DOMPoint(x + 0.5, y + 0.5)));
+      return symbols[pixel?.getAttribute('fill') ?? ''] ?? '?';
+    }).join(''));
+  });
+  expect(rows).toEqual([
+    '............', '............', '..xx....xx..', '...xxxxxx...',
+    '...xxxxxx...', '...x+xx+x...', '..xxxxxxxx..', '...xxxxxx...',
+    '..x..xx..x..', '...x....x...', '............', '............',
+  ]);
+});
+
+test('wide workspace margins scroll the board conversation', async ({page}) => {
+  await page.setViewportSize({width: 2560, height: 900});
+  await page.goto(thread);
+  const stream = page.getByLabel('Messages', {exact: true});
+  await expect(stream.locator('.oc-board-post')).toHaveCount(20);
+  await page.evaluate(() => document.fonts.ready);
+  const scrollTop = () => stream.evaluate(element => element.scrollTop);
+  await stream.evaluate(element => { element.scrollTop = 0; });
+  const box = await page.getByRole('main').boundingBox();
+  if (!box) throw new Error('Expected a visible workspace');
+  await page.mouse.move(box.x + 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(scrollTop).toBeGreaterThan(50);
+  await page.mouse.move(box.x + box.width - 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, -240);
+  await expect.poll(scrollTop).toBe(0);
+});
+
+test('each outside margin scrolls its adjacent reader when a board thread is open', async ({page}) => {
+  await page.setViewportSize({width: 2560, height: 800});
+  await page.route('**/api/console/board?*', async route => {
+    if (!new URL(route.request().url()).searchParams.has('threadId')) return route.fallback();
+    const replies = messages.slice(1, 21).reverse().map(message => ({...message, threadId: 1}));
+    return route.fulfill({json: {threadRoot: messages[0], messages: replies, next: null, topicSummaries: []}});
+  });
+  await page.goto(thread + '&thread=1');
+  const channel = page.getByLabel('Messages', {exact: true});
+  const replies = page.getByLabel('Replies', {exact: true});
+  await expect(channel.locator('.oc-board-post')).toHaveCount(20);
+  await expect(replies.locator('.oc-board-post')).toHaveCount(21);
+  await page.evaluate(() => document.fonts.ready);
+  await channel.evaluate(element => { element.scrollTop = 0; });
+  const box = await page.getByRole('main').boundingBox();
+  if (!box) throw new Error('Expected a visible workspace');
+  await page.mouse.move(box.x + 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => channel.evaluate(element => element.scrollTop)).toBeGreaterThan(50);
+  expect(await replies.evaluate(element => element.scrollTop)).toBe(0);
+  const channelTop = await channel.evaluate(element => element.scrollTop);
+  await page.mouse.move(box.x + box.width - 8, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => replies.evaluate(element => element.scrollTop)).toBeGreaterThan(50);
+  expect(await channel.evaluate(element => element.scrollTop)).toBe(channelTop);
+});
+
 for (const width of [1440, 390]) {
   test(`message IDs provide keyboard-accessible SPA permalinks at ${width}px`, async ({page}, info) => {
     await page.setViewportSize({width, height: 900});
@@ -86,7 +164,11 @@ for (const width of [1440, 390]) {
     await expect(page.locator('.oc-board-post')).toHaveCount(8);
     await expect(page.getByText(/Showing \d+ messages/)).toHaveCount(0);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(8);
-    const hues = await page.locator('.oc-board-author-line h3').evaluateAll(nodes => nodes.map(node => ({name: node.textContent, color: getComputedStyle(node).color})));
+    const header = page.locator('.oc-board-post-header').first();
+    const channelBox = (await header.getByRole('link').boundingBox())!;
+    const authorBox = (await header.getByRole('heading').boundingBox())!;
+    expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(authorBox.y);
+    const hues = await page.locator('.oc-board-post-header h3').evaluateAll(nodes => nodes.map(node => ({name: node.textContent, color: getComputedStyle(node).color})));
     expect(new Set(hues.map(item => item.color)).size).toBe(2);
     await page.screenshot({path: info.outputPath(`all-topics-${width}.png`)});
     const openNavigation = async () => {if (width < 800) await page.getByRole('button', {name: 'Open workspace navigation', exact: true}).click();};
@@ -96,7 +178,7 @@ for (const width of [1440, 390]) {
     await expect(page.locator('.oc-board-post')).toHaveCount(4);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(0);
     await page.screenshot({path: info.outputPath(`channel-${width}.png`)});
-    expect(await page.locator('.oc-board-author-line h3').first().evaluate(node => getComputedStyle(node).color)).toBe(hues.find(item => item.name === 'codex:one')!.color);
+    expect(await page.locator('.oc-board-post-header h3').first().evaluate(node => getComputedStyle(node).color)).toBe(hues.find(item => item.name === 'codex:one')!.color);
     await openNavigation();
     const back = page.getByRole('link', {name: 'Back', exact: true});
     await expect(back).toHaveText('Back'); await expect(back.locator('svg')).toHaveCount(1);
