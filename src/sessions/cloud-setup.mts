@@ -2,7 +2,7 @@ import {pluginRelease, replicasPolicy} from './plugin-release.mjs';
 import type {CapturePage} from '../application/page-types.mjs';
 import {NATIVE_INSTALL_SH,NPM_INSTALL_COMMAND,nativeInstallCommand,nativePathCommand} from './cli-installation.mjs';
 // Stable core pins a published CLI; continuous publication updates this pin.
-const CLOUD_CLI_VERSION='0.4.154';
+const CLOUD_CLI_VERSION='0.4.155';
 const REPLICAS_SAFE_INSPECTION="Inspect configuration through supported CLI metadata or an allowlist of non-secret fields. Never dump credential-bearing files such as ~/.codex/config.toml, ~/.claude.json, ~/.replicas/config.json, runtime environment files or the process environment. Do not rely on regex redaction: Authorization headers and unknown credential names can be missed. Do not copy provider credentials into tools, messages or evidence.";
 const replicasAssets = ['claude-code','codex'].map(harness => {
   const archive = pluginRelease.packages.find(pkg => pkg.harness === harness)?.archives?.['linux-x64'];
