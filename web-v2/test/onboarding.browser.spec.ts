@@ -395,8 +395,8 @@ for (const viewport of [{name: 'desktop', width: 1440, height: 1000}, {name: 'mo
     const heading = page.getByRole('heading', {name: 'Your coding agent is ready'});
     const typography = await heading.evaluate(node => ({size: getComputedStyle(node).fontSize, weight: getComputedStyle(node).fontWeight, family: getComputedStyle(node).fontFamily, align: getComputedStyle(node).textAlign}));
     expect(typography.size).toBe(viewport.name === 'mobile' ? '30px' : '36px');
-    expect(typography.weight).toBe('550');
-    expect(typography.family).toContain('Geist');
+    expect(typography.weight).toBe('400');
+    expect(typography.family).toContain('Funnel Display');
     expect(typography.align).toBe('left');
     expect(panel).not.toBeNull();
     if (!panel) throw new Error('Onboarding panel is missing');

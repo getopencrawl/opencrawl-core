@@ -1,4 +1,4 @@
-/* The existing approved Night tokens remain the only product palette. */
+/* The shared Porcelain tokens remain the only product palette. */
 @import '../../../web/tokens.css';
 
 :root {
@@ -30,40 +30,40 @@
 
 /* Identity hues carry no status meaning. */
 :root {
-  --agent-identity-0: hsl(0 62% 74%);
-  --agent-identity-1: hsl(10 62% 74%);
-  --agent-identity-2: hsl(20 62% 74%);
-  --agent-identity-3: hsl(30 62% 74%);
-  --agent-identity-4: hsl(40 62% 74%);
-  --agent-identity-5: hsl(50 62% 74%);
-  --agent-identity-6: hsl(60 62% 74%);
-  --agent-identity-7: hsl(70 62% 74%);
-  --agent-identity-8: hsl(80 62% 74%);
-  --agent-identity-9: hsl(90 62% 74%);
-  --agent-identity-10: hsl(100 62% 74%);
-  --agent-identity-11: hsl(110 62% 74%);
-  --agent-identity-12: hsl(120 62% 74%);
-  --agent-identity-13: hsl(130 62% 74%);
-  --agent-identity-14: hsl(140 62% 74%);
-  --agent-identity-15: hsl(150 62% 74%);
-  --agent-identity-16: hsl(160 62% 74%);
-  --agent-identity-17: hsl(170 62% 74%);
-  --agent-identity-18: hsl(180 62% 74%);
-  --agent-identity-19: hsl(190 62% 74%);
-  --agent-identity-20: hsl(200 62% 74%);
-  --agent-identity-21: hsl(210 62% 74%);
-  --agent-identity-22: hsl(220 62% 74%);
-  --agent-identity-23: hsl(230 62% 74%);
-  --agent-identity-24: hsl(240 62% 74%);
-  --agent-identity-25: hsl(250 62% 74%);
-  --agent-identity-26: hsl(260 62% 74%);
-  --agent-identity-27: hsl(270 62% 74%);
-  --agent-identity-28: hsl(280 62% 74%);
-  --agent-identity-29: hsl(290 62% 74%);
-  --agent-identity-30: hsl(300 62% 74%);
-  --agent-identity-31: hsl(310 62% 74%);
-  --agent-identity-32: hsl(320 62% 74%);
-  --agent-identity-33: hsl(330 62% 74%);
-  --agent-identity-34: hsl(340 62% 74%);
-  --agent-identity-35: hsl(350 62% 74%);
+  --agent-identity-0: hsl(0 70% 15%);
+  --agent-identity-1: hsl(10 70% 15%);
+  --agent-identity-2: hsl(20 70% 15%);
+  --agent-identity-3: hsl(30 70% 15%);
+  --agent-identity-4: hsl(40 70% 15%);
+  --agent-identity-5: hsl(50 70% 15%);
+  --agent-identity-6: hsl(60 70% 15%);
+  --agent-identity-7: hsl(70 70% 15%);
+  --agent-identity-8: hsl(80 70% 15%);
+  --agent-identity-9: hsl(90 70% 15%);
+  --agent-identity-10: hsl(100 70% 15%);
+  --agent-identity-11: hsl(110 70% 15%);
+  --agent-identity-12: hsl(120 70% 15%);
+  --agent-identity-13: hsl(130 70% 15%);
+  --agent-identity-14: hsl(140 70% 15%);
+  --agent-identity-15: hsl(150 70% 15%);
+  --agent-identity-16: hsl(160 70% 15%);
+  --agent-identity-17: hsl(170 70% 15%);
+  --agent-identity-18: hsl(180 70% 15%);
+  --agent-identity-19: hsl(190 70% 15%);
+  --agent-identity-20: hsl(200 70% 15%);
+  --agent-identity-21: hsl(210 70% 15%);
+  --agent-identity-22: hsl(220 70% 15%);
+  --agent-identity-23: hsl(230 70% 15%);
+  --agent-identity-24: hsl(240 70% 15%);
+  --agent-identity-25: hsl(250 70% 15%);
+  --agent-identity-26: hsl(260 70% 15%);
+  --agent-identity-27: hsl(270 70% 15%);
+  --agent-identity-28: hsl(280 70% 15%);
+  --agent-identity-29: hsl(290 70% 15%);
+  --agent-identity-30: hsl(300 70% 15%);
+  --agent-identity-31: hsl(310 70% 15%);
+  --agent-identity-32: hsl(320 70% 15%);
+  --agent-identity-33: hsl(330 70% 15%);
+  --agent-identity-34: hsl(340 70% 15%);
+  --agent-identity-35: hsl(350 70% 15%);
 }

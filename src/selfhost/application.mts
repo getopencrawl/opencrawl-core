@@ -206,7 +206,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   const assets=new Map<string,[string,string]>([
     ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],
     ...['tokens.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
-    ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
+    ...['geist-sans.woff2','geist-mono.woff2','funnel-display.woff2','plex-mono-400.woff2','plex-mono-500.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
     ...['slack','granola','circleback','notion','github','linear','replicas'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
   ]);
   return (req:IncomingMessage,res:ServerResponse)=>observeAgentRequest(usageActivity,httpTool(req.method,(req.url??'').split('?')[0]!),req,res,()=>handle(req,res));
