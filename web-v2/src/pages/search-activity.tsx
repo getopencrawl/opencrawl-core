@@ -59,7 +59,10 @@ function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;s
   return <>
     {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>{label} couldn’t update.</Notice>}
     {loading&&!data&&<LoadingState spinner label={'Loading '+label.toLowerCase()+'…'}/>}
-    {data&&<Section className="report-panel" headingLevel={3} title={label} actions={<span className="report-chart-total" title={count(value(data))}>{compact(value(data))}</span>}>
+    {data&&<Section className="report-panel" headingLevel={3} title={label}
+      description={edits?'Proactive searches that ran and returned at least one result. OpenCrawl runs these on its own when an agent gets a new prompt; ones that find nothing are not counted.'
+        :billed?'Searches your agents ran that returned at least one result. Searches with no results, or that failed, are listed below and are free.'
+        :'Every search your agents ran through OpenCrawl.'} actions={<span className="report-chart-total" title={count(value(data))}>{compact(value(data))}</span>}>
       <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:edits?day.nonSilent:day.agentSearches}))} label={label+' per day'}
         unit={n=>edits?plural(n,'edit'):plural(n,'search','searches')}/>
     </Section>}

@@ -156,7 +156,10 @@ function OverviewTab({adapter, scope, range, names}: {adapter: TokenAdapter; sco
   return <>
     {error && <Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Session tokens couldn’t update.</Notice>}
     {loading && !data && <LoadingState spinner label="Loading session tokens…"/>}
-    {data && <Section className="report-panel" headingLevel={3} title={data.source === 'meter' ? 'Tokens stored' : 'Session tokens indexed'} actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
+    {data && <Section className="report-panel" headingLevel={3} title={data.source === 'meter' ? 'Tokens stored' : 'Session tokens indexed'}
+      description={data.source === 'meter'
+        ? 'Everything OpenCrawl holds for this workspace: history you imported (backfill) plus sessions captured live, and memories. The number is the total stored now; each bar is the total stored that day.'
+        : 'Tokens from captured sessions, imported history (backfill) and live capture together, by the day each session happened.'} actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
       <DailyBarChart days={data.daily.map(day => ({date: day.date, value: day.count}))} label={data.source === 'meter' ? 'Tokens stored each day' : 'Session tokens indexed per day'}
         unit={data.source === 'meter' ? value => `${count(value)} tokens stored` : tokens}/>
     </Section>}
