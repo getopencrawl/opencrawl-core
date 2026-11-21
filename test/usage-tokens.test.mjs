@@ -27,7 +27,7 @@ test('the session list leaves out sessions the viewer cannot read; unrecorded se
   assert.deepEqual(page.rows.map(row => [row.userId, row.sessionId, row.tokens]), [['alice', 's1', 5], ['bob', 'shared', 2], ['alice', null, 1]]);
   assert.equal(page.next, 25);
   assert.equal((await tokenSessionPage({principal, search, visible}, {range: '30d', offset: 25})).next, null);
-  await assert.rejects(tokenSessionPage({principal, search}, {range: '30d'}), {status: 503});
+  assert.deepEqual((await tokenSessionPage({principal, search}, {range: '30d'})).rows.map(row => [row.userId, row.sessionId]), [['alice', 's1'], ['alice', null]], 'with no visibility check only the viewer’s own sessions list');
   await assert.rejects(tokenSessionPage({principal, visible}, {range: '30d'}), {status: 503});
   await assert.rejects(tokenSessionPage({principal, search, visible}, {range: '30d', tenantId: 'org_b'}));
   const oversized = {tokenSessions: async () => ({rows: Array.from({length: 26}, (_, i) => session('alice', 's' + i, 1)), more: false})};

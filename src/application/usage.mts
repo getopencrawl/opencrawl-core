@@ -155,10 +155,10 @@ export async function tokenSessionPage({principal, search, visible}: UsageOption
   if (!search?.tokenSessions) throw consoleFailure(503, 'Token usage is unavailable on this deployment.');
   const page = await search.tokenSessions(principal, {team: principal.tenantId.startsWith('org_'), days: rangeDays(range), now, offset});
   if (page.rows.length > 25) throw new Error('Oversized token session page');
-  if (!visible) throw consoleFailure(503, 'Session visibility is unavailable.');
   const asRows = page.rows.map((row, i): SearchActivityRow => ({id: String(i), at: row.lastAt ?? '', userId: row.userId, operation: '', queries: [], harness: row.harness, sessionId: row.sessionId,
     messageId: null, message: null, returned: null, outcome: 'unknown', delivered: false}));
-  const allowed = new Set((await visible(principal, asRows)).map(row => row.id));
+  // Without a visibility check to ask, only the viewer's own sessions are listed.
+  const allowed = new Set((visible ? await visible(principal, asRows) : asRows.filter(row => row.userId === principal.userId)).map(row => row.id));
   return {rows: page.rows.filter((_, i) => allowed.has(String(i))), next: page.more ? offset + 25 : null};
 }
 

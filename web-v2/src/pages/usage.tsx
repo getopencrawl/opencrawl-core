@@ -164,7 +164,7 @@ function OverviewTab({adapter, scope, range, names}: {adapter: TokenAdapter; sco
         unit={data.source === 'meter' ? value => `${count(value)} tokens stored` : tokens}/>
     </Section>}
     <Section className="report-panel" headingLevel={3} title="Sessions">
-      <PagedList<TokenSession, number> resetKey={JSON.stringify([scope, range])} label="Sessions" className="usage-search-history" empty="No sessions in this period."
+      <PagedList<TokenSession, number> cacheKey={[...consoleResourceKey(adapter, 'usage-token-sessions'), range]} label="Sessions" className="usage-search-history" empty="No sessions in this period."
         load={async (offset, signal) => scoped(scope, await adapter.tokenSessions({range, ...offset ? {offset} : {}}, signal))}
         head={<tr><th scope="col">Session</th><th scope="col">From</th><th scope="col">Tokens</th><th scope="col">Last active</th></tr>}
         row={(row, index) => <tr key={`${row.userId}:${row.harness}:${row.sessionId}:${index}`}>
@@ -206,7 +206,7 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
     {value: 'sources', label: 'Sources'},
   ];
   const current: Tab = tabs.some(item => item.value === tab) ? tab : tabs[0]!.value;
-  return <Page title="Usage" bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
+  return <Page title="Usage" description="Tokens stored, searches and team activity for this workspace." bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
     <div className="usage-toolbar">
       <Tabs label="Usage" items={tabs} value={current} onChange={value => setTab(value as Tab)}/>
       <Select aria-label="Date range" value={range} onChange={event => setRange(event.target.value as UsageRange)}>

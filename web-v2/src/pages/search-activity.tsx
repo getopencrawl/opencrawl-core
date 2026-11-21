@@ -68,7 +68,7 @@ function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;s
     </Section>}
     <Section className="report-panel" headingLevel={3} title={edits?'Edits':'Searches'}>
       {data?.charged&&data.rates&&<p className="report-note usage-charge-summary">{chargeSummary(data,edits)}</p>}
-      <PagedList<SearchActivityRow,NonNullable<HistoryRequest['before']>> resetKey={JSON.stringify([scope,request])} label={edits?'Proactive context edits':'Agent searches'}
+      <PagedList<SearchActivityRow,NonNullable<HistoryRequest['before']>> cacheKey={[...consoleResourceKey(adapter,'usage-search-lines'),kind,range]} label={edits?'Proactive context edits':'Agent searches'}
         className="usage-search-history" empty={edits?'No proactive context edits in this period.':'No agent searches in this period.'}
         load={async(before,signal)=>scoped(scope,await adapter.searchHistory({...request,...before?{before}:{}},signal))}
         head={<tr><th scope="col">Time</th>{edits&&<th scope="col">Triggering message</th>}<th scope="col">{edits?'Search':'Query'}</th>
