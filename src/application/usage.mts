@@ -92,7 +92,7 @@ export async function usageReport({principal, directory, integrations, search, c
         const now = Date.now();
         const [agents, overlap] = await Promise.all([
           soft('sessions', async () => search.usage(principal, {team: true, days, now, members: (await userRead) ?? []}), empty()),
-          soft('overlap', () => search.overlap(principal, {days: days ?? 30, now}), {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days ?? 30, now)} satisfies SessionOverlap),
+          soft('overlap', () => search.overlap(principal, {days: days ?? 365, now}), {timeZone: 'UTC', measuredAt: new Date(now).toISOString(), sessions: 0, daily: dailyOverlap([], days ?? 365, now)} satisfies SessionOverlap),
         ]);
         return {agents, overlap};
       })(),

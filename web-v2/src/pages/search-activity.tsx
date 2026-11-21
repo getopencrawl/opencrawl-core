@@ -1,5 +1,5 @@
 import {consoleResourceKey,useConsoleResource} from '../data.tsx';
-import {Button,DailyBarChart,LoadingState,MetricGrid,Notice,Section} from '../design/components.js';
+import {Button,DailyBarChart,LoadingState,Notice,Section} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter} from './types.js';
 import type {CallTotals,HistoryRequest,SearchActivityRow} from '../../../src/application/search-activity.mjs';
@@ -43,13 +43,10 @@ function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;s
   return <>
     {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>{label} couldn’t update.</Notice>}
     {loading&&!data&&<LoadingState label={'Loading '+label.toLowerCase()}/>}
-    {data&&<>
-      <MetricGrid items={[{label,value:compact(value(data)),title:count(value(data))}]}/>
-      <Section className="report-panel" headingLevel={3} title={edits?'Proactive context edits per day':'Agent searches per day'}>
-        <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:edits?day.nonSilent:day.agentSearches}))} label={label+' per day'}
-          unit={n=>edits?plural(n,'edit'):plural(n,'search','searches')}/>
-      </Section>
-    </>}
+    {data&&<Section className="report-panel" headingLevel={3} title={label} actions={<span className="report-chart-total" title={count(value(data))}>{compact(value(data))}</span>}>
+      <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:edits?day.nonSilent:day.agentSearches}))} label={label+' per day'}
+        unit={n=>edits?plural(n,'edit'):plural(n,'search','searches')}/>
+    </Section>}
     <Section className="report-panel" headingLevel={3} title={edits?'Edits':'Searches'}>
       <PagedList<SearchActivityRow,NonNullable<HistoryRequest['before']>> resetKey={JSON.stringify([scope,request])} label={edits?'Proactive context edits':'Agent searches'}
         className="usage-search-history" empty={edits?'No proactive context edits in this period.':'No agent searches in this period.'}

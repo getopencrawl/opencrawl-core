@@ -183,7 +183,8 @@ test('Team shows its totals, sessions per day, the leaders and member activity, 
   assert.deepEqual(headings(html), ['Agent sessions per day', 'Member activity']);
   assert.deepEqual([...html.matchAll(/<dt>([^<]+)<\/dt><dd><span class="report-metric-value"[^>]*>([^<]+)/g)].map(match => [match[1], match[2]]),
     [['Sessions', '8'], ['Active members', '2 of 2'], ['Tool calls', '60']]);
-  assert.match(html, /<title>2026-11-07: 5 sessions<\/title>/);
+  assert.equal((html.match(/class="report-bar"/g) || []).length, 2);
+  assert.deepEqual([...html.matchAll(/class="report-bar-axis"[^>]*>([^<]+)</g)].map(match => match[1]), ['0', '2', '4', '6', '2026-11-06', '2026-11-07']);
   assert.ok(html.indexOf('Agent sessions per day') < html.indexOf('Most sessions'));
   assert.ok(html.indexOf('Most sessions') < html.indexOf('Member activity'));
   assert.doesNotMatch(html, /Tokens captured|Machines capturing|Where agents run|Main session overlap|Data sources/);

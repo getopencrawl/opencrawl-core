@@ -3,11 +3,12 @@ import {ProactiveTab, SearchesTab, From, SessionLink, scoped, useCallTotals} fro
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
-import {Button, DailyBarChart, EmptyState, LoadingState, MetricGrid, Notice, Page, Section, Select, Table, Tabs} from '../design/components.js';
+import {BarList, Button, DailyBarChart, DailyLineChart, EmptyState, IntegrationCard, LoadingState, MetricGrid, Notice, Page, Section, Select, Table, Tabs} from '../design/components.js';
+import {Link} from '../router.js';
 import {CopyPromptButton} from '../onboarding/copy.tsx';
 import type {ConsoleDataAdapter, UsageReport} from './types.js';
-import {ago, compact, count, memberName, plural, sortedMembers, topMember} from './usage-model.ts';
-import type {UsageMember} from './usage-model.ts';
+import {ago, compact, count, harnessName, memberName, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
+import type {UsageMember, UsageSource} from './usage-model.ts';
 import type {UsageSection} from '../../../src/application/reports.mjs';
 import type {TokenSession, UsageRange} from '../../../src/application/usage-range.mjs';
 import {reconcileUsage, usageSectionFailed} from './usage-recovery.ts';
@@ -15,7 +16,7 @@ import {PagedList} from './usage-list.tsx';
 
 const refreshPolicy = {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000, reconcile: reconcileUsage};
 const tokenRefresh = {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000};
-type Tab = 'overview' | 'searches' | 'proactive' | 'team';
+type Tab = 'overview' | 'searches' | 'proactive' | 'team' | 'activity' | 'sources';
 type TokenAdapter = Required<Pick<ConsoleDataAdapter, 'usageTokens' | 'tokenSessions'>>;
 const ranges: ReadonlyArray<{value: UsageRange; label: string}> = [{value: '30d', label: 'Last 30 days'}, {value: '7d', label: 'Last 7 days'}, {value: 'all', label: 'All time'}];
 const tokens = (value: number) => plural(value, 'token');
@@ -98,6 +99,57 @@ export function UsageReportView({data: report, now = Date.now(), retry}: {data: 
   </>;
 }
 
+/** Activity tab: concurrent main sessions, where agents run and the tools they call. */
+function AgentActivity({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
+  const agents = report.agents;
+  return <>
+    <MeasurementStatus report={report} section="agents" label="Session activity" now={now} retry={retry}/>
+    <Section className="report-panel" headingLevel={3} title="Main session overlap" description={report.days == null ? 'Concurrent sessions by day, last 365 days.' : 'Concurrent sessions by day.'}>
+      <MeasurementStatus report={report} section="overlap" label="Session overlap" now={now} retry={retry}/>
+      {report.overlap && <DailyLineChart daily={report.overlap.daily} label="Main session overlap"/>}
+    </Section>
+    {agents && <div className="report-split">
+      <Section className="report-panel" headingLevel={3} title="Where agents run" description="Captured events by agent and surface.">
+        <BarList rows={agents.harnesses.map(row => ({...row, name: harnessName(row.name)}))} label="Captured events by agent"/>
+        <BarList rows={agents.origins.map(row => ({...row, name: originName(row.name)}))} label="Captured events by surface"/>
+      </Section>
+      <Section className="report-panel" headingLevel={3} title="Tools" description="Most used tools across captured sessions.">
+        <BarList rows={agents.tools.map(row => ({...row, name: row.name.replace(/^mcp__/, '').replace(/__/g, ': ')}))} label="Most used agent tools"/>
+      </Section>
+    </div>}
+  </>;
+}
+
+function SourceCard({source, now, countsUnavailable}: {source: UsageSource; now: number; countsUnavailable: boolean}) {
+  const status = sourceStatus(source.state);
+  return <IntegrationCard name={source.name} icon={source.icon} status={status}
+    metrics={source.indexedSpecies?.map(item => ({label: speciesLabel(item.name), count: item.count}))}
+    emptyMessage={source.indexedSpecies ? 'No content yet.' : countsUnavailable ? 'Indexed item counts unavailable.' : 'Content breakdown unavailable.'}
+    metadata={<span>{source.state === 'synced' && source.lastSyncedAt ? `Synced ${ago(source.lastSyncedAt, now)}` : status.label}</span>}/>;
+}
+
+/** Sources tab: everything indexed so far from each connected integration. Not limited by the date range. */
+function DataSources({report, now, retry}: {report: UsageReport; now: number; retry?: () => void}) {
+  const data = report.ingestion;
+  const countsUnavailable = report.failedSources?.includes('connectors') === true;
+  const total = data?.index?.connectorDocuments;
+  const bySource = [...data?.index?.sources ?? []].sort((left, right) => right.count - left.count);
+  return <>
+    <MeasurementStatus report={report} section="ingestion" label="Connected sources" now={now} retry={retry}/>
+    {!data ? (usageSectionFailed(report, 'ingestion') ? null : <EmptyState title="Source reporting isn’t available on this deployment."/>)
+      : !data.sources.length ? <EmptyState title="No sources connected" actions={<Link to="/sources">Connect a source to start ingesting.</Link>}/>
+      : <>
+        <Section className="report-panel" headingLevel={3} title="Items indexed by source" description="Everything indexed so far; the date range does not apply."
+          actions={<span className="report-chart-total" title={count(total)}>{countsUnavailable ? 'Unavailable' : compact(total)}</span>}>
+          {countsUnavailable ? <p className="report-note">Indexed item counts unavailable.</p> : <BarList rows={bySource} label="Items indexed by source"/>}
+        </Section>
+        <div className="oc-integration-grid">
+          {data.sources.map((source, index) => <SourceCard key={`${source.name}:${source.account || index}`} source={source} now={now} countsUnavailable={countsUnavailable}/>)}
+        </div>
+      </>}
+  </>;
+}
+
 function ActivityCards({activity, range, children}: {activity: {adapter: ActivityAdapter; scope: string}; range: UsageRange; children: (items: MetricItem[]) => React.ReactNode}) {
   const {data} = useCallTotals(activity.adapter, activity.scope, range);
   return <>{children(data ? [
@@ -109,12 +161,11 @@ function ActivityCards({activity, range, children}: {activity: {adapter: Activit
 /** Overview: session tokens (with the other billed counts beside them), tokens per day, then sessions. */
 function OverviewTab({adapter, scope, range, names, activity}: {adapter: TokenAdapter; scope: string; range: UsageRange; names: MemberNames; activity?: {adapter: ActivityAdapter; scope: string}}) {
   const {data, error, loading, reload} = useConsoleResource([...consoleResourceKey(adapter, 'usage-tokens'), range], async signal => scoped(scope, await adapter.usageTokens(range, signal)), tokenRefresh);
-  const tokenCard: MetricItem[] = data ? [{label: 'Session tokens indexed', value: compact(data.total), title: count(data.total)}] : [];
   return <>
     {error && <Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Session tokens couldn’t update.</Notice>}
     {loading && !data && <LoadingState label="Loading session tokens"/>}
-    {activity ? <ActivityCards activity={activity} range={range}>{items => <MetricGrid items={[...tokenCard, ...items]}/>}</ActivityCards> : tokenCard.length > 0 && <MetricGrid items={tokenCard}/>}
-    {data && <Section className="report-panel" headingLevel={3} title="Session tokens indexed per day">
+    {activity && <ActivityCards activity={activity} range={range}>{items => items.length > 0 && <MetricGrid items={items}/>}</ActivityCards>}
+    {data && <Section className="report-panel" headingLevel={3} title="Session tokens indexed" actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
       <DailyBarChart days={data.daily.map(day => ({date: day.date, value: day.count}))} label="Session tokens indexed per day" unit={tokens}/>
     </Section>}
     <Section className="report-panel" headingLevel={3} title="Sessions">
@@ -156,6 +207,8 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
     ...tokenAdapter ? [{value: 'overview' as const, label: 'Overview'}] : [],
     ...activity ? [{value: 'searches' as const, label: 'Searches'}, {value: 'proactive' as const, label: 'Proactive context'}] : [],
     {value: 'team', label: 'Team'},
+    {value: 'activity', label: 'Activity'},
+    {value: 'sources', label: 'Sources'},
   ];
   const current: Tab = tabs.some(item => item.value === tab) ? tab : tabs[0]!.value;
   return <Page title="Usage" bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
@@ -168,6 +221,11 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
     {current === 'overview' && tokenAdapter && scope && <OverviewTab adapter={tokenAdapter} scope={scope} range={range} names={names} activity={activity}/>}
     {current === 'searches' && activity && <SearchesTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {current === 'proactive' && activity && <ProactiveTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
+    {(current === 'activity' || current === 'sources') && <>
+      {team.error && <Notice tone={team.data ? 'warning' : 'danger'} actions={!team.data && <Button onClick={team.reload} disabled={team.loading}>Try again</Button>}>{team.data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : team.error}</Notice>}
+      {team.loading && !team.data && <LoadingState label="Loading usage"/>}
+      {team.data && (current === 'activity' ? <AgentActivity report={team.data} now={Date.now()} retry={team.reload}/> : <DataSources report={team.data} now={Date.now()} retry={team.reload}/>)}
+    </>}
     {current === 'team' && <>
       {team.error && <Notice tone={team.data ? 'warning' : 'danger'} actions={!team.data && <Button onClick={team.reload} disabled={team.loading}>Try again</Button>}>{team.data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : team.error}</Notice>}
       {team.loading && !team.data && <LoadingState label="Loading usage"/>}
