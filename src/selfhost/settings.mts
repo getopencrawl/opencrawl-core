@@ -32,7 +32,7 @@ export function selfhostSettings(env:NodeJS.ProcessEnv=process.env):SelfhostSett
   const username=env.OPENCRAWL_OPENSEARCH_USERNAME,password=env.OPENCRAWL_OPENSEARCH_PASSWORD;
   if(Boolean(username)!==Boolean(password))throw new Error('Set both OpenSearch username and password');
   if(search.protocol==='sqlite:'&&(username||password))throw new Error('SQLite search does not use OpenSearch credentials');
-  const sharedFilesAccess=env.OPENCRAWL_FILES_ACCESS??'off';
+  const sharedFilesAccess=env.OPENCRAWL_FILES_ACCESS??'read-write';
   if(sharedFilesAccess!=='off'&&sharedFilesAccess!=='read-only'&&sharedFilesAccess!=='read-write')
     throw new Error('OPENCRAWL_FILES_ACCESS must be off, read-only or read-write');
   return {sharedFilesAccess,replicasBindings:replicasBindings(env.OPENCRAWL_REPLICAS_BINDINGS,organizationId),url,authOrigin:url+'/api/auth',clientId:CLI_CLIENT_ID,organizationId,authSecret,revision:env.REVISION,

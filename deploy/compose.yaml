@@ -8,7 +8,7 @@ x-runtime: &runtime
   stop_grace_period: 45s
   volumes: ["application:/data"]
   environment: &env
-    OPENCRAWL_FILES_ACCESS: ${OPENCRAWL_FILES_ACCESS:-off}
+    OPENCRAWL_FILES_ACCESS: ${OPENCRAWL_FILES_ACCESS:-read-write}
     OPENCRAWL_DATABASE_URL: postgres://opencrawl:${OPENCRAWL_DATABASE_PASSWORD:?Run ./up.sh}@temporal-db:5432/opencrawl
     OPENCRAWL_URL: ${OPENCRAWL_URL:?Set the HTTPS application origin}
     OPENCRAWL_SETUP_START_COMMAND: ${OPENCRAWL_SETUP_START_COMMAND:-}

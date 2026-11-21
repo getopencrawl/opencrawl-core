@@ -189,7 +189,7 @@ PostgreSQL, raw objects, credentials, and the installation journal together.
 Keep the organization, storage prefix, index and Temporal binding stable. Moving
 data between backends is a separate migration, not an endpoint edit.
 
-The app provisions shared Git repositories on a retained PVC. Access defaults to off. Set `runtime.env.OPENCRAWL_FILES_ACCESS` to `read-only` or `read-write` to enable it. Configure its capacity with
+The app provisions writable shared Git repositories on a retained PVC. Set `runtime.env.OPENCRAWL_FILES_ACCESS` to `read-only` or `off` to restrict member access. Configure its capacity with
 `sharedFiles.size` or supply `sharedFiles.existingClaim`. Stop writers and back up
 this claim together with PostgreSQL. In the installer config, nest these chart
 values under `application.sharedFiles`. The chart also retains StatefulSet PVCs on uninstall. Removing a Helm release is not a

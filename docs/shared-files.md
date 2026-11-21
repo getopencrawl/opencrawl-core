@@ -65,10 +65,10 @@ deleted file. Sharing a link pins the original bytes even when main advances.
 
 ## Self-hosting
 
-Self-hosting provisions the workspace repository on startup with access off. Set
-`OPENCRAWL_FILES_ACCESS=read-write` to enable member discovery and ordinary Git,
-or `read-only` to allow clones and fetches during maintenance. Restart the API after
-changing the setting. Helm accepts it in `runtime.env.OPENCRAWL_FILES_ACCESS`.
+Self-hosting provisions a writable workspace repository on startup. Set
+`OPENCRAWL_FILES_ACCESS=read-only` to allow only clones and fetches during maintenance,
+or `off` to disable access. An existing explicit setting takes precedence.
+Restart the API after changing it. Helm accepts it in `runtime.env.OPENCRAWL_FILES_ACCESS`.
 
 The self-host application serves authenticated Git smart HTTP. The distribution
 image includes Git. Source installs require Git on the server and clients. Fetch
