@@ -21,10 +21,10 @@ const blobHash=(text:string)=>{const bytes=Buffer.from(text);return createHash('
 export const packageRelease=(client:string,release:PluginRelease=pluginRelease)=>release.packages.find(row=>row.harness===client);
 
 /** Only immutable, reviewed public files are fetched. No account credential is sent. */
-export async function loadPublishedPackage(client:LocalPluginClient,{fetcher=fetch,cache=join(configDir(),'setup','packages'),release=pluginRelease,platform=process.platform+'-'+process.arch}: {fetcher?:typeof fetch;cache?:string;release?:PluginRelease;platform?:string}={}):Promise<PublishedPackage>{
+export async function loadPublishedPackage(client:LocalPluginClient,{fetcher=fetch,cache=join(configDir(),'setup','packages'),release=pluginRelease,platform=process.platform+'-'+process.arch,signal}: {signal?:AbortSignal;fetcher?:typeof fetch;cache?:string;release?:PluginRelease;platform?:string}={}):Promise<PublishedPackage>{
  const entry=packageRelease(client,release);release={...release,ref:entry?.ref??release.ref};if(!entry||!/^[a-f0-9]{40}$/.test(release.ref)||release.repository!=='getopencrawl/opencrawl-plugins')throw invalid();
  let binary:Awaited<ReturnType<typeof loadPluginArchive>>|undefined;
- if(entry.archives)binary=await loadPluginArchive(entry,release,platform,{fetcher,cache});
+ if(entry.archives)binary=await loadPluginArchive(entry,release,platform,{fetcher,cache,signal});
  const expected=Object.entries(entry.files??{}),path=join(cache,release.ref,client+'.json');
  const valid=(value:unknown):value is Record<string,string>=>Boolean(value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===expected.length&&expected.every(([name,spec])=>{const text=(value as Record<string,unknown>)[name];return typeof text==='string'&&Buffer.byteLength(text)===spec.bytes&&blobHash(text)===spec.sha;}));
  let files:unknown=binary?.files;if(!binary)try{files=JSON.parse(readFileSync(path,'utf8'));}catch{}
@@ -32,7 +32,7 @@ export async function loadPublishedPackage(client:LocalPluginClient,{fetcher=fet
   const loaded:Record<string,string>={};let index=0;
   await Promise.all(Array.from({length:Math.min(4,expected.length)},async()=>{
    for(;;){const item=expected[index++];if(!item)return;const [name,spec]=item;
-    const response=await fetcher(`https://raw.githubusercontent.com/${release.repository}/${release.ref}/${entry.path}/${name}`,{redirect:'error',signal:AbortSignal.timeout(30_000)});
+    const response=await fetcher(`https://raw.githubusercontent.com/${release.repository}/${release.ref}/${entry.path}/${name}`,{redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000)});
     if(!response.ok||!response.body)throw invalid();
     const chunks:Uint8Array[]=[];let size=0;const reader=response.body.getReader();
     try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>spec.bytes){await reader.cancel();throw invalid();}chunks.push(value);}}finally{reader.releaseLock();}

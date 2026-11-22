@@ -64,8 +64,8 @@ function allowedUrl(value:string,release:PluginRelease,redirect=false){
  if(!official&&!(redirect&&url.hostname==='release-assets.githubusercontent.com'))throw invalid();
  return url;
 }
-async function download(url:string,limit:number,release:PluginRelease,fetcher:typeof fetch){
- let target=allowedUrl(url,release);const signal=AbortSignal.timeout(90_000);
+async function download(url:string,limit:number,release:PluginRelease,fetcher:typeof fetch,cancel?:AbortSignal){
+ let target=allowedUrl(url,release);const timeout=AbortSignal.timeout(90_000),signal=cancel?AbortSignal.any([cancel,timeout]):timeout;
  for(let redirects=0;redirects<=3;redirects++){
   const response=await fetcher(target,{redirect:'manual',signal});
   if([301,302,303,307,308].includes(response.status)){
@@ -78,7 +78,7 @@ async function download(url:string,limit:number,release:PluginRelease,fetcher:ty
  }
  throw invalid();
 }
-export async function loadPluginArchive(entry:PackageRelease,release:PluginRelease,platform:string,{fetcher,cache}:{fetcher:typeof fetch;cache:string}){
+export async function loadPluginArchive(entry:PackageRelease,release:PluginRelease,platform:string,{fetcher,cache,signal}:{fetcher:typeof fetch;cache:string;signal?:AbortSignal}){
  if(!['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'].includes(platform))throw new CliError('PLUGIN_PLATFORM_UNAVAILABLE','This pinned plugin has no package for this machine. Existing plugins were preserved.',2);
  const pin=entry.archives?.[platform];
  if(!pin)throw new CliError('PLUGIN_PLATFORM_UNAVAILABLE','This pinned plugin has no package for this machine. Existing plugins were preserved.',2);
@@ -88,10 +88,10 @@ export async function loadPluginArchive(entry:PackageRelease,release:PluginRelea
  const read=(path:string,sha:string,limit:number)=>{try{const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>limit)return;const bytes=readFileSync(path);return bytes.length<=limit&&fileHash(bytes)===sha?bytes:undefined;}catch{return;}};
  let metadata=read(metadataPath,pin.metadataSha256,16_384),archive=read(zipPath,pin.sha256,maxArchive);
  const cached=Boolean(metadata&&archive);
- metadata??=await download(pin.metadataUrl,16_384,release,fetcher);
+ metadata??=await download(pin.metadataUrl,16_384,release,fetcher,signal);
  if(fileHash(metadata)!==pin.metadataSha256)throw invalid();
  try{validateArtifact(JSON.parse(metadata.toString('utf8')),entry,platform,pin);}catch{throw invalid();}
- archive??=await download(pin.url,maxArchive,release,fetcher);
+ archive??=await download(pin.url,maxArchive,release,fetcher,signal);
  const result=await readPluginArchive(archive,metadata,entry,platform,pin);
  if(!cached){atomicFile(zipPath,archive);atomicFile(metadataPath,metadata);}
  return {...result,archive:{platform,url:pin.url,sha256:pin.sha256,metadataSha256:pin.metadataSha256}};

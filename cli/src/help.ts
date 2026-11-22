@@ -28,6 +28,7 @@ an interruption. The uploaded count measures batches. Run search to verify index
   if(command==='setup')return `Usage: opencrawl setup [--api URL]
        opencrawl setup --client claude-code [--api URL]
        opencrawl setup --json
+       opencrawl setup updates [--json]
        opencrawl setup hooks --json
        opencrawl setup apply --plugins IDS --forward IDS --history IDS --plan-id ID --yes
 
@@ -39,6 +40,7 @@ Use arrows to move, Space to toggle, and Enter on a bottom button.
 Detected agents start selected; saved off choices stay off. History starts off.
 Each selected plugin records new sessions. You can import history with recording off.
 Run setup again to review your choices. Installed integrations can continue. ⚠ Needs reinstall marks a missing or damaged installation.
+setup updates downloads verified releases for the installed profile and lists changed hook files.
 setup hooks inspects this installation's Codex hook trust locally without changing it.
 setup report-hooks publishes the native review for the saved installation without reinstalling plugins.
 

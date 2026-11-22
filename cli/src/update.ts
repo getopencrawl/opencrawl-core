@@ -139,9 +139,12 @@ export async function refreshCli({signal,launcher=nativeDistribution(),install}:
   },0,signal);}catch{} // A busy cache, sandbox or offline registry never blocks capture.
 }
 
-export function scheduleCliUpdate() {
+export function scheduleCliUpdate(pluginApi?:string) {
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),90_000);timeout.unref();
-  const done=refreshCli({signal:controller.signal}).catch(()=>{}).finally(()=>clearTimeout(timeout));
+  const jobs:Promise<unknown>[]=[refreshCli({signal:controller.signal})];
+  if (pluginApi && distribution.compiled() && process.env.OPENCRAWL_NO_UPDATE!=='1')
+    jobs.push(import('./setup/plugin-updates.ts').then(module=>module.stagePluginUpdates(pluginApi,controller.signal)));
+  const done=Promise.allSettled(jobs).finally(()=>clearTimeout(timeout));
   return {stop:async()=>{controller.abort();await done;}};
 }

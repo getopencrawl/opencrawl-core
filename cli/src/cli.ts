@@ -333,6 +333,11 @@ export async function main(args = process.argv.slice(2)) {
       emit(result,JSON.stringify(result,null,2));return 0;
     }
     if(parsed.values.local){const data=localSetupStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
+    if(command==='setup'&&parsed.positionals[1]==='updates'){
+      const {stagePluginUpdates,formatPluginUpdates}=await import('./setup/plugin-updates.ts');
+      const rows=await stagePluginUpdates((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);
+      emit({plugins:rows},formatPluginUpdates(rows));return rows.some(row=>row.status==='retry')?1:0;
+    }
     if(command==='setup'&&parsed.positionals[1]==='hooks'){const data=await setupHookStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
     if(command==='setup'||command==='verify-installation'){
       const humanSetup=command==='setup'&&!parsed.positionals[1]&&!json&&Boolean(process.stdin.isTTY&&process.stderr.isTTY);
@@ -375,13 +380,20 @@ export async function main(args = process.argv.slice(2)) {
       emit(data,'Installed opencrawl '+data.version+' at '+data.path+'.\n'+data.pathMessage);
       return 0;
     }
-    if(command==='update'){const data=await updateCli();emit(data,data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`);return 0;}
+    if(command==='update'){
+      const data=await updateCli();
+      const {stagePluginUpdates,formatPluginUpdates}=await import('./setup/plugin-updates.ts');
+      const plugins=await stagePluginUpdates((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);
+      const message=data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`;
+      emit({...data,plugins},message+(plugins.length?'\n'+formatPluginUpdates(plugins):''));
+      return plugins.some(row=>row.status==='retry')?1:0;
+    }
     if(!['setup','logout','install','skills','verify-installation'].includes(command)&&!(command==='collect'&&parsed.positionals[1]!=='hook'))try{scheduleDaemonUpgrade();}catch{}
     const pluginHookInvocation=captureHandoff||hasPluginContext();
-    if(!pluginHookInvocation)updateJob=scheduleCliUpdate();
     const api = apiOrigin((parsed.values.api as string | undefined) ?? process.env.OPENCRAWL_API_URL
       ?? readCaptureConfig()?.api
       ?? DEFAULT_API_ORIGIN);
+    if(!pluginHookInvocation)updateJob=scheduleCliUpdate(['search','fetch','browse','board','status'].includes(command)&&!parsed.values['dry-run']&&!parsed.values['no-background']?api:undefined);
     if(!['login','logout','status','whoami','skills','collect'].includes(command))try{wakeApprovedHistory();}catch{}
     if(command!=='collect'&&command!=='skills'&&process.env.OPENCRAWL_NO_UPDATE!=='1'&&!hasPluginContext()&&readCaptureConfig()?.hookOwnership!=='plugin')await refreshManagedSkills(api);
     if (command === 'skills') {
