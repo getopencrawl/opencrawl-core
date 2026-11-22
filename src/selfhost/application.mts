@@ -164,7 +164,8 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   const identifyAgent=async(req:IncomingMessage,authorization=req.headers.authorization)=>{const token=/^Bearer (.+)$/i.exec(authorization||'')?.[1];return identifyWorkload(token)??identifyCli(authorization,{capture:true});};
   const filesHandler=settings.sharedFilesAccess && settings.sharedFilesAccess!=='off' && sharedFiles && createSharedFilesHandler({store:sharedFiles,limits:filesLimits});
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
-  const contextCheck=createContextCheckHandler({authenticate,check:measuredCheck(usageActivity,createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize}))});
+  const checkSuggestions=measuredCheck(usageActivity,createContextCheck({search:authorizedSearch,judge:contextSuggestions.judgment??lexicalCheckJudgment,authorize}));
+  const contextCheck=createContextCheckHandler({authenticate,check:checkSuggestions});
   const suggestionEvents=createContextCheckHandler({authenticate,check:createSuggestionEvents({authorize,observe:measuredSuggestionEvents(usageActivity,contextSuggestions.observe)})});
   const setup=setupState?createSetupStatus({state:{setup:setupState},search:authorizedSearch}):undefined;
   const setupHandler=setup?createSetupHandler({setup,authenticate,invitations:{
@@ -175,7 +176,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate,sharedFiles:Boolean(filesHandler)});
-  const mcp=createOpenCrawlMcp({usageActivity,origin:settings.url,revision:settings.revision,search:authorizedSearch,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
+  const mcp=createOpenCrawlMcp({usageActivity,origin:settings.url,revision:settings.revision,search:authorizedSearch,contextSuggestions:checkSuggestions,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
     const token=/^Bearer (.+)$/i.exec(req.headers.authorization||'')?.[1];
     const workload=identifyWorkload(token);
     if(!workload)return accounts.mcpIdentity(req,res);

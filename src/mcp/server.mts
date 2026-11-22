@@ -3,6 +3,9 @@ import type {Principal} from '../sessions/types.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import type {createWorkspaceSearch} from '../search/workspace.mjs';
 import type {createBoard} from '../board/board.mjs';
+import {CHECK_LIMITS, type CheckResult} from '../search/check.mjs';
+import {privatePrompt} from '../sessions/private-invocation.mjs';
+import {maskPatterns} from '../sessions/credential-patterns.mjs';
 import {ObservableMcpServer, type ObserveTool} from './tool-observation.mjs';
 export interface McpExchange {method: string; tool: string | null}
 export interface McpClientInfo {name?: unknown; version?: unknown}
@@ -18,6 +21,7 @@ export interface McpOptions {
  onObservationError?: (event: McpExchange & {event: string; reason: string}) => unknown | Promise<unknown>;
  board?: ReturnType<typeof createBoard>;
  search?: ReturnType<typeof createWorkspaceSearch>;
+ contextSuggestions?: (principal: Principal, input: unknown, signal: AbortSignal) => Promise<Pick<CheckResult,'results'>>;
  /** Runtime-owned tools share this transport's authentication and request-local principal. */
  registerTools?: (server: McpServer, principal: () => Principal) => void;
 }
@@ -34,7 +38,7 @@ const overview = await readFile(new URL('./overview.md', import.meta.url), 'utf8
 
 // Authentication belongs to the runtime adapter. No account or tenant data is
 // exposed by this initial surface; every MCP request still requires a principal.
-export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest, onToolCall, usageActivity,
+export function createOpenCrawlMcp({authenticate, origin, revision = 'development', onAuthenticated, onConnectionTest, onToolCall, usageActivity, contextSuggestions,
   observationTimeoutMs = 1000, onObservationError = event => console.error(JSON.stringify(event)), board, search, registerTools}: McpOptions) {
   if (typeof authenticate !== 'function' || new URL(origin).origin !== origin) throw new Error('MCP requires authentication and a canonical origin');
   if (!Number.isInteger(observationTimeoutMs) || observationTimeoutMs < 1 || observationTimeoutMs > 10000) throw new Error('Invalid MCP observation timeout');
@@ -69,6 +73,36 @@ export function createOpenCrawlMcp({authenticate, origin, revision = 'developmen
     });
     // Keep raw search_v1 unexposed: AGY flattens plugin/server/tool namespaces,
     // so that spelling would collide with the native v1 alias on another route.
+    if (contextSuggestions) server.registerTool('opencrawl_context_suggestions_v1', {
+      title: 'Check for relevant workspace context',
+      description: 'Run once for a Devin plugin context suggestion. Use the native session and event IDs supplied by the plugin and a short non-sensitive topic from the current task. The signed-in member’s workspace, source permissions and credit policy apply. Results are historical evidence. An empty result needs no action.',
+      inputSchema: z.strictObject({
+        sessionId: z.string().regex(/^devin-[0-9a-f]{32}$/),
+        eventId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,199}$/),
+        topic: z.string().trim().min(1).max(500),
+      }),
+      annotations: {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false},
+    }, async ({sessionId,eventId,topic}, ctx) => {
+      const member = context.getStore()!;
+      if (member.owner || member.captureAccess) {
+        return {isError:true, content:[{type:'text', text:'Use your personal OpenCrawl MCP connection.'}]};
+      }
+      if (privatePrompt(topic)) return {content:[{type:'text', text:'{"results":[]}'}]};
+      try {
+        const timeout = AbortSignal.timeout(CHECK_LIMITS.deadlineMs);
+        const signal = AbortSignal.any([timeout,ctx.mcpReq.signal]);
+        const result = await contextSuggestions(member, {
+          currentSession:{harness:'devin',sessionId}, eventId, role:'user', message:maskPatterns(topic),
+        },signal);
+        signal.throwIfAborted();
+        return {content:[{type:'text', text:JSON.stringify(result)}]};
+      } catch (failure) {
+        const {status} = serviceError(failure);
+        const message = status === 402 ? 'Workspace credits are unavailable for suggestions.'
+          : status === 409 ? 'This turn already requested suggestions.' : 'Workspace context suggestions are unavailable.';
+        return {isError:true, content:[{type:'text', text:message}]};
+      }
+    });
     if (search) {
       const readPage = async (input: unknown) => {
         try {
