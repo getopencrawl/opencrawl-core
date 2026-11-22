@@ -13,6 +13,7 @@ import {CallbackChoices, readContinuation} from '../../src/application/callback-
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
 import {UsagePage} from '../../src/pages/usage.tsx';
+import {DailyBarChart} from '../../src/design/components.tsx';
 import {DiagnosticsPage, SearchPlaygroundPage} from '../../src/pages/diagnostics.tsx';
 import {BoardNavigation} from '../../src/pages/board.tsx';
 import type {ConsoleDataAdapter} from '../../src/pages/types.ts';
@@ -74,6 +75,10 @@ function Fixture() {
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
   if (location.pathname === '/usage') return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', label: 'Usage', icon: 'usage', element: <UsagePage showActivity={new URLSearchParams(location.search).has('activity')?'usage-fixture':undefined} adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/stacked-usage-fixture') return <DailyBarChart label="Items per day" xAxisLabel="Date (UTC)" yAxisLabel="Items"
+    days={[{date:'2026-11-17',value:10,segments:[2,3,5]},{date:'2026-11-18',value:0,segments:[0,0,0]},
+      {date:'2026-11-19',value:null},{date:'2026-11-20',value:9,segments:[8,1,0]}]}
+    series={[{label:'Sessions'},{label:'Documents'},{label:'Memories'}]} unit={n=>n+' items'}/>;
   if (location.pathname === '/diagnostics' || location.pathname === '/search') {
     const query = new URLSearchParams(location.search), board = location.pathname === '/diagnostics' && query.get('nav') !== 'workspace' && query.get('view') !== 'search';
     const topic = query.get('view') === 'stream' ? '' : query.get('channel') || query.get('topic') || '';

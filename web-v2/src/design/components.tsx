@@ -238,8 +238,26 @@ function niceTicks(maximum: number) {
   return Array.from({length: Math.ceil(maximum / step) + 1}, (_, i) => i * step);
 }
 
-/** Daily bars with a y-axis and a hover or keyboard readout for each day. A null day was not tracked. */
-export function DailyBarChart({days, label, unit}: {days: ReadonlyArray<{date: string; value: number | null}>; label: string; unit: (value: number) => string}) {
+interface BarDay {
+  date: string;
+  /** A measured total, or null when the day was not tracked. */
+  value: number | null;
+  /** Nonnegative parts of the total, in series order. Omit if only the total is available. */
+  segments?: readonly number[];
+}
+
+function daySegments(day: BarDay, seriesCount: number) {
+  const parts = day.segments;
+  if (day.value == null || !parts || parts.length !== seriesCount || !parts.every(v => Number.isFinite(v) && v >= 0)) return null;
+  const total = parts.reduce((sum, v) => sum + v, 0);
+  return Math.abs(total - day.value) <= Number.EPSILON * Math.max(1, day.value) * seriesCount ? parts : null;
+}
+
+/** Daily totals optionally broken into stacked series. Days can be inspected by mouse, keyboard or touch. */
+export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxisLabel}: {
+  days: readonly BarDay[]; label: string; unit: (value: number) => string;
+  series?: readonly {label: string}[]; xAxisLabel?: string; yAxisLabel?: string;
+}) {
   const figure = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(760);
   const [active, setActive] = useState<number | null>(null);
@@ -256,21 +274,28 @@ export function DailyBarChart({days, label, unit}: {days: ReadonlyArray<{date: s
   const column = (width - left - right) / days.length;
   const y = (value: number) => plotBottom - value / top * (plotBottom - plotTop);
   const describe = (day: typeof days[number]) => `${day.date}: ${day.value == null ? 'not tracked' : unit(day.value)}`;
-  const shown = active == null ? null : days[active];
-  const labels = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])];
-  const tip = shown && (() => {
+  const stacked = series.length > 0;
+  const selected = Math.min(active ?? days.length - 1, days.length - 1);
+  const shown = stacked ? days[selected] : active == null ? null : days[active];
+  const breakdown = shown && stacked ? daySegments(shown, series.length) : null;
+  const labels = [...new Set(width - left - right >= 270 ? [0, Math.floor((days.length - 1) / 2), days.length - 1] : [0, days.length - 1])];
+  const tip = !stacked && shown && (() => {
     const lines = [shown.date, shown.value == null ? 'Not tracked' : unit(shown.value)];
     const boxWidth = Math.max(...lines.map(line => line.length)) * 7 + 20, center = left + (active! + .5) * column;
     return {lines, boxWidth, x: Math.min(Math.max(center - boxWidth / 2, left), width - right - boxWidth)};
   })();
-  return <figure ref={figure} className="report-bar-chart">
+  return <figure ref={figure} className={stacked ? 'report-bar-chart report-bar-chart-stacked' : 'report-bar-chart'}>
+    {yAxisLabel && <div className="report-bar-axis-title">{yAxisLabel}</div>}
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label} tabIndex={0}
-      onMouseLeave={() => setActive(null)} onBlur={() => setActive(null)}
+      onMouseLeave={() => {if (!stacked) setActive(null);}} onBlur={() => {if (!stacked) setActive(null);}}
       onKeyDown={event => {
+        if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault(); setActive(event.key === 'Home' ? 0 : days.length - 1); return;
+        }
         const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
         if (!step) return;
         event.preventDefault();
-        setActive(current => Math.min(days.length - 1, Math.max(0, (current ?? (step > 0 ? -1 : days.length)) + step)));
+        setActive(current => Math.min(days.length - 1, Math.max(0, (current ?? (stacked ? selected : step > 0 ? -1 : days.length)) + step)));
       }}>
       {ticks.map(tick => <g key={tick}>
         <line className="report-bar-grid" x1={left} x2={width - right} y1={y(tick)} y2={y(tick)}/>
@@ -278,9 +303,16 @@ export function DailyBarChart({days, label, unit}: {days: ReadonlyArray<{date: s
       </g>)}
       {days.map((day, index) => {
         const value = day.value ?? 0, barHeight = value ? Math.max(2, plotBottom - y(value)) : 0;
-        return <g key={day.date} className={index === active ? 'is-active' : undefined}>
-          <rect className="report-bar" x={left + index * column + column * .15} y={plotBottom - barHeight} width={Math.max(1, column * .7)} height={barHeight} rx="2"/>
-          <rect className="report-bar-hit" x={left + index * column} y={plotTop} width={column} height={plotBottom - plotTop} onMouseEnter={() => setActive(index)}/>
+        const x = left + index * column + column * .15, barWidth = Math.max(1, column * .7);
+        const parts = stacked ? daySegments(day, series.length) : null;
+        let sum = 0;
+        return <g key={day.date} className={index === (stacked ? selected : active) ? 'is-active' : undefined}>
+          {stacked && selected === index && <rect className="report-stack-highlight" x={left + index * column} y={plotTop} width={column} height={plotBottom - plotTop}/>}
+          {parts ? parts.map((part, i) => {
+            const base = y(sum); sum += part;
+            return part > 0 && <rect key={i} className={`report-stack-segment report-series-${i % 6}`} x={x} y={y(sum)} width={barWidth} height={base - y(sum)}/>;
+          }) : <rect className={stacked ? 'report-bar-unclassified' : 'report-bar'} x={x} y={plotBottom - barHeight} width={barWidth} height={barHeight} rx="2"/>}
+          <rect className="report-bar-hit" x={left + index * column} y={plotTop} width={column} height={plotBottom - plotTop} onMouseEnter={() => setActive(index)} onPointerDown={() => setActive(index)}/>
         </g>;
       })}
       {labels.map(i => <text key={i} className="report-bar-axis" x={left + (i + .5) * column} y={height - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>{days[i]!.date}</text>)}
@@ -289,7 +321,20 @@ export function DailyBarChart({days, label, unit}: {days: ReadonlyArray<{date: s
         {tip.lines.map((line, i) => <text key={i} x={tip.x + 10} y={19 + i * 17} className={i ? 'report-bar-tip-value' : undefined}>{line}</text>)}
       </g>}
     </svg>
-    <span className="sr-only" role="status">{shown ? describe(shown) : ''}</span>
+    {xAxisLabel && <div className="report-bar-axis-title report-bar-x-title">{xAxisLabel}</div>}
+    {stacked && shown ? <figcaption className="report-stack-caption">
+      <div className="report-stack-summary">
+        <Select aria-label="Day to inspect" value={selected} onChange={e => setActive(Number(e.target.value))}>
+          {days.map((day, i) => <option key={day.date} value={i}>{day.date}</option>)}
+        </Select>
+        <span>{shown.value == null ? 'Not tracked' : `Total ${unit(shown.value)}`}</span>
+      </div>
+      <ul className="report-stack-legend" aria-label="Series breakdown">{series.map((s, i) => <li key={s.label}>
+        <span className={`report-series-key report-series-${i % 6}`} aria-hidden="true"/>{s.label}
+        <strong>{breakdown ? unit(breakdown[i]!) : 'Unavailable'}</strong>
+      </li>)}</ul>
+    </figcaption> : null}
+    <span className="sr-only" role="status">{shown ? [describe(shown), ...(breakdown ? series.map((s, i) => `${s.label} ${unit(breakdown[i]!)}`) : [])].join('. ') : ''}</span>
   </figure>;
 }
 
