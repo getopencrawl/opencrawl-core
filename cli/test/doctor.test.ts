@@ -9,7 +9,7 @@ import {pluginRelease} from '../src/setup/plugin-release.ts';
 const cli=join(import.meta.dir,'../src/cli.ts');
 const json=(file:string,value:unknown)=>{mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify(value),{mode:0o600});};
 const owner={tenantId:'doctor-tenant',userId:'doctor-user'},installationId='doctor-host';
-async function run(home:string,api:string,extra:Record<string,string>={}){
+async function run(home:string,api:string|undefined,extra:Record<string,string>={}){
   const env={...process.env,HOME:home,USERPROFILE:home,OPENCRAWL_CONFIG_HOME:home,OPENCRAWL_NO_UPDATE:'1',OPENCRAWL_API_URL:api,OPENCRAWL_TOKEN:'doctor-test',OPENCRAWL_SESSIONS_TOKEN:'doctor-test',...extra};
   const child=Bun.spawn([process.execPath,cli,'doctor','--json'],{env,stdout:'pipe',stderr:'pipe',stdin:'ignore'});
   const [exit,out,err]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
@@ -24,6 +24,7 @@ test('doctor distinguishes consent, explicitly recording off, and an unfinished 
     expect(await run(home,api)).toMatchObject({exit:2,status:'needs_human',nextAction:{kind:'choose_setup'}});
     json(file,state);const bytes=readFileSync(file),mtime=statSync(file).mtimeMs;
     for(let attempt=0;attempt<2;attempt++)expect(await run(home,api)).toMatchObject({exit:0,status:'green',recordingOff:true,repairs:[]});
+    expect((await run(home,undefined)).status).toBe('green');
     expect(readFileSync(file)).toEqual(bytes);expect(statSync(file).mtimeMs).toBe(mtime);
     json(file,{...state,firstRun:'choosing'});expect((await run(home,api)).exit).toBe(2);
   }finally{rmSync(home,{recursive:true,force:true});}

@@ -118,7 +118,7 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
       return fail('blocked','update_rolled_back','The native check rejected this pin. The previous release is active until a different verified pin is available.');
     const row=updates.find(item=>item.client===client);
     return row?.status==='retry'?fail('retry','download_pending','Retry the verified plugin download.'):
-      fail('blocked','update_staged',row?.status==='kept_current'?row.reason+' The desired release is still pending.':'The desired release has not been safely activated. Keep the current installation until activation is supported.');
+      fail('blocked',row?'update_staged':'update_unconfirmed',row?.status==='kept_current'?row.reason+' The desired release is still pending.':'The desired release has not been safely activated. Keep the current installation until activation is supported.');
   }
   if(recording&&prior.captureAvailable!==true)return fail('blocked','capture_unavailable','This installed package has no confirmed support for recording.');
   if(recording&&local.captureMode==='daemon'&&report.worker!=='running'){app.observed='waiting_for_worker';return;}
@@ -164,10 +164,10 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
     {client,tool:'verify_installation',arguments:{installationId,client,proofId:verify.proof.id!},...(message?{message}:{})});
   app.observed='awaiting_native_check';report.issues.push(action);
 }
-async function reconcile(api:string,report:Report){
+async function reconcile(api:string,report:Report,explicitDestination:boolean){
   const config=readCaptureConfig();
   if(!config){
-    if(unboundSetupComplete(api)){report.recordingOff=true;return;}
+    if(unboundSetupComplete(explicitDestination?api:undefined)){report.recordingOff=true;return;}
     report.issues.push(setupNeeded());return;
   }
   if(config.api!==api)throw new CliError('SETUP_SCOPE_CHANGED','Use the deployment configured for this local installation.');
@@ -183,7 +183,7 @@ async function reconcile(api:string,report:Report){
   if(state.firstRun==='choosing'){report.issues.push(setupNeeded());return;}
   const ids=chosen(local.selections,'plugins');
   if(!ids.length){
-    if(!config.disabled&&config.harnesses?.length)throw new CliError('SETUP_STATE_INVALID','Recording is active outside the saved selection. Review setup for this installation.');
+    if(!config.disabled&&(config.harnesses??['claude-code','codex']).length)throw new CliError('SETUP_STATE_INVALID','Recording is active outside the saved selection. Review setup for this installation.');
     report.recordingOff=true;return;
   }
   if(config.hookOwnership!=='plugin')throw new CliError('SETUP_STATE_INVALID','Review this legacy capture installation with opencrawl setup.');
@@ -204,7 +204,7 @@ async function reconcile(api:string,report:Report){
     if(current.firstRun==='choosing'||current.acceptedAt!==state.acceptedAt)throw new CliError('SETUP_CHANGED','Setup is changing.');
     if(local.captureMode==='daemon'&&(!config.disabled||config.backgroundStartup)){
       try{
-        report.worker=await doctorWorker(config,report.repairs);
+        report.worker=await doctorWorker(config,current,report.repairs);
         if(report.worker!=='running')report.issues.push(report.worker==='starting'?issue('retry','worker_starting','The capture worker is starting. Rerun doctor shortly.'):
           issue('blocked','worker_supervision','The host could not supervise the selected worker. Inspect opencrawl setup status --local --json for its service command.'));
       }catch(error){report.worker='unavailable';report.issues.push(failure(error));}
@@ -232,7 +232,7 @@ export async function hostDoctor(explicitApi:string|undefined,args:string[]){
       catch{report.issues.push(issue('retry','cli_update','The CLI release check did not finish. Rerun doctor to check the configured channel.'));}
     }
     const api=apiOrigin(explicitApi??readCaptureConfig()?.api??DEFAULT_API_ORIGIN);
-    await withEnvironmentTokenOrigin(explicitApi,()=>withSessionLock('doctor',()=>reconcile(api,report),0));
+    await withEnvironmentTokenOrigin(explicitApi,()=>withSessionLock('doctor',()=>reconcile(api,report,explicitApi!==undefined),0));
   }catch(error){report.issues.push(failure(error));}
   return outcome(report,explicitApi);
 }
