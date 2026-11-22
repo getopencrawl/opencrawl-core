@@ -44,7 +44,7 @@ export async function loadPublishedPackage(client:LocalPluginClient,{fetcher=fet
  if(!binary&&!valid(files))throw invalid();
  const textFiles=files as Record<string,string>,capability=JSON.parse(textFiles['capabilities.json']!);
  if(capability.schemaVersion!==1||capability.harness!==client||capability.version!==entry.version||capability.cliRequired!==false||typeof capability.capture?.minimum!=='boolean'||typeof capability.daemonHandoff!=='boolean'||
-   capability.minimumHarnessVersion!==undefined&&!/^\d+\.\d+\.\d+$/.test(String(capability.minimumHarnessVersion))||
+   capability.minimumHarnessVersion!==undefined&&(typeof capability.minimumHarnessVersion!=='string'||capability.minimumHarnessVersion.length>128)||
    !historical&&(capability.capture.minimum!==entry.captureAvailable||capability.daemonHandoff!==entry.daemonHandoff||capability.minimumHarnessVersion!==entry.minimumHarnessVersion))throw invalid();
  const available=!['stub','development'].includes(capability.status);
  return {files:textFiles,...(capability.minimumHarnessVersion?{minimumHarnessVersion:capability.minimumHarnessVersion}:{}),...(binary?{binaries:binary.binaries,executable:binary.executable}:{}),source:{repository:release.repository,ref:release.ref,path:entry.path,name:entry.name,version:entry.version,...(binary?{archive:binary.archive}:{})},captureAvailable:available&&capability.capture.minimum===true,daemonHandoff:available&&capability.daemonHandoff===true};

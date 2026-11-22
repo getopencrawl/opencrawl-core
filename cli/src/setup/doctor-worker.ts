@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {read} from '../distribution.ts';
+import {compiled,read,version} from '../distribution.ts';
 import {CliError} from '../oauth.ts';
 import {sessionFile,withSessionLock} from '../session.ts';
 import {captureDir,captureDaemonEnabled,readCaptureConfig,type CaptureConfig} from '../capture/runtime.ts';
@@ -11,7 +11,7 @@ import {isDeepStrictEqual} from 'node:util';
 
 async function live(){
   const status=read(join(captureDir(),'daemon','status.json'));
-  if(status?.state!=='running'||!Number.isInteger(status.pid)||status.pid<=0)return false;
+  if(status?.state!=='running'||compiled()&&status.version!==version||!Number.isInteger(status.pid)||status.pid<=0)return false;
   try{
     if(readFileSync(sessionFile('capture:daemon')+'.lock','utf8')!==String(status.pid))return false;
     process.kill(status.pid,0);

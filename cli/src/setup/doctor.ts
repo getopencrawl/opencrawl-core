@@ -5,10 +5,10 @@ import {isDeepStrictEqual} from 'node:util';
 import {compiled,delegateToNewest,read,version} from '../distribution.ts';
 import {updateCli} from '../update.ts';
 import {CliError,DEFAULT_API_ORIGIN,apiOrigin} from '../oauth.ts';
-import {configDir,withSessionLock} from '../session.ts';
+import {atomicJson,configDir,withSessionLock} from '../session.ts';
 import {workspaceIdentityEnabled} from '../workspace-identity.ts';
 import {withEnvironmentTokenOrigin} from '../environment-token.ts';
-import {captureIdentity,readCaptureConfig,type CaptureConfig} from '../capture/runtime.ts';
+import {captureDir,captureIdentity,readCaptureConfig,type CaptureConfig} from '../capture/runtime.ts';
 import {verifyInstallation} from '../verify-installation.ts';
 import {readServerSetup,serverScope,publishSetup} from './api.ts';
 import {chosen,scopeKey,automaticUpdateClients,readSetupState,updateSetupState,type SetupState} from './state.ts';
@@ -34,7 +34,7 @@ function failure(error:unknown):Issue{
   if(['AUTH_REQUIRED','NOT_LOGGED_IN','NO_SESSION','LOGIN_REQUIRED','SESSION_EXPIRED'].includes(code))
     return workspaceIdentityEnabled()?issue('blocked','repair_identity','Restore the configured workload identity for this host.'):issue('needs_human','sign_in','Run opencrawl login for the saved workspace, then rerun doctor.');
   if(code==='SETUP_NOT_STARTED')return setupNeeded();
-  if(['SESSION_BUSY','SETUP_CHANGED','SETUP_UNAVAILABLE','NETWORK_ERROR','CAPTURE_NETWORK','SEARCH_UNAVAILABLE','UPDATE_UNAVAILABLE','CONTENT_CHANGED','NOT_FOUND'].includes(code)||
+  if(['SESSION_BUSY','SETUP_CHANGED','SETUP_UNAVAILABLE','NETWORK_ERROR','CAPTURE_RETRY_EXHAUSTED','SEARCH_UNAVAILABLE','UPDATE_UNAVAILABLE','CONTENT_CHANGED','NOT_FOUND'].includes(code)||
      error instanceof Error&&(/Timeout|Abort|fetch failed|network|socket|connect/i.test(error.name+' '+error.message)))return issue('retry','retry','Retry the check after the current operation or service recovers.');
   return issue('blocked',code.toLowerCase()||'check_failed',error instanceof CliError?error.message:'The host check failed. Inspect the local installation and rerun doctor.');
 }
@@ -43,7 +43,7 @@ function outcome(report:Report,api?:string){
   const {issues,...observations}=report,status:Status=first?first.status:'green';
   const resume=['opencrawl','doctor',...(api?['--api',api]:[]),'--json'];
   const nextAction=first?{actor:status==='needs_human'?'human':status==='needs_agent'?'agent':status==='retry'?'caller':'operator',...first.action,resume}:undefined;
-  const data={schemaVersion:1,status,...observations,...(nextAction?{nextAction}:{}),...(status==='retry'?{retryAfterSeconds:10}:{})};
+  const data={schemaVersion:1,status,...observations,...(issues.length>1?{issues}:{}),...(nextAction?{nextAction}:{}),...(status==='retry'?{retryAfterSeconds:10}:{})};
   const human=[!first?(report.recordingOff?'Green. Recording is off as requested.':'Green. All selected apps are ready.'):status.replaceAll('_',' '),
     ...Object.entries(report.apps).map(([name,row])=>name+' — '+row.observed+(row.installedVersion?' ('+row.installedVersion+')':'')),
     ...report.repairs.map(item=>'Repaired '+item.replaceAll('_',' ')),nextAction?.instruction,
@@ -121,16 +121,33 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
       fail('blocked','update_staged',row?.status==='kept_current'?row.reason+' The desired release is still pending.':'The desired release has not been safely activated. Keep the current installation until activation is supported.');
   }
   if(recording&&prior.captureAvailable!==true)return fail('blocked','capture_unavailable','This installed package has no confirmed support for recording.');
+  if(recording&&local.captureMode==='daemon'&&report.worker!=='running'){app.observed='waiting_for_worker';return;}
   if(!proofSupported)return fail('blocked','server_upgrade_required','Upgrade this deployment to a release that supports revision-bound installation verification.');
+  const worker=recording&&local.captureMode==='daemon'?read(join(captureDir(),'daemon','status.json')):undefined;
+  const markerFile=join(installed.nativeRoot,'.opencrawl-setup-plugin.json'),markerTime=statSync(markerFile).mtimeMs;
   const revision=createHash('sha256').update(JSON.stringify([state.scope,installationId,client,installed.digest,installed.nativeRoot,
-    statSync(join(installed.nativeRoot,'.opencrawl-setup-plugin.json')).mtimeMs,local.captureMode,config.roots,config.exclusions,
-    config.command,config.captureWorker,source.archive?.sha256,permissionRevision,recording])).digest('hex');
+    markerTime,local.captureMode,config.roots,config.exclusions,
+    config.command,config.installedAt,state.acceptedAt,config.captureWorker,worker?.version,worker?.startedAt,source.archive?.sha256,permissionRevision,recording])).digest('hex');
   if(auto&&app.installedVersion===pin.version&&source.archive?.sha256!==pin.archives?.[process.platform+'-'+process.arch]?.sha256)
     return fail('blocked','archive_mismatch','The installed archive differs from the verified pin for this platform.');
   const verify=await verifyInstallation(api,{installationId,client,revision});
+  if(!isDeepStrictEqual(installed,read(join(root,'installed.json')))||statSync(markerFile).mtimeMs!==markerTime||
+     await recordingInstallState(api,client,prior.status)!=='installed')throw new CliError('SETUP_CHANGED','The active plugin changed during native verification. Rerun doctor.');
   if(!recording&&['authenticated','observed'].includes(verify.mcp.state)){app.observed='connected';return;}
   if(recording&&verify.forward&&verify.proof.state==='verified'&&verify.mcp.state==='authenticated'){
     app.observed='verified';app.verifiedAt=verify.proof.verifiedAt;app.sessionId=verify.proof.sessionId;
+    if(prior.status==='prepared'){
+      const updated=await withSessionLock('setup:plugins',async()=>{
+        const file=join(root,'installed.json'),now=read(file);
+        if(!isDeepStrictEqual(installed,now))throw new CliError('SETUP_CHANGED','The native plugin changed during verification.');
+        if(client==='cursor'&&now.captureConfirmed!==true)atomicJson(file,{...now,captureConfirmed:true});
+        return updateSetupState(state.scope,current=>{
+          if(!current||current.acceptedAt!==state.acceptedAt||current.installationId!==installationId)throw new CliError('SETUP_CHANGED','The installation changed during verification.');
+          return {...current,pluginResults:current.pluginResults?.map(row=>row.client===client?{...row,status:'installed',message:undefined}:row)};
+        });
+      },0);
+      await publishSetup(updated);report.repairs.push('confirmed_'+client+'_activation');
+    }
     if(retained&&directoryClient)await settlePromotion(state,directoryClient,installed.digest,'verify');
     if(app.desiredVersion!==app.installedVersion)return fail('retry','newer_pin_pending','The intermediate version passed capture verification. Rerun doctor to activate the next release.');
     return;
@@ -154,7 +171,14 @@ async function reconcile(api:string,report:Report){
     report.issues.push(setupNeeded());return;
   }
   if(config.api!==api)throw new CliError('SETUP_SCOPE_CHANGED','Use the deployment configured for this local installation.');
-  if(config.authPending){report.issues.push(failure(new CliError('AUTH_REQUIRED','Sign-in is pending.')));return;}
+  if(config.authPending){
+    const authenticated=await readServerSetup(api),scope=serverScope(api,authenticated),saved=readSetupState(scope);
+    if(!saved||saved.firstRun==='choosing'||!saved.installationId||saved.installationId!==config.installationId||config.installationId==='pending'){
+      report.issues.push(setupNeeded());return;
+    }
+    await captureIdentity(config,undefined,AbortSignal.timeout(20_000),scope);
+    report.repairs.push('renewed_capture_identity');
+  }
   const local=localSetupStatus(api),state=readSetupState(local.scope)!;
   if(state.firstRun==='choosing'){report.issues.push(setupNeeded());return;}
   const ids=chosen(local.selections,'plugins');
@@ -183,9 +207,9 @@ async function reconcile(api:string,report:Report){
         report.worker=await doctorWorker(config,report.repairs);
         if(report.worker!=='running')report.issues.push(report.worker==='starting'?issue('retry','worker_starting','The capture worker is starting. Rerun doctor shortly.'):
           issue('blocked','worker_supervision','The host could not supervise the selected worker. Inspect opencrawl setup status --local --json for its service command.'));
-      }catch(error){report.issues.push(failure(error));}
+      }catch(error){report.worker='unavailable';report.issues.push(failure(error));}
     }
-    if(!server.installations.some(i=>i.installationId===current.installationId&&ids.every(id=>i.clients.some(row=>row.client===id&&row.forward===(current.selections.forward[id]===true))))){
+    if(!server.installations.some(i=>i.installationId===current.installationId&&ids.every(id=>i.clients.some(row=>row.client===id&&row.forward===(current.selections.forward[id]===true)&&(!current.pluginResults?.some(p=>p.client===id&&['installed','unchanged'].includes(p.status))||row.installed===true))))){
       await publishSetup(current);report.repairs.push('reported_installation');
     }
     const active=readCaptureConfig()!;
@@ -204,7 +228,7 @@ export async function hostDoctor(explicitApi:string|undefined,args:string[]){
   const report:Report={cliVersion:version,apps:{},repairs:[],issues:[]};
   try{
     if(compiled()&&process.env.OPENCRAWL_NO_UPDATE!=='1'){
-      try{await updateCli();const delegated=delegateToNewest(args);if(delegated!==undefined)return {delegated};}
+      try{await updateCli(AbortSignal.timeout(90_000));const delegated=delegateToNewest(args);if(delegated!==undefined)return {delegated};}
       catch{report.issues.push(issue('retry','cli_update','The CLI release check did not finish. Rerun doctor to check the configured channel.'));}
     }
     const api=apiOrigin(explicitApi??readCaptureConfig()?.api??DEFAULT_API_ORIGIN);

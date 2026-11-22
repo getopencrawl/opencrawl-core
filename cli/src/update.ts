@@ -26,10 +26,10 @@ function nativeDistribution():Launcher|undefined {
     }
   }};
 }
-export async function updateCli(){
+export async function updateCli(signal?:AbortSignal){
   if(!distribution.compiled())throw new Error('Run update from the installed native executable.');
   const launcher=nativeDistribution()!;
-  return withFileLock(join(distribution.cacheRoot(),'update.lock'),()=>distribution.update({force:true,install:(version,native)=>installUpdate(version,launcher,undefined,native)}));
+  return withFileLock(join(distribution.cacheRoot(),'update.lock'),()=>distribution.update({force:true,signal,install:(version,native)=>installUpdate(version,launcher,signal,native)}),20_000,signal);
 }
 function readState(file:string):unknown {try{return JSON.parse(readFileSync(file,'utf8'));}catch{return null;}}
 async function bytes(response:Response,limit:number,signal?:AbortSignal) {

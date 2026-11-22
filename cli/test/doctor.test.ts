@@ -35,7 +35,7 @@ test('doctor challenges an active bundle, resumes on the same revision and refus
   const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(req){
     const path=new URL(req.url).pathname;
     const ok=(data:unknown)=>Response.json({schemaVersion:1,data});
-    if(path==='/api/setup')return ok({scope:account,revisionProofSupported:supported,installations:[{installationId,clients:[{client:'cursor',forward:true}]}]});
+    if(path==='/api/setup')return ok({scope:account,revisionProofSupported:supported,installations:[{installationId,clients:[{client:'cursor',forward:true,installed:true}]}]});
     if(path==='/api/sessions/identity')return ok({principal:owner,capabilities:{harnesses:['cursor']}});
     if(path!=='/api/setup/verify')return new Response(null,{status:404});
     const {revision}=await req.json();
