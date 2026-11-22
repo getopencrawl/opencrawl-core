@@ -6,6 +6,7 @@ import {loadContextSuggestions} from './context-suggestions.mjs';
 import {selfhostTemporalSettings} from './temporal-settings.mjs';
 import {hkdfSync} from 'node:crypto';
 import {createReplicasImport} from '../integrations/replicas-import.mjs';
+import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs';
 import {createSessionIngest} from '../sessions/ingest.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
@@ -42,7 +43,9 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
   const devinState=createDevinState(database,Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'devin-first-turn-credentials-v1',32)));await devinState.ready();
   const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
-  const {server,shutdown}=createDrainableServer(selfhostApplication({sharedFiles,filesLimits:sharedFilesLimits(env),usageActivity,contextSuggestions,settings,store,devinState,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){await stopRetention();services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
+  const devinRecording=devinRecordingRuntime({database,secret:settings.authSecret,audience:settings.url,schedule:indexing.scheduleDevinRecording,
+    sessions:{...settings.search,store,prefix,eventIdentities,scheduleIndexing:indexing.schedule,scheduleDeletion:scheduleSessionDeletion}});
+  const {server,shutdown}=createDrainableServer(selfhostApplication({sharedFiles,filesLimits:sharedFilesLimits(env),usageActivity,contextSuggestions,settings,store,devinState,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,devinRecording,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){await stopRetention();services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
   const requestTimeout=Number(env.OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS??60000);
   if(!Number.isSafeInteger(requestTimeout)||requestTimeout<0)throw new Error('Invalid OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS');
   server.requestTimeout=requestTimeout;server.headersTimeout=10000;

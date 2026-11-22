@@ -1,4 +1,5 @@
 import {Pool, type PoolClient, type PoolConfig} from 'pg';
+export type {PoolClient as ApplicationTransaction} from 'pg';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {ApplicationSourceIdentity} from './settings.mjs';

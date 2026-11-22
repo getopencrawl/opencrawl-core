@@ -1,4 +1,5 @@
 import type {ReplicasJob} from '../../integrations/replicas-import.mjs';
+import type {DevinRecording, DevinRecordingJob} from '../../integrations/devin-recording.mjs';
 import type {replicasActivities} from './replicas.mjs';
 import type {SessionDeletionInput, SessionDeletionRecoveryInput, sessionDeletionActivities} from './deletion.mjs';
 import type {SessionTaskInput} from './worker.mjs';
@@ -85,4 +86,17 @@ async function importReplicasHistoryV1(job:ReplicasJob):Promise<void>{
   }
   await continueAsNew<typeof importReplicasHistoryV1>(job);
 }
-export = {importReplicasHistoryV1, indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};
+const devin = proxyActivities<{runDevinRecordingStep: DevinRecording['runStep']}>({
+  startToCloseTimeout:'3 minutes', retry:{initialInterval:'2 seconds', maximumInterval:'2 minutes'},
+});
+async function recordDevinSessionsV1(job: DevinRecordingJob): Promise<void> {
+  for (let step = 0; step < 200; step++) {
+    const {done, delayMs} = await devin.runDevinRecordingStep(job);
+    if (done) return;
+    // Recheck local consent and key rotations during provider cooldowns. The
+    // stored retry time continues to prevent any early request to Devin.
+    if (delayMs > 0) await sleep(Math.min(delayMs,60000));
+  }
+  await continueAsNew<typeof recordDevinSessionsV1>(job);
+}
+export = {recordDevinSessionsV1, importReplicasHistoryV1, indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};

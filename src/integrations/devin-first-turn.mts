@@ -5,10 +5,10 @@ import {privatePrompt} from '../sessions/private-invocation.mjs';
 import type {RecordingPolicy} from '../sessions/recording.mjs';
 import type {SetupState} from '../state/setup.mjs';
 import {withDevinEventClient} from './devin-events-client.mjs';
-import {firstTurnDevinEvent, readDevinEventDetail} from './devin-session-events.mjs';
+import {firstTurnDevinEvent, readDevinEventPage, checkedDevinEventDetail, type ListedDevinEvent} from './devin-session-events.mjs';
 
 export type DevinEventRequest =
-  | {action: 'list'; session_id: string; first: number; event_types: string[]; after?: string;created_after?:number;created_before?:number}
+  | {action: 'list'; session_id: string; first: number; event_types?: string[]; after?: string;created_after?:number;created_before?:number}
   | {action: 'details'; session_id: string; event_ids: string[]; max_content_length: number};
 
 /** The grant is established before the session starts, scoped to the provider
@@ -32,26 +32,6 @@ interface StartupReaderOptions {
 }
 
 const selectors = ['initial_user_message', 'user_message', 'shell_process_started', 'shell_process_completed'];
-const listLine = /^\[(event-[a-zA-Z0-9_-]{1,160})\] (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) UTC (<<<|>>>) ([a-z_]+) \(([a-z_]+)\):/gm;
-type Listed = {id: string; second: number; direction: string; type: string; category: string};
-
-function readEventPage(page: string) {
-  if (Buffer.byteLength(page) > 1024 * 1024) fail(502, 'Devin session event listing exceeded the read limit');
-  const header = page.split(/^\[event-/m, 1)[0]!;
-  const continuation = /More results available\. Pass after=([^\s]{1,2048}) to fetch the next page\./.exec(header);
-  if (header.includes('More results available') && !continuation) fail(502, 'Unrecognized Devin pagination response');
-  const records: Listed[] = [];
-  for (const match of page.matchAll(listLine)) {
-    const [, id, day, time, arrow, type, category] = match;
-    if (!id || !type || !category || !selectors.includes(type)) continue;
-    const second = Date.parse(day + 'T' + time + 'Z');
-    if (!Number.isFinite(second)) fail(502, 'Invalid Devin session event time');
-    records.push({id, type, category, second, direction: arrow === '<<<' ? 'incoming' : 'outgoing'});
-  }
-  if (records.length > 100) fail(502, 'Devin session event page exceeded the requested size');
-  return {records, after: continuation?.[1]};
-}
-
 /** Read the bounded gap observed at startup. The installation supplies only its
  * native cutoff. Every provider request uses the session from verified OIDC. */
 export async function readDevinStartupEvents(options: StartupReaderOptions, principal: Principal,
@@ -98,23 +78,16 @@ export async function readDevinStartupEvents(options: StartupReaderOptions, prin
 
 async function collectStartupEvents(request: (input: DevinEventRequest) => Promise<string>, recheck: () => Promise<void>,
   session_id: string, enabledAt: number, end: number, audience: string): Promise<SessionEvent[]> {
-  async function detail(item: Listed) {
+  async function detail(item: ListedDevinEvent) {
     await recheck();
-    const response = await request({action: 'details', session_id, event_ids: [item.id], max_content_length: 100000});
-    const actual = readDevinEventDetail(item.id, response);
-    const timestamp = Date.parse(actual.timestamp);
-    if (actual.type !== item.type || actual.category !== item.category || actual.direction !== item.direction ||
-        Math.floor(timestamp / 1000) * 1000 !== item.second) {
-      fail(502, 'Devin event details disagree with the session listing');
-    }
-    return actual;
+    return checkedDevinEventDetail(request, session_id, item);
   }
 
   // A private initial prompt must stop recovery before even requesting tool
   // summaries. The first query contains no shell or later-message selectors.
   await recheck();
   const bounds = {created_after:Math.floor(enabledAt/1000)-1, created_before:Math.ceil(end/1000)+1};
-  const opening = readEventPage(await request({action:'list', session_id, first:2, event_types:['initial_user_message'], ...bounds}));
+  const opening = readDevinEventPage(await request({action:'list', session_id, first:2, event_types:['initial_user_message'], ...bounds}), selectors);
   if (opening.after || opening.records.length > 1) fail(502, 'Ambiguous initial Devin prompt');
   const opener = opening.records[0];
   if (!opener || opener.type !== 'initial_user_message' || opener.category !== 'message' || opener.direction !== 'incoming' ||
@@ -128,13 +101,13 @@ async function collectStartupEvents(request: (input: DevinEventRequest) => Promi
   const first = firstTurnDevinEvent(prompt);
   if (!first) return [];
 
-  const listed = new Map<string, Listed>();
+  const listed = new Map<string, ListedDevinEvent>();
   const cursors = new Set<string>();
   let after: string | undefined;
   do {
     await recheck();
-    const page = readEventPage(await request({action:'list', session_id, first:100,
-      event_types:selectors.filter(type => type !== 'initial_user_message'), ...bounds, ...(after && {after})}));
+    const page = readDevinEventPage(await request({action:'list', session_id, first:100,
+      event_types:selectors.filter(type => type !== 'initial_user_message'), ...bounds, ...(after && {after})}), selectors);
     for (const item of page.records) listed.set(item.id, item);
     after = page.after;
     if (after) {

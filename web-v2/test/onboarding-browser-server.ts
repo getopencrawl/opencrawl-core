@@ -92,7 +92,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (/^\/assets\/[a-zA-Z0-9_./-]+$/.test(url.pathname) && !url.pathname.includes('..')) {
     try {
       const bytes = await readFile(new URL(`../../web${url.pathname.replace("/assets/integrations/","/assets/connectors/")}`, import.meta.url));
-      res.writeHead(200, {'content-type': url.pathname.endsWith('.woff2') ? 'font/woff2' : 'image/svg+xml'}).end(bytes);
+      const type=url.pathname.endsWith('.woff2')?'font/woff2':url.pathname.endsWith('.png')?'image/png':'image/svg+xml';
+      res.writeHead(200, {'content-type':type}).end(bytes);
       return;
     } catch {res.writeHead(404).end(); return;}
   }

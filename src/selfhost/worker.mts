@@ -1,7 +1,8 @@
 import {createReplicasImport} from '../integrations/replicas-import.mjs';
+import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs';
 import {hkdfSync} from 'node:crypto';
 import {createSessionIngest} from '../sessions/ingest.mjs';
-import {sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
+import {sessionDeletionScheduler,sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
 import {selfhostTemporalSettings} from './temporal-settings.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
@@ -51,7 +52,10 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const indexing=sessionIndexingScheduler({...config,taskQueue:sessionQueue,sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),
     ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
-  const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,replicasImport});
+  const devinRecording=devinRecordingRuntime({database,secret:settings.authSecret,audience:settings.url,schedule:indexing.scheduleDevinRecording,
+    sessions:{...settings.search,store,prefix,eventIdentities,scheduleIndexing:indexing.schedule,
+      scheduleDeletion:sessionDeletionScheduler({...config,taskQueue:deletionQueue,sourceId:source.sourceId})}});
+  const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,replicasImport,devinRecording});
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
   const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
   // An operator sets this only after the receiver and worker rollout is complete.

@@ -1,6 +1,7 @@
 import {historyRequest,type SearchActivityPage,type CallTotals} from './search-activity.mjs';
 import {usageRange, tokenSessionsRequest, type TokenUsage, type TokenSessionPage} from './usage-range.mjs';
 import {replicasImportInput} from './replicas-import-http.mjs';
+import {devinRecordingInput} from './devin-recording-http.mjs';
 import type {IncomingMessage} from 'node:http';
 import {initTRPC, TRPCError, type AnyRouter} from '@trpc/server';
 import {fetchRequestHandler} from '@trpc/server/adapters/fetch';
@@ -80,6 +81,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
   }),
   integrations: t.router({
     replicasHistory:p.input(replicasImportInput).mutation(({ctx,input})=>ctx.invoke<import('../integrations/replicas-import.mjs').ReplicasImportStatus>('/api/integrations/replicas/history','POST',input)),
+    devinRecording:p.input(devinRecordingInput).mutation(({ctx,input})=>ctx.invoke<import('../integrations/devin-recording.mjs').DevinRecordingStatus>('/api/integrations/devin/recording','POST',input)),
     connect: p.input(z.object({provider,apiKey:z.string().max(4000).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok?:boolean;redirectUrl?:string}>('/api/integrations/'+input.provider+'/connect','POST',{apiKey:input.apiKey})),
     retry: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/retry','POST',{})),
     disconnect: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/disconnect','POST',{})),

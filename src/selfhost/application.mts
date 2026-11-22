@@ -6,6 +6,7 @@ import {devinRuntime} from '../identity/devin-runtime.mjs';
 import {isDevinToken} from '../identity/devin.mjs';
 import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
 import type {ReplicasImport} from '../integrations/replicas-import.mjs';
+import type {DevinRecording} from '../integrations/devin-recording.mjs';
 import {createReplicasConnections} from '../identity/replicas-connections.mjs';
 import {replicasConnectionHandler} from '../identity/replicas-http.mjs';
 import type {EventIdentityStore} from '../sessions/types.mjs';
@@ -71,6 +72,7 @@ type Store=ObjectStore;
 export interface SelfhostApplicationOptions {
   usageActivity?:SearchActivity;
   replicasImport?:ReplicasImport;
+  devinRecording?:DevinRecording;
   log?: Log;
   contextSuggestions?:ContextSuggestionsExtension;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
@@ -91,7 +93,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -205,6 +207,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   };
   const assets=new Map<string,[string,string]>([
     ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],
+    ['/assets/integrations/devin.png',['web/assets/connectors/devin.png','image/png']],
     ...['tokens.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
     ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),
     ...['slack','granola','circleback','notion','github','linear','replicas'].flatMap(f=>['connectors','integrations'].map((kind):[string,[string,string]]=>[`/assets/${kind}/${f}.svg`,[`web/assets/connectors/${f}.svg`,'image/svg+xml']])),
@@ -287,7 +290,8 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
       const {principal,user,member,cacheScope}=current,activeIdentity=browser;
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
-      const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[]];
+      const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[],
+        ...devinRecording?[await devinRecording.source(p,key=>sessions.read(p,{...key,limit:1}))]:[]];
       const consoleApi=createConsoleApi({usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         ...usageServices(principal => ({principal,directory,integrations,search,connectors,onboarding,log,visible:sessions.visibleActivity})),progress:guided.progress,next:guided.next,library,libraryFailure},setup?{bootstrap:async context=>({setup:await setup.read(context.principal)})}:{});
@@ -315,7 +319,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
           try{const {value}=await smallJson(request,8192);await connectorSettings.save(selected.provider||'',value,principal);return reply(200,JSON.stringify({ok:true}),'application/json');}
           catch(error){const info=errorInfo(error);return info.expose?refuse(info.status||400,'CREDENTIAL_NOT_SAVED',info.message):refuse(503,'INTEGRATION_UNAVAILABLE','We couldn’t save that. Please try again.');}
         }
-        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,replicasImport,providers,principal,member,onboarding,guided,respond:reply,message,document});
+        if(selected.name.startsWith('integration-')||selected.name.startsWith('/api/integrations'))return integrationRequest(request,target,selected,{integrations,replicasImport,devinRecording,revalidate,providers,principal,member,onboarding,guided,respond:reply,message,document});
         if(selected.name==='cloud-capture'||selected.name==='cloud-capture-revoke'){
           let credential,revoked=false;
           if(request.method==='POST'){

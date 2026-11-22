@@ -15,6 +15,7 @@ const credentials:RegExp[] = [
   // Cursor worker credentials can appear as bare command-line arguments.
   /\bctxt(?:\\*_)+secret(?:\\*_)+[A-Za-z0-9_\\-]+/gi,
   /\bcrsr_[a-f0-9]{64}\b/g,
+  /\bcog_[A-Za-z0-9_-]{20,}/g,
   /\bsk-(?:(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})/g,
   /\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,}/g,
   /\bxox[baprse]-[A-Za-z0-9-]{20,}/g,

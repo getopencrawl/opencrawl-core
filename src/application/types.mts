@@ -3,6 +3,7 @@ export type WorkspaceRole = 'admin' | 'member';
 import type {SourceSetup} from './onboarding-types.mjs';
 
 export interface SourceCard {
+  devinRecording?: import('../integrations/devin-recording.mjs').DevinRecordingStatus;
   history?: import('../integrations/replicas-import.mjs').ReplicasImportStatus;
   provider: string;
   name: string;

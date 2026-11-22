@@ -1,7 +1,9 @@
+import {fail} from '../errors.mjs';
+import type {DevinEventRequest} from './devin-first-turn.mjs';
 import type {SessionEvent} from '../sessions/types.mjs';
 
 const eventId = /^event-[a-zA-Z0-9_-]{1,160}$/;
-const detailHeader = /^Event details \(1 events?\):\r?\n\r?\n--- (event-[a-zA-Z0-9_-]+) ---\r?\n  type: ([a-z_]+) \(([a-z_]+)\)\r?\n  direction: (incoming|outgoing)\r?\n  created_at: [^\r\n]+\r?\n  contents: /;
+const detailHeader = /^Event details \(1 events?\):\r?\n\r?\n--- (event-[a-zA-Z0-9_-]+) ---\r?\n  type: ([a-z_]+) \(([a-z_]+)\)\r?\n  direction: (incoming|outgoing)\r?\n  created_at: ([^\r\n]+)\r?\n  contents: /;
 const timestampWithZone = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/;
 
 type Detail = {
@@ -45,7 +47,7 @@ export function firstTurnDevinEvent(detail: Detail): SessionEvent | null {
     const input = {command: contents.command, ...(typeof contents.starting_dir === 'string' && {workdir: contents.starting_dir})};
     return {...base, kind: 'tool_call', data: {type: 'tool_use', ...call, input}};
   }
-  if (type === 'shell_process_completed' && typeof contents.output_trunc === 'string') {
+  if ((type === 'shell_process_completed' || type === 'shell_process_completed_background') && typeof contents.output_trunc === 'string') {
     const status = contents.exit_code;
     if (typeof status !== 'string' || !/^-?\d{1,10}$/.test(status)) return null;
     // Devin names this field output_trunc. Even a valid completion receipt
@@ -54,4 +56,43 @@ export function firstTurnDevinEvent(detail: Detail): SessionEvent | null {
       exit_code: Number(status), is_error: Number(status) !== 0, outputCapture: {status: 'provider_excerpt'}}};
   }
   return null;
+}
+
+const listLine = /^\[(event-[a-zA-Z0-9_-]{1,160})\] (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) UTC (<<<|>>>) ([a-z_]+) \(([a-z_]+)\):/gm;
+export type ListedDevinEvent = {id: string; second: number; direction: string; type: string; category: string};
+
+export function checkDevinDetailHeader(response: string, item: ListedDevinEvent) {
+  const header = detailHeader.exec(response);
+  if (!header || header[1]!==item.id || header[2]!==item.type || header[3]!==item.category ||
+      header[4]!==item.direction || Date.parse(header[5]!.replace(' ','T').replace(' UTC','Z'))!==item.second)
+    fail(502,'Devin event details disagree with the session listing');
+}
+
+export function readDevinEventPage(page: string, selectors?: readonly string[]) {
+  if (Buffer.byteLength(page) > 1024 * 1024) fail(502, 'Devin session event listing exceeded the read limit');
+  const header = page.split(/^\[event-/m, 1)[0]!;
+  const continuation = /More results available\. Pass after=([^\s]{1,2048}) to fetch the next page\./.exec(header);
+  if (header.includes('More results available') && !continuation) fail(502, 'Unrecognized Devin pagination response');
+  const records: ListedDevinEvent[] = [];
+  for (const match of page.matchAll(listLine)) {
+    const [, id, day, time, arrow, type, category] = match;
+    if (!id || !type || !category || (selectors && !selectors.includes(type))) continue;
+    const second = Date.parse(day + 'T' + time + 'Z');
+    if (!Number.isFinite(second)) fail(502, 'Invalid Devin session event time');
+    records.push({id, type, category, second, direction: arrow === '<<<' ? 'incoming' : 'outgoing'});
+  }
+  if (records.length > 100) fail(502, 'Devin session event page exceeded the requested size');
+  return {records, after: continuation?.[1]};
+}
+
+export async function checkedDevinEventDetail(read: (request: DevinEventRequest) => Promise<string>, sessionId: string, item: ListedDevinEvent) {
+  const response = await read({action: 'details', session_id:sessionId, event_ids: [item.id], max_content_length: 100000});
+  checkDevinDetailHeader(response,item);
+  const actual = readDevinEventDetail(item.id, response);
+  const timestamp = Date.parse(actual.timestamp);
+  if (actual.type !== item.type || actual.category !== item.category || actual.direction !== item.direction ||
+      Math.floor(timestamp / 1000) * 1000 !== item.second) {
+    fail(502, 'Devin event details disagree with the session listing');
+  }
+  return actual;
 }

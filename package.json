@@ -69,6 +69,8 @@
     "./application/rpc": "./dist/src/application/rpc.mjs",
     "./web-v2/application/*": "./web-v2/src/application/*.ts",
     "./integrations/replicas-import": "./dist/src/integrations/replicas-import.mjs",
+    "./integrations/devin-recording": "./dist/src/integrations/devin-recording.mjs",
+    "./integrations/devin-recording-runtime": "./dist/src/integrations/devin-recording-runtime.mjs",
     "./integrations/airbyte": "./dist/src/integrations/airbyte.mjs",
     "./integrations/types": "./dist/src/integrations/types.mjs",
     "./integrations/provisioning": "./dist/src/integrations/provisioning.mjs",

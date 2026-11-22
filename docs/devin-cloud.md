@@ -1,14 +1,22 @@
-# Devin Cloud adapter status
+# Devin Cloud
 
-For member search, skills and CLI access, install the [Devin Cloud plugin](https://github.com/getopencrawl/opencrawl-plugins/tree/main/plugins/devin) from `plugins/devin`. The administrator setup below configures a workspace workload identity and optional organization recording.
+## Record new sessions
 
-An administrator can connect a Devin Cloud organization to an OpenCrawl
-workspace using Devin's signed workload identity. Production checks verified
-workspace search, board access and recording. With CLI 0.4.143 and a Devin
-event grant in place before launch, an independent workspace reader also found
-a fresh session's original user prompt, first shell command and its output.
+1. In the Devin organization you want to record, open **Settings → Devin API → Service users**. Create a service user whose role can view organization sessions. Copy its key. [Devin service users](https://docs.devin.ai/api-reference/authentication)
+2. As an OpenCrawl workspace admin, open **Integrations → Devin → Connect**. Review which data workspace members will be able to search, enter the key, and select **Connect and record**.
+3. Start a new Devin Cloud session and use it normally. OpenCrawl polls Devin for new conversations and tool activity. Stock VMs need no setup. The Devin card shows when a session reaches the search index. Select **View indexed session** to open the transcript.
 
-## Administrator setup
+Recording applies to sessions created after you connect that belong to the authorized organization and are visible to the service user. It includes prompts, Devin replies, shell commands and the output excerpts Devin supplies. OpenCrawl honors private-session commands. In **Manage**, you can update the key or disconnect to stop new capture. Previously indexed sessions stay in the workspace.
+
+## Use OpenCrawl tools inside Devin
+
+In **Customize → Plugins → Add plugin → From repository**, select the intended scope, enter `getopencrawl/opencrawl-plugins`, and set **Subdirectory** to `plugins/devin`. Sign in to OpenCrawl under **Customize → MCPs** as the member who will use the tools. Start a fresh Devin session to load the plugin. It provides workspace search over MCP, three skills and the bundled CLI. CLI commands that use workspace data require a separate member login with `bin/opencrawl login --no-browser`. [Public Devin plugin](https://github.com/getopencrawl/opencrawl-plugins/tree/main/plugins/devin)
+
+## Existing blueprint recorder
+
+Earlier releases recorded using VM hooks and a signed workload identity. Connecting the same organization in Integrations replaces that workspace's blueprint recorder with API recording for new sessions. The following implementation notes and dated verification records describe the earlier recorder.
+
+### Legacy administrator setup
 
 1. Prepare the Ubuntu blueprint your team uses. Install OpenCrawl CLI 0.4.143
    or later and Devin’s official OIDC helper. Build and activate the snapshot.

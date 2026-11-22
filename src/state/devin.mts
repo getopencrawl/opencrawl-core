@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {sealedEnvelope} from '../integrations/credential-vault.mjs';
 import type {DevinEventGrant} from '../integrations/devin-first-turn.mjs';
 import {fail} from '../errors.mjs';
+import {devinRecordingStore,lockDevinOrganization} from '../integrations/devin-recording-store.mjs';
 import {ensureSchemaIndex,type ApplicationDatabase} from './postgres.mjs';
 import {connectionSchema,devinOrganization,challengeSchema,type DevinConnection,type DevinChallenge} from '../identity/devin-schema.mjs';
 type Versioned<T>={record:T|null;version:string|null};
@@ -23,6 +24,7 @@ const checkCode=(value:string)=>{if(!/^[a-f0-9]{64}$/.test(value))throw new Erro
 export function createDevinState(database:ApplicationDatabase, encryptionKey?:Uint8Array):DevinState & {ready():Promise<void>} {
   const checkOrg=(value:string)=>devinOrganization.parse(value);
   const ns=database.namespace;let preparing:Promise<void>|undefined;
+  const apiStore=devinRecordingStore(database);
   const query=(sql:string,args:unknown[])=>database.pool.query(sql,args);
   const envelope=encryptionKey && sealedEnvelope(encryptionKey);
   const aad=(tenant:string,org:string,approvedAt:string)=>JSON.stringify(['devin-first-turn-v1',ns,tenant,org,approvedAt]);
@@ -71,6 +73,11 @@ export function createDevinState(database:ApplicationDatabase, encryptionKey?:Ui
     if(value.organizationId!==org||value.installations.some(i=>i.tenantId!==value.tenantId))throw new Error('Devin connection scope is invalid');
     const {installations,...record}=value;
     return database.transaction(async client=>{
+      await lockDevinOrganization(client,ns,org);
+      if (!value.revokedAt) {
+        const bound=await client.query("SELECT 1 FROM opencrawl_devin_api_connections WHERE namespace=$1 AND organization=$2 AND health<>'disconnected'",[ns,org]);
+        if (bound.rowCount) fail(409,'This organization is managed in Integrations → Devin.');
+      }
       const args=[ns,org,value.tenantId,JSON.stringify(record),randomUUID()];
       const result=version===null?await client.query(`INSERT INTO opencrawl_devin_connections(namespace,organization_id,tenant_id,record,revision) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING`,args):
         await client.query(`UPDATE opencrawl_devin_connections SET record=$4::jsonb,revision=$5,
@@ -86,7 +93,7 @@ export function createDevinState(database:ApplicationDatabase, encryptionKey?:Ui
   async function saveSetup(codeHash:string,version:string|null,input:DevinChallenge){checkCode(codeHash);const record=challengeSchema.parse(input),params=[ns,codeHash,JSON.stringify(record),randomUUID()];
     const {rowCount}=version===null?await query(`INSERT INTO opencrawl_devin_setup(namespace,code_hash,record,revision) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT DO NOTHING`,params):await query(`UPDATE opencrawl_devin_setup SET record=$3::jsonb,revision=$4 WHERE namespace=$1 AND code_hash=$2 AND revision=$5`,[...params,version]);return rowCount===1;}
   return {
-    async ready(){preparing??=(async()=>{await database.ready();await database.transaction(async client=>{await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`opencrawl:devin:schema`]);await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_devin_connections(namespace text NOT NULL,organization_id text NOT NULL,tenant_id text NOT NULL,record jsonb NOT NULL,revision uuid NOT NULL,PRIMARY KEY(namespace,organization_id),CHECK(record->>'organizationId'=organization_id),CHECK(record->>'tenantId'=tenant_id));
+    async ready(){preparing??=(async()=>{await database.ready();await apiStore.ready();await database.transaction(async client=>{await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`opencrawl:devin:schema`]);await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_devin_connections(namespace text NOT NULL,organization_id text NOT NULL,tenant_id text NOT NULL,record jsonb NOT NULL,revision uuid NOT NULL,PRIMARY KEY(namespace,organization_id),CHECK(record->>'organizationId'=organization_id),CHECK(record->>'tenantId'=tenant_id));
       CREATE TABLE IF NOT EXISTS opencrawl_devin_installations(namespace text NOT NULL,organization_id text NOT NULL,user_id text NOT NULL,ordinal integer NOT NULL,record jsonb NOT NULL,PRIMARY KEY(namespace,organization_id,user_id),UNIQUE(namespace,organization_id,ordinal),FOREIGN KEY(namespace,organization_id) REFERENCES opencrawl_devin_connections(namespace,organization_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS opencrawl_devin_setup(namespace text NOT NULL,code_hash text NOT NULL,record jsonb NOT NULL,revision uuid NOT NULL,PRIMARY KEY(namespace,code_hash))`);
       await client.query('ALTER TABLE opencrawl_devin_connections ADD COLUMN IF NOT EXISTS event_grant bytea');

@@ -1,4 +1,5 @@
 import type {ReplicasJob} from '../../integrations/replicas-import.mjs';
+import type {DevinRecordingJob} from '../../integrations/devin-recording.mjs';
 import type {Client, ConnectionOptions} from '@temporalio/client';
 import {ActivityExecutionAlreadyStartedError, ScheduleNotFoundError, WorkflowExecutionAlreadyStartedError, WorkflowIdReusePolicy} from '@temporalio/client';
 import {connectorClient} from '../../connectors/temporal/client.mjs';
@@ -109,6 +110,14 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
     return runtime;
   };
   return {
+    async scheduleDevinRecording(job: DevinRecordingJob) {
+      const current = await connect();
+      const workflowId = 'devin-recording-' + digest(JSON.stringify([config.sourceId, job.tenantId, job.generation]));
+      await current.connection.withDeadline(Date.now() + 10000, () => current.client.workflow.start('recordDevinSessionsV1', {
+        workflowId, taskQueue:config.taskQueue, args:[job], workflowIdConflictPolicy:'USE_EXISTING',
+        workflowIdReusePolicy:WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+      }));
+    },
     async scheduleReplicasImport(job:ReplicasJob){
       const current=await connect();
       await current.connection.withDeadline(Date.now()+10000,()=>current.client.workflow.start('importReplicasHistoryV1',{
