@@ -41,7 +41,7 @@ export function DevinRecordingCard({source,mutate,onChange}:{
     {dialog==='connect' && <Dialog open onClose={close} title="Connect Devin" description="New sessions this key can read will be searchable by members of this OpenCrawl workspace.">
       <form className="stack" onSubmit={event=>void submit('connect',event)}>
         <p>OpenCrawl records prompts, replies, and available tool activity, including shell commands and output excerpts. Recording starts when you connect.</p>
-        <Field label="Organization service-user key" hint={<span>In your Devin organization, open <ExternalLink href="https://app.devin.ai/settings/api-keys">Settings → Devin API</ExternalLink> and create a service user whose role can view organization sessions.</span>}>
+        <Field label="Organization service-user key" hint={<span>Open <ExternalLink href="https://app.devin.ai/settings/devin-api?tab=service-users">Service users in Devin</ExternalLink>. In the organization you want to record, create a service user whose role can view organization sessions.</span>}>
           <Input type="password" autoComplete="off" spellCheck={false} required value={key} onChange={event=>setKey(event.target.value)}/>
         </Field>
         {error && <Notice tone="danger">{error}</Notice>}

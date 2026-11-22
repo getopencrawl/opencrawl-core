@@ -21,6 +21,7 @@ for (const width of [1440,390]) test('Devin recording consent, search evidence a
   expect(await card.locator('img').evaluate((img:HTMLImageElement)=>img.complete && img.naturalWidth>0)).toBe(true);
   await card.getByRole('button',{name:'Connect Devin'}).click();
   const dialog=page.getByRole('dialog'), submit=dialog.getByRole('button',{name:'Connect and record'});
+  await expect(dialog.getByRole('link',{name:'Service users in Devin'})).toHaveAttribute('href','https://app.devin.ai/settings/devin-api?tab=service-users');
   await expect(submit).toBeDisabled();
   await expect(dialog).toContainText('searchable by members of this OpenCrawl workspace');
   await expect(dialog).toContainText('output excerpts');
