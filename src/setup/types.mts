@@ -12,7 +12,7 @@ export interface SetupClientObservation {
 }
 export interface SetupProof {
   state:'not_selected'|'pending'|'waiting_capture'|'waiting_index'|'verified'|'expired';
-  id?:string;marker?:string;issuedAt?:string;expiresAt?:string;verifiedAt?:string;
+  revision?:string;id?:string;marker?:string;issuedAt?:string;expiresAt?:string;verifiedAt?:string;
   sessionId?:string;eventId?:string;passageId?:string;
 }
 export interface SetupHumanTask {id:string;kind:'hook_trust'|'mcp_auth'|'native_event';client:SetupClient;title:string;instruction:string}
@@ -34,6 +34,7 @@ export interface SetupStatus {
   schemaVersion:1;scope:{tenantId:string;userId:string};
   /** Older servers reject unknown observation fields; clients negotiate this field. */
   pluginStateSupported?:true;
+  revisionProofSupported?:true;
   firstWin:{installationId:string;client:SetupClient;verifiedAt:string}|null;
   installations:SetupInstallation[];
 }

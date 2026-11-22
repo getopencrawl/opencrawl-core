@@ -1,5 +1,10 @@
 const common='\nOptions: --json (versioned JSON), --api https://host (deployment), --help.\n';
 export function commandHelp(command:string, operation?:string):string|undefined {
+  if(command==='doctor')return `Usage: opencrawl doctor [--json] [--api URL]
+Repair this host using its saved choices. Native verification may require an agent action.
+Exit 0 green, 2 human action, 3 agent action, 75 retry, 1 blocked.
+In JSON mode read status and nextAction at the top level.
+`+common;
   if(command==='files')return `Usage: opencrawl files url [--api URL]
        opencrawl files setup-git [--api URL]
        opencrawl files open [--session NATIVE_ID] [--api URL] [--json]

@@ -4,6 +4,22 @@ Sign in to your OpenCrawl workspace. You can open Sessions, search workspace
 content, and use the sidebar as soon as you join an organization. **Setup** stays
 in the sidebar so you can return to it at any time.
 
+## Check or repair this machine
+
+Run `opencrawl doctor` after setup or an update. An agent can run `opencrawl doctor --json` with the same profile. Both commands apply saved choices and exit without prompting. Doctor supports local Claude Code, Codex, Cursor, and Antigravity plugins.
+
+| Exit | Result | What to do |
+| --- | --- | --- |
+| 0 | `green` | Done. Recording apps include a verified session and time. An explicit recording opt-out can also be green. |
+| 2 | `needs_human` | Show the person the requested sign-in, setup choice, or native hook review. |
+| 3 | `needs_agent` | In the named app, emit the supplied marker when present and call the named MCP tool with its arguments. |
+| 75 | `retry` | Wait `retryAfterSeconds` and rerun. |
+| 1 | `blocked` | Read the reported incompatibility or failed check. |
+
+JSON has top-level `schemaVersion`, `status`, `cliVersion`, `apps`, and `repairs`. Follow `nextAction.resume` with the same profile after completing an action. A recording app passes when a normal native session under the current installation challenge has delivered its marker and authenticated tool call, and the workspace can search and fetch the passage. Doctor renews the challenge after a relevant configuration change or 24 hours.
+
+Automatic plugin updates follow the versions pinned by the CLI for apps selected during setup. Manual updates keep the accepted version. On supported Claude Code and Cursor installations, an atomic update retains a rollback copy until capture passes. A failed native installation check can restore that copy. An indexing delay leaves it in place. Updates that the host cannot activate safely stay pending. Codex continues to handle hook review in its native interface.
+
 ## Set up an agent on macOS or Linux
 
 1. Install the [OpenCrawl CLI](https://github.com/getopencrawl/opencrawl-core/tree/main/cli#install) and run `opencrawl setup`.

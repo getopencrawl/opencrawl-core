@@ -199,6 +199,29 @@ test('a new captured event waits for exact authorized search AND fetch; first wi
   f.setHits([]);assert.equal((await f.setup.verify(owner,selection)).proof.state,'waiting_index','fresh verification cannot reuse a disappeared passage');
 });
 
+test('doctor revisions invalidate old capture and native authentication while native tools join the current challenge',async()=>{
+  const f=await fixture(),revision='a'.repeat(64);
+  await f.setup.session(owner,f.batch());f.setHits([f.hit()]);
+  assert.equal((await f.setup.verify(owner,selection)).proof.state,'verified');
+  const current=await f.setup.verify(owner,{...selection,revision});
+  assert.notEqual(current.proof.id,f.proof.id);
+  assert.equal(current.proof.revision,revision);
+  assert.equal(current.proof.state,'waiting_capture');
+  assert.equal((await f.setup.verify(owner,selection)).proof.id,current.proof.id);
+  await assert.rejects(f.setup.mcp(owner,{...selection,proofId:f.proof.id}),{status:409});
+  await f.setup.mcp(owner,{...selection,proofId:current.proof.id});
+  await f.setup.session(owner,f.batch());
+  const unchanged=await f.setup.verify(owner,{...selection,revision});
+  assert.equal(unchanged.proof.state,'waiting_capture');
+  assert.equal(unchanged.mcp.state,'observed');
+  const revisions=await Promise.all([1,2].map(()=>f.setup.verify(owner,{...selection,revision:'b'.repeat(64)})));
+  assert.equal(revisions[0].proof.id,revisions[1].proof.id);
+  assert.equal(revisions[0].mcp.state,'pending');
+  await assert.rejects(f.setup.verify(owner,{...selection,revision:'invalid'}),{status:400});
+  f.advance(25*3600_000);
+  assert.notEqual((await f.setup.verify(owner,{...selection,revision:'b'.repeat(64)})).proof.id,revisions[0].proof.id);
+});
+
 test('MCP needs its authenticated proof-specific call plus the selected native client tool result',async()=>{
   const f=await fixture();await f.setup.session(owner,f.batch());
   await assert.rejects(f.setup.mcp({...owner,userId:'bob'},{...selection,proofId:f.proof.id}),{status:404});

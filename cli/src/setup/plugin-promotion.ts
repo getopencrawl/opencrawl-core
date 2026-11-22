@@ -14,8 +14,10 @@ import {bundleManifest} from './plugin-bundle.ts';
 import {exchangePluginDirectories} from './exchange-plugin.ts';
 
 type Client='claude-code'|'cursor';
-type Journal={installationId:string;client:Client;oldDigest:string;nextDigest:string;directory:string;
-  source:PublishedPackage['source'];daemonHandoff:boolean;preparedAt:string};
+type Backup={directory:string;oldDigest:string;previous?:NonNullable<SetupState['pluginResults']>[number];previousPreparedAt?:string;previousConfirmed?:boolean};
+type Journal=Backup & {installationId:string;client:Client;nextDigest:string;
+  source:PublishedPackage['source'];daemonHandoff:boolean;preparedAt:string;
+  fallback?:Backup};
 const marker='.opencrawl-setup-plugin.json';
 
 function ordinaryPath(base:string,target:string) {
@@ -33,6 +35,64 @@ function exclusivelyManaged(root:string,files:Record<string,string>) {
     });
   }
   return inspect(root);
+}
+
+/** Caller holds the setup choices lock. Journal both sides of rollback so stopping
+ * between exchange and metadata writes is recoverable on the next doctor run. */
+export async function settlePromotion(state:SetupState,client:Client,digest:string,decision:'verify'|'rollback'|'resume'){
+  const identity=setupPluginIdentity(state.scope.api),home=dirname(configDir());
+  const manager=join(configDir(),'setup-plugins',client,identity.key),file=join(manager,'pending-verification.json');
+  if(!existsSync(file))return 'none';
+  return withSessionLock('setup:plugins',()=>withSessionLock('capture:configuration',async()=>{
+    const tx=read(file) as (Journal&{decision?:'verify'|'rollback'})|null;
+    const live=client==='cursor'?join(homedir(),'.cursor','plugins','local',identity.name):join(manager,'marketplace',identity.name);
+    const receiptFile=join(manager,'installed.json'),receipt=read(receiptFile),config=readCaptureConfig();
+    if(!tx||tx.client!==client||tx.installationId!==state.installationId||!tx.previous?.source||tx.previous.client!==client||
+      tx.nextDigest!==digest||dirname(tx.directory)!==manager||!/^swap-[a-zA-Z0-9]+$/.test(basename(tx.directory))||
+      receipt?.api!==state.scope.api||receipt.configHome!==home||receipt.directory!==live||receipt.nativeRoot!==live||
+      config?.api!==state.scope.api||config.installationId!==state.installationId||config.owner?.userId!==state.scope.userId||
+      config.owner?.tenantId!==state.scope.tenantId||!ordinaryPath(home,manager)||!ordinaryPath(client==='cursor'?homedir():manager,live))
+      throw Error('The retained plugin changed during verification.');
+    const op=tx.decision??decision;
+    if(op==='resume')return 'pending';
+    const binding:PluginBinding={api:state.scope.api,client,configHome:home,pluginName:identity.name,nativeRoot:live};
+    const active=verifyPluginBundle(binding),backup=join(tx.directory,'bundle');
+    const ownership=read(join(live,'.opencrawl-binding.json'));
+    if(ownership?.installationId!==state.installationId||ownership?.owner?.tenantId!==state.scope.tenantId||ownership?.owner?.userId!==state.scope.userId)throw Error('The active plugin changed owner.');
+    if(!tx.decision){
+      if(active.digest!==digest||!automaticUpdateClients(readSetupState(state.scope)).includes(client)&&op==='rollback')return 'pending';
+      atomicJson(file,{...tx,decision:op});
+    }
+    let saved;
+    if(existsSync(backup)){
+      if(!ordinaryPath(manager,backup))throw Error('Retained plugin moved');
+      saved=verifyPluginBundle({...binding,nativeRoot:backup});
+      if(!exclusivelyManaged(backup,saved.files))throw Error('Retained plugin contains local changes');
+    }
+    if(op==='rollback'){
+      if(active.digest===digest){
+        if(saved?.digest!==tx.oldDigest||!exclusivelyManaged(live,active.files)||
+          !isDeepStrictEqual(read(join(backup,'.opencrawl-binding.json')),ownership)||
+          !isDeepStrictEqual(read(join(backup,'.opencrawl-source.json')),tx.previous.source)||
+          !exchangePluginDirectories(live,backup))throw Error('Cannot safely restore the retained plugin.');
+        syncDirectory(dirname(live));syncDirectory(tx.directory);
+      }else if(active.digest!==tx.oldDigest)throw Error('Active plugin changed before rollback');
+      atomicJson(receiptFile,{...receipt,digest:tx.oldDigest,preparedAt:tx.previousPreparedAt,captureConfirmed:tx.previousConfirmed});
+      await updateSetupState(state.scope,current=>{
+        if(!current||current.installationId!==state.installationId)throw Error('Installation changed before rollback');
+        return {...current,pluginResults:current.pluginResults?.map(item=>item.client===client?tx.previous!:item)};
+      });
+      atomicJson(join(manager,'rejected-update.json'),{installationId:state.installationId,sha256:tx.source.archive?.sha256});
+    }else if(active.digest!==digest)throw Error('Active plugin changed before verification');
+    if(existsSync(backup)){
+      const retired=verifyPluginBundle({...binding,nativeRoot:backup});
+      if(retired.digest!==(op==='verify'?tx.oldDigest:tx.nextDigest)||!exclusivelyManaged(backup,retired.files))throw Error('Retained plugin changed');
+      rmSync(backup,{recursive:true});
+    }
+    if(existsSync(tx.directory))rmdirSync(tx.directory);
+    unlinkSync(file);syncDirectory(manager);
+    return op==='verify'?'verified':'rolled_back';
+  },0),0);
 }
 
 // Existing sessions may have already loaded the old list of commands. Require
@@ -96,7 +156,11 @@ export async function promoteDirectoryPlugin(state:SetupState,client:Client,sign
       return {...current,pluginResults:current.pluginResults?.map(row=>row.client!==client?row:{...row,source:tx.source,
         status:client==='cursor'?'prepared':'installed',preparedAt:client==='cursor'?tx.preparedAt:undefined,message:undefined,captureAvailable:true,daemonHandoff:tx.daemonHandoff})};
     });
-    clearStage(tx,tx.oldDigest);
+    if(tx.previous){
+      const {fallback,...current}=tx;
+      atomicJson(join(manager,'pending-verification.json'),{...current,...fallback});
+      if(fallback)clearStage(tx,tx.oldDigest);
+    }else clearStage(tx,tx.oldDigest);
     unlinkSync(journalFile);
     syncDirectory(manager);
   }
@@ -114,6 +178,20 @@ export async function promoteDirectoryPlugin(state:SetupState,client:Client,sign
     if(active.digest!==tx.oldDigest||active.digest!==receipt.digest)return false;
     clearStage(tx,tx.nextDigest);unlinkSync(journalFile);
   }
+  const rejected=read(join(manager,'rejected-update.json'));
+  if(rejected?.installationId===installationId&&rejected.sha256===archive.sha256)return false;
+  let fallback:Backup|undefined;
+  const pendingFile=join(manager,'pending-verification.json');
+  if(existsSync(pendingFile)){
+    const pending=read(pendingFile);
+    if(!pending||pending.decision||pending.client!==client||pending.installationId!==installationId||
+      pending.nextDigest!==active.digest||!pending.previous?.source||typeof pending.directory!=='string'||
+      dirname(pending.directory)!==manager||!/^swap-[A-Za-z0-9]+$/.test(basename(pending.directory)))return false;
+    const folder=join(pending.directory,'bundle');
+    if(!ordinaryPath(manager,folder)||verifyPluginBundle({...binding,nativeRoot:folder}).digest!==pending.oldDigest)return false;
+    const {directory,oldDigest,previous,previousPreparedAt,previousConfirmed}=pending;
+    fallback={directory,oldDigest,previous,previousPreparedAt,previousConfirmed};
+  }
   if(!consent()||active.digest!==receipt.digest||!isDeepStrictEqual(source,prior.source)||!stable(source.version)||
     compare(source.version,pin.version)>=0||!exclusivelyManaged(live,active.files))return false;
   const pkg=await load(client,{signal});
@@ -129,7 +207,7 @@ export async function promoteDirectoryPlugin(state:SetupState,client:Client,sign
   const digest=bundleManifest(contents,candidate.executable).digest;
   const directory=mkdtempSync(join(manager,'swap-')),staged=join(directory,'bundle');
   const tx:Journal={installationId,client,oldDigest:active.digest,nextDigest:digest,directory,source:pkg.source,
-    daemonHandoff:pkg.daemonHandoff,preparedAt:new Date().toISOString()};
+    daemonHandoff:pkg.daemonHandoff,preparedAt:new Date().toISOString(),previous:prior,previousPreparedAt:receipt.preparedAt,previousConfirmed:receipt.captureConfirmed,fallback};
   let exchanged=false;
   try{
     writeBundle(staged,contents,client,api,identity.name,home,manager,candidate.executable);

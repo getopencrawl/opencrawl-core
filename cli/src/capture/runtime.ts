@@ -2,7 +2,7 @@ import {allowedTime,confirmedPermission,readPermission,permittedBatch,type Recor
 import {transcriptCheckpoint,transcriptIdentity,transcriptIdentityMatches} from './transcript-checkpoint.ts';
 import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, fstatSync, lstatSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream} from 'node:fs';
 import {gzip} from 'node:zlib';
-import {promisify} from 'node:util';
+import {promisify,isDeepStrictEqual} from 'node:util';
 import {join, dirname, resolve, relative, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {compiled,commandForBinary} from '../distribution.ts';
@@ -53,7 +53,7 @@ export function harnessRoot(config:CaptureConfig,harness:Harness) {
 }
 // Enrollment and every queued payload remain bound to their original destination.
 const recordingPath=(config:Pick<CaptureConfig,'api'|'owner'>)=>join(captureDir(),'state','recording-'+hash(JSON.stringify([config.api,config.owner.tenantId,config.owner.userId]))+'.json');
-export async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal) {
+export async function captureIdentity(config:CaptureConfig,token?:string,signal?:AbortSignal,expectedOwner?:Pick<CaptureConfig['owner'],'tenantId'|'userId'>) {
   // Keep a refreshed workload token paired with the owner verified by identity.
   let verifiedToken=token;
   const renew=token&&workspaceIdentityEnabled()?async(rejected:string)=>verifiedToken=await workspaceToken(config.api,rejected,signal):undefined;
@@ -68,14 +68,15 @@ export async function captureIdentity(config:CaptureConfig,token?:string,signal?
     const current=readCaptureConfig();
     const pending=config.authPending && config.installationId==='pending';
     if(!current || current.api!==config.api || (!pending && current.installationId!==config.installationId))throw new CliError('CAPTURE_CONFIG_CHANGED','Capture configuration changed during authentication. Retry with the current configuration.');
-    if(!current.authPending && (current.owner.userId!==principal.userId || current.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_DESTINATION_CHANGED','Capture is enrolled to another account or team. Sign back into that destination; queued data has not moved. To change destination, uninstall and resolve or explicitly purge pending data before reinstalling.');
+    if(expectedOwner&&(expectedOwner.userId!==principal.userId||expectedOwner.tenantId!==principal.tenantId)||!current.authPending && (current.owner.userId!==principal.userId || current.owner.tenantId!==principal.tenantId))throw new CliError('CAPTURE_DESTINATION_CHANGED','Capture is enrolled to another account or team. Sign back into that destination; queued data has not moved. To change destination, uninstall and resolve or explicitly purge pending data before reinstalling.');
     config.owner=principal;
     if(recording&&(!cached||cached.revision!==recording.revision||cached.paused!==recording.paused||recording.paused))atomicJson(recordingPath(config),recording);
     if(config.authPending){
       config.installationId=current.installationId==='pending'?randomUUID():current.installationId;
       config.authPending=false;
     }
-    atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
+    const next={...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})};
+    if(!isDeepStrictEqual(current,next))atomicJson(join(captureDir(),'config.json'),next);
   },20_000,signal);
   return {principal,recording,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
 }
