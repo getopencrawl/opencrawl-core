@@ -26,9 +26,9 @@ export function From({userId,harness,names}:{userId:string;harness:string|null;n
   return <>{names.get(userId)??'Workspace member'}{harness&&<span className="report-email">{harnessName(harness)}</span>}</>;
 }
 
-export function SessionLink({userId,harness,sessionId}:{userId:string;harness:string|null;sessionId:string|null}){
+export function SessionLink({userId,harness,sessionId,label}:{userId:string;harness:string|null;sessionId:string|null;label?:string}){
   if(!sessionId||!harness)return <span className="report-email">Not recorded</span>;
-  return <Link to={'/sessions?'+new URLSearchParams({user:userId,harness,id:sessionId})}><code>{sessionId.slice(0,8)}</code></Link>;
+  return <Link to={'/sessions?'+new URLSearchParams({user:userId,harness,id:sessionId})}>{label ?? <code>{sessionId.slice(0,8)}</code>}</Link>;
 }
 
 const time=(at:string)=><time dateTime={at} title={at}>{dateFormat.format(new Date(at))}</time>;

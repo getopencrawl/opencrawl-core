@@ -41,6 +41,7 @@
 .usage-query-table :is(td,th):last-child { width: 28px; }
 .usage-query-table .oc-button { min-height: 24px; padding: 2px; }
 .usage-query-row { cursor: pointer; }
+.usage-query-row time { white-space: normal; }
 .usage-query-row:hover { background: var(--surface-subtle); }
 .usage-query-row [aria-expanded=true] svg { transform: rotate(180deg); }
 .usage-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

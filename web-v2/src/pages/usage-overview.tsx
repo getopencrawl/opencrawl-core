@@ -30,11 +30,13 @@ function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names
         <AgentAvatar name={row.agentName || row.at}/>
       </span></td>
       <td className="usage-query" title={query}>{query.split('\n')[0]}</td>
-      <td><time dateTime={row.at} title={at.toLocaleString()}>{(showDate ? dateTime : time).format(at)}</time></td>
+      <td><time dateTime={row.at} title={at.toLocaleString()}>{(expanded || showDate ? dateTime : time).format(at)}</time></td>
       <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query}><Icon name="chevron-down" size={14}/></Button></td>
     </tr>
-    {expanded && <tr><td colSpan={4} className="usage-query-detail"><p>{query}</p><time dateTime={row.at}>{at.toLocaleString()}</time>{row.operation && ' / ' + row.operation}
-      {row.sessionId && <> / <SessionLink {...row}/></>}</td></tr>}
+    {expanded && <tr><td colSpan={4} className="usage-query-detail">
+      <p>{query}</p>
+      {row.sessionId && row.harness && <SessionLink {...row} label="View session"/>}
+    </td></tr>}
   </>;
 }
 
