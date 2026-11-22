@@ -1,5 +1,5 @@
 import {appendFileSync,existsSync,mkdirSync,readFileSync,realpathSync,statSync,symlinkSync} from 'node:fs';
-import {homedir,userInfo} from 'node:os';
+import {homedir} from 'node:os';
 import {basename,dirname,join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {CliError} from './oauth.ts';
@@ -36,6 +36,21 @@ try {
 }
 
 /** Only the explicit installer configures the shell. Updates keep the stable launcher. */
+function loginShell(){
+ const configured=process.env.SHELL;
+ if(configured&&configured!=='unknown')return basename(configured);
+ // Bun can report "unknown" for the login shell. Ask the OS for this user's account.
+ const uid=String(process.getuid?.());
+ if(process.platform==='darwin'){
+  const {stdout}=spawnSync('/usr/bin/dscacheutil',['-q','user','-a','uid',uid],{encoding:'utf8',timeout:3000});
+  return basename(stdout?.match(/^shell:\s*(\/[^\r\n]+)$/m)?.[1]??'/bin/zsh');
+ }
+ const {stdout}=spawnSync('/usr/bin/getent',['passwd',uid],{encoding:'utf8',timeout:3000});
+ const entries=stdout?.trim()||(existsSync('/etc/passwd')?readFileSync('/etc/passwd','utf8'):'');
+ const account=entries.split('\n').map(line=>line.split(':')).find(fields=>fields[2]===uid);
+ return basename(account?.[6]||'sh');
+}
+
 export function configureShellPath(entry:string){
  if(process.platform==='win32')return configureWindowsPath(dirname(resolve(entry)));
  if(resolvesTo(entry))return 'The opencrawl command is on PATH.';
@@ -54,13 +69,7 @@ export function configureShellPath(entry:string){
   }
  }
 
- // Some Linux runtimes report "unknown" when SHELL is unset (including in containers).
- let loginShell=process.env.SHELL||userInfo().shell;
- if(!loginShell||loginShell==='unknown'){
-  const uid=String(process.getuid?.());
-  loginShell=existsSync('/etc/passwd')?readFileSync('/etc/passwd','utf8').split('\n').map(line=>line.split(':')).find(fields=>fields[2]===uid)?.[6]??'sh':'sh';
- }
- const shell=basename(loginShell||'sh'),quoted=quoteSh(directory);
+ const shell=loginShell(),quoted=quoteSh(directory);
  let files:string[];
  let command='export PATH='+quoted+'"${PATH:+:$PATH}"';
  let line='case "$PATH" in '+quoted+'|'+quoted+':*) ;; *) '+command+' ;; esac';

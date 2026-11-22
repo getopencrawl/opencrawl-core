@@ -27,3 +27,18 @@ test.skipIf(process.platform==='win32')('reinstall preserves startup files and t
   }
  }finally{rmSync(home,{recursive:true,force:true});}
 });
+
+test.skipIf(process.platform!=='darwin')('unset SHELL configures the macOS account login shell in a fresh home',()=>{
+ const account=Bun.spawnSync(['/usr/bin/dscacheutil','-q','user','-a','uid',String(process.getuid?.())]).stdout.toString();
+ const shell=account.match(/^shell:\s*(\/[^\r\n]+)$/m)?.[1];
+ if(shell!=='/bin/zsh'&&shell!=='/bin/bash')return;
+ const home=mkdtempSync(join(tmpdir(),'oc-login-shell-')),entry=join(home,'bin','opencrawl');
+ try{
+  mkdirSync(join(home,'bin'));writeFileSync(entry,'#!/bin/sh\nexit 0\n',{mode:0o755});
+  const env={HOME:home,ZDOTDIR:home,PATH:'/usr/bin:/bin',SHELL:undefined};
+  const install=Bun.spawnSync([process.execPath,'-e','import {configureShellPath} from '+JSON.stringify(modulePath)+'; configureShellPath(process.argv[1]);',entry],{env});
+  expect(install.exitCode).toBe(0);
+  const lookup=Bun.spawnSync([shell,'-ic','command -v opencrawl'],{env});
+  expect(lookup.stdout.toString().trim().split('\n').at(-1)).toBe(entry);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
