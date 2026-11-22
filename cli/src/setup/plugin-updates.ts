@@ -77,6 +77,25 @@ export function changedHookFiles(installed:Record<string,string>, candidate:Publ
     (!(name in target)||fileHash(target[name]!)!==installed[name])).sort();
 }
 
+
+function cachedResults(file:string,key:{installationId?:string;acceptedAt:string;candidates:Candidate[]},requireFresh:boolean):Staged[]|undefined {
+  const {candidates}=key;
+  const receipt=read(file);
+  if (!isDeepStrictEqual(receipt?.key,key) || (requireFresh && updateDue(receipt)) || !Array.isArray(receipt.results)) return;
+  const valid=receipt.results.every((row:Staged)=>row && candidates.some(candidate=>
+    candidate.client===row.client && candidate.installed===row.installed &&
+    candidate.version===row.version && candidate.sha256===row.sha256) &&
+    (row.status==='retry' || row.status==='ready_for_review' && Array.isArray(row.hookChanges) &&
+    row.hookChanges.every(file=>typeof file==='string')));
+  if (valid) return receipt.results;
+}
+
+export function pendingPluginUpdates(state:SetupState) {
+  const candidates=updateCandidates(state).filter(row=>ownedSource(state,row));
+  if (!candidates.length) return [];
+  return cachedResults(candidateFile(state),{installationId:state.installationId,acceptedAt:state.acceptedAt,candidates},false)??[];
+}
+
 /** Verification and download are safe in the background. Archives live outside host discovery. */
 export async function stagePluginUpdates(api?:string, signal?:AbortSignal, load=loadPublishedPackage):Promise<Staged[]> {
   const state=currentInstallation(api);
@@ -85,11 +104,7 @@ export async function stagePluginUpdates(api?:string, signal?:AbortSignal, load=
   if (!candidates.length) return [];
   const file=candidateFile(state);
   const key={installationId:state.installationId,acceptedAt:state.acceptedAt,candidates};
-  const cached=():Staged[]|undefined=>{
-    const receipt=read(file);
-    if (isDeepStrictEqual(receipt?.key,key) && !updateDue(receipt) && Array.isArray(receipt.results))
-      return receipt.results;
-  };
+  const cached=()=>cachedResults(file,key,true);
   const previous=cached();
   if (previous) return previous;
   return withSessionLock('plugin-updates:'+scopeKey(state.scope),async()=>{

@@ -29,6 +29,7 @@ import {readServerSetup,serverScope,publishSetup,type SetupServerStatus} from '.
 import {historyJob,startHistoryWorker,runHistoryWorker} from './history-worker.ts';
 import {chooseSetupItems} from './select.ts';
 import {deferredPlugins,nextSetupAction} from './next.ts';
+import {pendingPluginUpdates,formatPluginUpdates} from './plugin-updates.ts';
 import {rememberFinishedSetup} from './first-run.ts';
 import {verifyInstallation} from '../verify-installation.ts';
 import {formatSetupCommand,setupCommandForSelf,profileSetupCommand} from './invocation.ts';
@@ -67,8 +68,9 @@ export function localSetupStatus(requestedApi?:string){
  if(!state)throw new CliError('SETUP_NOT_STARTED','No saved setup choices match this local installation owner and API. Preserve the current installation; local status did not start setup.',2);
  if(state.scope.api!==scope.api||state.scope.tenantId!==scope.tenantId||state.scope.userId!==scope.userId||state.installationId!==config.installationId)throw new CliError('SETUP_SCOPE_CHANGED','Saved setup choices do not match the current installation, API and owner. No state was changed.',2);
  const selections=preserveRecordingOff(state.selections,scope,config);
+ const pluginUpdates=config.disabled?[]:pendingPluginUpdates(state);
  if(JSON.stringify(readLocalCaptureConfig())!==JSON.stringify(config))throw new CliError('SETUP_SCOPE_CHANGED','The local installation changed while reading status. Retry local status; no state was changed.',2);
- return {status:'local_status',freshness:'local-only',serverChecked:false,scopeSource:'saved-capture-config',scope,installationId:config.installationId,savedSelections:state.selections,selections,captureMode:savedCaptureMode(state,config),...(state.pluginResults?{pluginResults:state.pluginResults.map(({client,status,message})=>({client,status,message}))}:{}),...(state.worker?{worker:workerObservation(state.worker)}:{})};
+ return {status:'local_status',freshness:'local-only',serverChecked:false,scopeSource:'saved-capture-config',scope,installationId:config.installationId,savedSelections:state.selections,selections,...(pluginUpdates.length?{pluginUpdates}:{}),captureMode:savedCaptureMode(state,config),...(state.pluginResults?{pluginResults:state.pluginResults.map(({client,status,message})=>({client,status,message}))}:{}),...(state.worker?{worker:workerObservation(state.worker)}:{})};
 }
 
 const availabilityBinding=({scope,installationId,savedSelections,selections}:ReturnType<typeof localSetupStatus>)=>JSON.stringify({scope,installationId,savedSelections,selections});
@@ -434,10 +436,10 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  return importApproved(files);
 }
 export function formatSetupOutput(data:unknown):string{
- const value=data as {status?:string;instruction?:string;humanTasks?:SetupHumanTask[];applyCommand?:string;agentPrompt?:string;history?:{state?:string};worker?:{readiness?:string}};
+ const value=data as {pluginUpdates?:ReturnType<typeof pendingPluginUpdates>;status?:string;instruction?:string;humanTasks?:SetupHumanTask[];applyCommand?:string;agentPrompt?:string;history?:{state?:string};worker?:{readiness?:string}};
  if(value.status==='recording_off')return 'No sessions will be recorded on this machine. No history import was started.';
  if(value.status==='cancelled')return 'Setup closed. Run opencrawl setup to review your choices.';
- if(value.status==='local_status')return 'Setup: local-only saved state. The server, current authentication, and worker liveness were not checked.'+(value.worker?.readiness==='pending'?'\nBackground worker supervision is pending; --json preserves its bound command and environment.':'')+'\nUse --json for the installation binding and saved/effective choices.';
+ if(value.status==='local_status')return 'Setup: local-only saved state. The server, current authentication, and worker liveness were not checked.'+(value.worker?.readiness==='pending'?'\nBackground worker supervision is pending; --json preserves its bound command and environment.':'')+(value.pluginUpdates?.length?'\n'+formatPluginUpdates(value.pluginUpdates):'')+'\nUse --json for the installation binding and saved/effective choices.';
  if(value.agentPrompt)return `OpenCrawl setup saved.${value.worker?.readiness==='pending'?' Background worker supervision is pending.':''}${value.history?.state==='queued'||value.history?.state==='running'?' History is importing in the background.':''}\nIn your primary coding agent, send:\n${value.agentPrompt}`;
  if(value.applyCommand)return 'Review the JSON setup plan, then run its applyCommand after confirming the choices.';
  if(value.status==='action_required')return value.instruction??value.humanTasks?.[0]?.instruction??'Complete CLI sign-in before continuing setup.';

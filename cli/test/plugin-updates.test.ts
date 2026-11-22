@@ -6,7 +6,7 @@ import {pluginRelease} from '../src/setup/plugin-release.ts';
 import {bundleManifest,fileHash} from '../src/setup/plugin-bundle.ts';
 import {setupPluginIdentity} from '../src/setup/plugin-identity.ts';
 import {scopeKey,type SetupState} from '../src/setup/state.ts';
-import {stagePluginUpdates,updateCandidates,changedHookFiles} from '../src/setup/plugin-updates.ts';
+import {stagePluginUpdates,updateCandidates,changedHookFiles,pendingPluginUpdates} from '../src/setup/plugin-updates.ts';
 import type {PublishedPackage} from '../src/setup/published-plugins.ts';
 
 const api='https://selfhost.example',scope={api,tenantId:'org',userId:'member'};
@@ -63,6 +63,7 @@ test('staging verifies active profile and release, leaves native bytes intact an
     expect(await stagePluginUpdates('https://other.example',undefined,load)).toEqual([]);
     const staged=await stagePluginUpdates(api,undefined,load);
     expect(calls).toBe(candidates.length);
+    expect(pendingPluginUpdates(state)).toEqual(staged);
     expect(staged.map(row=>row.status)).toEqual(candidates.map((_,i)=>i===0?'retry':'ready_for_review'));
     expect(await stagePluginUpdates(api,undefined,load)).toEqual(staged);
     expect(calls).toBe(candidates.length);
