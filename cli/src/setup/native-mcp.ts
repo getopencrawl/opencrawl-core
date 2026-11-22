@@ -9,9 +9,13 @@ export type NativeClient = 'claude-code' | 'codex' | 'antigravity';
 export type SetupConnection = {name:string; skipLogin:boolean};
 type Inspect = (args:string[])=>Promise<string|undefined>;
 const json=(text:string|undefined):unknown=>{try{return JSON.parse(text??'');}catch{return undefined;}};
+const inspectNative=(executable:string):Inspect=>async args=>{
+  const result=await runPluginCommand(executable,args,process.env,12_000);
+  return result.code===0&&!result.timedOut?result.stdout:undefined;
+};
 
 async function claudeConnections(inspect:Inspect,endpoint:string,managed:string) {
-  const matches:SetupConnection[]=[];
+  const matches:(SetupConnection&{needsAuthentication:boolean})[]=[];
   for(const name of ['opencrawl','plugin:opencrawl:opencrawl',managed]){
     const details=await inspect(['mcp','get',name]);
     if(!details)continue;
@@ -20,10 +24,16 @@ async function claudeConnections(inspect:Inspect,endpoint:string,managed:string)
     const status=lines.find(line=>line.startsWith('Status:'));
     if(!status||/disabled|pending approval/i.test(status))continue;
     const connected=/\bConnected\b/i.test(status)&&!/not connected|disconnected/i.test(status);
-    if(connected)return [{name,skipLogin:connected}];
-    matches.push({name,skipLogin:connected});
+    if(connected)return [{name,skipLogin:true,needsAuthentication:false}];
+    matches.push({name,skipLogin:false,needsAuthentication:/^Status:\s*(?:(?:!|⚠️?)\s*)?Needs authentication$/i.test(status)});
   }
   return matches;
+}
+
+export async function claudeLoginServer(executable:string,api:string,inspect:Inspect=inspectNative(executable)){
+  const identity=scopedPluginIdentity(api);
+  const rows=await claudeConnections(inspect,identity.api+'/mcp','plugin:'+identity.name+':opencrawl');
+  return rows.find(row=>row.needsAuthentication)?.name;
 }
 
 function codexConnections(text:string|undefined,endpoint:string,managed:string):SetupConnection[]{
@@ -70,17 +80,14 @@ async function antigravityConnections(inspect:Inspect,endpoint:string,managed:st
 
 /** Resolve the effective native transport before prompting for OAuth. Native
  * connection state can skip a redundant login, never the workspace proof. */
-export async function findSetupConnection(client:NativeClient,executable:string,api:string,inspect:Inspect=async args=>{
-  const result=await runPluginCommand(executable,args,process.env,12_000);
-  return result.code===0?result.stdout:undefined;
-}):Promise<SetupConnection>{
+export async function findSetupConnection(client:NativeClient,executable:string,api:string,inspect:Inspect=inspectNative(executable)):Promise<SetupConnection>{
   const identity=scopedPluginIdentity(api),endpoint=identity.api+'/mcp';
   const rows=client==='claude-code'?await claudeConnections(inspect,endpoint,'plugin:'+identity.name+':opencrawl')
     :client==='codex'?codexConnections(await inspect(['mcp','list','--json']),endpoint,identity.name)
     :await antigravityConnections(inspect,endpoint,identity.name);
   const connection=rows.find(row=>row.skipLogin)??rows[0];
   if(!connection)throw new CliError('NATIVE_MCP_UNAVAILABLE','Setup could not confirm an enabled '+labels[client]+' connection at '+endpoint+'. Check the endpoint in the client’s MCP settings, then run setup again.');
-  return connection;
+  return {name:connection.name,skipLogin:connection.skipLogin};
 }
 
 export function nativeConnectionPrompt(prompt:string,name:string,api:string){

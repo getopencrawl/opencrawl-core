@@ -2,11 +2,25 @@ import {expect,test} from 'bun:test';
 import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {findSetupConnection} from '../src/setup/native-mcp.ts';
+import {claudeLoginServer,findSetupConnection} from '../src/setup/native-mcp.ts';
 import {scopedPluginIdentity} from '../src/setup/plugin-identity.ts';
 
 const api='https://selected.example',endpoint=api+'/mcp',scoped=scopedPluginIdentity(api).name;
 const details=(name:string,url:string,status:string)=>[name+':','  Scope: User config','  Status: '+status,'  Type: http','  URL: '+url].join('\n');
+test('doctor asks for Claude login only on a confirmed deployment-matching authentication status',async()=>{
+  const plugin='plugin:opencrawl:opencrawl';
+  const check=(status:string,url=endpoint,connectedAlias=false)=>claudeLoginServer('claude',api,async args=>{
+    if(args[2]===plugin)return details(plugin,url,status);
+    if(connectedAlias&&args[2]==='opencrawl')return details('opencrawl',endpoint,'✔ Connected');
+    return undefined;
+  });
+  expect(await check('! Needs authentication')).toBe(plugin);
+  expect(await check('! Needs authentication',api+'/wrong')).toBeUndefined();
+  expect(await check('! Needs authentication',endpoint,true)).toBeUndefined();
+  for(const status of ['✔ Connected','Failed to connect','Disconnected','Disabled','Pending approval','Unknown']){
+    expect(await check(status)).toBeUndefined();
+  }
+});
 test('Claude uses the already connected MCP that hides the plugin alias for the same endpoint',async()=>{
   const calls:string[][]=[];
   const connection=await findSetupConnection('claude-code','claude',api,async args=>{

@@ -18,6 +18,8 @@ Run `opencrawl doctor` after setup or an update. An agent can run `opencrawl doc
 
 JSON has top-level `schemaVersion`, `status`, `cliVersion`, `apps`, and `repairs`. Follow `nextAction.resume` with the same profile after completing an action. A recording app passes when a normal native session under the current installation challenge has delivered its marker and authenticated tool call, and the workspace can search and fetch the passage. Doctor renews the challenge after a relevant configuration change or 24 hours.
 
+If a setup wizard holds the installation lock, doctor identifies its terminal when available. Finish setup, or cancel it with Ctrl+C, then rerun doctor. If Claude Code reports that OpenCrawl needs authentication, doctor prints the exact `claude mcp login` command for that connection. Approve OpenCrawl in your browser and rerun doctor. Agents can read the login command as an argument array in `nextAction.command`.
+
 Automatic plugin updates follow the versions pinned by the CLI for apps selected during setup. Manual updates keep the accepted version. On supported Claude Code and Cursor installations, an atomic update retains a rollback copy until capture passes. A failed native installation check can restore that copy. An indexing delay leaves it in place. Updates that the host cannot activate safely stay pending. Codex continues to handle hook review in its native interface.
 
 ## Set up an agent on macOS or Linux

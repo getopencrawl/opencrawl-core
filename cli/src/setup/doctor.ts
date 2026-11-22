@@ -15,14 +15,17 @@ import {chosen,scopeKey,automaticUpdateClients,readSetupState,updateSetupState,t
 import {unboundSetupComplete} from './first-run.ts';
 import {localSetupStatus,setupHookStatus} from './command.ts';
 import {refreshManagedPlugins} from './plugin-updates.ts';
-import {setupPluginIdentity,recordingInstallState} from './plugins.ts';
+import {setupPluginIdentity,recordingInstallState,recordingRuntime} from './plugins.ts';
+import {claudeLoginServer} from './native-mcp.ts';
+import {formatSetupCommand} from './invocation.ts';
 import {acceptedPackageSource,installPublishedSetupPlugins,loadAcceptedPackage,packageRelease,type LocalPluginClient} from './published-plugins.ts';
 import {settlePromotion} from './plugin-promotion.ts';
 import {doctorWorker} from './doctor-worker.ts';
+import {checkRunningSetup,withDoctorSetupChoices} from './setup-lock.ts';
 
 const exits={green:0,needs_human:2,needs_agent:3,retry:75,blocked:1} as const;
 type Status=keyof typeof exits;
-type Action={kind:string;instruction:string;client?:string;tool?:string;arguments?:Record<string,string>;message?:string};
+type Action={kind:string;instruction:string;client?:string;command?:string[];tool?:string;arguments?:Record<string,string>;message?:string};
 type Issue={status:Exclude<Status,'green'>;action:Action};
 type App={desired:'recording'|'connected';observed:string;desiredVersion?:string;installedVersion?:string;availableVersion?:string;verifiedAt?:string;sessionId?:string};
 type Report={cliVersion:string;apps:Record<string,App>;repairs:string[];issues:Issue[];worker?:string;recordingOff?:boolean};
@@ -33,6 +36,7 @@ function failure(error:unknown):Issue{
   if(['AUTH_REQUIRED','NOT_LOGGED_IN','NO_SESSION','LOGIN_REQUIRED','SESSION_EXPIRED'].includes(code))
     return workspaceIdentityEnabled()?issue('blocked','repair_identity','Restore the configured workload identity for this host.'):issue('needs_human','sign_in','Run opencrawl login for the saved workspace, then rerun doctor.');
   if(code==='SETUP_NOT_STARTED')return setupNeeded();
+  if(error instanceof CliError&&code==='SETUP_WIZARD_OPEN')return issue('needs_human','finish_setup',error.message);
   if(['SESSION_BUSY','SETUP_CHANGED','SETUP_UNAVAILABLE','NETWORK_ERROR','CAPTURE_RETRY_EXHAUSTED','SEARCH_UNAVAILABLE','UPDATE_UNAVAILABLE','CONTENT_CHANGED','NOT_FOUND'].includes(code)||
      error instanceof Error&&(/Timeout|Abort|fetch failed|network|socket|connect/i.test(error.name+' '+error.message)))return issue('retry','retry','Retry the check after the current operation or service recovers.');
   return issue('blocked',code.toLowerCase()||'check_failed',error instanceof CliError?error.message:'The host check failed. Inspect the local installation and rerun doctor.');
@@ -43,9 +47,10 @@ function outcome(report:Report,api?:string){
   const resume=['opencrawl','doctor',...(api?['--api',api]:[]),'--json'];
   const nextAction=first?{actor:status==='needs_human'?'human':status==='needs_agent'?'agent':status==='retry'?'caller':'operator',...first.action,resume}:undefined;
   const data={schemaVersion:1,status,...observations,...(issues.length>1?{issues}:{}),...(nextAction?{nextAction}:{}),...(status==='retry'?{retryAfterSeconds:10}:{})};
-  const human=[!first?(report.recordingOff?'Green. Recording is off as requested.':'Green. All selected apps are ready.'):status.replaceAll('_',' '),
-    ...Object.entries(report.apps).map(([name,row])=>name+' — '+row.observed+(row.installedVersion?' ('+row.installedVersion+')':'')),
-    ...report.repairs.map(item=>'Repaired '+item.replaceAll('_',' ')),nextAction?.instruction,
+  const humanAction=nextAction?.actor==='human';
+  const human=[!first?(report.recordingOff?'Green. Recording is off as requested.':'Green. All selected apps are ready.'):humanAction?nextAction.instruction:status.replaceAll('_',' '),
+    ...Object.entries(report.apps).filter(([name])=>!humanAction||name!==nextAction.client).map(([name,row])=>name+' — '+row.observed+(row.installedVersion?' ('+row.installedVersion+')':'')),
+    ...report.repairs.map(item=>'Repaired '+item.replaceAll('_',' ')),humanAction?undefined:nextAction?.instruction,
     ...(nextAction?.tool?[nextAction.tool+' '+JSON.stringify(nextAction.arguments)]:[]),...(nextAction?.message?[nextAction.message]:[]),
     ...(status==='retry'?['Retry in 10 seconds.']:[])].filter(Boolean).join('\n');
   return {data,human,exit:exits[status]};
@@ -65,7 +70,7 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
   app.installedVersion=prior?.source?.version;
   if(!auto&&app.installedVersion&&pin.version!==app.installedVersion)app.availableVersion=pin.version;
   const root=join(configDir(),'setup-plugins',client,setupPluginIdentity(api).key);
-  const fail=(status:Issue['status'],kind:string,instruction:string)=>{app.observed=kind;report.issues.push(issue(status,kind,instruction,{client}));};
+  const fail=(status:Issue['status'],kind:string,instruction:string,command?:string[])=>{app.observed=kind;report.issues.push(issue(status,kind,instruction,{client,command}));};
   const retained=read(join(root,'pending-verification.json'));
   const directoryClient=client==='claude-code'||client==='cursor'?client:undefined;
   if(directoryClient&&retained?.decision){
@@ -122,6 +127,14 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
   if(recording&&prior.captureAvailable!==true)return fail('blocked','capture_unavailable','This installed package has no confirmed support for recording.');
   if(recording&&local.captureMode==='daemon'&&report.worker!=='running'){app.observed='waiting_for_worker';return;}
   if(!proofSupported)return fail('blocked','server_upgrade_required','Upgrade this deployment to a release that supports revision-bound installation verification.');
+  if(client==='claude-code'&&read(join(installed.nativeRoot,'.mcp.json'))?.mcpServers?.opencrawl?.url===api+'/mcp'){
+    const runtime=await recordingRuntime(client);
+    const server=runtime&&await claudeLoginServer(runtime.executable,api);
+    if(runtime&&server){
+      const command=[runtime.desktop?runtime.executable:'claude','mcp','login',server];
+      return fail('needs_human','claude_mcp_login','Run '+formatSetupCommand(command.slice(1),[command[0]!])+'\nApprove OpenCrawl in your browser, then rerun opencrawl doctor.',command);
+    }
+  }
   const worker=recording&&local.captureMode==='daemon'?read(join(captureDir(),'daemon','status.json')):undefined;
   const markerFile=join(installed.nativeRoot,'.opencrawl-setup-plugin.json'),markerTime=statSync(markerFile).mtimeMs;
   const revision=createHash('sha256').update(JSON.stringify([state.scope,installationId,client,installed.digest,installed.nativeRoot,
@@ -164,6 +177,7 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
   app.observed='awaiting_native_check';report.issues.push(action);
 }
 async function reconcile(api:string,report:Report,explicitDestination:boolean){
+  await checkRunningSetup();
   const config=readCaptureConfig();
   if(!config){
     if(unboundSetupComplete(explicitDestination?api:undefined)){report.recordingOff=true;return;}
@@ -197,7 +211,7 @@ async function reconcile(api:string,report:Report,explicitDestination:boolean){
   try{updates=await refreshManagedPlugins(api,AbortSignal.timeout(90_000));}
   catch(error){report.issues.push(failure(error));}
   for(const item of updates)if(item.status==='updated')report.repairs.push('updated_'+item.client+'_plugin');
-  await withSessionLock('setup:interactive-choices',async()=>{
+  await withDoctorSetupChoices(async()=>{
     assertSame(local);
     const current=readSetupState(local.scope)!;
     if(current.firstRun==='choosing'||current.acceptedAt!==state.acceptedAt)throw new CliError('SETUP_CHANGED','Setup is changing.');
@@ -221,7 +235,7 @@ async function reconcile(api:string,report:Report,explicitDestination:boolean){
     assertSame(local);
     if(!isDeepStrictEqual(active,readCaptureConfig()))throw new CliError('SETUP_CHANGED','Capture configuration changed during verification.');
     report.recordingOff=paused||!chosen(local.selections,'forward').length;
-  },0);
+  });
 }
 export async function hostDoctor(explicitApi:string|undefined,args:string[]){
   const report:Report={cliVersion:version,apps:{},repairs:[],issues:[]};

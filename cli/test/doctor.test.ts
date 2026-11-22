@@ -9,6 +9,27 @@ import {pluginRelease} from '../src/setup/plugin-release.ts';
 const cli=join(import.meta.dir,'../src/cli.ts');
 const json=(file:string,value:unknown)=>{mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify(value),{mode:0o600});};
 const owner={tenantId:'doctor-tenant',userId:'doctor-user'},installationId='doctor-host';
+test('doctor distinguishes a live wizard from an unattended setup on a fresh profile',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'oc-doctor-wizard-'));
+  const module=join(import.meta.dir,'../src/setup/setup-lock.ts');
+  try{
+    for(const wizard of [true,false]){
+      const script='const {withSetupChoices}=await import('+JSON.stringify(module)+');await withSetupChoices(async()=>{console.log("held");await Bun.stdin.text();},'+wizard+');';
+      const child=Bun.spawn([process.execPath,'-e',script],{env:{...process.env,OPENCRAWL_CONFIG_HOME:home},stdin:'pipe',stdout:'pipe',stderr:'pipe'});
+      try{
+        const reader=child.stdout.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain('held');
+        reader.releaseLock();
+        const result=await run(home,undefined);
+        if(wizard){
+          expect(result).toMatchObject({exit:2,status:'needs_human',nextAction:{kind:'finish_setup',resume:['opencrawl','doctor','--json']}});
+          expect(result.nextAction.instruction).toMatch(/Finish or cancel opencrawl setup in .+, then rerun opencrawl doctor/);
+        }else expect(result).toMatchObject({exit:75,status:'retry'});
+      }finally{child.stdin.end();await child.exited;}
+    }
+    expect((await run(home,undefined)).nextAction.kind).toBe('choose_setup');
+  }finally{rmSync(home,{recursive:true,force:true});}
+},15000);
 async function run(home:string,api:string|undefined,extra:Record<string,string>={}){
   const env={...process.env,HOME:home,USERPROFILE:home,OPENCRAWL_CONFIG_HOME:home,OPENCRAWL_NO_UPDATE:'1',OPENCRAWL_API_URL:api,OPENCRAWL_TOKEN:'doctor-test',OPENCRAWL_SESSIONS_TOKEN:'doctor-test',...extra};
   const child=Bun.spawn([process.execPath,cli,'doctor','--json'],{env,stdout:'pipe',stderr:'pipe',stdin:'ignore'});
