@@ -25,13 +25,13 @@ function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names
   const query = row.queries.join('\n').trim();
   const at = new Date(row.at);
   return <>
-    <tr>
+    <tr className="usage-query-row" onClick={() => setExpanded(open => !open)}>
       <td><span className="usage-agent" role="img" tabIndex={0} aria-label={identity} data-tooltip={identity}>
         <AgentAvatar name={row.agentName || row.at}/>
       </span></td>
       <td className="usage-query" title={query}>{query.split('\n')[0]}</td>
       <td><time dateTime={row.at} title={at.toLocaleString()}>{(showDate ? dateTime : time).format(at)}</time></td>
-      <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query} onClick={() => setExpanded(!expanded)}><Icon name="chevron-down" size={14}/></Button></td>
+      <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query}><Icon name="chevron-down" size={14}/></Button></td>
     </tr>
     {expanded && <tr><td colSpan={4} className="usage-query-detail"><p>{query}</p><time dateTime={row.at}>{at.toLocaleString()}</time>{row.operation && ' / ' + row.operation}
       {row.sessionId && <> / <SessionLink {...row}/></>}</td></tr>}

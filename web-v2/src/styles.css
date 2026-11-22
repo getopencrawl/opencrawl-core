@@ -40,6 +40,9 @@
 .usage-query-table :is(td,th):nth-child(3) { width: 88px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .usage-query-table :is(td,th):last-child { width: 28px; }
 .usage-query-table .oc-button { min-height: 24px; padding: 2px; }
+.usage-query-row { cursor: pointer; }
+.usage-query-row:hover { background: var(--surface-subtle); }
+.usage-query-row [aria-expanded=true] svg { transform: rotate(180deg); }
 .usage-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-agent { display: inline-flex; position: relative; align-items: center; vertical-align: middle; }
 .usage-agent .oc-agent-avatar { width: 24px; height: 24px; margin: 0; }
