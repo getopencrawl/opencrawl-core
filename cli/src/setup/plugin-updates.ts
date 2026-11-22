@@ -4,7 +4,7 @@ import {atomicJson, configDir, withSessionLock} from '../session.ts';
 import {readCaptureConfig} from '../capture/runtime.ts';
 import {automaticUpdateClients, readSetupState, scopeKey, type SetupState} from './state.ts';
 import {pluginRelease, type PluginRelease} from './plugin-release.ts';
-import {loadPublishedPackage,type PublishedPackage} from './published-plugins.ts';
+import {acceptedPackageSource,loadPublishedPackage,type PublishedPackage} from './published-plugins.ts';
 import {setupPluginIdentity} from './plugin-identity.ts';
 import {verifyPluginBundle} from './plugin-context.ts';
 import {fileHash} from './plugin-bundle.ts';
@@ -21,7 +21,8 @@ export function updateCandidates(state:SetupState, release=pluginRelease, platfo
     const result=state.pluginResults?.find(row=>row.client===client);
     if (!result || !['installed','prepared','unchanged'].includes(result.status)) continue;
     const source=result.source;
-    if (!source || source.repository!==release.repository || source.path!==entry.path ||
+    if (!source || source.repository!==release.repository ||
+        (source.path!==entry.path && !acceptedPackageSource(client,source)) ||
         !stable(source.version) || compare(source.version,entry.version)>=0) continue;
     candidates.push({client,installed:source.version,version:entry.version,sha256:pin.sha256});
   }

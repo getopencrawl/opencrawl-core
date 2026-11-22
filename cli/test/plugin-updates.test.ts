@@ -31,6 +31,16 @@ test('only selected managed installs on an older release are candidates',()=>{
   expect(updateCandidates(state,pluginRelease,'unsupported')).toEqual([]);
 });
 
+test('discovers the signed local-layout Codex release after the package moved',()=>{
+  const previous=structuredClone(state);
+  const row=previous.pluginResults!.find(item=>item.client==='codex')!;
+  previous.pluginResults=[row];
+  Object.assign(row.source!,{name:'opencrawl-local-codex',path:'local/codex',version:'0.2.6',ref:'a'.repeat(40)});
+  expect(updateCandidates(previous,pluginRelease,'linux-x64').map(item=>item.installed)).toEqual(['0.2.6']);
+  row.source!.path='local/cursor';
+  expect(updateCandidates(previous,pluginRelease,'linux-x64')).toEqual([]);
+});
+
 test('staging verifies active profile and release, leaves native bytes intact and retries independent clients',async()=>{
   const home=mkdtempSync(join(tmpdir(),'oc-review-')),previous=process.env.OPENCRAWL_CONFIG_HOME;
   process.env.OPENCRAWL_CONFIG_HOME=home;
