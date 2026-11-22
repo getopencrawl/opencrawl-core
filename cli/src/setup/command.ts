@@ -249,7 +249,7 @@ export function setupCommand(action:string,api:string,values:Values,deps:Depende
  };
  // Serialize changes to this profile's confirmed choices and installation.
  return action==='apply'&&values.yes===true||action==='run'&&(interactive||values.yes===true||!values.json)
-  ?withSetupChoices(run,action==='run'&&interactive&&!values.yes):run();
+  ?withSetupChoices(run,action==='run'&&interactive):run();
 }
 export function nativeSetupPrompt(api:string,client:string,command=setupCommandForSelf()){
  const nextCommand=formatSetupCommand(['setup','next','--api',api,'--json'],profileSetupCommand(command,dirname(configDir()),process.env,true));
