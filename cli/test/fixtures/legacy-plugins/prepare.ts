@@ -48,5 +48,5 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
     const configHome=resolve(env.OPENCRAWL_CONFIG_HOME||env.XDG_CONFIG_HOME||join(options.home??homedir(),'.config'));
     bundles[client]={files:setupPluginFiles(client,api,{...options,configHome})};
   }
-  return installPrepared(api,selected,{...options,bundles});
+  return installPrepared(api,selected,{applicationDirs:[],...options,bundles});
 }
