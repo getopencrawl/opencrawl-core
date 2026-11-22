@@ -2,6 +2,7 @@ import {z} from 'zod';
 
 /** Reporting windows on Usage. Days are UTC calendar days ending today. */
 export const usageRange = z.enum(['7d', '30d', 'all']);
+export const tokenRangeInput = z.strictObject({range: usageRange, basis: z.literal('session-start').optional()});
 export type UsageRange = z.infer<typeof usageRange>;
 export const rangeInput = z.strictObject({range: usageRange});
 export const rangeDays = (range: UsageRange) => range === '7d' ? 7 : range === '30d' ? 30 : null;

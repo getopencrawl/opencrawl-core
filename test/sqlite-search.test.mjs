@@ -359,3 +359,23 @@ test('realm migration copies and verifies large documents without treating the s
   assert.equal(result.complete, true); assert.equal(checkpoint.copied, 3);
   assert.deepEqual((await realm.collection('connector').mget(principal, documents.map(d => d.id))).docs.map(d => d._source), documents.map(d => d.document));
 });
+
+test('Overview assigns multi-day sessions to the first event, including late imports, within the authorized tenant', async t => {
+  const {endpoint,principal}=await fixture(t);
+  const sessions=createSessionSearch({endpoint});
+  const now=Date.parse('2026-11-08T12:00:00Z');
+  const put=async (who,id,timestamp,capturedTokens,chunk=0)=>sessions.putDocuments([{id,document:{...who,harness:'codex',sessionId:'same-id',
+    chunk,text:'example',kind:'message',timestamp,receivedAt:'2026-11-08T01:00:00Z',capturedTokens}}],who);
+  await sessions.ensureIndex(principal);
+  await put(principal,'first','2026-11-01T23:00:00Z',3);
+  await put(principal,'next','2026-11-07T02:00:00Z',8);
+  await put(principal,'extra-chunk','2026-11-07T02:00:00Z',8,1);
+  const teammate={...principal,userId:'bob'};
+  await put(teammate,'other-owner','2026-11-07T02:00:00Z',19);
+  const all=await sessions.tokensBySessionStart(principal,{team:true,days:null,now});
+  assert.equal(all.total,30);
+  assert.deepEqual(all.daily.filter(day=>day.count),[{date:'2026-11-01',count:11},{date:'2026-11-07',count:19}]);
+  assert.equal((await sessions.tokensBySessionStart(principal,{days:7,now})).total,0);
+  assert.equal((await sessions.tokensBySessionStart({...principal,tenantId:'org_other'},{team:true,days:null,now})).total,0);
+  await assert.rejects(sessions.tokensBySessionStart({...principal,captureAccess:'write'},{team:true,now}),{status:403});
+});

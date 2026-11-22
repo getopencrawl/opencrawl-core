@@ -9,9 +9,12 @@ export const historyRequest = z.strictObject({
   /** Proactive checks that returned at least one result: OpenCrawl context edits. */
   edits:z.literal(true).optional(),
 });
+export const activityRequest = z.strictObject({range: usageRange.optional(), basis: z.literal('events').optional()});
+export const historyRead = historyRequest.extend({basis: z.literal('events').optional()});
 export type HistoryRequest = z.infer<typeof historyRequest>;
 export interface SearchActivityRow {
   id:string; at:string; userId:string; operation:string; queries:string[];
+  agentName?:string;
   harness:string|null; sessionId:string|null; messageId:string|null; message:string|null;
   returned:number|null; outcome:'complete'|'failed'|'unknown'; delivered:boolean;
   /** From a billing meter: this row is one receipt, and this is what it cost and why. */

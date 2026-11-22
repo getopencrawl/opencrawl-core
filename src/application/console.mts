@@ -1,5 +1,8 @@
-import {historyRequest} from './search-activity.mjs';
-import {usageRange,tokenSessionsRequest} from './usage-range.mjs';
+import {boardIdentity} from '../board/identity.mjs';
+import {digest} from '../sessions/event-identity.mjs';
+import type {BoardRepository} from '../state/board.mjs';
+import {activityRequest,historyRead} from './search-activity.mjs';
+import {tokenRangeInput,usageRange,tokenSessionsRequest} from './usage-range.mjs';
 import {z} from 'zod';
 const rangeOnly=z.strictObject({range:usageRange.optional()});
 import {hasCompletedOnboarding} from '../onboarding-state.mjs';
@@ -16,16 +19,17 @@ export type Organization = {id: string; name: string; metadata?: Record<string, 
 type Progress = {completed?: {observedAt?: string} | null; shared?: {observedAt?: string} | null};
 export interface ConsoleContext {principal: Principal; user: User; member: Membership; revalidate: () => Promise<boolean>; admitted?: boolean; cacheScope?: string}
 export interface ConsoleServices {
+  activityBoard?: BoardRepository;
   usageActivity?: {
-    totals:(p:Principal,range?:import('./usage-range.mjs').UsageRange)=>Promise<import('./search-activity.mjs').CallTotals>;
-    page:(p:Principal,input:import('./search-activity.mjs').HistoryRequest)=>Promise<import('./search-activity.mjs').SearchActivityPage>;
+    totals:(p:Principal,range?:import('./usage-range.mjs').UsageRange,basis?:'events')=>Promise<import('./search-activity.mjs').CallTotals>;
+    page:(p:Principal,input:import('./search-activity.mjs').HistoryRequest,basis?:'events')=>Promise<import('./search-activity.mjs').SearchActivityPage>;
   };
   usageParts?: {
     highlights(principal: Principal): Promise<import('./reports.mjs').UsageHighlights>;
     details(principal: Principal, range?: import('./usage-range.mjs').UsageRange): Promise<import('./reports.mjs').UsageDetails>;
   };
   usageTokens?: {
-    usage(principal: Principal, range: import('./usage-range.mjs').UsageRange): Promise<import('./usage-range.mjs').TokenUsage>;
+    usage(principal: Principal, range: import('./usage-range.mjs').UsageRange, basis?: 'session-start'): Promise<import('./usage-range.mjs').TokenUsage>;
     sessions(principal: Principal, input: unknown): Promise<import('./usage-range.mjs').TokenSessionPage>;
   };
   log?: Log;
@@ -115,14 +119,23 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       } else if(path==='/api/console/usage/calls'||path==='/api/console/usage/search-history'){
         if(!services.usageActivity)throw consoleFailure(503,'Search activity unavailable.');
         if(path.endsWith('/calls')){
-          const parsed=rangeOnly.safeParse(await input(req));
+          const parsed=activityRequest.safeParse(await input(req));
           if(!parsed.success)throw consoleFailure(400,'Invalid usage range.');
-          body={...await services.usageActivity.totals(principal,parsed.data.range),cacheScope};
+          const totals=await services.usageActivity.totals(principal,parsed.data.range,parsed.data.basis);
+          if(parsed.data.basis==='events' && totals.charged)throw consoleFailure(503,'Observed searches unavailable.');
+          body={...totals,cacheScope};
         }
         else{
-          const parsed=historyRequest.safeParse(await input(req));
+          const parsed=historyRead.safeParse(await input(req));
           if(!parsed.success)throw consoleFailure(400,'Invalid history page.');
-          body={...await services.usageActivity.page(principal,parsed.data),cacheScope};
+          const {basis,...page}=parsed.data;
+          const result=await services.usageActivity.page(principal,page,basis);
+          if(basis==='events' && result.rows.some(row=>row.charge))throw consoleFailure(503,'Observed searches unavailable.');
+          // Look up names only for rows that passed the session visibility check.
+          const identities=basis==='events' && services.activityBoard ? result.rows.map(row=>row.userId && row.sessionId && !row.withheld ? boardIdentity(row.userId,row.sessionId) : '') : [];
+          const ids=[...new Set(identities.filter(Boolean))];
+          const names=ids.length ? await services.activityBoard!.read(digest(principal.tenantId),tx=>tx.agentNames(ids)) : {};
+          body={...result,rows:result.rows.map((row,i)=>names[identities[i]!] ? {...row,agentName:names[identities[i]!]} : row),cacheScope};
         }
       } else if (path === '/api/console/usage') {
         body = await services.usage(principal);
@@ -135,9 +148,9 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         if (!services.usageTokens) throw consoleFailure(404, 'Token usage unavailable.');
         const request = await input(req);
         if (path.endsWith('/tokens')) {
-          const parsed = z.strictObject({range: usageRange}).safeParse(request);
+          const parsed = tokenRangeInput.safeParse(request);
           if (!parsed.success) throw consoleFailure(400, 'Invalid usage range.');
-          body = {...await services.usageTokens.usage(principal, parsed.data.range), cacheScope};
+          body = {...await services.usageTokens.usage(principal, parsed.data.range, parsed.data.basis), cacheScope};
         } else {
           const parsed = tokenSessionsRequest.safeParse(request);
           if (!parsed.success) throw consoleFailure(400, 'Invalid session page.');

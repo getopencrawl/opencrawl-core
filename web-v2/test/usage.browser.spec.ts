@@ -18,6 +18,7 @@ const searchRow = (i: number, kind: string) => ({id: `${kind}-${i}`, at: new Dat
 
 async function serve(page: Page, {sessions = 60}: {sessions?: number} = {}) {
   const requests: Record<string, unknown[]> = {tokens: [], sessions: [], calls: [], history: [], details: []};
+  await page.clock.setFixedTime(new Date(today + 12 * 3600000));
   await page.route('**/api/console/usage/highlights', route => route.fulfill({json: {cacheScope: scope, workspace: 'Example', value: null, capture: null, days: 30, generatedAt: '2026-11-19T12:00:00Z'}}));
   await page.route('**/api/console/usage/details', route => {
     const {range} = route.request().postDataJSON() as {range: string};
@@ -29,7 +30,7 @@ async function serve(page: Page, {sessions = 60}: {sessions?: number} = {}) {
     requests.tokens!.push(range);
     const days = range === '7d' ? 7 : range === 'all' ? 45 : 30;
     const daily = span(days, i => 1000 * (i + 1)).map(({date, value}) => ({date, count: value}));
-    return route.fulfill({json: {cacheScope: scope, source: 'meter', range, total: daily.reduce((sum, d) => sum + (d.count ?? 0), 0), daily}});
+    return route.fulfill({json: {cacheScope: scope, source: 'index', range, total: daily.reduce((sum, d) => sum + (d.count ?? 0), 0), daily}});
   });
   await page.route('**/api/console/usage/token-sessions', route => {
     const input = route.request().postDataJSON() as {range: string; offset?: number};
@@ -69,50 +70,54 @@ for (const width of [1440, 390]) test(`tabs and the date range sit on one bar an
   await page.setViewportSize({width, height: 900});
   await serve(page);
   await page.goto('/usage?split&activity');
-  await expect(page.getByRole('tablist', {name: 'Usage'}).getByRole('tab')).toHaveText(['Overview', 'Searches', 'Proactive context', 'Team', 'Activity', 'Sources']);
+  await expect(page.getByRole('tablist', {name: 'Usage'}).getByRole('tab')).toHaveText(['Overview', 'Searches', 'Proactive suggestions', 'Team', 'Activity', 'Sources']);
   await expect(tab(page, 'Overview')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByLabel('Date range').locator('option')).toHaveText(['Last 30 days', 'Last 7 days', 'All time']);
-  for (const name of ['Overview', 'Searches', 'Proactive context', 'Team', 'Activity', 'Sources']) {
+  await expect(page.getByRole('button', {name:'30 days', exact:true})).toHaveAttribute('aria-pressed','true');
+  for (const name of ['Overview', 'Searches', 'Proactive suggestions', 'Team', 'Activity', 'Sources']) {
     await tab(page, name).click();
-    if (['Overview', 'Searches', 'Proactive context', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart')).toHaveCount(1);
-    if (['Overview', 'Searches', 'Proactive context', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart .report-bar-axis').first()).toHaveText('0');
+    if (['Overview', 'Searches', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart')).toHaveCount(name === 'Overview' ? 2 : 1);
+    if (['Overview', 'Searches', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart .report-bar-axis').first()).toHaveText('0');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
     await page.screenshot({path: info.outputPath(`${name.replace(/ /g, '-').toLowerCase()}-${width}.png`)});
   }
 });
 
-test('Overview shows only session tokens: the total, tokens per day and sessions with who ran them', async ({page}) => {
-  const requests = await serve(page);
+test('Overview shows the three observed metrics, both UTC charts and five searchable events', async ({page}) => {
+  const receipts = await serve(page);
+  const page2 = 'a'.repeat(32);
+  const history: unknown[] = [];
+  await page.route('**/api/console/usage/search-history', route => {
+    const input = route.request().postDataJSON();
+    history.push(input);
+    return route.fulfill({json:{cacheScope:scope,rows:Array.from({length:input.before?2:7},(_,i)=>({...searchRow(i + (input.before?7:0),'agent'), agentName:i===0?'Otter':undefined})),next:input.before?null:page2}});
+  });
   await page.goto('/usage?split&activity');
-  await expect(chartTotal(page, 'Tokens stored')).toHaveText('465k');
-  await expect(metric(page, 'Tokens stored')).toHaveCount(0);
-  await expect(page.locator('.report-metric')).toHaveCount(0);
-  const chart = page.getByRole('region', {name: 'Tokens stored', exact: true});
-  await expect(chart.locator('.report-bar')).toHaveCount(30);
-  await expect(await hoverDay(page, 'Tokens stored', -1)).toHaveText(`${day(0)}30,000 tokens stored`);
-  // The y-axis starts at zero and its top gridline covers the tallest day.
-  await expect(chart.locator('.report-bar-axis').first()).toHaveText('0');
-  await expect(chart.locator('.report-bar-axis').nth(3)).toHaveText('30K');
-  await page.mouse.move(0, 0);
-  await expect(chart.locator('.report-bar-tip')).toHaveCount(0);
-  await chart.locator('svg').focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(chart.getByRole('status')).toHaveText(`${day(29)}: 1,000 tokens stored`);
-  const table = page.getByRole('region', {name: 'Sessions', exact: true}).getByRole('table');
-  await expect(table.locator('thead th')).toHaveText(['Session', 'From', 'Tokens', 'Last active']);
-  await expect(table.locator('tbody tr').first()).toContainText('Alex Example');
-  await expect(table.locator('tbody tr').first()).toContainText('Codex');
-  await expect(table.locator('tbody tr').first().getByRole('link')).toHaveAttribute('href', '/sessions?user=user_alex&harness=codex&id=session-000-abcdef');
-  await expect(table.locator('tbody tr').nth(1)).toContainText('Sam Example');
-  await expect(table.locator('tbody tr')).toHaveCount(25);
-  for (let i = 0; i < 6 && await table.locator('tbody tr').count() < 60; i++) await page.getByRole('region', {name: 'Sessions', exact: true}).locator('[aria-hidden="true"]').last().scrollIntoViewIfNeeded();
-  await expect(table.locator('tbody tr')).toHaveCount(60);
-  await expect(page.getByRole('button', {name: 'Load more'})).toHaveCount(0);
-  await page.getByLabel('Date range').selectOption('7d');
-  await expect(chart.locator('.report-bar')).toHaveCount(7);
-  await expect(chartTotal(page, 'Tokens stored')).toHaveText('28k');
-  expect(requests.tokens!.slice(0, 1)).toEqual(['30d']); expect(requests.tokens).toContain('7d');
-  expect(requests.sessions).toContainEqual({range: '7d'});
+  await expect(page.locator('.report-metric dt')).toHaveText(['Agent searches','OpenCrawl context edits','Session tokens indexed']);
+  await expect(metric(page,'Agent searches')).toHaveText('735');
+  await expect(metric(page,'Session tokens indexed')).toHaveText('0.92 Mtok');
+  const left = page.getByRole('img',{name:'Agent searches per day'}), right = page.getByRole('img',{name:'Session tokens indexed per day'});
+  await expect(left.locator('.report-bar-hit')).toHaveCount(30);
+  await expect(right.locator('.report-bar-hit')).toHaveCount(30);
+  const recent=page.getByRole('region',{name:'Recent agent queries',exact:true});
+  await expect(recent.locator('tbody tr')).toHaveCount(5);
+  await expect(recent.getByRole('img',{name:'Alex Example / Otter'})).toBeVisible();
+  await page.getByRole('button',{name:'View all searches'}).click();
+  const dialog=page.getByRole('dialog',{name:'Recent agent queries'});
+  await expect(dialog.locator('tbody tr').first()).toContainText('agent query 0');
+  await dialog.locator('tbody tr').last().scrollIntoViewIfNeeded();
+  await expect(dialog.locator('tbody tr')).toHaveCount(9);
+  await page.keyboard.press('Escape');
+  await expect(recent.locator('tbody tr')).toHaveCount(5);
+  await page.getByRole('button',{name:'90 days',exact:true}).click();
+  await expect(right.locator('.report-bar-hit')).toHaveCount(90);
+  await expect(left.locator('.report-bar-hit')).toHaveCount(90);
+  await page.getByRole('button',{name:'7 days',exact:true}).click();
+  await expect(right.locator('.report-bar-hit')).toHaveCount(7);
+  await expect(left.locator('.report-bar-hit')).toHaveCount(7);
+  await page.getByRole('button',{name:'Cumulative',exact:true}).click();
+  await expect(page.getByRole('img',{name:'Cumulative indexed session tokens'}).locator('polyline')).toBeVisible();
+  expect(receipts.tokens).toEqual(['all']);
+  expect(history).toContainEqual({kind:'agent',range:'30d',basis:'events',before:page2});
 });
 
 test('Searches and Proactive context each count, chart and list only their own events for the selected range', async ({page}) => {
@@ -132,7 +137,7 @@ test('Searches and Proactive context each count, chart and list only their own e
   await page.getByLabel('Date range').selectOption('all');
   await expect(searches.locator('.report-bar')).toHaveCount(40);
   await expect(await hoverDay(page, 'Agent searches', 0)).toHaveText(`${day(39)}Not tracked`);
-  await tab(page, 'Proactive context').click();
+  await tab(page, 'Proactive suggestions').click();
   await expect(chartTotal(page, 'Proactive context edits')).toHaveText('1,540');
   await expect(await hoverDay(page, 'Proactive context edits', -1)).toHaveText(`${day(0)}78 edits`);
   const edits = page.getByRole('region', {name: 'Edits', exact: true}).getByRole('table');
@@ -165,20 +170,19 @@ test('a changed workspace clears the report instead of showing another workspace
   await page.route('**/api/console/usage/tokens', route => route.fulfill({json: {cacheScope: 'another-workspace', source: 'meter', range: '30d', total: 5, daily: []}}));
   await page.goto('/usage?split&activity');
   await expect(page.getByText('Your workspace changed. Reload this page.')).toBeVisible();
-  await expect(chartTotal(page, 'Tokens stored')).toHaveCount(0);
+  await expect(page.locator('.report-metric')).toHaveCount(0);
 });
 
-test('a failed session page can be retried without losing the totals', async ({page}) => {
+test('recent query retries leave the independent token chart visible', async ({page}) => {
   await serve(page);
-  let fail = true;
-  await page.route('**/api/console/usage/token-sessions', route => fail ? route.fulfill({status: 503, json: {error: 'unavailable'}}) : route.fulfill({json: {cacheScope: scope, rows: [sessionRow(0)], next: null}}));
+  let fail=true;
+  await page.route('**/api/console/usage/search-history',route=>fail?route.fulfill({status:503,json:{error:'unavailable'}}):route.fulfill({json:{cacheScope:scope,rows:[searchRow(0,'agent')],next:null}}));
   await page.goto('/usage?split&activity');
-  const sessions = page.getByRole('region', {name: 'Sessions', exact: true});
-  await expect(sessions.getByText('Sessions couldn’t load.')).toBeVisible();
-  await expect(chartTotal(page, 'Tokens stored')).toHaveText('465k');
-  fail = false;
-  await sessions.getByRole('button', {name: 'Try again'}).click();
-  await expect(sessions.getByRole('table').locator('tbody tr')).toHaveCount(1);
+  await expect(page.getByText('Recent searches couldn’t update.')).toBeVisible();
+  await expect(page.getByRole('img',{name:'Session tokens indexed per day'})).toBeVisible();
+  fail=false;
+  await page.getByRole('button',{name:'Try again'}).click();
+  await expect(page.getByRole('region',{name:'Recent agent queries'}).getByRole('table')).toContainText('agent query 0');
 });
 
 test('without usage tabs data the page still shows the team report', async ({page}) => {
@@ -241,16 +245,11 @@ test('slow lists and charts show a visible spinner instead of a blank panel', as
   await serve(page);
   let release = () => {};
   const held = new Promise<void>(resolve => {release = resolve;});
-  await page.route('**/api/console/usage/token-sessions', async route => {await held; await route.fulfill({json: {cacheScope: scope, rows: [sessionRow(0)], next: null}});});
+  await page.route('**/api/console/usage/search-history', async route => {await held; await route.fulfill({json: {cacheScope:scope,rows:[searchRow(0,'agent')],next:null}});});
   await page.goto('/usage?split&activity');
-  const sessions = page.getByRole('region', {name: 'Sessions', exact: true});
-  const spinner = sessions.locator('.oc-loading-spinner');
-  await expect(spinner).toBeVisible();
-  await expect(spinner).toHaveText('Loading sessions…');
-  await expect(spinner.locator('.oc-spin')).toBeVisible();
+  await expect(page.getByText('Loading recent searches…')).toBeVisible();
   release();
-  await expect(sessions.getByRole('table').locator('tbody tr')).toHaveCount(1);
-  await expect(spinner).toHaveCount(0);
+  await expect(page.getByRole('region',{name:'Recent agent queries'}).getByRole('table')).toBeVisible();
 });
 
 test('with a billing meter every search row shows what it cost and why, and the arithmetic adds up', async ({page}) => {
@@ -288,44 +287,20 @@ test('with a billing meter every search row shows what it cost and why, and the 
   await expect(cells(5).nth(4)).toHaveText('Not recorded');
   // The charged rows on screen are the charge.
   expect(await rows.filter({hasText: '3 credits'}).count()).toBe(4);
-  await tab(page, 'Proactive context').click();
+  await tab(page, 'Proactive suggestions').click();
   const edits = page.getByRole('region', {name: 'Edits', exact: true});
   await expect(edits.locator('.usage-charge-summary')).toHaveText('1 edit charged × 10 credits = 10 credits.');
   await expect(edits.getByRole('table').locator('thead th')).toHaveText(['Time', 'Triggering message', 'Search', 'Results', 'From', 'Session', 'Charge']);
   await expect(edits.getByRole('table').locator('tbody tr').first()).toContainText('10 credits');
 });
 
-test('other ranges load in the background, so changing the range shows data at once without a new wait', async ({page}) => {
-  const requests = await serve(page);
-  await page.goto('/usage?split&activity');
-  await expect(chartTotal(page, 'Tokens stored')).toHaveText('465k');
-  // Every range of every read is fetched once, the selected one first.
-  await expect.poll(() => [requests.tokens!.length, requests.details!.length, requests.calls!.length, new Set(requests.sessions!.map(r => (r as {range: string}).range)).size]).toEqual([3, 3, 3, 3]);
-  expect(requests.tokens![0]).toBe('30d'); expect(requests.details![0]).toBe('30d');
-  // Hold every further response: what appears now can only come from what was already loaded.
-  let release = () => {};
-  const held = new Promise<void>(resolve => {release = resolve;});
-  await page.route('**/api/console/usage/**', async route => {await held; await route.fallback();});
-  try {
-    await page.getByLabel('Date range').selectOption('all');
-    await expect(chartTotal(page, 'Tokens stored')).toHaveText('1M');
-    await expect(page.locator('.oc-loading-spinner')).toHaveCount(0);
-    await tab(page, 'Team').click();
-    await expect(metric(page, 'Sessions')).toHaveText('4');
-    await expect(page.getByRole('region', {name: 'Agent sessions per day', exact: true}).locator('.report-bar')).toHaveCount(40);
-    await tab(page, 'Searches').click();
-    await expect(chartTotal(page, 'Agent searches')).toBeVisible();
-    await page.getByLabel('Date range').selectOption('7d');
-    await expect(chartTotal(page, 'Agent searches')).toHaveText('21');
-    await tab(page, 'Overview').click();
-    await expect(chartTotal(page, 'Tokens stored')).toHaveText('28k');
-    await expect(page.getByRole('region', {name: 'Sessions', exact: true}).getByRole('table')).toBeVisible();
-  } finally {release();}
-});
-
-test('memories are shown as their own line so the list and the total add up', async ({page}) => {
+test('Overview ignores billing snapshots and retains observed metrics across range changes', async ({page}) => {
   await serve(page);
-  await page.route('**/api/console/usage/tokens', route => route.fulfill({json: {cacheScope: scope, source: 'meter', range: '30d', total: 5_000_000, memories: 1_250_000, daily: [{date: day(0), count: 5_000_000}]}}));
+  await page.route('**/api/console/usage/tokens',route=>route.fulfill({json:{cacheScope:scope,source:'meter',range:'all',total:5_000_000,daily:[]}}));
   await page.goto('/usage?split&activity');
-  await expect(page.locator('.usage-memories')).toHaveText('Memories: 1.3M tokens stored. They are part of the total above and are not listed by session.');
+  await expect(metric(page,'Session tokens indexed')).toHaveText('Unavailable');
+  await expect(metric(page,'Agent searches')).toHaveText('735');
+  await page.getByRole('button',{name:'7 days',exact:true}).click();
+  await expect(metric(page,'Agent searches')).toHaveText('252');
+  await expect(page.getByText('Tokens stored')).toHaveCount(0);
 });

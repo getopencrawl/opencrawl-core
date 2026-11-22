@@ -1,5 +1,5 @@
-import {historyRequest,type SearchActivityPage,type CallTotals} from './search-activity.mjs';
-import {usageRange, tokenSessionsRequest, type TokenUsage, type TokenSessionPage} from './usage-range.mjs';
+import {activityRequest,historyRead,type SearchActivityPage,type CallTotals} from './search-activity.mjs';
+import {tokenRangeInput,usageRange, tokenSessionsRequest, type TokenUsage, type TokenSessionPage} from './usage-range.mjs';
 import {replicasImportInput} from './replicas-import-http.mjs';
 import {devinRecordingInput} from './devin-recording-http.mjs';
 import type {IncomingMessage} from 'node:http';
@@ -33,10 +33,10 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
       return report;
     }),
     usageHighlights: p.input(empty).query(({ctx}) => ctx.invoke<import('./reports.mjs').UsageHighlights & {cacheScope: string}>('/api/console/usage/highlights')),
-    callTotals:p.input(rangeOnly).query(({ctx,input})=>ctx.invoke<CallTotals & {cacheScope:string}>('/api/console/usage/calls','POST',input)),
-    usageTokens:p.input(z.strictObject({range:usageRange})).query(({ctx,input})=>ctx.invoke<TokenUsage & {cacheScope:string}>('/api/console/usage/tokens','POST',input)),
+    callTotals:p.input(activityRequest.optional().transform(value => value ?? {})).query(({ctx,input})=>ctx.invoke<CallTotals & {cacheScope:string}>('/api/console/usage/calls','POST',input)),
+    usageTokens:p.input(tokenRangeInput).query(({ctx,input})=>ctx.invoke<TokenUsage & {cacheScope:string}>('/api/console/usage/tokens','POST',input)),
     tokenSessions:p.input(tokenSessionsRequest).query(({ctx,input})=>ctx.invoke<TokenSessionPage & {cacheScope:string}>('/api/console/usage/token-sessions','POST',input)),
-    searchHistory:p.input(historyRequest).query(({ctx,input})=>ctx.invoke<SearchActivityPage & {cacheScope:string}>('/api/console/usage/search-history','POST',input)),
+    searchHistory:p.input(historyRead).query(({ctx,input})=>ctx.invoke<SearchActivityPage & {cacheScope:string}>('/api/console/usage/search-history','POST',input)),
     usageDetails: p.input(rangeOnly).query(({ctx,input}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details','POST',input)),
     sources: p.input(empty).query(({ctx}) => ctx.invoke<{items: SourceCard[]}>('/api/console/sources')),
     team: p.input(empty).query(({ctx}) => ctx.invoke<T>('/api/console/team')),
