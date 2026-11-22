@@ -36,7 +36,7 @@ test('facets use authorized candidates, projections omit content, all controls b
   assert.equal(r.facetScope,'authorized_candidate_window');assert.equal(r.coverage[0].truncated,true);
   assert.deepEqual(r.facets.source.values,[{value:'sessions',count:2}]);
   assert.equal(r.results[0].text,undefined);assert.equal(r.results[0].provenance,undefined);assert.ok(r.results[0].id);
-  for(const change of [{select:['text']},{facets:['source']},{filters:{roles:['user']}},{filters:{sessionIds:['another-chat']}},{order:'newest'},{excerptChars:100}])
+  for(const change of [{select:['text']},{facets:['source']},{filters:{roles:['user']}},{filters:{sessionIds:['another-chat']}},{excerptChars:100}])
     await assert.rejects(service.search(principal,{...input,...change,cursor:r.next}),/cursor/);
   const denied=createWorkspaceSearch({connectors:{search:async()=>{throw Object.assign(new Error('forbidden'),{status:403});}}});
   await assert.rejects(denied.search(principal,{query:'x',facets:['author']}),/forbidden/);
@@ -46,6 +46,10 @@ test('time browsing merges source timestamps, puts unknown dates last, and rejec
   const r=await s.search(principal,{query:'',order:'newest'});
   assert.deepEqual(r.results.map(h=>h.id),['memories:m','sessions:a','connectors:c']);
   await assert.rejects(s.search(principal,{query:''}),/Invalid/);
+  for (const order of ['oldest','newest']) {
+    await assert.rejects(s.search(principal,{query:'rollback',order}),{status:400});
+    assert.ok((await s.search(principal,{query:'',order})).results.length);
+  }
 });
 
 test('legacy dedupe=false inspects all chunks and connector counters are not passage offsets',async()=>{

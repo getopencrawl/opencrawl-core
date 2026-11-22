@@ -65,7 +65,7 @@ MCP authentication, and installation is not proof that a session is searchable.
 Issue or check a client-bound proof. The installation defaults to this machine's
 saved setup in the authenticated workspace. Follow returned human tasks in that client.
 `+common;
-  if(command==='search')return `Usage: opencrawl search "keywords" [options]
+  if(command==='search'||command==='browse')return `Usage: opencrawl ${command==='browse'?'browse [--order newest|oldest]':'search "keywords"'} [options]
 
 On supporting servers, defaults exclude session tool/command output and the
 current chat when its exact native identity is supplied. Check data.searchContext:
@@ -77,10 +77,10 @@ The three context options below require server support; never infer legacy defau
   --include-current-session         Include the calling chat
   --current-session JSON            {"harness":"codex","sessionId":"native-chat-id"}
   --source all|sessions|connectors|memories
-  --match any|all|phrase            Default any; all requires every term
-  --session-id ID                  Search only this session (--source sessions)
+${command==='search'?'  --match any|all|phrase            Default any; all requires every term\n':''}  --session-id ID                  Search only this session (--source sessions)
   --filters JSON                   Exact provenance filters
-  --order relevance|newest|oldest   Empty query allowed with time order
+  --after/--since DATE             Inclusive start (ISO timestamp or UTC date)
+  --before/--until DATE            Inclusive end (ISO timestamp or UTC date)
   --limit 1..40                    Default 10
   --facets source,kind,harness     Counts over authorized candidates
   --select title,text,provenance   Omit text for discovery, then fetch evidence

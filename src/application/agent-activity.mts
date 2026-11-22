@@ -4,7 +4,7 @@ import type {Principal} from '../identity/types.mjs';
 import {searchDetail,type SearchActivity,type SearchEntry} from '../state/search-activity.mjs';
 
 const searches=new Map([
-  ['opencrawl_search_v1','Workspace'],['opencrawl_search','Workspace'],['search','Workspace'],
+  ['opencrawl_search_v1','Workspace'],['opencrawl_search','Workspace'],['search','Workspace'],['opencrawl_browse','Workspace'],
   ['board_search','Board'],['session_search','Sessions'],['connector_search','Connectors'],
 ]);
 export function agentSearchEntry(tool:string|null,input:unknown):SearchEntry|undefined{

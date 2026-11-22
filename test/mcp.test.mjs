@@ -181,6 +181,38 @@ test('authenticated tool receipts cover each protocol and registered extensions 
   ]).flat());
 });
 
+test('keyword aliases rank by relevance and timeline browsing accepts no keywords', async t => {
+  const calls=[];
+  let handler;
+  const server=createServer((req,res)=>handler(req,res));
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin='http://127.0.0.1:'+server.address().port;
+  handler=createOpenCrawlMcp({origin,authenticate:()=>({tenantId:'org',userId:'member'}),
+    search:{async search(_principal,input){calls.push(input);return {results:[],coverage:[{state:'ready'}]};}}});
+  t.after(async()=>{await handler.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  const client=new Client({name:'search-order',version:'1'});
+  await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp')));
+  t.after(()=>client.close());
+  const {tools}=await client.listTools();
+  const bounds={after:'2026-11-10T00:00:00Z'};
+  for (const name of ['opencrawl_search_v1','opencrawl_search','search']) {
+    const schema=tools.find(tool=>tool.name===name).inputSchema;
+    assert.ok(!JSON.stringify(schema.properties.order).includes('newest'));
+    for (const order of ['newest','oldest']) {
+      assert.equal((await client.callTool({name,arguments:{query:'avatar',order}})).isError,true);
+    }
+    assert.ok(!(await client.callTool({name,arguments:{query:'avatar',filters:bounds}})).isError);
+    assert.deepEqual(calls.at(-1).filters,bounds);
+    assert.ok(!(await client.callTool({name,arguments:{query:'',order:'oldest'}})).isError);
+  }
+  const name='opencrawl_browse',currentSession={harness:'codex',sessionId:'this-chat'};
+  assert.ok(!(await client.callTool({name,arguments:{currentSession,filters:bounds}})).isError);
+  assert.deepEqual(calls.at(-1).currentSession,currentSession);
+  assert.equal(calls.at(-1).order,'newest');assert.equal(calls.at(-1).query,'');
+  assert.equal((await client.callTool({name,arguments:{query:'avatar'}})).isError,true);
+  assert.equal(calls.length,7);
+});
+
 test('Usage records one invocation per registered MCP call and selects only search fields',async t=>{
   const calls=[],principal={tenantId:'workspace',userId:'member'};
   let handler;

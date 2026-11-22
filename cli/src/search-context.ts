@@ -6,7 +6,11 @@ export const searchContextMarker = 'OpenCrawl search context';
 // Advertised aliases prove the server accepts currentSession. Older servers
 // expose only search and may reject new arguments in their schema.
 const boardContextTools=['board_post','board_sync','board_presence','board_follow','board_inbox'];
+const browseTool = 'opencrawl_browse';
 const searchTools = [
+  'mcp__opencrawl__opencrawl_browse',
+  'mcp__plugin_opencrawl_opencrawl__opencrawl_browse',
+  'mcp__codex_apps__opencrawl_opencrawl_browse',
   ...boardContextTools.flatMap(tool=>[`mcp__opencrawl__${tool}`,`mcp__plugin_opencrawl_opencrawl__${tool}`,`mcp__codex_apps__opencrawl_${tool}`]),
   'mcp__opencrawl__opencrawl_search',
   'mcp__plugin_opencrawl_opencrawl__opencrawl_search',
@@ -16,15 +20,15 @@ const searchTools = [
   'mcp__codex_apps__opencrawl_opencrawl_search_v1',
 ] as const;
 export const searchContextMatcher = '^(?:' + searchTools.join('|') + ')$';
-const cursorSearchTools = ['MCP:opencrawl_search', 'MCP:opencrawl_search_v1'];
+const cursorSearchTools = ['MCP:opencrawl_search', 'MCP:opencrawl_search_v1', 'MCP:opencrawl_browse'];
 export const cursorSearchContextMatcher = '^(?:' + cursorSearchTools.join('|') + ')$';
 // Antigravity flattens server/tool names: plugin opencrawl/server opencrawl/raw
 // search collides with manual server opencrawl/raw opencrawl_search. Its hook
 // payload cannot distinguish them, so only v1 is safe. Keep raw search_v1
 // unexposed on the server to prevent that collision recurring for v1.
-const antigravitySearchTools = ['mcp_opencrawl_opencrawl_search_v1', 'mcp_opencrawl_opencrawl_opencrawl_search_v1',...boardContextTools.flatMap(tool=>[`mcp_opencrawl_${tool}`,`mcp_opencrawl_opencrawl_${tool}`])];
+const antigravitySearchTools = ['mcp_opencrawl_opencrawl_search_v1', 'mcp_opencrawl_opencrawl_opencrawl_search_v1','mcp_opencrawl_opencrawl_browse','mcp_opencrawl_opencrawl_opencrawl_browse',...boardContextTools.flatMap(tool=>[`mcp_opencrawl_${tool}`,`mcp_opencrawl_opencrawl_${tool}`])];
 export const antigravitySearchContextMatcher = '^(?:' + [...antigravitySearchTools, 'call_mcp_tool'].join('|') + ')$';
-const aliases = ['opencrawl_search','opencrawl_search_v1',...boardContextTools];
+const aliases = ['opencrawl_search','opencrawl_search_v1',browseTool,...boardContextTools];
 // Candidate filter only. Claude supplies the server provenance at call time.
 export const claudeSearchContextMatcher = '^(?:' + searchTools.join('|') + '|mcp__.+__(?:' + aliases.join('|') + '))$';
 /** Match only this installed deployment, including the native identifier's
@@ -35,7 +39,7 @@ function selectedTools(harness:string,pluginName?:string) {
   const names=[pluginName,pluginName.replaceAll('-','_')];
   return {
     standard:names.flatMap(name=>aliases.map(alias=>harness==='codex'?`mcp__${name}__${alias}`:`mcp__plugin_${name}_opencrawl__${alias}`)),
-    agy:names.flatMap(name=>['opencrawl_search_v1',...boardContextTools].map(tool=>`mcp_${name}_opencrawl_${tool}`)),
+    agy:names.flatMap(name=>['opencrawl_search_v1',browseTool,...boardContextTools].map(tool=>`mcp_${name}_opencrawl_${tool}`)),
     servers:names.map(name=>name+'_opencrawl'),
   };
 }
@@ -61,7 +65,7 @@ export function searchContext(harness: string, event: unknown, pluginName?:strin
       const args = event.toolCall.args;
       if(boardContextTools.includes(args.ToolName as string)&&!boardSupported)return;
       if (!tools.servers.includes(args.ServerName as string)
-          || !['opencrawl_search_v1',...boardContextTools].includes(args.ToolName as string) || !object(args.Arguments)) return;
+          || !['opencrawl_search_v1',browseTool,...boardContextTools].includes(args.ToolName as string) || !object(args.Arguments)) return;
       // GUI dispatch carries an object, not a JSON string. Native overwrite
       // replaces nested objects wholesale, so preserve every search argument.
       return {decision:'allow', overwrite:{Arguments:{...args.Arguments, currentSession}}};

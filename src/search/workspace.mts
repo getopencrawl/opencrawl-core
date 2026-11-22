@@ -19,8 +19,8 @@ import {candidateFacets, facetNames} from './facets.mjs';
 import {memoryPassageId} from '../memories/projection.mjs';
 import {fail} from '../errors.mjs';
 
-export const workspaceSearchSchema = z.strictObject({
-  query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Empty only for time-ordered browsing.'),
+const searchOptions = z.strictObject({
+  query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Use filters.after and filters.before to focus on a period.'),
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term in one indexed passage, across its title/text fields. Terms do not combine across a chat. phrase requires analyzed words in order.'),
   sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
@@ -36,8 +36,23 @@ export const workspaceSearchSchema = z.strictObject({
   select: z.array(z.enum(['title','text','url','provenance'])).max(4).default(['title','text','url','provenance']).describe('Response fields to return. id and source are always included. Omit text for cheap discovery, then fetch.'),
   excerptChars: z.number().int().min(100).max(2000).default(800),
   groupBy: z.enum(['none','resource','session']).default('resource').describe('resource keeps the best passage per session event, memory file, or connector document. session also groups whole sessions. none returns every passage.'),
-}).refine(v => !v.sessionId || v.source === 'sessions', 'sessionId requires source=sessions')
-  .refine(v=>Boolean(v.query)||v.order!=='relevance','Empty query requires newest or oldest order');
+});
+const sessionSourceMatches = (input: {sessionId?: string; source: string}) => !input.sessionId || input.source === 'sessions';
+const timelineOrder = z.enum(['newest','oldest']);
+const validSearchOrder = (v: {query: string; order?: string}) => v.query
+  ? v.order === undefined || v.order === 'relevance'
+  : v.order === 'newest' || v.order === 'oldest';
+const orderGuidance = 'Keyword search ranks by relevance. Use filters.after/before for a time window, or opencrawl_browse without keywords.';
+export const workspaceSearchSchema = searchOptions.refine(sessionSourceMatches, 'sessionId requires source=sessions')
+  .refine(validSearchOrder, orderGuidance);
+// Older native skills browse with {query:'',order:...} on a search alias.
+// Keep those calls working while directing new timeline callers to browse.
+export const keywordSearchSchema = searchOptions.extend({
+  order: z.string().optional().describe('Deprecated compatibility field. Omit it for keyword search. Use opencrawl_browse for timelines.'),
+}).refine(sessionSourceMatches, 'sessionId requires source=sessions').refine(validSearchOrder, orderGuidance);
+export const workspaceBrowseSchema = searchOptions.omit({query:true,match:true,order:true}).extend({
+  order: timelineOrder.default('newest'),
+}).refine(sessionSourceMatches, 'sessionId requires source=sessions');
 export const workspaceFetchSchema = z.strictObject({
   id: z.string().regex(/^(sessions|connectors|memories):[A-Za-z0-9_:-]{1,256}$/).describe('An id returned by search. Access is checked again on every fetch.'),
   offset: z.number().int().min(0).max(10_000_000).default(0),
@@ -75,7 +90,7 @@ export function createWorkspaceSearch({capturePairs,sessions, connectors,memorie
       sessionScope(principal);
       if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
       const parsed = workspaceSearchSchema.safeParse(input);
-      if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, currentSession, includeCurrentSession, includeToolOutputs, limit, dedupe, groupBy and cursor. Empty query requires a time order.');
+      if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, currentSession, includeCurrentSession, includeToolOutputs, limit, dedupe, groupBy and cursor. Use filters.after/before with keywords. Time ordering requires an empty query.');
       // Preserve the original dedupe=false inspection contract for older clients.
       if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
       const {cursor, ...query} = parsed.data;

@@ -71,7 +71,7 @@ for(const backend of ['sqlite','opensearch']){
     const search=createWorkspaceSearch({sessions});
     assert.equal((await search.fetch(foreign,{id:'sessions:past'})).text,'foreign evidence');
     assert.equal((await search.fetch(principal,{id:'sessions:past'})).text,'evidence past');
-    const input={query:'evidence',source:'sessions',currentSession,order:'newest',dedupe:false,groupBy:'none',facets:['kind','author','sessionId'],limit:1};
+    const input={query:'',source:'sessions',currentSession,order:'newest',dedupe:false,groupBy:'none',facets:['kind','author','sessionId'],limit:1};
     const first=await search.search(principal,input);
     assert.deepEqual(first.searchContext,{currentSession,currentSessionStatus:'excluded',currentSessionExcluded:true,toolOutputsIncluded:false,unclassifiedSessionCandidates:3,
       warning:'Some session candidates predate tool-output classification. Legacy embedded tool outputs may remain until the server metadata migration completes.'});

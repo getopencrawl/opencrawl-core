@@ -10,6 +10,16 @@ test('search command validates filters before sending and never accepts a scope 
   expect(searchInput(' incident filters ', {})).toEqual({query:'incident filters',source:'all',match:'any',limit:10});
   for (const [query, options] of [['',{}],['x',{source:'bad'}],['x',{match:'bad'}],['x',{limit:'41'}],['x',{'session-id':'s'}]] as const) expect(()=>searchInput(query,options)).toThrow();
 });
+test('time bounds reject contradictions, invalid dates, and timestamps without a timezone', () => {
+  const after = '2026-11-10T00:00:00Z';
+  expect(searchInput('x',{since:after,after,filters:JSON.stringify({after})}).filters).toEqual({after});
+  expect(searchInput('x',{since:'2026-11-09T16:00:00-08:00'}).filters).toEqual({after:'2026-11-09T16:00:00-08:00'});
+  for (const flags of [{since:'2026-11-31'}, {until:'invalid'}, {since:'2026-11-10T01:00:00'},
+    {since:'2026-11-11',until:'2026-11-10'}, {since:'2026-11-11',after}, {before:after,filters:JSON.stringify({before:'2026-11-12'})}]) {
+    expect(() => searchInput('x',flags)).toThrow();
+  }
+});
+
 test('fetch command validates paging and uses the authenticated fetch endpoint', async () => {
   expect(fetchInput('sessions:abc',{})).toEqual({id:'sessions:abc',offset:0,length:6000});
   expect(searchInput('x',{'no-dedupe':true})).toMatchObject({dedupe:false});

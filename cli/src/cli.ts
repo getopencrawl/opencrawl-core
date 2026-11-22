@@ -45,7 +45,8 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   signup      Register this agent and activate its own workspace without a browser
   whoami      Verify your saved session or environment token with the service
   status      Show installation, sign-in and index availability
-  search      Search session history and indexed workspace connectors
+  search      Search workspace knowledge by relevance
+  browse      Browse a workspace timeline without keywords
   context-suggestions  Enable, disable or inspect automatic bounded prompt checks
   mcp         Serve the configured OpenCrawl MCP over stdio
   workload    Connect a cloud organization with one-time admin approval
@@ -104,8 +105,8 @@ Search: opencrawl search "words" --json
   --session-id ID                   Narrow a sessions-only query
   --filters JSON                   Exact roles/authors/kinds/providers/repositories/harnesses/origins/clientApps/sessionIds/projects/paths
   --role user|assistant             Session role filter
-  --after ISO --before ISO          Original message/memory time bounds
-  --order relevance|newest|oldest    Empty query allowed with time order
+  --after/--since DATE --before/--until DATE   Inclusive time bounds; date-only values use UTC days
+  opencrawl browse [--order newest|oldest]    List entries by time without keywords
   --facets source,kind,provider     Counts over authorized candidates, not the whole corpus
   --select title,provenance         Omit text for cheap discovery; fetch selected IDs
   --group-by resource|session|none  Default: resource
@@ -317,7 +318,7 @@ export async function main(args = process.argv.slice(2)) {
     informational=hasLocalFlag(args)||Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token','files'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'browse', 'fetch','board','skills','token','files'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
@@ -434,8 +435,11 @@ export async function main(args = process.argv.slice(2)) {
       emit(data, formatFetch(data));
       return 0;
     }
-    if (command === 'search') {
-      const input = searchInput(parsed.positionals[1], parsed.values);
+    if (command === 'search' || command === 'browse') {
+      if (command === 'browse' && parsed.values.match !== undefined)
+        throw new CliError('INVALID_USAGE','--match applies to keyword search.',64);
+      const options = command === 'browse' ? {...parsed.values, order: parsed.values.order ?? 'newest'} : parsed.values;
+      const input = searchInput(parsed.positionals[1], options);
       const data = await searchWorkspace(api, input);
       emit(data, formatSearch(data));
       return data.partial || data.coverage.every((c: any) => c.state !== 'ready') ? 1 : 0;

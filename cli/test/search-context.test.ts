@@ -28,7 +28,7 @@ test('subagents use the same native identity as capture, not their parent or dis
 test('only exact OpenCrawl search tools receive caller identity',()=>{
   const matcher=new RegExp(searchContextMatcher);
   for(const tool_name of ['mcp__opencrawl__opencrawl_search','mcp__plugin_opencrawl_opencrawl__opencrawl_search','mcp__codex_apps__opencrawl_opencrawl_search',
-    'mcp__opencrawl__opencrawl_search_v1','mcp__plugin_opencrawl_opencrawl__opencrawl_search_v1','mcp__codex_apps__opencrawl_opencrawl_search_v1']) {
+    'mcp__opencrawl__opencrawl_search_v1','mcp__plugin_opencrawl_opencrawl__opencrawl_search_v1','mcp__codex_apps__opencrawl_opencrawl_search_v1','mcp__opencrawl__opencrawl_browse']) {
     expect(matcher.test(tool_name)).toBe(true);
     for(const harness of ['codex','claude-code']) {
       const result=searchContext(harness,{...event,tool_name}) as any;
@@ -50,7 +50,7 @@ test('only exact OpenCrawl search tools receive caller identity',()=>{
 test('Cursor uses its native conversation ID only for the unique OpenCrawl alias',()=>{
   const cursor={hook_event_name:'preToolUse',conversation_id:'cursor-conversation',session_id:'other-session',tool_name:'MCP:opencrawl_search_v1',tool_input:input};
   const matcher=new RegExp(cursorSearchContextMatcher);
-  for(const tool_name of ['MCP:opencrawl_search','MCP:opencrawl_search_v1']) {
+  for(const tool_name of ['MCP:opencrawl_search','MCP:opencrawl_search_v1','MCP:opencrawl_browse']) {
     expect(matcher.test(tool_name)).toBe(true);
     expect(searchContext('cursor',{...cursor,tool_name})).toEqual({updated_input:{...input,currentSession:{harness:'cursor',sessionId:'cursor-conversation'}}});
   }

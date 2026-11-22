@@ -23,6 +23,40 @@ test('agent command errors keep stdout JSON, stable exit codes and credential-fr
 });
 
 
+test('search date aliases reach the HTTP request and browsing stays keyword-free', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'opencrawl-search-bounds-'));
+  const requests: unknown[] = [];
+  const server = Bun.serve({hostname:'127.0.0.1',port:0,async fetch(req) {
+    requests.push(await req.json());
+    return Response.json({schemaVersion:1,data:{results:[],coverage:[{source:'sessions',state:'ready'}],partial:false}});
+  }});
+  const run = async (...args: string[]) => {
+    const child = Bun.spawn(['bun',resolve(import.meta.dir,'../src/cli.ts'),...args,'--json'],{
+      env:{...process.env,OPENCRAWL_API_URL:server.url.origin,OPENCRAWL_TOKEN:'test-only',OPENCRAWL_CONFIG_HOME:directory},
+      stdout:'pipe',stderr:'pipe',
+    });
+    const out = await new Response(child.stdout).text();
+    return {code:await child.exited,body:JSON.parse(out)};
+  };
+  try {
+    const bounds = {after:'2026-11-10T00:00:00.000Z',before:'2026-11-20T23:59:59.999Z'};
+    expect((await run('search','avatar','--since','2026-11-10','--until','2026-11-20')).code).toBe(0);
+    expect((await run('search','avatar','--after','2026-11-10','--before','2026-11-20')).code).toBe(0);
+    expect((await run('browse','--order','oldest','--since','2026-11-10')).code).toBe(0);
+    expect(requests).toHaveLength(3);
+    expect(requests[0]).toMatchObject({query:'avatar',filters:bounds});
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[2]).toMatchObject({query:'',order:'oldest',filters:{after:bounds.after}});
+    for (const args of [['search','avatar','--order','newest'],['search','avatar','--order','oldest'],['browse','avatar'],['browse','--match','all']]) {
+      expect((await run(...args)).code).toBe(64);
+    }
+    expect(requests).toHaveLength(3);
+  } finally {
+    server.stop(true);
+    rmSync(directory,{recursive:true,force:true});
+  }
+});
+
 test('identity distinguishes organization setup, email verification and denied access', async () => {
   const {identity}=await import('../src/cli.ts');
   for(const [code,message] of [

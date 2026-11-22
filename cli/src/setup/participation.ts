@@ -35,10 +35,10 @@ function settingsList(settings: Record<string, unknown>, section: string, key: s
 }
 
 function claudeRules(platform: NodeJS.Platform) {
-  const commands = ['board', 'search', 'fetch', 'files'];
+  const commands = ['board', 'search', 'browse', 'fetch', 'files'];
   const shells = platform === 'win32' ? ['Bash', 'PowerShell'] : ['Bash'];
   // The setup-owned plugin declares an MCP server named opencrawl.
-  const tools = ['board_*', 'opencrawl_search_v1', 'opencrawl_search', 'search', 'fetch'];
+  const tools = ['board_*', 'opencrawl_search_v1', 'opencrawl_search', 'search', 'opencrawl_browse', 'fetch'];
   return [
     ...shells.flatMap(shell => commands.map(command => `${shell}(opencrawl ${command} *)`)),
     ...tools.map(tool => 'mcp__plugin_opencrawl_opencrawl__' + tool),

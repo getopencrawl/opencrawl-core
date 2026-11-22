@@ -42,7 +42,7 @@ can choose a tenant, index, endpoint, credentials or raw OpenSearch DSL.
 
 ## Contract
 
-- `query`: up to 4,000 characters; empty only with `order: newest | oldest`.
+- `query`: up to 4,000 characters. Keywords always rank by relevance. Use `filters.after` and `filters.before` to limit the period.
 - `source`: `all` (default), `sessions`, `memories`, or `connectors`.
 - `match`: `any` (default, broad term matching), `all` (every analyzed term in
   one passage), or `phrase` (analyzed words in order). Phrase matching uses the
@@ -71,7 +71,11 @@ to connectors. Incompatible sources produce no matches, never an unfiltered
 fallback. Session and memory time controls use original event/modification time.
 Connector bounds/order use the realm timestamp, which can fall back to indexing
 time when the source supplies no valid date. Inspect provenance before making
-chronological claims. `order` is `relevance` (default), `newest`, or `oldest`.
+chronological claims. For a timeline, call `opencrawl_browse` or `opencrawl browse`
+with `order`/`--order` set to `newest` (default) or `oldest`. The HTTP endpoint
+also accepts an empty query with either time order for existing timeline clients.
+The CLI accepts `--after`/`--since` and `--before`/`--until`. A date-only lower
+bound starts at midnight UTC and a date-only upper bound includes the whole UTC day.
 
 Session provenance includes the recorded `origin`: `cli`, `desktop`, `cloud`,
 `subagent`, or `unknown`. If review or worker chats crowd a query, inspect the

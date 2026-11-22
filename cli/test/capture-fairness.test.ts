@@ -162,7 +162,7 @@ for(const activate of [false,true])test(activate
   expect(readFileSync(join(skill,'SKILL.md'),'utf8')).toBe(skillFiles()['SKILL.md']);
   const settings=JSON.parse(readFileSync(join(process.env.CURSOR_CONFIG_DIR!,'hooks.json'),'utf8'));
   const adapters=settings.hooks.preToolUse.filter((entry:any)=>entry.command.endsWith('search-context --harness cursor'));
-  expect(adapters).toHaveLength(1);expect(adapters[0].matcher).toBe('^(?:MCP:opencrawl_search|MCP:opencrawl_search_v1)$');
+  expect(adapters).toHaveLength(1);expect(adapters[0].matcher).toBe('^(?:MCP:opencrawl_search|MCP:opencrawl_search_v1|MCP:opencrawl_browse)$');
  }
 }));
 

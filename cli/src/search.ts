@@ -32,19 +32,40 @@ export const memoryReader = (api:string,token:string) => ({
 export const searchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'search', input, fetcher);
 export const fetchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'fetch', input, fetcher);
 
+// Date-only flags name whole UTC days. Timestamps retain their explicit offset.
+function searchBound(value: unknown, key: 'after' | 'before'): string {
+  const invalid = () => new CliError('INVALID_USAGE', 'Use a UTC date (YYYY-MM-DD) or an ISO timestamp with timezone for '+key+'.', 64);
+  if (typeof value !== 'string') throw invalid();
+  const day = value.slice(0, 10);
+  const midnight = new Date(day+'T00:00:00Z');
+  if (!Number.isFinite(midnight.getTime()) || midnight.toISOString().slice(0, 10) !== day) throw invalid();
+  if (value === day) return day+(key === 'after' ? 'T00:00:00.000Z' : 'T23:59:59.999Z');
+  if (!/^\d{4}-\d\d-\d\dT(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) throw invalid();
+  return value;
+}
+
 export function searchInput(query: string | undefined, values: Record<string, unknown>) {
   const source = values.source ?? 'all', match = values.match ?? 'any', limit = Number(values.limit ?? 10), sessionId = values['session-id'], cursor = values.cursor;
   const order=values.order;
+  if (query?.trim() && (order === 'newest' || order === 'oldest'))
+    throw new CliError('INVALID_USAGE','Keyword search ranks by relevance. Use --after/--before for a time window, or opencrawl browse for a timeline.',64);
   if ((!query?.trim()&&!['newest','oldest'].includes(String(order))) || (query?.length??0) > 4000 || !['all','sessions','connectors','memories'].includes(source as string) || !['all','any','phrase'].includes(match as string) || !Number.isInteger(limit) || limit < 1 || limit > 40 || (sessionId !== undefined && (source !== 'sessions' || typeof sessionId !== 'string' || !sessionId || sessionId.length > 200)) || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048)) || order!==undefined&&!['relevance','newest','oldest'].includes(String(order))) throw new CliError('INVALID_USAGE', 'Use search "keywords" --match all. See opencrawl --help for filters, projections and browsing.', 64);
   let filters:Record<string,unknown>={};
   if(values.filters!==undefined){try{filters=JSON.parse(String(values.filters));}catch{throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);}}
   if(!filters||typeof filters!=='object'||Array.isArray(filters))throw new CliError('INVALID_USAGE','--filters requires a JSON object.',64);
-  for(const key of ['after','before'])if(values[key]!==undefined)filters[key]=values[key];
+  for (const [key, alias] of [['after','since'],['before','until']] as const) {
+    const bounds = [filters[key], values[key], values[alias]].filter(value => value !== undefined).map(value => searchBound(value, key));
+    if (!bounds.length) continue;
+    const [first] = bounds;
+    if (bounds.some(bound => Date.parse(bound) !== Date.parse(first)))
+      throw new CliError('INVALID_USAGE','Conflicting '+key+' bounds. Use one value across --filters, --'+key+' and --'+alias+'.',64);
+    filters[key] = first;
+  }
   if(values.role!==undefined)filters.roles=[values.role];
   const arrays=['authors','kinds','excludeKinds','roles','harnesses','origins','clientApps','sessionIds','providers','repositories','projects','paths','toolNames'];
   for(const [key,value] of Object.entries(filters)){
     const valid=arrays.includes(key)?Array.isArray(value)&&value.length>0&&value.length<=20&&value.every(x=>typeof x==='string'&&x.length>0&&x.length<=(key==='sessionIds'?200:500)):
-      ['after','before'].includes(key)&&typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
+      ['after','before'].includes(key);
     if(!valid)throw new CliError('INVALID_USAGE','Invalid search filter '+key+'.',64);
   }
   if(filters.roles&&(!(filters.roles as string[]).every(r=>['user','assistant','system','developer'].includes(r))||(filters.roles as string[]).length>4))throw new CliError('INVALID_USAGE','Invalid roles filter.',64);

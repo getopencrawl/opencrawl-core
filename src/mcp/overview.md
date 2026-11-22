@@ -21,6 +21,9 @@ individual occurrences remain available through the documented query options.
 Pending sources, partial results and bounded candidate windows are explicit.
 Zero results do not establish that information does not exist.
 
+Keyword search ranks by relevance. Apply `filters.after` and `filters.before` to focus on a period.
+Use `opencrawl_browse` for a workspace timeline without keywords.
+
 Search defaults exclude session tool/command output and the calling chat when
 its native identity is supplied. Prefer `opencrawl_search_v1` when advertised;
 updated native client hooks attach identity to this versioned alias. The older
