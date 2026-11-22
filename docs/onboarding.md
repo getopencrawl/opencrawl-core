@@ -21,6 +21,24 @@ and native approval steps vary by agent. Run `opencrawl setup` to choose again.
 Setup reuses a valid sign-in for the workspace you select. To read the choices saved on this machine,
 run `opencrawl setup status --local --json`.
 
+## Automatic plugin updates
+
+Run `opencrawl setup` to choose which apps may automatically run future OpenCrawl
+hooks on this machine. The choice starts unchecked. Run setup again to change it.
+Use `opencrawl setup updates` to check now or `opencrawl setup status --local --json`
+to see which apps you selected.
+
+On macOS and Linux, the native CLI can switch Claude Code's enabled local plugin
+and Cursor's installed local plugin to the verified release bundled with the CLI's
+release information. OpenCrawl keeps the current copy if the new release removes
+an existing hook command, the local copy was edited, or the filesystem cannot
+switch directories in one operation. A fresh session loads newly added hooks.
+
+Codex requires review inside Codex for each changed installation. The Antigravity
+installer briefly removes the active hook when replacing it. On these clients
+the updater downloads the release and keeps the existing plugin running. Windows
+also stages downloads. Devin Cloud follows the Git revision chosen in Devin.
+
 ## Run setup on someone's behalf
 
 On a supported machine, run `opencrawl setup --json` to read the machine's plan.

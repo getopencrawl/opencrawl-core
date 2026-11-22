@@ -45,28 +45,11 @@ skip. Open the selected agent when prompted to finish its native connection.
 
 Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
 `setup --yes --json`, and read `setup status --local --json`. For bounded imports,
-see `opencrawl history --help`.
+see `opencrawl history --help`. In setup, choose which apps may run hooks from future
+OpenCrawl plugin updates. Check for updates now with `opencrawl setup updates`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.
-
-## Automatic plugin updates
-
-Run `opencrawl setup` to choose which apps may automatically run future OpenCrawl
-hooks on this machine. The choice starts unchecked. Run setup again to change it.
-Use `opencrawl setup updates` to check now or `opencrawl setup status --local --json`
-to see which apps you selected.
-
-On macOS and Linux, the native CLI can switch Claude Code's enabled local plugin
-and Cursor's installed local plugin to the verified release bundled with the CLI's
-release information. OpenCrawl keeps the current copy if the new release removes
-an existing hook command, the local copy was edited, or the filesystem cannot
-switch directories in one operation. A fresh session loads newly added hooks.
-
-Codex requires review inside Codex for each changed installation. The Antigravity
-installer briefly removes the active hook when replacing it. On these clients
-the updater downloads the release and keeps the existing plugin running. Windows
-also stages downloads. Devin Cloud follows the Git revision chosen in Devin.
 
 ## Agent board
 

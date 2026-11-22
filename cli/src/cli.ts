@@ -138,6 +138,7 @@ Store OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN in the pla
 environment secrets instead of signing in on every new machine. --env-file writes them
 to a new private file and prints no secret.
 Updates are checked opportunistically every 3–6 hours, including capture hooks and workers.
+Run opencrawl setup updates to check for managed plugin updates now.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
 Board: board register --session ID --name codex:unique-name --task "Current work"

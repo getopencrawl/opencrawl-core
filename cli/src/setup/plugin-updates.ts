@@ -152,7 +152,11 @@ export async function refreshManagedPlugins(api?:string,signal?:AbortSignal):Pro
         const current=currentInstallation(state.scope.api);
         if(!current||current.installationId!==state.installationId||!isDeepStrictEqual(state.scope,current.scope))return false;
         const {promoteDirectoryPlugin}=await import('./plugin-promotion.ts');
-        return promoteDirectoryPlugin(current,client,signal);
+        const activated=await promoteDirectoryPlugin(current,client,signal);
+        if(!activated||!row)return activated;
+        // Recovery may have finished a release from an older CLI. Report the version actually activated.
+        const installed=readSetupState(state.scope)?.pluginResults?.find(result=>result.client===client)?.source;
+        return installed?.version===row.version&&installed.archive?.sha256===row.sha256;
       },0,signal),0,signal);
       if(row)results[results.indexOf(row)]={...row,status:ok?'updated':'kept_current',reason:ok?'The new plugin is in its active directory.':'The active installation could not be safely exchanged.'};
     }catch{
@@ -167,5 +171,5 @@ export async function refreshManagedPlugins(api?:string,signal?:AbortSignal):Pro
 export function formatPluginUpdates(rows:RefreshResult[]) {
   if (!rows.length) return 'No eligible managed plugin updates.';
   return rows.map(row=>row.client+' '+row.installed+' → '+row.version+
-    (row.status==='updated'||row.status==='kept_current'?' — '+row.reason:row.status==='ready_for_review'?' — downloaded for review. '+(row.hookChanges.length?'Hook files changed: '+row.hookChanges.join(', ')+'.':'Hook definitions and runtime are unchanged.'):' — download pending.')).join('\n');
+    (row.status==='updated'||row.status==='kept_current'?' — '+row.reason:row.status==='ready_for_review'?' — downloaded for review. '+(row.hookChanges.length?'Hook files changed: '+row.hookChanges.join(', ')+'.':'Hook definitions and runtime are unchanged.'):' — check incomplete. Run opencrawl setup updates to retry.')).join('\n');
 }
