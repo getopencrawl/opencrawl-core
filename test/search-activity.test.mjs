@@ -21,6 +21,25 @@ const ctx={harness:'codex',sessionId:'shared'};
 const entry=(query,current=ctx)=>agentSearchEntry('opencrawl_search_v1',{query,currentSession:current});
 const identity=async(_p,rows)=>rows;
 
+test('Overview pages through visible keyword queries while totals include keyword-free calls',async t=>{
+  const db=await applicationDatabaseFixture(t),activity=createSearchActivity(db);
+  await activity.ready();
+  for(let i=0;i<26;i++)await activity.agentCall(alice,entry('keyword '+i));
+  for(const query of ['', '  \t\n', null])await activity.agentCall(alice,entry(query));
+  await activity.agentCall(bob,entry('unlinked private query',null));
+  const request={kind:'agent',withQuery:true};
+  const first=await activity.page(alice,request,identity);
+  const last=await activity.page(alice,{...request,before:first.next},identity);
+  assert.equal(first.rows.length,25);
+  assert.equal(last.rows.length,1);
+  assert.equal(last.next,null);
+  const queries=[...first.rows,...last.rows].map(row=>row.queries[0]);
+  assert.deepEqual(new Set(queries),new Set(Array.from({length:26},(_,i)=>'keyword '+i)));
+  await assert.rejects(activity.page(alice,{kind:'agent',before:first.next},identity),/cursor/i);
+  await assert.rejects(activity.page(other,{...request,before:first.next},identity),/cursor/i);
+  assert.equal((await activity.totals(alice)).agentSearches,30);
+});
+
 test('authenticated call accounting, scoped paging and idempotent proactive outcomes on PostgreSQL',async t=>{
   const db=await applicationDatabaseFixture(t);
   const requests=[];
