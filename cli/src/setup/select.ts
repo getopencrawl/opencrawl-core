@@ -1,5 +1,5 @@
 import type {RecordingInstallState} from './plugins.ts';
-export type SelectionItem={id:string;label:string;selected:boolean;detail?:string;installState?:RecordingInstallState|'pending';disabled?:boolean};
+export type SelectionItem={id:string;label:string;selected:boolean;detail?:string;installState?:RecordingInstallState;disabled?:boolean};
 export type SelectionScreen={title:string;description:string;items:SelectionItem[];noneLabel:string;phase:1|2|3;emptyMessage?:string};
 
 /** Load the terminal renderer only for human setup, never capture hooks or JSON calls. */

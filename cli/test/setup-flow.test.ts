@@ -17,7 +17,7 @@ import {hash} from '../src/capture/parse.ts';
 import {validTranscriptIdentity} from '../src/capture/transcript-checkpoint.ts';
 import {installCapture} from '../src/capture/install.ts';
 import {installSetupPlugins} from './fixtures/legacy-plugins/prepare.ts';
-import {canInstallRecordingPlugin,recordingInstallState,setupPluginIdentity,type PluginOptions} from '../src/setup/plugins.ts';
+import {recordingInstallState,setupPluginIdentity,type PluginOptions} from '../src/setup/plugins.ts';
 import type {SelectionScreen} from '../src/setup/select.ts';
 import {needsFirstRunSetup} from '../src/setup/first-run.ts';
 import {findSetupConnection} from '../src/setup/native-mcp.ts';
@@ -77,7 +77,7 @@ test('interrupted setup repairs a deleted Codex hook with the saved choices and 
  const hook=join(cache,'hooks','hooks.json');
  let nativeInstalled=false,installs=0;
  const native:PluginOptions={
-  home:dir,which:()=>'/fixture/codex',runner:async(_command,args)=>{
+  home:dir,applicationDirs:[],which:()=>'/fixture/codex',runner:async(_command,args)=>{
    if(args[1]==='marketplace'&&args[2]==='add')directory=join(args[3]!,identity.name);
    if(args[1]==='add'){cpSync(directory,cache,{recursive:true});nativeInstalled=true;installs++;}
    const rows=nativeInstalled?[{pluginId:identity.name+'@'+identity.marketplace,enabled:true,source:{source:'local',path:directory},installedPath:cache}]:[];
@@ -165,7 +165,7 @@ test('full human TUI keeps installation, history and pending verification in its
   screens.push(screen.title);
   return 'done';
  },close:()=>{closed=true;},native:async run=>run()};
- const result=await runInteractiveSetup({values:{},readDestination:()=>({}),withOrigin:async(origin,run)=>{expect(origin).toBe(api);return run();},login:async()=>{throw Error('Unexpected sign-in');}},{createUi:()=>ui,which:()=>null,pause:async()=>{
+ const result=await runInteractiveSetup({values:{},readDestination:()=>({}),withOrigin:async(origin,run)=>{expect(origin).toBe(api);return run();},login:async()=>{throw Error('Unexpected sign-in');}},{createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{
   expect(screens.at(-1)).toBe('Verify the Codex connection');
   if(++polls===3)setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});
  },setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
@@ -180,32 +180,26 @@ test('cancelling workspace entry never runs auth or setup and the TUI always clo
  expect(closed).toBe(true);
 });
 
-test('recording stays selectable when no compatible CLI is on PATH, with actionable pending status',()=>fixture(async(api,dir)=>{
- mkdirSync(join(dir,'cursor'),{recursive:true});
- const screens:SelectionScreen[]=[];
+test('only compatible local agents can be enabled, including after an earlier opt-in',()=>fixture(async api=>{
+ await setupCommand('apply',api,{yes:true,plugins:'cursor',forward:'cursor',history:'none'},{installPlugins:async()=>({results:[{client:'cursor',status:'installed'}],humanTasks:[]})});
+ const phases:number[]=[];
  const result=await setupCommand('run',api,{},{
-  interactive:true,canInstall:id=>canInstallRecordingPlugin(id,{which:name=>name==='cursor'?join(dir,'cursor-editor'):null},'darwin'),
-  choose:async screen=>{screens.push(screen);return screen.items.map(row=>({...row,selected:screen.phase===1&&row.id==='cursor'}));},
-  installPlugins:async(_api,clients)=>{expect(clients).toEqual([]);return {results:[],humanTasks:[]};}
- });
- expect(screens.map(screen=>screen.phase)).toEqual([1,2]);
- expect(screens[0]!.items.find(row=>row.id==='cursor')).toMatchObject({selected:false,detail:expect.stringContaining('cursor-agent')});
- expect(screens[1]!.items.map(row=>row.id)).toContain('codex');
- expect(result).toMatchObject({selections:{forward:{cursor:true}},nextAction:{kind:'repair_plugin',reason:expect.stringContaining('cursor-agent')}});
-}));
-
-test('an unavailable saved agent can be kept without reinstalling or losing its recording choice',()=>fixture(async api=>{
- const selected={yes:true,plugins:'cursor',forward:'cursor',history:'none'};
- await setupCommand('apply',api,selected,{installPlugins:async()=>({results:[{client:'cursor',status:'installed'}],humanTasks:[]})});
- const result=await setupCommand('run',api,{},{
-  interactive:true,canInstall:async()=>false,
+  interactive:true,canInstall:async id=>id==='codex',
   choose:async screen=>{
-   if(screen.phase===1)expect(screen.items.find(row=>row.id==='cursor')).toMatchObject({selected:false,detail:expect.stringContaining('cursor-agent')});
+   phases.push(screen.phase);
+   if(screen.phase===1){
+    expect(screen.items[0]).toMatchObject({id:'codex',selected:true,disabled:false});
+    expect(screen.items.slice(1).every(row=>row.disabled&&!row.selected)).toBe(true);
+    expect(screen.items.find(row=>row.id==='cursor')?.detail).toContain('No compatible local installation');
+   }
+   // Even a stale renderer returning a disabled row cannot enroll or defer it.
    return screen.items.map(row=>({...row,selected:screen.phase===1&&row.id==='cursor'}));
   },
-  installPlugins:async(_api,clients)=>{expect(clients).toEqual([]);return {results:[],humanTasks:[]};}
+  installPlugins:async(_api,ids)=>{expect(ids).toEqual([]);return {results:[],humanTasks:[]};}
  });
- expect(result).toMatchObject({selections:{forward:{cursor:true}},nextAction:{kind:'repair_plugin',client:'cursor'}});
+ expect(phases).toEqual([1,2]);
+ expect(result).toMatchObject({status:'recording_off',selections:{forward:{cursor:false,codex:false},plugins:{cursor:false}}});
+ expect(readCaptureConfig()?.harnesses??[]).not.toContain('cursor');
 }));
 
 test('a plugin download failure still reaches history confirmation and saves retry details',()=>fixture(async api=>{
@@ -230,7 +224,7 @@ test('a failed plugin leaves history and healthy agents usable and can be retrie
  };
  const failure={client:'cursor' as const,status:'error' as const,message:'Installer no longer available.'};
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:async()=>{}},{
-  createUi:()=>ui,which:()=>null,pause:async()=>{expect(++polls).toBe(1);setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});},
+  createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{expect(++polls).toBe(1);setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});},
   setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,
    installPlugins:async()=>({results:[failure,{client:'codex',status:'installed'}],humanTasks:[{client:'cursor',id:'repair',kind:'plugin_install',title:'Resolve Cursor plugin installation',instruction:'Retry installation'}]}),
    launchHistory:()=>{historyJobs++;return {state:'queued'};}
@@ -270,7 +264,7 @@ test('TUI service retry preserves selections and does not ask for native verific
   if(screen.title==='Background capture needs attention'){expect(screen.actions?.map(a=>a.label)).toEqual(['Record without a background service','Retry service','Close']);ready=true;setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});return 'retry';}
   return 'done';
  },close:()=>{},native:async run=>run()};
- const result=await runInteractiveSetup({values:{},readDestination:()=>({api,explicit:api}),withOrigin:async(_origin,run)=>run(),login:async()=>{throw Error('Unexpected login');}},{createUi:()=>ui,which:()=>null,pause:async()=>{throw Error('Must repair service before native verification');},setup:(action,origin,values,dependencies)=>{
+ const result=await runInteractiveSetup({values:{},readDestination:()=>({api,explicit:api}),withOrigin:async(_origin,run)=>run(),login:async()=>{throw Error('Unexpected login');}},{createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{throw Error('Must repair service before native verification');},setup:(action,origin,values,dependencies)=>{
   operations.push(values.yes?'repair':action);return setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>ready,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})});
  }});
  expect(result).toBe(0);expect(installs).toBe(2);expect(operations.filter(x=>x==='run')).toHaveLength(1);expect(operations.filter(x=>x==='repair')).toHaveLength(1);expect(choices).toBe(3);expect(screens).not.toContain('Finish connecting your agents');expect(screens.at(-1)).toBe('Setup complete');
@@ -279,7 +273,7 @@ test('TUI service retry preserves selections and does not ask for native verific
 test('failed supervision stops before launching Claude native sign-in',async()=>fixture(async api=>{
  let nativeCalls=0;const screens:string[]=[];
  const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='claude-code'||screen.phase===3&&item.id==='daemon'})),action:async screen=>{screens.push(screen.title);return 'close';},close:()=>{},native:async run=>run()};
- const code=await runInteractiveSetup({values:{client:['claude-code']},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,which:()=>'/fixture/claude',native:async()=>{nativeCalls++;return 0;},pause:async()=>{throw Error('Unexpected wait');},setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>false,installPlugins:async()=>({results:[{client:'claude-code',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
+ const code=await runInteractiveSetup({values:{client:['claude-code']},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,resolveRuntime:async()=>({executable:'/fixture/claude',desktop:false}),native:async()=>{nativeCalls++;return 0;},pause:async()=>{throw Error('Unexpected wait');},setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>false,installPlugins:async()=>({results:[{client:'claude-code',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
  expect(code).toBe(2);expect(nativeCalls).toBe(0);expect(screens).toEqual(['Background capture needs attention']);
 }));
 
@@ -303,8 +297,8 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   progress:(title,description,details,options)=>{
    if(options?.waiting){
     waitingScreens++;
-    expect(title).toBe('Trust all OpenCrawl hooks in Codex Desktop or CLI');
-    expect(description).toBe('Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
+    expect(title).toBe('Review OpenCrawl hooks');
+    expect(description).toBe('ChatGPT Desktop or Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
     expect(details).toEqual(['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.']);
     expect(options.waiting.spinner).toBe('Checking whether OpenCrawl hooks are trusted…');
    }
@@ -318,7 +312,7 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   }
  };
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:unexpected},{
-  createUi:()=>ui,which:()=>'/native/codex',native:unexpected,findConnection:unexpected,
+  createUi:()=>ui,resolveRuntime:async()=>({executable:'/native/codex',desktop:false}),native:unexpected,findConnection:unexpected,
   inspectCodex:async()=>{const review=reviews.shift();if(!review)throw Error('Extra hook inspection');return review;},
   pause:async()=>{if(handoffs)setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});},
   setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
@@ -353,7 +347,7 @@ test('skipping hook trust during inspection saves Codex as pending and continues
   }
  };
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
-  createUi:()=>ui,which:()=>'/native/codex',native:unexpected,pause:async()=>{},
+  createUi:()=>ui,resolveRuntime:async()=>({executable:'/native/codex',desktop:false}),native:unexpected,pause:async()=>{},
   inspectCodex:()=>{skip!();return inspection.promise;},
   setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'cursor',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
  });
@@ -375,7 +369,7 @@ test('exiting hook review stops polling and keeps the saved recording choice',()
   progress:()=>{},
  };
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:unexpected},{
-  createUi:()=>ui,which:()=>'/native/codex',native:unexpected,
+  createUi:()=>ui,resolveRuntime:async()=>({executable:'/native/codex',desktop:false}),native:unexpected,
   inspectCodex:async()=>{checks++;return {state:'observed',total:12,pending:0,disabled:1};},
   pause:async()=>{controller.abort();},
   setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
@@ -390,7 +384,7 @@ test('failed service can switch to direct recording inside the TUI without anoth
   if(screen.title==='Background capture needs attention'){installationId=readCaptureConfig()?.installationId;mkdirSync(dirname(queued()),{recursive:true});writeFileSync(queued(),'retain queued bytes');setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});return 'direct';}
   expect(screen.title,screen.description).toBe('Setup complete');return 'done';
  },close:()=>{},native:async run=>run()};
- const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,which:()=>null,pause:async()=>{throw Error('Unexpected polling');},setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>false,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},stopDaemon:()=>{stops++;},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
+ const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{throw Error('Unexpected polling');},setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>false,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},stopDaemon:()=>{stops++;},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
  expect(code).toBe(0);expect(choices).toBe(3);expect(stops).toBe(1);expect(installs).toBe(1);expect(readFileSync(queued(),'utf8')).toBe('retain queued bytes');expect(readCaptureConfig()?.installationId).toBe(installationId);expect(readCaptureConfig()?.harnesses).toEqual(['codex']);expect(readCaptureConfig()?.captureWorker).toBeUndefined();expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('hook');
 }));
 async function legacySetupCommand(action:string,api:string,values:Parameters<typeof realSetupCommand>[2],dependencies:NonNullable<Parameters<typeof realSetupCommand>[3]>={}){
@@ -461,7 +455,7 @@ test('multi-agent setup resumes the approved browser action and advances to the 
   }
  };
  const run=()=>runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
-  createUi:()=>ui,which:name=>'/native/'+name,findConnection:async client=>({name:client==='claude-code'?'opencrawl':setupPluginIdentity(api).name,skipLogin:false}),
+  createUi:()=>ui,resolveRuntime:async client=>({executable:client==='claude-code'?'/native/claude':'/native/agy',desktop:false}),findConnection:async client=>({name:client==='claude-code'?'opencrawl':setupPluginIdentity(api).name,skipLogin:false}),
   inspectCodex:async()=>({state:'observed',total:1,pending:0,disabled:0}),
   native:async(command,args)=>{
    calls.push([command,...args]);
@@ -499,7 +493,7 @@ test('Claude opens verification on its connected legacy server while workspace p
    expect(screen.title).toBe('Connect Claude Code to OpenCrawl');expect(screen.actions?.[0]?.label).toBe('Open Claude Code');return 'connect';
   }};
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_api,run)=>run(),login:async()=>{}},{
-  createUi:()=>ui,which:()=>'/native/claude',findConnection:(client,binary,origin)=>findSetupConnection(client,binary,origin,async args=>
+  createUi:()=>ui,resolveRuntime:async()=>({executable:'/native/claude',desktop:false}),findConnection:(client,binary,origin)=>findSetupConnection(client,binary,origin,async args=>
    args[2]==='opencrawl'?['opencrawl:','  Status: ✓ Connected','  Type: http','  URL: '+api+'/mcp'].join('\n'):undefined),
   native:async(_command,args)=>{
    calls.push(args);expect(args).toHaveLength(1);expect(args[0]).toContain('Use native MCP server opencrawl at '+api+'/mcp');
@@ -533,7 +527,7 @@ test('Antigravity opens native consent first and resumes its saved task after an
   const code = await runInteractiveSetup({
    values: {}, readDestination: () => ({api}), withOrigin: (_api, run) => run(), login: async () => {},
   }, {
-   createUi: () => ui, which: name => name === 'agy' ? '/native/agy' : null, findConnection: async () => ({name:'opencrawl_opencrawl',skipLogin:false}),
+   createUi: () => ui, resolveRuntime: async client => client === 'antigravity' ? {executable:'/native/agy',desktop:false} : undefined, findConnection: async () => ({name:'opencrawl_opencrawl',skipLogin:false}),
    native: async (command, args) => {
     expect(command).toBe('/native/agy');
     calls.push(args);
@@ -934,7 +928,7 @@ test('manual Cursor MCP can enroll through normal setup without replacing connec
  const cursorRoot=join(dir,'cursor'),mcpFile=join(cursorRoot,'mcp.json');mkdirSync(cursorRoot);
  const manual=JSON.stringify({mcpServers:{opencrawl:{url:api+'/mcp'},other:{url:'https://other.example/mcp'}}},null,2)+'\n';writeFileSync(mcpFile,manual);
  const choices={plugins:'cursor',forward:'cursor',history:'none','capture-mode':'daemon'},command=[join(dir,'opencrawl')];
- const dependencies={command,installPlugins:((target,clients,options)=>installSetupPlugins(target,clients,{...options,home:dir,which:()=>null})) as typeof installSetupPlugins};
+ const dependencies={command,installPlugins:((target,clients,options)=>installSetupPlugins(target,clients,{...options,home:dir,applicationDirs:[],which:()=>null})) as typeof installSetupPlugins};
  const plan=await setupCommand('plan',api,choices) as {planId:string};
  expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();expect(readCaptureConfig()).toBeNull();expect(observations).toHaveLength(0);
  const result=await setupCommand('apply',api,{...choices,'plan-id':plan.planId,yes:true},dependencies);

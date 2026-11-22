@@ -46,7 +46,7 @@ try{
     writeFileSync(join(roots[index]!,index===1?'settings.json':'hooks.json'),JSON.stringify(settings)+'\n',{mode:0o600});
   }
   const sharedPaths=[...roots,skills[0]!,otherProfile],beforeInstall=snapshot(sharedPaths);
-  const installed=await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin,OPENCRAWL_NO_UPDATE:undefined});
+  const installed=await run(installer,{...(process.platform==='linux'?{SHELL:undefined}:{}),OPENCRAWL_DOWNLOAD_BASE:server.url.origin,OPENCRAWL_NO_UPDATE:undefined});
   if(snapshot(sharedPaths)!==beforeInstall)throw new Error('Binary installation changed another profile\'s native skills/hooks or file modes');
   if(existsSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','startup'))||existsSync(join(env.OPENCRAWL_CONFIG_HOME,'opencrawl','capture','config.json')))throw new Error('Binary installation enrolled native integrations');
   const guided=windows?[...installer,'-Setup']:['/bin/sh',join(root,'install.sh'),'--setup',pkg.version];

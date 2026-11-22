@@ -18,9 +18,10 @@ import {inspectCodexHooks,codexHookReviewMessage} from '../capture/codex-hooks.t
 import {inventory,type HistoryFile} from '../capture/backfill.ts';
 import {defaultClaudeDesktopSessionsRoot} from '../capture/desktop-history.ts';
 import type {Harness,TranscriptHarness} from '../capture/parse.ts';
+import {hasClaudeDesktop} from './desktop-runtime.ts';
 import {setupInventory} from './inventory.ts';
 import {assertSetupAvailability,newSetupClientAvailable,selectOfferedGroup,setupAvailabilityMessage} from './availability.ts';
-import {canInstallRecordingPlugin,installerCommands,recordingInstallState,installSetupPlugins,type PluginResult} from './plugins.ts';
+import {canInstallRecordingPlugin,recordingInstallState,installSetupPlugins,type PluginResult} from './plugins.ts';
 import {installPublishedSetupPlugins,loadPublishedPackage,packageRelease,type LocalPluginClient,type CaptureMode} from './published-plugins.ts';
 import {daemonEligibility,daemonStartupGuidance,savedCaptureMode,requestedCaptureMode} from './capture-mode.ts';
 import {chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
@@ -351,7 +352,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  const availableHistory=()=>[...historyFiles(api,claudeOnly?'claude-code':undefined).filter(file=>!retainedHistory.includes(file.harness)&& (workload||newSetupClientAvailable(file.harness,platform,registered))),...(previous?.historyJob?.files??[]).filter(file=>retainedHistory.includes(file.harness))];
  const optionalFailures=action==='run'&&interactive?new Map<string,PluginResult>():undefined;
  const configureClients=()=>applyClients(scope,selections,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,chosen(selections,'plugins').length>0&&eligibility(selections).eligible,stopDaemon,onProgress,inspectHooks,true,optionalFailures);
- const saveRecording=()=>sameOwner||chosen(selections,'plugins').length?configureClients():updateSetupState(scope,current=>({...current,schemaVersion:1,firstRun:'choosing',scope,selections,captureMode,acceptedAt:new Date().toISOString()}));
+ const saveRecording=()=>sameOwner||chosen(selections,'plugins').length?configureClients():updateSetupState(scope,current=>({...current,schemaVersion:1,firstRun:'choosing',scope,selections,captureMode,pluginResults:current?.pluginResults?.filter(row=>['installed','unchanged','prepared'].includes(row.status)),humanTasks:[],acceptedAt:new Date().toISOString()}));
  const finishChoices=(state:SetupState,importing=false)=>updateSetupState(scope,current=>{
   if(!current||current.acceptedAt!==state.acceptedAt||current.installationId!==state.installationId)throw new CliError('SETUP_SCOPE_CHANGED','The saved installation changed while finishing setup. Review its current choices.');
   return {...current,firstRun:chosen(current.selections,'plugins').length||importing&&current.historyJob?'ready':'complete'};
@@ -375,32 +376,30 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const prospectiveHistory=values.history===undefined?{}:selections.history;
   const candidates=clients.filter(client=>client.plugin&&client.forward);
   const options=await Promise.all(candidates.map(async client=>{
-   const selected=selections.forward[client.id]===true;
-   const prior=previous?.pluginResults?.find(row=>row.client===client.id);
-   const installState=await inspectInstall(api,client.id as LocalPluginClient,prior?.status);
-   const item={id:client.id,label:client.label,selected,installState};
-   const offered=newSetupClientAvailable(client.id,platform,registered);
-   if(!offered&&!selected)return {...item,disabled:true,detail:'Recording package unavailable for this platform'};
-   if(await canInstall(client.id))return item;
-   const id=client.id as LocalPluginClient;
-   const release=packageRelease(id);
-   const supported=release?.captureAvailable&&(!release.archives||release.archives[platform+'-'+process.arch]);
-   const detail=supported?'Requires '+installerCommands[id]+(release.minimumHarnessVersion?' '+release.minimumHarnessVersion+' or later':'')+' on PATH':'Recording package unavailable for this platform';
-   optionalFailures!.set(id,{client:id,status:'pending',message:client.label+' recording is pending. '+detail+'.'});
-   const retained=!offered&&!!admitted?.selections.forward[id];
-   return {...item,installState:'pending' as const,selected:retained,disabled:!supported&&!retained,detail};
+   const id=client.id;
+   const label=id==='claude-code'?'Claude Code / Claude Desktop (Code)':id==='codex'?'Codex / ChatGPT Desktop (Work)':client.label;
+   const offered=newSetupClientAvailable(id,platform,registered);
+   if(!offered||!await canInstall(id)){
+    let detail=offered?'No compatible local installation':'Unavailable on this platform';
+    if(offered&&id==='claude-code'&&hasClaudeDesktop({platform}))detail='Open or update Claude Desktop’s Code tab, then rerun setup';
+    return {id,label,selected:false,disabled:true,detail};
+   }
+   const prior=previous?.pluginResults?.find(row=>row.client===id);
+   const installState=await inspectInstall(api,id as LocalPluginClient,prior?.status);
+   return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState};
   }));
-  const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.'+(options.some(item=>item?.id==='claude-code'||item?.id==='codex')?' '+participationNotice:''),noneLabel:'Do not record any sessions on this machine',items:options});
+  options.sort((a,b)=>Number(a.disabled)-Number(b.disabled));
+  const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.'+(options.some(item=>!item.disabled&&(item.id==='claude-code'||item.id==='codex'))?' '+participationNotice:''),noneLabel:'Do not record any sessions on this machine',items:options});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
-  const selectedIds=new Set(selected.filter(row=>row.selected).map(row=>row.id));
+  const eligibleIds=new Set(options.filter(item=>!item.disabled).map(item=>item.id));
+  const selectedIds=new Set(selected.filter(row=>row.selected&&eligibleIds.has(row.id)).map(row=>row.id));
   for(const {id} of candidates){
-   if(!newSetupClientAvailable(id,platform,registered)&&!admitted?.selections.forward[id])continue;
    selections.plugins[id]=selectedIds.has(id);
    selections.forward[id]=selectedIds.has(id);
   }
   selections.history=Object.fromEntries(Object.keys(selections.history).map(id=>[id,previous?.selections.history[id]===true]));
   assertCaptureSelections(selections,previous?.selections);
-  if([...selectedIds].some(id=>!optionalFailures?.has(id))&&eligibility(selections).eligible){
+  if(selectedIds.size&&eligibility(selections).eligible){
    const service=await choose({phase:3,title:'Background capture',description:'Install background utility for more reliable session capture?',noneLabel:'Record without a background service',items:[{id:'daemon',label:'Install background service',selected:values['capture-mode']===undefined||captureMode==='daemon'}]});
    if(service===null)return {status:'cancelled',humanTasks:[]};
    captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';

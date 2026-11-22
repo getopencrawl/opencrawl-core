@@ -60,7 +60,8 @@ export function localCodexHookReview(root:string):CodexHookReview{return snapsho
 
 /** Read native metadata without starting a thread or executing any hook. */
 export async function nativeCodexHooks(root:string):Promise<unknown>{
- const executable=Bun.which('codex');if(!executable)throw new Error('Codex unavailable');
+ const {recordingRuntime}=await import('../setup/plugins.ts');
+ const executable=(await recordingRuntime('codex'))?.executable;if(!executable)throw new Error('Codex unavailable');
  let command=executable,args=['app-server','--stdio'];
  if(process.platform==='win32'&&/\.(cmd|bat)$/i.test(command)){
   args=['-NoProfile','-NonInteractive','-Command','& '+[command,...args].map(powershellQuote).join(' ')+'; exit $LASTEXITCODE'];
@@ -99,7 +100,7 @@ export async function nativeCodexHooks(root:string):Promise<unknown>{
  });
 }
 export async function inspectCodexHooks(root:string,query=nativeCodexHooks):Promise<CodexHookReview>{
- const before=snapshot(root);if(before.review.state==='not_applicable')return before.review;
+ const before=snapshot(root);if(!before.keys.size)return before.review;
  try {
   const value=await query(root),after=snapshot(root);
   if(after.file!==before.file||after.bytes!==before.bytes||after.config!==before.config||after.binding!==before.binding||after.pluginId!==before.pluginId||!value||typeof value!=='object'||!('data' in value)||!Array.isArray(value.data))return before.review;

@@ -54,7 +54,13 @@ export function configureShellPath(entry:string){
   }
  }
 
- const shell=basename(process.env.SHELL||userInfo().shell||'sh'),quoted=quoteSh(directory);
+ // Some Linux runtimes report "unknown" when SHELL is unset (including in containers).
+ let loginShell=process.env.SHELL||userInfo().shell;
+ if(!loginShell||loginShell==='unknown'){
+  const uid=String(process.getuid?.());
+  loginShell=existsSync('/etc/passwd')?readFileSync('/etc/passwd','utf8').split('\n').map(line=>line.split(':')).find(fields=>fields[2]===uid)?.[6]??'sh':'sh';
+ }
+ const shell=basename(loginShell||'sh'),quoted=quoteSh(directory);
  let files:string[];
  let command='export PATH='+quoted+'"${PATH:+:$PATH}"';
  let line='case "$PATH" in '+quoted+'|'+quoted+':*) ;; *) '+command+' ;; esac';

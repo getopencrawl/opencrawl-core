@@ -6,7 +6,7 @@ import {nativeSetupPrompt,setupCommand,setupHookStatus} from './command.ts';
 import {launchClaudeSetup} from './claude-launch.ts';
 import {launchAntigravitySetup} from './antigravity-launch.ts';
 import type {SetupUi} from './tui.tsx';
-import {labels,type PluginClient} from './plugins.ts';
+import {labels,recordingRuntime,type PluginClient} from './plugins.ts';
 import {findSetupConnection,nativeConnectionPrompt,type NativeClient} from './native-mcp.ts';
 import {nativeLogin} from './native-login.ts';
 import {nativeTerminal} from './native-terminal.ts';
@@ -15,7 +15,7 @@ import {publishSetup} from './api.ts';
 import {readSetupState} from './state.ts';
 
 type Options={values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
-type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:typeof inspectCodexHooks;pause?:(signal:AbortSignal)=>Promise<void>};
+type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;resolveRuntime?:(client:'claude-code'|'codex'|'antigravity')=>Promise<{executable:string;desktop:boolean}|undefined>;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:typeof inspectCodexHooks;pause?:(signal:AbortSignal)=>Promise<void>};
 
 async function nativeCommand(command:string,args:string[],ui:SetupUi,title?:string):Promise<number>{
  if(args[0]!=='mcp')return ui.native(()=>nativeTerminal(command,args));
@@ -27,8 +27,8 @@ async function waitForCodexHookTrust(ui:SetupUi,inspect:()=>ReturnType<typeof se
  const signal=AbortSignal.any([controller.signal,ui.signal]);
  const skipped=Promise.withResolvers<'skipped'>();
  ui.progress(
-  'Trust all OpenCrawl hooks in Codex Desktop or CLI',
-  'Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.',
+  'Review OpenCrawl hooks',
+  'ChatGPT Desktop or Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.',
   ['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.'],
   {waiting:{spinner:'Checking whether OpenCrawl hooks are trusted…',onSkip:()=>skipped.resolve('skipped')}}
  );
@@ -90,7 +90,7 @@ export async function showDeviceCode(ui:Pick<SetupUi,'action'|'progress'>,url:st
  ui.progress(title,canOpenBrowser?'Confirm the code in your browser.':'Open this link in your browser and confirm the code.',details);
 }
 
-export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,which=Bun.which,findConnection=findSetupConnection,native=nativeCommand,inspectCodex=inspectCodexHooks,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
+export async function runInteractiveSetup(options:Options,{createUi,setup=setupCommand,resolveRuntime=recordingRuntime,findConnection=findSetupConnection,native=nativeCommand,inspectCodex=inspectCodexHooks,pause=async signal=>{await delay(3000,undefined,{signal});}}:Dependencies={}){
  const ui=createUi?createUi():(await import('./tui.tsx')).createSetupUi();
  let destination:ReturnType<Options['readDestination']>|undefined;
  try{
@@ -175,8 +175,8 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       }
       const step=next&&'nextAction' in next?next.nextAction:undefined;
       const client=step?.kind==='native_tool'?step.arguments.client:step&&'client' in step?step.client:undefined;
-      const binary=client==='claude-code'?'claude':client==='codex'?'codex':client==='antigravity'?'agy':undefined;
-      const executable=binary&&which(binary);
+      const runtime=(step?.kind==='native_tool'||step?.kind==='review_setup')&&(client==='claude-code'||client==='codex'||client==='antigravity')?await resolveRuntime(client):undefined;
+      const executable=runtime?.executable;
       const recordingSetup=next&&'installationId' in next&&'selections' in next?next:undefined;
       const recordsCodex=client==='codex'&&recordingSetup?.selections?.forward.codex;
       if(step?.kind==='native_tool'&&recordsCodex&&executable&&!codexTrust){
@@ -192,11 +192,11 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        ui.progress('Checking setup','Checking the remaining setup steps.');
        continue;
       }
-      const label=labels[client as PluginClient]??client;
+      const label=runtime?.desktop?(client==='codex'?'ChatGPT Desktop or Codex Desktop':'Claude Desktop’s Code tab'):labels[client as PluginClient]??client;
       const remainingClientPrompt=codexTrust==='skipped'&&label
        ?`Finish OpenCrawl setup for ${api} in ${label}. Use the OpenCrawl plugin’s installation_status and verify_installation tools for ${client} with my saved choices. I skipped Codex setup for now.`
        :undefined;
-      if(step?.kind==='native_tool'&&executable&&(client==='claude-code'||client==='antigravity')){
+      if(step?.kind==='native_tool'&&executable&&!runtime?.desktop&&(client==='claude-code'||client==='antigravity')){
        displayedInstruction=undefined;
        const code=await connectNativeClient(client,executable,api,ui,step.requiresSignIn,lastLaunched===client,native,findConnection,remainingClientPrompt);
        if(code!==undefined)return code;
@@ -211,10 +211,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        prompt=remainingClientPrompt??'Finish OpenCrawl setup for '+api+' using my saved choices.';
        details=['Keep this terminal open. Setup will continue when '+label+' connects.'];
        if(client==='codex'){
-        title='Verify the Codex connection';
-        if(codexTrust==='trusted')description='Hooks approved. Start a new chat in Codex and send this message.';
+        title=runtime?.desktop?'Verify the desktop connection':'Verify the Codex connection';
+        if(codexTrust==='trusted')description=runtime?.desktop?'Hooks approved. Start a new Work or Code session and send this message.':'Hooks approved. Start a new chat in Codex and send this message.';
         if(step.kind==='native_tool'&&step.requiresSignIn)details.push('If Codex asks you to sign in to OpenCrawl, approve the connection.');
-        if(recordsCodex&&!executable)details.push('Local hook status is unavailable without the Codex CLI. In Desktop, open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
+        if(recordsCodex&&!executable)details.push('Open ChatGPT Desktop or Codex Desktop. In the app, open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
        }
       }else if(label&&step?.kind==='wait_capture'){
        title='Checking '+label;

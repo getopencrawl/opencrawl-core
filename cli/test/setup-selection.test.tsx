@@ -12,6 +12,7 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
   await waitForFrame(app,'› [x] Claude Code');
   expect(app.lastFrame()).toMatch(/Codex[^\n]*⚠ Needs reinstall/);
   expect(app.lastFrame()).toContain('Reinstall & record');
+  expect(app.lastFrame()!.indexOf('Antigravity')).toBeGreaterThan(app.lastFrame()!.indexOf('Do not record'));
   await pressAndRead(app,' ','› [ ] Claude Code');expect(answer).toBeUndefined();
   await pressAndRead(app,down,'› [x] Codex');
   await pressAndRead(app,down,'› [ ] Cursor');

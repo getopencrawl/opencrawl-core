@@ -15,7 +15,7 @@ async function fixture(run:(home:string,options:PluginOptions,calls:string[][])=
  const home=mkdtempSync(join(tmpdir(),'opencrawl-setup-plugin-')),prior=process.env.OPENCRAWL_CONFIG_HOME;
  process.env.OPENCRAWL_CONFIG_HOME=join(home,'config');
  const calls:string[][]=[],installed:Record<string,Record<string,unknown>[]>= {},markets:Record<string,string>={};
- const options:PluginOptions={home,command:[join(home,'private cli','opencrawl')],env:{OPENCRAWL_CONFIG_HOME:join(home,'config')},which:name=>'/client/'+name,runner:async(command,args)=>{
+ const options:PluginOptions={home,applicationDirs:[],command:[join(home,'private cli','opencrawl')],env:{OPENCRAWL_CONFIG_HOME:join(home,'config')},which:name=>'/client/'+name,runner:async(command,args)=>{
   calls.push([command,...args]);
   if(args[1]==='marketplace'&&args[2]==='add')markets[command]=args[3];
   if(args[1]==='remove'||args[1]==='uninstall'){
@@ -90,8 +90,8 @@ test('an interrupted old install with a missing managed asset can be reinstalled
 test('inventory detects supported clients without creating configuration',()=>{
  const home=mkdtempSync(join(tmpdir(),'opencrawl-plugin-inventory-'));
  try{
-  expect(pluginInventory({home,env:{},which:()=>null}).every(row=>!row.detected)).toBe(true);mkdirSync(join(home,'.codex'));
-  expect(pluginInventory({home,env:{},which:()=>null}).filter(row=>row.detected).map(row=>row.id)).toEqual(['codex']);expect(existsSync(join(home,'.config'))).toBe(false);
+  expect(pluginInventory({home,applicationDirs:[],env:{},which:()=>null}).every(row=>!row.detected)).toBe(true);mkdirSync(join(home,'.codex'));
+  expect(pluginInventory({home,applicationDirs:[],env:{},which:()=>null}).filter(row=>row.detected).map(row=>row.id)).toEqual(['codex']);expect(existsSync(join(home,'.config'))).toBe(false);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
 

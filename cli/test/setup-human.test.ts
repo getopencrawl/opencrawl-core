@@ -36,6 +36,6 @@ test.skipIf(process.platform==='win32')('explicit setup ignores old navigation a
  }
  try{
   await run([],[['› [ Continue ]','\r'],['Where is your workspace?','\x1b']]);
-  await run(['--api',server.url.origin],[['› [ Continue ]','\r'],['Requires claude ',' '],['[x] Claude Code','\x1b']]);
+  await run(['--api',server.url.origin],[['› [ Continue ]','\r'],['No compatible local installation','\x1b']]);
  }finally{server.stop(true);rmSync(home,{recursive:true,force:true});}
 },16000);

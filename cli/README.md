@@ -37,9 +37,9 @@ Each run starts fresh and reuses your workspace sign-in. Arrows move, Space togg
 a checkbox, and Enter confirms. Compatible detected agents start checked. To opt
 out, choose **Do not record any sessions on this machine**.
 
-An agent that needs a CLI update shows the required command and version. If you
-select it, recording stays pending until you install the prerequisite and rerun
-setup. **⚠ Needs reinstall** flags a damaged installation. History import
+Setup also recognizes the runtimes in ChatGPT Desktop (Work) and Claude Desktop
+(Code). Open the desktop coding surface once to initialize its runtime. Unavailable
+agents appear disabled below the recording choices. **⚠ Needs reinstall** flags a damaged installation. History import
 requires a separate confirmation. Admins can invite teammates or press Esc to
 skip. Open the selected agent when prompted to finish its native connection.
 

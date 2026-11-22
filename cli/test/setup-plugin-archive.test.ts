@@ -103,7 +103,7 @@ test('binary native bundle survives registration/resume and rejects byte or perm
   const source={...parsed,minimumHarnessVersion:'2.1.327',source:{repository:f.release.repository,ref:f.release.ref,path:f.entry.path,name:f.entry.name,version:f.entry.version},captureAvailable:false,daemonHandoff:false};
   const bundle=bindPublishedPackage('claude-code',api,source,{configHome,installationId:'fixture-installation',owner:{tenantId:'fixture-tenant',userId:'fixture-user'},captureMode:'hook',command:['/fixture/opencrawl'],env:{}});
   let market='',native:Record<string,unknown>[]=[];let installs=0;
-  const options={home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],which:()=>'/fixture/claude',bundles:{'claude-code':bundle},runner:async(_command:string,args:string[])=>{
+  const options={home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],applicationDirs:[],which:()=>'/fixture/claude',bundles:{'claude-code':bundle},runner:async(_command:string,args:string[])=>{
    if(args[0]==='--version')return {code:0,stdout:'2.1.327 (Claude Code)'};
    if(args[1]==='marketplace')market=args[3];
    if(args[1]==='install'){installs++;const path=join(home,'cache');rmSync(path,{recursive:true,force:true});cpSync(join(market,identity.name),path,{recursive:true});native=[{id:args[2],enabled:true,readFromFolder:path}];}
@@ -131,7 +131,7 @@ test('unknown, prerelease or old Claude cannot mutate the plugin source or nativ
   const source={...parsed,minimumHarnessVersion:'2.1.327',source:{repository:f.release.repository,ref:f.release.ref,path:f.entry.path,name:f.entry.name,version:f.entry.version},captureAvailable:true,daemonHandoff:true};
   for(const version of ['2.1.326 (Claude Code)','1.99.999 (Claude Code)','2.1.327-beta','unknown','']){
    const calls:string[][]=[];
-   const result=await installSetupPlugins('https://selfhost.example',['claude-code'],{home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],which:()=>'/fixture/claude',bundles:{'claude-code':source},runner:async(_command,args)=>{calls.push(args);return {code:0,stdout:version};}});
+   const result=await installSetupPlugins('https://selfhost.example',['claude-code'],{home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],applicationDirs:[],which:()=>'/fixture/claude',bundles:{'claude-code':source},runner:async(_command,args)=>{calls.push(args);return {code:0,stdout:version};}});
    expect(result.results[0]).toMatchObject({status:'pending',message:'Claude Code 2.1.327 or later is required. Update the client, then run setup again.'});
    expect(calls).toEqual([['--version']]);expect(existsSync(join(configHome,'opencrawl/setup-plugins'))).toBe(false);
   }
@@ -143,10 +143,10 @@ test('Codex native version prefix is recognized while old or unknown clients sto
  try{
   const parsed=await readPluginArchive(bytes,f.metadata,f.entry,'darwin-arm64',f.pin);
   const source={...parsed,minimumHarnessVersion:'0.166.0',source:{repository:f.release.repository,ref:f.release.ref,path:'local/codex',name:'opencrawl-local-codex',version:'0.1.1'},captureAvailable:true,daemonHandoff:true};
-  for(const version of ['codex-cli 0.165.0','codex-cli 0.166.0-beta','0.166.0','unknown','codex-cli 0.166.0','codex-cli 0.167.0']){
+  for(const version of ['codex-cli 0.165.0','codex-cli 0.166.0-beta','0.166.0','unknown','codex-cli 0.166.0','codex-cli 0.167.0','codex-cli 0.171.0-alpha.13']){
    const calls:string[][]=[];
-   const result=await installSetupPlugins('https://selfhost.example',['codex'],{home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],which:()=>'/fixture/codex',bundles:{codex:source},runner:async(_command,args)=>{calls.push(args);return {code:0,stdout:args[0]==='--version'?version:'native listing unavailable'};}});
-   const supported=['codex-cli 0.166.0','codex-cli 0.167.0'].includes(version);
+   const result=await installSetupPlugins('https://selfhost.example',['codex'],{home,env:{OPENCRAWL_CONFIG_HOME:configHome},command:['/fixture/opencrawl'],applicationDirs:[],which:()=>'/fixture/codex',bundles:{codex:source},runner:async(_command,args)=>{calls.push(args);return {code:0,stdout:args[0]==='--version'?version:'native listing unavailable'};}});
+   const supported=['codex-cli 0.166.0','codex-cli 0.167.0','codex-cli 0.171.0-alpha.13'].includes(version);
    expect(calls).toEqual(supported?[['--version'],['plugin','list','--marketplace',setupPluginIdentity('https://selfhost.example').marketplace,'--json']]:[['--version']]);
    expect(result.results[0]?.status).toBe('pending');
    expect(result.results[0]?.message).toContain(supported?'could not report':'0.166.0 or later');

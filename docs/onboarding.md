@@ -13,7 +13,10 @@ in the sidebar so you can return to it at any time.
 5. Follow the selected agent’s native connection prompts. After a new session is captured, the agent verifies its connection and whether that session can be found. Open **Setup** in the workspace to see which checks have finished.
 
 Setup detects Claude Code, Codex, Cursor and Antigravity on macOS and on x64 or
-ARM64 Linux systems with glibc. Available history
+ARM64 Linux systems with glibc. Claude Desktop’s Code tab and ChatGPT Desktop’s
+Work sessions can use the desktop app’s own runtime. Open the app’s coding surface
+once to initialize it. Unavailable integrations appear disabled below the recording
+choices. Available history
 and native approval steps vary by agent. Run `opencrawl setup` to choose again.
 Setup reuses a valid sign-in for the workspace you select. To read the choices saved on this machine,
 run `opencrawl setup status --local --json`.

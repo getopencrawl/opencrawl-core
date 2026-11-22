@@ -39,16 +39,16 @@ export function SetupSelection({screen,onComplete,standalone=true}:{screen:Selec
   const choices=items.filter(item=>item.selected);
   const install=choices.some(item=>item.installState==='new');
   const repair=choices.some(item=>item.installState==='repair');
-  if(choices.some(item=>item.installState==='pending'))primary='Save choices';
-  else if(install&&repair)primary='Apply changes';
+  if(install&&repair)primary='Apply changes';
   else if(install)primary='Install & record';
   else if(repair)primary='Reinstall & record';
  }
  return <SetupFrame title={screen.title} description={screen.description} footer={['↑ ↓ ← → Move','Space Toggle','Enter Select']}>
   <Box flexDirection="column" marginTop={1}>
    {screen.phase===1&&!items.length&&<Text>No recording integrations are available for this platform.</Text>}
-   {items.map(item=><Choice key={item.id} id={choiceId(item.id)} label={item.label} installState={screen.phase===1?item.installState:undefined} detail={item.detail} checked={item.selected} disabled={item.disabled} autoFocus={item.id===first} onToggle={()=>setItems(current=>current.map(row=>row.id===item.id?{...row,selected:!row.selected}:row))}/>)}
+   {items.filter(item=>!item.disabled).map(item=><Choice key={item.id} id={choiceId(item.id)} label={item.label} installState={screen.phase===1?item.installState:undefined} detail={item.detail} checked={item.selected} disabled={item.disabled} autoFocus={item.id===first} onToggle={()=>setItems(current=>current.map(row=>row.id===item.id?{...row,selected:!row.selected}:row))}/>)}
    <Box marginTop={1}><Choice id={noneId} label={screen.noneLabel} checked={selected===0} autoFocus={!first} onToggle={()=>setItems(current=>current.map(item=>({...item,selected:false})))}/></Box>
+   {items.filter(item=>item.disabled).map(item=><Choice key={item.id} id={choiceId(item.id)} label={item.label} detail={item.detail} checked={false} disabled onToggle={()=>{}}/>)}
   </Box>
   <Box marginTop={1} gap={2}><Button id={continueId} label={primary} onPress={()=>finish(items)}/><Button id={cancelId} label="Cancel" onPress={()=>finish(null)}/></Box>
  </SetupFrame>;
