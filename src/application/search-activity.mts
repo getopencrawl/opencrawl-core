@@ -8,9 +8,12 @@ export const historyRequest = z.strictObject({
   range:usageRange.optional(),
   /** Proactive checks that returned at least one result: OpenCrawl context edits. */
   edits:z.literal(true).optional(),
+  /** List keyword queries for the Overview. Keyword-free browse calls still count in totals. */
+  withQuery:z.literal(true).optional(),
 });
 export const activityRequest = z.strictObject({range: usageRange.optional(), basis: z.literal('events').optional()});
-export const historyRead = historyRequest.extend({basis: z.literal('events').optional()});
+export const historyRead = historyRequest.extend({basis: z.literal('events').optional()})
+  .refine(input => !input.withQuery || (input.kind === 'agent' && input.basis === 'events'));
 export type HistoryRequest = z.infer<typeof historyRequest>;
 export interface SearchActivityRow {
   id:string; at:string; userId:string; operation:string; queries:string[];

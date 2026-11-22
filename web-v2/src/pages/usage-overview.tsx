@@ -22,7 +22,7 @@ function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names
   const [expanded, setExpanded] = useState(false);
   const human = names.get(row.userId);
   const identity = [human, row.agentName].filter(Boolean).join(' / ') || 'Unidentified searcher';
-  const query = row.queries.join('\n') || 'Query unavailable';
+  const query = row.queries.join('\n').trim();
   const at = new Date(row.at);
   return <>
     <tr>
@@ -43,14 +43,14 @@ const columns = (label: string) => <tr><th scope="col" aria-label="Agent"/><th s
 function RecentQueries({adapter, scope, period, names}: {adapter: ActivityAdapter; scope: string; period: Period; names: MemberNames}) {
   const [open, setOpen] = useState(false);
   const range = period === '7d' ? '7d' : '30d'; // Query text is retained for 30 days.
-  const key = [...consoleResourceKey(adapter, 'observed-search-history'), scope, range];
+  const key = [...consoleResourceKey(adapter, 'observed-query-history'), scope, range];
   async function load(before: string | undefined, signal: AbortSignal): Promise<SearchActivityPage> {
     const rows: SearchActivityRow[] = [];
     let next = before;
     // A privacy-filtered page can be empty even while more visible queries follow.
     do {
-      const page = scoped(scope, await adapter.searchHistory({kind: 'agent', range, basis: 'events', before: next}, signal));
-      rows.push(...page.rows);
+      const page = scoped(scope, await adapter.searchHistory({kind: 'agent', range, basis: 'events', withQuery: true, before: next}, signal));
+      rows.push(...page.rows.filter(row => !row.withheld && row.queries.some(query => query.trim())));
       if (!page.next || page.next === next || rows.length >= (before ? 1 : 5)) return {rows, next: page.next === next ? null : page.next};
       next = page.next;
     } while (!signal.aborted);

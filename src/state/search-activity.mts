@@ -186,11 +186,12 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
         daily:(r.daily as [string,unknown,unknown][]).map(([date,agent,edits])=>({date,agentSearches:value(agent),nonSilent:value(edits)}))};
     },
     async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
-      const {kind,before,range,edits}=historyRequest.parse(input);
+      const {kind,before,range,edits,withQuery}=historyRequest.parse(input);
       const owner=readScope(p);
-      const audience=JSON.stringify([namespace,...owner,kind,range??'30d',Boolean(edits)]);
+      const audience=JSON.stringify([namespace,...owner,kind,range??'30d',Boolean(edits),...(withQuery ? ['withQuery'] : [])]);
       const start=range==='7d'?"((now() at time zone 'UTC')::date - 6)":windowStart;
       const window=`namespace=$1 and tenant_id=$2 and kind=$4 and at>=${start} at time zone 'UTC' ${edits?"and kind='proactive' and returned>0":''}
+        ${withQuery ? "and array_to_string(queries,'') ~ '[^[:space:]]'" : ''}
         ${before?'and (at,id)<($5::timestamptz,$6::uuid)':''}`;
       const end=`order by at desc,id desc limit ${pageSize+1}`;
       // Two disjoint index seeks. A workspace's unlinked searches cannot force a
