@@ -60,7 +60,7 @@ export function consoleRoute(method: string, path: string) {
 }
 export {createConsoleReloadCache} from './console-reload.mjs';
 import type {ConsoleReload} from './console-reload.mjs';
-export function consoleDocument(data?: {page: {kind:string}; signedIn:boolean}, {machineSetup = true, showIntegrations = false, reload}: {machineSetup?: boolean; showIntegrations?: boolean; reload?: ConsoleReload} = {}) {
+export function consoleDocument(data?: {page: {kind:string}; signedIn:boolean; frame?:'imprint'}, {machineSetup = true, showIntegrations = false, reload}: {machineSetup?: boolean; showIntegrations?: boolean; reload?: ConsoleReload} = {}) {
   // Only inert JSON crosses the server/browser boundary. All visible UI is React.
   const payload = data ?? reload;
   const bootstrap = payload ? `<script id="${data ? 'opencrawl-page' : 'opencrawl-reload'}" type="application/json">${JSON.stringify(payload).replace(/[<>&\u2028\u2029]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4,'0'))}</script>` : '';

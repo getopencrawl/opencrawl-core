@@ -990,3 +990,54 @@ img { max-width: 100%; }
 .report-line-chart .report-bar-tip text{fill:var(--muted);font-family:var(--font-mono);font-size:var(--text-xs)}
 .report-line-chart .report-bar-tip .report-bar-tip-value{fill:var(--text);font-weight:600}
 .report-line-chart svg:focus-visible{outline:var(--console-focus-ring);outline-offset:var(--console-focus-offset)}
+
+/* Imprint provides the visual frame for account and workspace transitions. */
+.oc-imprint {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+  min-height: 100svh; padding: 12px; background: var(--imprint-canvas); color: var(--text); color-scheme: dark;
+}
+.oc-imprint-art {
+  display: grid; place-items: center; border-radius: 5px; position: relative;
+  background-color: var(--imprint-paper);
+  background-image: url('/assets/imprint-paper.png'),
+    radial-gradient(ellipse closest-side, var(--imprint-glow), var(--imprint-glow-middle) 40%, var(--imprint-glow-edge) 72%, transparent),
+    radial-gradient(ellipse at 4% 10%, var(--imprint-ink-blue), transparent 72%), radial-gradient(ellipse at 91% 87%, var(--imprint-ink-plum), transparent 68%);
+  background-repeat: repeat, no-repeat, no-repeat, no-repeat;
+  background-position: 0 0, center, center, center;
+  background-size: 256px 256px, min(88%, 580px) min(60%, 336px), 100% 100%, 100% 100%;
+}
+.oc-imprint-art picture {display: block; width: min(54%, 360px)}
+.oc-imprint-art img {display: block; width: 100%; height: auto}
+.oc-imprint-pane {display: grid; grid-template-rows: 1fr auto; justify-items: center; align-items: center; min-width: 0; padding: 24px}
+.oc-imprint-content {display: grid; gap: 24px; width: min(100%, 344px); padding-block: 32px}
+.oc-imprint-content h1 {margin: 0; font-size: 28px; line-height: 1.2; font-weight: 500; letter-spacing: -.025em}
+.oc-imprint-content header {display: grid; gap: 10px; overflow-wrap: anywhere}
+.oc-imprint-content header p, .oc-imprint-alternate, .oc-imprint-footer {color: var(--muted)}
+.oc-imprint-content form {display: grid; gap: 18px; min-width: 0}
+.oc-imprint-content .oc-button {min-height: 40px; width: 100%}
+.oc-imprint-content .oc-input {width: 100%; font-size: 16px}
+.oc-imprint-alternate, .oc-imprint-footer {text-align: center; font-size: var(--text-sm)}
+.oc-imprint-footer a {color: inherit; text-decoration: underline}
+.oc-imprint-providers {display: flex; gap: 12px}
+.oc-imprint-providers img {width: 18px; height: 18px}
+@media (prefers-color-scheme: light) {
+  .oc-imprint {
+    color-scheme: light; background: var(--imprint-canvas-light); --text: var(--imprint-text-light); --strong: var(--imprint-strong-light); --muted: var(--imprint-muted-light);
+    --quiet: var(--imprint-quiet-light); --surface-subtle: var(--imprint-control-light); --surface-raised: white; --surface: var(--imprint-surface-light);
+    --control-line: var(--imprint-border-light); --accent: var(--imprint-link-light); --accent-hover: var(--imprint-link-hover-light);
+  }
+  .oc-imprint-art {background: var(--imprint-paper-light)}
+  .oc-imprint-art picture {width: 81%}
+  .oc-imprint-art::after {content: ''; position: absolute; right: 6%; bottom: 5%; width: 27px; height: 7px;
+    background: linear-gradient(to right, var(--imprint-registration) 0 7px, transparent 7px 10px, var(--brand-coral) 10px 17px, transparent 17px 20px, var(--brand-cobalt) 20px)}
+}
+@media (max-width: 700px) {
+  .oc-imprint {grid-template-columns: 1fr; grid-template-rows: 120px 1fr; padding: 0; gap: 0}
+  .oc-imprint-art {border-radius: 0; background-size: 256px 256px, 156px 92px, 100% 100%, 100% 100%}
+  .oc-imprint-art picture {width: 91px}
+  .oc-imprint-pane {padding: 20px 24px}
+  .oc-imprint-content .oc-button {min-height: 44px}
+}
+@media (max-width: 700px) and (prefers-color-scheme: light) {
+  .oc-imprint-art picture {width: 148px}
+}
