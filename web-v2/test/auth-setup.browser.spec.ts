@@ -30,6 +30,8 @@ test('device approval submits the code shown in the terminal', async ({page}) =>
 });
 
 test('Imprint follows the system palette and keeps the action on screen', async ({page}) => {
+  const markBounds = () => page.locator('.oc-imprint-art img').boundingBox();
+  const darkMarks = new Map<number, Awaited<ReturnType<typeof markBounds>>>();
   for (const colorScheme of ['dark','light'] as const) {
     await page.emulateMedia({colorScheme});
     for (const width of [1440,390,320]) {
@@ -37,7 +39,12 @@ test('Imprint follows the system palette and keeps the action on screen', async 
       await page.goto('/auth-fixture/imprint');
       await expect(page.getByRole('button',{name:'Continue'})).toBeInViewport();
       const art = page.locator('.oc-imprint-art');
-      expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain(colorScheme==='dark'?'opencrawl-mark':'imprint-light');
+      expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain('/assets/opencrawl-mark.svg');
+      await expect(art).toHaveCSS('background-image', /imprint-paper.png/);
+      const mark = await markBounds();
+      expect(mark?.width).toBeGreaterThan(0);
+      if (colorScheme === 'dark') darkMarks.set(width, mark);
+      else expect(mark).toEqual(darkMarks.get(width));
       const poster=await art.boundingBox(), pane=await page.getByRole('main').boundingBox();
       expect(width>700 ? poster!.x+poster!.width<=pane!.x : poster!.y+poster!.height<=pane!.y).toBe(true);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);

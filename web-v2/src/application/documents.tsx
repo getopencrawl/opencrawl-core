@@ -18,10 +18,7 @@ export function readBrowserDocument() {
 export function DocumentFrame({signedIn,children,frame}: {signedIn:boolean;children:ReactNode;frame?:'imprint'}) {
   if (frame === 'imprint') return <div className="oc-imprint">
     <a className="oc-skip-link" href="#main">Skip to content</a>
-    <div className="oc-imprint-art" aria-hidden="true"><picture>
-      <source media="(prefers-color-scheme: light)" srcSet="/assets/imprint-light.svg"/>
-      <img src="/assets/opencrawl-mark.svg" alt=""/>
-    </picture></div>
+    <div className="oc-imprint-art" aria-hidden="true"><img src="/assets/opencrawl-mark.svg" alt=""/></div>
     <main id="main" className="oc-imprint-pane">{children}</main>
   </div>;
   return <FocusedFrame reloadHome footer={signedIn ? <form method="post" action="/auth/logout"><Button type="submit" variant="quiet">Sign out</Button></form> : undefined}><main id="main" className="oc-document">{children}</main></FocusedFrame>;
