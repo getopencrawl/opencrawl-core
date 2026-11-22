@@ -25,7 +25,7 @@ export type PluginClient = 'claude-code' | 'codex' | 'cursor' | 'antigravity' | 
 export type PluginHumanTask = {id:string;kind:'mcp_auth'|'restart'|'plugin_install';client:PluginClient;title:string;instruction:string;url?:string};
 export type PluginResult = {client:PluginClient;status:'installed'|'unchanged'|'prepared'|'pending'|'error';message?:string;pluginId?:string;directory?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PublishedPackage['source']};
 type CommandResult = {code:number;stdout?:string;timedOut?:boolean};
-export type PluginOptions = {applicationDirs?:string[];onProgress?:(message:string)=>void;validateBinding?:()=>void;cursorCapture?:{installationId:string;observedAt:string};captureMode?:CaptureMode;bundles?:Partial<Record<LocalPluginClient,PublishedPackage | {files:Record<string,string>;source?:undefined}>>;command?:string[];home?:string;env?:NodeJS.ProcessEnv;which?:(name:string)=>string|null;runner?:(command:string,args:string[],env:NodeJS.ProcessEnv)=>Promise<CommandResult>};
+export type PluginOptions = {applicationDirs?:string[];onProgress?:(message:string)=>void;validateBinding?:()=>void;cursorCapture?:{installationId:string;observedAt:string};captureMode?:CaptureMode;bundles?:Partial<Record<LocalPluginClient,PublishedPackage | {files:Record<string,string>;source?:undefined}>>;command?:string[];home?:string;env?:NodeJS.ProcessEnv;which?:(name:string)=>string|null;requireLiveDirectory?:boolean;runner?:(command:string,args:string[],env:NodeJS.ProcessEnv)=>Promise<CommandResult>};
 const clients:PluginClient[] = ['claude-code','codex','cursor','antigravity','devin'];
 export const labels:Record<PluginClient,string> = {'claude-code':'Claude Code',codex:'Codex',cursor:'Cursor',antigravity:'Antigravity',devin:'Devin Cloud'};
 const marker = '.opencrawl-setup-plugin.json';
@@ -100,6 +100,7 @@ export async function recordingInstallState(api:string,client:LocalPluginClient,
     const [row]=matches;
     if(matches.length!==1||!row||!isManaged(row,client,identity)||row.enabled===false||row.installed===false)return 'review';
     if(nativeRoot(row,client,receipt.cachePath)!==receipt.nativeRoot)return 'review';
+    if(options.requireLiveDirectory&&client==='claude-code'&&(row.scope!=='user'||typeof row.readFromFolder!=='string'||!matchesSourcePath(row.readFromFolder,receipt.directory)))return 'review';
     if(client==='codex'){
       const source=row.source as {source?:unknown;path?:unknown}|undefined;
       if(source?.source!=='local'||typeof source.path!=='string'||!matchesSourcePath(source.path,receipt.directory))return 'review';
@@ -159,7 +160,7 @@ function obsoleteBundleFiles(directory:string,owned:ReturnType<typeof read>,file
   }
   return obsolete;
 }
-function writeBundle(directory:string,files:BundleFiles,client:PluginClient,api:string,pluginName:string,configHome:string,pathRoot:string,executable?:string) {
+export function writeBundle(directory:string,files:BundleFiles,client:PluginClient,api:string,pluginName:string,configHome:string,pathRoot:string,executable?:string) {
   const existing=stat(directory),owned=read(join(directory,marker));
   if(existing&&(!owned||![2,3].includes(owned.schemaVersion)||owned.api!==api||owned.client!==client||owned.pluginName!==pluginName||owned.configHome!==configHome))throw new CliError('PLUGIN_PATH_CONFLICT','Another plugin occupies the setup path. Preserve it and resolve the conflict before retrying.');
   const inventory=bundleManifest(files,executable);

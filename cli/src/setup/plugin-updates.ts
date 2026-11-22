@@ -2,7 +2,7 @@ import {dirname, join} from 'node:path';
 import {compare, read, stable, updateDue} from '../distribution.ts';
 import {atomicJson, configDir, withSessionLock} from '../session.ts';
 import {readCaptureConfig} from '../capture/runtime.ts';
-import {readSetupState, scopeKey, type SetupState} from './state.ts';
+import {automaticUpdateClients, readSetupState, scopeKey, type SetupState} from './state.ts';
 import {pluginRelease, type PluginRelease} from './plugin-release.ts';
 import {loadPublishedPackage,type PublishedPackage} from './published-plugins.ts';
 import {setupPluginIdentity} from './plugin-identity.ts';
@@ -57,7 +57,7 @@ function ownedSource(state:SetupState, candidate:Candidate) {
 }
 
 type Staged = Candidate & ({status:'ready_for_review';hookChanges:string[]} | {status:'retry'});
-function verifiedInstallation(state:SetupState, candidate:Candidate) {
+export function verifiedInstallation(state:SetupState, candidate:Candidate) {
   if (!ownedSource(state,candidate)) return;
   const identity=setupPluginIdentity(state.scope.api);
   const receipt=read(join(configDir(),'setup-plugins',candidate.client,identity.key,'installed.json'));
@@ -134,8 +134,38 @@ export async function stagePluginUpdates(api?:string, signal?:AbortSignal, load=
   },0,signal);
 }
 
-export function formatPluginUpdates(rows:Staged[]) {
+type RefreshResult=Staged | Candidate & {status:'updated'|'kept_current';reason:string};
+
+export async function refreshManagedPlugins(api?:string,signal?:AbortSignal):Promise<RefreshResult[]> {
+  const staged=await stagePluginUpdates(api,signal),state=currentInstallation(api);
+  if(!state?.installationId)return staged;
+  const consent=automaticUpdateClients(state);
+  const promotable=['claude-code','cursor'] as const;
+  const results:RefreshResult[]=[...staged];
+  for(const client of promotable){
+    const row=staged.find(item=>item.client===client);
+    const identity=setupPluginIdentity(state.scope.api);
+    const interrupted=read(join(configDir(),'setup-plugins',client,identity.key,'update-transaction.json'));
+    if(!interrupted&&(!consent.includes(client)||row?.status!=='ready_for_review'))continue;
+    try{
+      const ok=await withSessionLock('setup:interactive-choices',()=>withSessionLock('setup:plugins',async()=>{
+        const current=currentInstallation(state.scope.api);
+        if(!current||current.installationId!==state.installationId||!isDeepStrictEqual(state.scope,current.scope))return false;
+        const {promoteDirectoryPlugin}=await import('./plugin-promotion.ts');
+        return promoteDirectoryPlugin(current,client,signal);
+      },0,signal),0,signal);
+      if(row)results[results.indexOf(row)]={...row,status:ok?'updated':'kept_current',reason:ok?'The new plugin is in its active directory.':'The active installation could not be safely exchanged.'};
+    }catch{
+      signal?.throwIfAborted();
+      if(row)results[results.indexOf(row)]={...row,status:'retry'};
+    }
+  }
+  return results.map(row=>row.status==='ready_for_review'&&consent.includes(row.client)&&['codex','antigravity'].includes(row.client)
+    ?{...row,status:'kept_current',reason:row.client==='codex'?'Codex requires native review for the new version.':'The native installer can interrupt capture.'}:row);
+}
+
+export function formatPluginUpdates(rows:RefreshResult[]) {
   if (!rows.length) return 'No eligible managed plugin updates.';
   return rows.map(row=>row.client+' '+row.installed+' → '+row.version+
-    (row.status==='ready_for_review'?' — downloaded for review. '+(row.hookChanges.length?'Hook files changed: '+row.hookChanges.join(', ')+'.':'Hook definitions and runtime are unchanged.'):' — download pending.')).join('\n');
+    (row.status==='updated'||row.status==='kept_current'?' — '+row.reason:row.status==='ready_for_review'?' — downloaded for review. '+(row.hookChanges.length?'Hook files changed: '+row.hookChanges.join(', ')+'.':'Hook definitions and runtime are unchanged.'):' — download pending.')).join('\n');
 }

@@ -24,12 +24,12 @@ import {assertSetupAvailability,newSetupClientAvailable,selectOfferedGroup,setup
 import {canInstallRecordingPlugin,recordingInstallState,installSetupPlugins,type PluginResult} from './plugins.ts';
 import {installPublishedSetupPlugins,loadPublishedPackage,packageRelease,type LocalPluginClient,type CaptureMode} from './published-plugins.ts';
 import {daemonEligibility,daemonStartupGuidance,savedCaptureMode,requestedCaptureMode} from './capture-mode.ts';
-import {chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
+import {automaticUpdateClients,chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
 import {readServerSetup,serverScope,publishSetup,type SetupServerStatus} from './api.ts';
 import {historyJob,startHistoryWorker,runHistoryWorker} from './history-worker.ts';
 import {chooseSetupItems} from './select.ts';
 import {deferredPlugins,nextSetupAction} from './next.ts';
-import {pendingPluginUpdates,formatPluginUpdates} from './plugin-updates.ts';
+import {pendingPluginUpdates,formatPluginUpdates,updateCandidates,verifiedInstallation} from './plugin-updates.ts';
 import {rememberFinishedSetup} from './first-run.ts';
 import {verifyInstallation} from '../verify-installation.ts';
 import {formatSetupCommand,setupCommandForSelf,profileSetupCommand} from './invocation.ts';
@@ -70,7 +70,7 @@ export function localSetupStatus(requestedApi?:string){
  const selections=preserveRecordingOff(state.selections,scope,config);
  const pluginUpdates=config.disabled?[]:pendingPluginUpdates(state);
  if(JSON.stringify(readLocalCaptureConfig())!==JSON.stringify(config))throw new CliError('SETUP_SCOPE_CHANGED','The local installation changed while reading status. Retry local status; no state was changed.',2);
- return {status:'local_status',freshness:'local-only',serverChecked:false,scopeSource:'saved-capture-config',scope,installationId:config.installationId,savedSelections:state.selections,selections,...(pluginUpdates.length?{pluginUpdates}:{}),captureMode:savedCaptureMode(state,config),...(state.pluginResults?{pluginResults:state.pluginResults.map(({client,status,message})=>({client,status,message}))}:{}),...(state.worker?{worker:workerObservation(state.worker)}:{})};
+ return {status:'local_status',freshness:'local-only',serverChecked:false,scopeSource:'saved-capture-config',scope,installationId:config.installationId,savedSelections:state.selections,selections,automaticPluginUpdates:automaticUpdateClients(state),...(pluginUpdates.length?{pluginUpdates}:{}),captureMode:savedCaptureMode(state,config),...(state.pluginResults?{pluginResults:state.pluginResults.map(({client,status,message})=>({client,status,message}))}:{}),...(state.worker?{worker:workerObservation(state.worker)}:{})};
 }
 
 const availabilityBinding=({scope,installationId,savedSelections,selections}:ReturnType<typeof localSetupStatus>)=>JSON.stringify({scope,installationId,savedSelections,selections});
@@ -133,10 +133,21 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  const server=await confirmScope(scope);
  const previous=readSetupState(scope),existing=readCaptureConfig();
  if(installPlugins===installPublishedSetupPlugins&&previous?.pluginResults?.some(row=>selections.forward[row.client]&&(!row.source||row.captureAvailable===true)&&['installed','unchanged','prepared'].includes(row.status)&&packageRelease(row.client)?.captureAvailable===false))throw new CliError('PLUGIN_CAPTURE_UNAVAILABLE','The pinned package cannot capture yet. Your current working installation and saved choices are preserved.');
+ // Changing update preferences must not reinstall a healthy older plugin.
+ const retained=new Map<string,PluginResult>();
+ if(installPlugins===installPublishedSetupPlugins&&previous?.installationId&&existing?.installationId===previous.installationId&&
+    existing.api===scope.api&&existing.owner.tenantId===scope.tenantId&&existing.owner.userId===scope.userId&&savedCaptureMode(previous,existing)===mode){
+  for(const candidate of updateCandidates(previous)){
+   const row=previous.pluginResults?.find(row=>row.client===candidate.client);
+   if(!selections.plugins[candidate.client]||!row?.captureAvailable||!row.source?.archive||
+      !verifiedInstallation(previous,candidate)||await recordingInstallState(scope.api,candidate.client,row.status)!=='installed')continue;
+   retained.set(candidate.client,{...row,client:candidate.client,status:row.status==='prepared'?'prepared':'unchanged'});
+  }
+ }
  const packages=new Map<LocalPluginClient,Awaited<ReturnType<typeof loadPublishedPackage>>>();
  if(installPlugins===installPublishedSetupPlugins)for(const id of chosen(selections,'plugins')){
   const client=id as LocalPluginClient;
-  if(id==='devin'||optionalFailures?.has(client))continue;
+  if(id==='devin'||retained.has(client)||optionalFailures?.has(client))continue;
   onProgress?.('Installing session capture tooling','Loading the OpenCrawl plugin for '+client+'.','installing');
   try{packages.set(client,await loadPublishedPackage(client));}
   catch(error){
@@ -146,17 +157,18 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  }
  // Saving the first confirmation independently makes interruption before the
  // history screen safe: it cannot create consent or a job for new history.
- await updateSetupState(scope,old=>({...old,schemaVersion:1,firstRun:reviewingChoices?'choosing':'ready',scope,selections,captureMode:mode,acceptedAt:new Date().toISOString(),worker:mode==='daemon'||existing?.captureWorker||existing?.daemonRequested||existing?.backgroundStartup?{kind:'configuring',status:'pending',supervised:false,harnesses:chosen(selections,'forward'),startup:false}:undefined,pluginResults:[...(old?.pluginResults??[]).filter(row=>!selections.plugins[row.client]),...chosen(selections,'plugins').map(client=>({client,status:'pending',...(installPlugins===installPublishedSetupPlugins?{captureAvailable:packageRelease(client)?.captureAvailable??false,daemonHandoff:packageRelease(client)?.daemonHandoff??false}:{})}))]}));
+ await updateSetupState(scope,old=>({...old,schemaVersion:1,firstRun:reviewingChoices?'choosing':'ready',scope,selections,captureMode:mode,acceptedAt:new Date().toISOString(),worker:mode==='daemon'||existing?.captureWorker||existing?.daemonRequested||existing?.backgroundStartup?{kind:'configuring',status:'pending',supervised:false,harnesses:chosen(selections,'forward'),startup:false}:undefined,pluginResults:[...(old?.pluginResults??[]).filter(row=>!selections.plugins[row.client]),...chosen(selections,'plugins').map(client=>retained.get(client)??({client,status:'pending',...(installPlugins===installPublishedSetupPlugins?{captureAvailable:packageRelease(client)?.captureAvailable??false,daemonHandoff:packageRelease(client)?.daemonHandoff??false}:{})}))]}));
  const forward=chosen(selections,'forward');
  const capture=await installCapture(scope.api,{harnesses:forward as Harness[],historyHarnesses:chosen(selections,'history') as TranscriptHarness[],selectionMode:'replace',captureMode:mode,daemon:mode==='daemon'&&eligible,stagedDaemon:mode==='daemon'&&eligible&&stageDaemon,daemonService:false,backgroundStartup:mode==='daemon'&&eligible&&chosen(selections,'plugins').length>0,expectedOwner:scope,expectedConfig:existing,validatePrincipal,hookOwnership:'plugin',command});
  if(!selections.plugins.cursor)await removeCursorSetupHooks(scope.api,existing?.roots.cursor);
  const cursor=server.installations.find(row=>row.installationId===capture.installationId)?.clients.find(row=>row.client==='cursor');
  const cursorCapture=cursor?.captureObservedAt?{installationId:capture.installationId,observedAt:cursor.captureObservedAt}:undefined;
- const selectedPlugins=chosen(selections,'plugins').filter(client=>!optionalFailures?.has(client));
+ const selectedPlugins=chosen(selections,'plugins').filter(client=>!optionalFailures?.has(client)&&!retained.has(client));
  const pluginOptions={command,captureMode:mode,cursorCapture,onProgress:(message:string)=>onProgress?.('Installing session capture tooling',message,'installing')};
  const plugins=installPlugins===installPublishedSetupPlugins
   ?await installPublishedSetupPlugins(scope.api,selectedPlugins,{...pluginOptions,loadPackage:async client=>packages.get(client)!})
   :await installPlugins(scope.api,selectedPlugins,pluginOptions);
+ plugins.results.push(...retained.values());
  for(const failure of optionalFailures?.values()??[])if(selections.plugins[failure.client])plugins.results.push(failure);
  await confirmScope(scope);
  const ready=chosen(selections,'plugins').every(client=>plugins.results.some(row=>row.client===client&&['installed','unchanged','prepared'].includes(row.status)));
@@ -406,12 +418,26 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    if(service===null)return {status:'cancelled',humanTasks:[]};
    captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';
   }
+  let autoUpdateClients:string[]=[];
+  if(selectedIds.size){
+   const previousGrant=new Set(automaticUpdateClients(sameOwner&&previous?.installationId===readCaptureConfig()?.installationId?previous:null));
+   const editable=options.filter(item=>selectedIds.has(item.id));
+   const consent=await choose({phase:4,title:'Automatically update OpenCrawl plugins on this machine?',
+    description:'Select the apps where future verified OpenCrawl updates may run new or changed hooks. If an app requires another approval, OpenCrawl keeps the current version active until the update can run.',
+    noneLabel:'Keep plugin updates manual',items:editable.map(item=>({id:item.id,label:item.label,selected:previousGrant.has(item.id),detail:item.id==='codex'?'Download only. Codex requires review.':item.id==='antigravity'?'Download only. The installer can interrupt recording.':process.platform==='win32'?'Download only on Windows.':undefined}))});
+   if(consent===null)return {status:'cancelled',humanTasks:[]};
+   autoUpdateClients=consent.filter(item=>item.selected&&selectedIds.has(item.id)).map(item=>item.id);
+  }
   const capture=chosen(selections,'plugins').length>0;
   if(capture){
    checkMode(selections);
    onProgress?.('Installing session capture tooling','Connecting the selected agents and enabling session recording.','installing');
   }else onProgress?.('Saving your choices','Turning off new-session recording for this workspace on this machine.');
-  const state=await saveRecording();
+  const recorded=await saveRecording();
+  const state=await updateSetupState(scope,current=>{
+   if(!current||current.acceptedAt!==recorded.acceptedAt||current.installationId!==recorded.installationId)throw new CliError('SETUP_SCOPE_CHANGED','The installation changed before saving automatic plugin updates.');
+   return {...current,pluginAutoUpdates:current.installationId?{installationId:current.installationId,clients:autoUpdateClients}:undefined};
+  });
   const available=availableHistory(),historyClients=clients.filter(client=>newSetupClientAvailable(client.id,platform,registered)&&client.history&&available.some(file=>file.harness===client.id));
   const selectedHistory=await choose({phase:2,title:'Import past sessions',description:historyBenefit,noneLabel:'Skip history import',emptyMessage:'No supported local session history was found. Continuing without an import.',items:historyClients.map(client=>{const count=available.filter(file=>file.harness===client.id).length;return {id:client.id,label:client.label,detail:`${count} ${count===1?'file':'files'}`,selected:prospectiveHistory[client.id]===true};})});
   if(selectedHistory===null)return {status:'cancelled',historyDecision:'unchanged',humanTasks:[]};

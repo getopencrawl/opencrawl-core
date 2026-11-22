@@ -334,8 +334,8 @@ export async function main(args = process.argv.slice(2)) {
     }
     if(parsed.values.local){const data=localSetupStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
     if(command==='setup'&&parsed.positionals[1]==='updates'){
-      const {stagePluginUpdates,formatPluginUpdates}=await import('./setup/plugin-updates.ts');
-      const rows=await stagePluginUpdates((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);
+      const {refreshManagedPlugins,formatPluginUpdates}=await import('./setup/plugin-updates.ts');
+      const rows=await refreshManagedPlugins((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);
       emit({plugins:rows},formatPluginUpdates(rows));return rows.some(row=>row.status==='retry')?1:0;
     }
     if(command==='setup'&&parsed.positionals[1]==='hooks'){const data=await setupHookStatus((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);emit(data,formatSetupOutput(data));return 0;}
@@ -382,8 +382,8 @@ export async function main(args = process.argv.slice(2)) {
     }
     if(command==='update'){
       const data=await updateCli();
-      const {stagePluginUpdates,formatPluginUpdates}=await import('./setup/plugin-updates.ts');
-      const plugins=await stagePluginUpdates((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);
+      const {refreshManagedPlugins,formatPluginUpdates}=await import('./setup/plugin-updates.ts');
+      const plugins=await refreshManagedPlugins((parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL);
       const message=data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`;
       emit({...data,plugins},message+(plugins.length?'\n'+formatPluginUpdates(plugins):''));
       return plugins.some(row=>row.status==='retry')?1:0;

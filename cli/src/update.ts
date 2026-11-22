@@ -144,7 +144,7 @@ export function scheduleCliUpdate(pluginApi?:string) {
   const timeout=setTimeout(()=>controller.abort(),90_000);timeout.unref();
   const jobs:Promise<unknown>[]=[refreshCli({signal:controller.signal})];
   if (pluginApi && distribution.compiled() && process.env.OPENCRAWL_NO_UPDATE!=='1')
-    jobs.push(import('./setup/plugin-updates.ts').then(module=>module.stagePluginUpdates(pluginApi,controller.signal)));
+    jobs.push(import('./setup/plugin-updates.ts').then(module=>module.refreshManagedPlugins(pluginApi,controller.signal)));
   const done=Promise.allSettled(jobs).finally(()=>clearTimeout(timeout));
   return {stop:async()=>{controller.abort();await done;}};
 }

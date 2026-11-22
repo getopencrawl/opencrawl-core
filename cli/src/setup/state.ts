@@ -13,7 +13,7 @@ export type SetupSelections={plugins:Record<string,boolean>;forward:Record<strin
 export type SetupClient={id:string;label:string;detected:boolean;plugin:boolean;forward:boolean;history:boolean;historyFiles:number;historyBytes:number};
 export type HistoryJob={id:string;clients:string[];files:HistoryFile[];state:'queued'|'running'|'complete'|'failed'|'paused';completedClients:string[];createdAt:string;updatedAt:string;progress?:{client:string;completed:number;total:number;uploaded:number};error?:string;pid?:number};
 export type SetupWorker={kind:string;status?:string;supervised:boolean;harnesses:string[];startup:boolean;command?:string[];environment?:Record<string,string>;reason?:string};
-export type SetupState={schemaVersion:1;firstRun?:'choosing'|'ready'|'complete';scope:SetupScope;selections:SetupSelections;captureMode?:CaptureMode;acceptedAt:string;installationId?:string;machine?:{id:string;label:string};historyJob?:HistoryJob;worker?:SetupWorker;pluginResults?:{client:string;status:string;message?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PluginResult['source']}[];humanTasks?:SetupHumanTask[]};
+export type SetupState={schemaVersion:1;pluginAutoUpdates?:{installationId:string;clients:string[]};firstRun?:'choosing'|'ready'|'complete';scope:SetupScope;selections:SetupSelections;captureMode?:CaptureMode;acceptedAt:string;installationId?:string;machine?:{id:string;label:string};historyJob?:HistoryJob;worker?:SetupWorker;pluginResults?:{client:string;status:string;message?:string;preparedAt?:string;captureAvailable?:boolean;daemonHandoff?:boolean;source?:PluginResult['source']}[];humanTasks?:SetupHumanTask[]};
 export const historyBenefit='Import past sessions so your agents can find previous decisions, fixes, and context.';
 export const scopeKey=(scope:SetupScope)=>createHash('sha256').update(JSON.stringify([scope.api,scope.tenantId,scope.userId])).digest('hex');
 export const setupRoot=()=>join(configDir(),'setup');
@@ -26,10 +26,26 @@ export function readStateKey(key:string):SetupState|null {
   delete value.checkpoint;
   return value;
 }
+/** This grant is local to one enrolled installation. Older setups have no grant. */
+export function automaticUpdateClients(state:SetupState|null):string[] {
+  const grant=state?.pluginAutoUpdates;
+  if(!state?.installationId||grant?.installationId!==state.installationId||!Array.isArray(grant.clients))return [];
+  return [...new Set(grant.clients.filter(client=>typeof client==='string'&&['claude-code','codex','cursor','antigravity'].includes(client)&&state.selections.plugins[client]===true))].sort();
+}
 export const readSetupState=(scope:SetupScope)=>readStateKey(scopeKey(scope));
 export async function updateSetupState(scope:SetupScope,change:(previous:SetupState|null)=>SetupState){
   const key=scopeKey(scope);
-  return withSessionLock('setup:'+key,async()=>{const next=change(readStateKey(key));if(scopeKey(next.scope)!==key)throw new CliError('SETUP_SCOPE_CHANGED','Setup scope changed.');atomicJson(statePath(key),next);return next;});
+  return withSessionLock('setup:'+key,async()=>{
+    const next=change(readStateKey(key));
+    if(scopeKey(next.scope)!==key)throw new CliError('SETUP_SCOPE_CHANGED','Setup scope changed.');
+    if(next.pluginAutoUpdates){
+      const clients=automaticUpdateClients(next);
+      if(next.installationId&&clients.length)next.pluginAutoUpdates={installationId:next.installationId,clients};
+      else delete next.pluginAutoUpdates;
+    }
+    atomicJson(statePath(key),next);
+    return next;
+  });
 }
 /** Missing clients may default on; a saved false is never treated as missing. */
 export function defaultSelections(clients:SetupClient[],previous?:SetupSelections,legacyForward?:string[]):SetupSelections {
