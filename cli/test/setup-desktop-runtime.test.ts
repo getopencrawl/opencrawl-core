@@ -18,8 +18,11 @@ test.skipIf(process.platform==='win32')('desktop-only discovery requires a local
    executable(join(apps,mac?'Claude.app/Contents/MacOS/Claude':'claude-desktop/claude-desktop'));
    expect(await recordingRuntime('claude-code',{...options,runner:async()=>({code:0,stdout:'2.1.330 (Claude Code)'})},platform)).toEqual({executable:engine,desktop:true});
   }
-  const bundled=join(apps,'ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex');executable(bundled);
-  const runner=async(command:string)=>({code:0,stdout:command===bundled?'codex-cli 0.171.0-alpha.13':'codex-cli 0.100.0'});
-  for(const terminal of [null,'/older/codex'])expect(await recordingRuntime('codex',{...options,which:()=>terminal,runner},'darwin')).toEqual({executable:bundled,desktop:true});
+  for(const platform of ['darwin','linux'] as const){
+   const bundled=join(apps,platform==='darwin'?'ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex':'chatgpt/resources/codex');
+   executable(bundled);
+   const runner=async(command:string)=>({code:0,stdout:command===bundled?'codex-cli 0.171.0-alpha.13':'codex-cli 0.100.0'});
+   for(const terminal of [null,'/older/codex'])expect(await recordingRuntime('codex',{...options,which:()=>terminal,runner},platform)).toEqual({executable:bundled,desktop:true});
+  }
  }finally{rmSync(home,{force:true,recursive:true});}
 });

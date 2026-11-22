@@ -24,6 +24,9 @@ export function hasClaudeDesktop({home=homedir(),platform=process.platform,appli
 /** Desktop Code and Work use the same native plugin profiles as their terminal counterparts. */
 export function desktopExecutables(client:LocalPluginClient,{home=homedir(),env=process.env,platform=process.platform,
  applicationDirs=applicationRoots(home,platform)}:DesktopOptions={}):string[]{
+ if(client==='codex'&&platform==='linux'){
+  return applicationDirs.map(root=>join(root,'chatgpt','resources','codex')).filter(executable);
+ }
  if(client==='codex'&&platform==='darwin'){
   return applicationDirs.flatMap(root=>['ChatGPT.app','Codex.app'].flatMap(app=>{
    const resources=join(root,app,'Contents','Resources');
