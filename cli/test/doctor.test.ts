@@ -30,7 +30,7 @@ test('doctor distinguishes consent, explicitly recording off, and an unfinished 
   }finally{rmSync(home,{recursive:true,force:true});}
 },30000);
 
-test('doctor challenges an active bundle, resumes on the same revision and refuses stale proof after a configuration change',async()=>{
+test.each(['unified','per-client'])('doctor verifies a retained %s release and refuses stale proof after a configuration change',async layout=>{
   const home=mkdtempSync(join(tmpdir(),'oc-doctor-proof-'));
   let seen='',phase='native',supported=true,account=owner;
   const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(req){
@@ -48,7 +48,11 @@ test('doctor challenges an active bundle, resumes on the same revision and refus
   const api=server.url.origin,scope={api,...owner},base=join(home,'opencrawl'),identity=setupPluginIdentity(api),client='cursor';
   const manager=join(base,'setup-plugins',client,identity.key),live=join(home,'.cursor','plugins','local',identity.name);
   const pin=pluginRelease.packages.find(row=>row.harness===client)!,archive=pin.archives![process.platform+'-'+process.arch]!;
-  const source={repository:pluginRelease.repository,ref:pin.ref??pluginRelease.ref,name:pin.name,path:pin.path,version:pin.version,archive:{...archive,platform:process.platform+'-'+process.arch}};
+  const platform=process.platform+'-'+process.arch;
+  const source=layout==='unified'
+    ?{repository:pluginRelease.repository,ref:pin.ref??pluginRelease.ref,name:pin.name,path:pin.path,version:pin.version,archive:{...archive,platform}}
+    :{repository:pluginRelease.repository,ref:'335991acf5e23c072b9874aa4d486fd82d3b37e2',name:'opencrawl-local-cursor',path:'local/cursor',version:'0.2.6',archive:{...archive,platform,
+      url:'https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-cursor-v0.2.6/opencrawl-local-cursor-0.2.6-'+platform+'.zip'}};
   const config={schemaVersion:1,api,owner,installationId,hookOwnership:'plugin',roots:{cursor:join(home,'.cursor'),codex:join(home,'.codex'),'claude-code':join(home,'.claude')},command:[process.execPath,cli],harnesses:[client]};
   const files={'.opencrawl-source.json':JSON.stringify(source),'.opencrawl-binding.json':JSON.stringify({schemaVersion:1,api,configHome:home,client,installationId,owner,captureMode:'hook'})};
   const state={schemaVersion:1,firstRun:'ready',scope,installationId,acceptedAt:new Date().toISOString(),captureMode:'hook',selections:{plugins:{cursor:true},forward:{cursor:true},history:{}},pluginResults:[{client,status:'installed',captureAvailable:true,source}]};

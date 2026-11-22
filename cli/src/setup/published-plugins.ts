@@ -50,14 +50,27 @@ export async function loadPublishedPackage(client:LocalPluginClient,{fetcher=fet
  return {files:textFiles,...(capability.minimumHarnessVersion?{minimumHarnessVersion:capability.minimumHarnessVersion}:{}),...(binary?{binaries:binary.binaries,executable:binary.executable}:{}),source:{repository:release.repository,ref:release.ref,path:entry.path,name:entry.name,version:entry.version,...(binary?{archive:binary.archive}:{})},captureAvailable:available&&capability.capture.minimum===true,daemonHandoff:available&&capability.daemonHandoff===true};
 }
 
+/** Match the per-client release layout as well as the unified plugin release layout. */
+export function acceptedPackageSource(client:LocalPluginClient,source:PublishedPackage['source']){
+ const pin=packageRelease(client);
+ if(!pin||source.repository!==pluginRelease.repository||!/^\d+\.\d+\.\d+$/.test(source.version)||!/^[a-f0-9]{40}$/.test(source.ref))return false;
+ const legacy=source.path==='local/'+client&&source.name==='opencrawl-local-'+client;
+ if(!legacy&&(source.path!==pin.path||source.name!==pin.name))return false;
+ const archive=source.archive;
+ if(!archive)return true;
+ const tag=(legacy?'local-'+client+'-v':'v')+source.version;
+ const basename=legacy?source.name:'opencrawl-'+client;
+ const platform=process.platform+'-'+process.arch;
+ const url='https://github.com/'+pluginRelease.repository+'/releases/download/'+tag+'/'+basename+'-'+source.version+'-'+platform+'.zip';
+ return archive.platform===platform&&archive.url===url&&/^[a-f0-9]{64}$/.test(archive.sha256)&&/^[a-f0-9]{64}$/.test(archive.metadataSha256);
+}
+
 /** Repair uses the accepted release receipt, including both artifact hashes. */
 export async function loadAcceptedPackage(client:LocalPluginClient,source:PublishedPackage['source']){
- const pin=packageRelease(client),archive=source.archive,platform=process.platform+'-'+process.arch;
- if(!pin||!archive||archive.platform!==platform||source.repository!==pluginRelease.repository||source.path!==pin.path||
-   source.name!==pin.name||!/^\d+\.\d+\.\d+$/.test(source.version)||!/^[a-f0-9]{40}$/.test(source.ref))throw invalid();
- const url='https://github.com/'+pluginRelease.repository+'/releases/download/v'+source.version+'/opencrawl-'+client+'-'+source.version+'-'+platform+'.zip';
- if(archive.url!==url)throw invalid();
- const entry={...pin,ref:source.ref,version:source.version,archives:{[platform]:{url,sha256:archive.sha256,metadataUrl:url.slice(0,-4)+'.json',metadataSha256:archive.metadataSha256}}};
+ const pin=packageRelease(client),archive=source.archive;
+ if(!pin||!archive||!acceptedPackageSource(client,source))throw invalid();
+ const {platform,url}=archive;
+ const entry={...pin,name:source.name,path:source.path,ref:source.ref,version:source.version,archives:{[platform]:{url,sha256:archive.sha256,metadataUrl:url.slice(0,-4)+'.json',metadataSha256:archive.metadataSha256}}};
  const pkg=await loadPublishedPackage(client,{release:{...pluginRelease,ref:source.ref,packages:[entry]},platform,historical:true});
  if(!isDeepStrictEqual(pkg.source,source))throw invalid();
  return pkg;

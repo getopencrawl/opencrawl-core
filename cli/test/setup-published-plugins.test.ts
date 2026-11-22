@@ -5,10 +5,22 @@ import {join} from 'node:path';
 import fixture from './fixtures/published-claude-stub.json';
 import stubRelease from './fixtures/published-stub-release.json';
 import type {PluginRelease} from '../src/setup/plugin-release.ts';
-import {loadPublishedPackage,bindPublishedPackage,type PublishedPackage} from '../src/setup/published-plugins.ts';
+import {acceptedPackageSource,loadPublishedPackage,bindPublishedPackage,type PublishedPackage} from '../src/setup/published-plugins.ts';
 import {daemonEligibility,daemonStartupGuidance,requestedCaptureMode,savedCaptureMode} from '../src/setup/capture-mode.ts';
 import {nextSetupAction} from '../src/setup/next.ts';
 import type {SetupState} from '../src/setup/state.ts';
+
+test('a retained per-client release must match the harness, official artifact URL and saved hashes',()=>{
+ const platform=process.platform+'-'+process.arch;
+ const receipt={repository:'getopencrawl/opencrawl-plugins',ref:'335991acf5e23c072b9874aa4d486fd82d3b37e2',name:'opencrawl-local-codex',path:'local/codex',version:'0.2.6',
+  archive:{platform,url:'https://github.com/getopencrawl/opencrawl-plugins/releases/download/local-codex-v0.2.6/opencrawl-local-codex-0.2.6-'+platform+'.zip',sha256:'a'.repeat(64),metadataSha256:'b'.repeat(64)}};
+ expect(acceptedPackageSource('codex',receipt)).toBe(true);
+ expect(acceptedPackageSource('claude-code',receipt)).toBe(false);
+ for(const patch of [{name:'opencrawl'},{path:'plugins/codex'},{path:'local/cursor'},{repository:'other/plugins'},{ref:'main'},
+  {archive:{...receipt.archive,url:receipt.archive.url.replace('local-codex-v','v')}},{archive:{...receipt.archive,sha256:''}}]){
+  expect(acceptedPackageSource('codex',{...receipt,...patch})).toBe(false);
+ }
+});
 
 test('pinned package bytes are checked and cached; ambient credentials never leave for GitHub',async()=>{
  const cache=mkdtempSync(join(tmpdir(),'oc-package-'));let calls=0;

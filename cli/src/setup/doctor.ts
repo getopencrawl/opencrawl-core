@@ -16,8 +16,7 @@ import {unboundSetupComplete} from './first-run.ts';
 import {localSetupStatus,setupHookStatus} from './command.ts';
 import {refreshManagedPlugins} from './plugin-updates.ts';
 import {setupPluginIdentity,recordingInstallState} from './plugins.ts';
-import {installPublishedSetupPlugins,loadAcceptedPackage,packageRelease,type LocalPluginClient} from './published-plugins.ts';
-import {pluginRelease} from './plugin-release.ts';
+import {acceptedPackageSource,installPublishedSetupPlugins,loadAcceptedPackage,packageRelease,type LocalPluginClient} from './published-plugins.ts';
 import {settlePromotion} from './plugin-promotion.ts';
 import {doctorWorker} from './doctor-worker.ts';
 
@@ -103,7 +102,7 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
   if(native!=='installed')return fail('blocked','native_plugin_unconfirmed','Inspect the OpenCrawl plugin entry in '+client+' for a disabled plugin, source conflict, or missing client.');
   const installed=read(join(root,'installed.json'));
   const source=read(join(installed.nativeRoot,'.opencrawl-source.json')),binding=read(join(installed.nativeRoot,'.opencrawl-binding.json'));
-  if(!prior?.source||!isDeepStrictEqual(prior.source,source)||source.repository!==pluginRelease.repository||source.path!==pin.path||
+  if(!prior?.source||!isDeepStrictEqual(prior.source,source)||!acceptedPackageSource(client,prior.source)||
     binding?.api!==api||binding.client!==client||binding.configHome!==dirname(configDir())||binding.installationId!==installationId||
     binding.owner?.tenantId!==state.scope.tenantId||binding.owner?.userId!==state.scope.userId||binding.captureMode!==local.captureMode)
     return fail('blocked','plugin_binding_changed','Review this plugin’s installation and saved capture mode in setup.');
