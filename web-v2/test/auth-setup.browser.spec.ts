@@ -28,3 +28,19 @@ test('device approval submits the code shown in the terminal', async ({page}) =>
   expect(fields.get('user_code')).toBe('TEST-1234');
   expect(fields.get('decision')).toBe('approve');
 });
+
+test('Imprint follows the system palette and keeps the action on screen', async ({page}) => {
+  for (const colorScheme of ['dark','light'] as const) {
+    await page.emulateMedia({colorScheme});
+    for (const width of [1440,390,320]) {
+      await page.setViewportSize({width,height:800});
+      await page.goto('/auth-fixture/imprint');
+      await expect(page.getByRole('button',{name:'Continue'})).toBeInViewport();
+      const art = page.locator('.oc-imprint-art');
+      expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain(colorScheme==='dark'?'opencrawl-mark':'imprint-light');
+      const poster=await art.boundingBox(), pane=await page.getByRole('main').boundingBox();
+      expect(width>700 ? poster!.x+poster!.width<=pane!.x : poster!.y+poster!.height<=pane!.y).toBe(true);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    }
+  }
+});

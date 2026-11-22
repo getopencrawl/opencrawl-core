@@ -6,6 +6,6 @@ export const securityHeaders = {
   'Strict-Transport-Security': 'max-age=31536000',
 };
 /** Server adapters supply page data, never HTML content. */
-export function document<T extends {kind:string}>(page:T, {signedIn=false}={}) {
-  return consoleDocument({page,signedIn});
+export function document<T extends {kind:string}>(page:T, {signedIn=false, frame}: {signedIn?:boolean; frame?:'imprint'}={}) {
+  return consoleDocument({page,signedIn,...(frame ? {frame} : {})});
 }

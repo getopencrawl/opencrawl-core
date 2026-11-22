@@ -142,5 +142,5 @@ export function OpenCrawlApp<B extends Bootstrap>({api, extensions}: {api: Produ
 }
 function ApplicationContent<B extends Bootstrap>({api,extensions}: {api:ProductApi<B>;extensions?:ConsoleExtensions<B>}) {
   const [page] = useState(readBrowserDocument);
-  return page ? <DocumentFrame signedIn={page.signedIn}>{extensions?.document?.(page.page) ?? <ProductDocument page={page.page}/>}</DocumentFrame> : <ConsoleApp api={api} extensions={extensions}/>;
+  return page ? <DocumentFrame signedIn={page.signedIn} frame={page.frame}>{extensions?.document?.(page.page) ?? <ProductDocument page={page.page}/>}</DocumentFrame> : <ConsoleApp api={api} extensions={extensions}/>;
 }

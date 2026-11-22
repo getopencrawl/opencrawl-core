@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="158 289 905 514" fill="none">
+    <defs>
+      <path id="print-shape" d="M441 337C521 337 571 372 609 426Q629 456 650 426C691 371 747 337 828 337C908 337 968 377 994 451L922 493C903 451 871 429 828 429C765 429 715 478 715 538C715 599 765 647 828 647C871 647 902 625 922 583L994 625C966 698 907 737 828 737C748 737 692 704 651 652Q630 623 609 652C570 704 520 737 441 737C318 737 224 650 224 538C224 425 318 337 441 337ZM441 431C380 431 332 478 332 538C332 598 380 645 441 645C500 645 548 598 548 538C548 478 500 431 441 431Z" fill-rule="evenodd"/>
+      <pattern id="dots" width="6" height="6" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.25" fill="#a5a5f8"/></pattern>
+    </defs>
+    <g stroke="#56567f" stroke-width="1.5" opacity=".74"><path d="M171 324v-15h15m846 0h15v15M171 764v15h15m846 0h15v-15"/></g>
+    <use href="#print-shape" transform="translate(-12 0)" fill="#ff6268"/>
+    <use href="#print-shape" transform="translate(12 0)" fill="#164bff"/>
+    <use href="#print-shape" fill="#201e39"/>
+    <use href="#print-shape" fill="url(#dots)"/>
+  </svg>
