@@ -40,7 +40,15 @@ test('Imprint follows the system palette and keeps the action on screen', async 
       await expect(page.getByRole('button',{name:'Continue'})).toBeInViewport();
       const art = page.locator('.oc-imprint-art');
       expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain('/assets/opencrawl-mark.svg');
-      await expect(art).toHaveCSS('background-image', /imprint-paper.png/);
+      const grain = await art.evaluate(el => {
+        const layer = getComputedStyle(el, '::before');
+        return {image:layer.backgroundImage, size:layer.backgroundSize, opacity:Number(layer.opacity)};
+      });
+      expect(grain.image).toContain('/assets/imprint-paper.png');
+      expect(grain.size).toBe('256px 256px');
+      expect(grain.opacity).toBeGreaterThan(0);
+      if (colorScheme === 'light') expect(grain.opacity).toBeLessThan(.35);
+      else expect(grain.opacity).toBe(1);
       const mark = await markBounds();
       expect(mark?.width).toBeGreaterThan(0);
       if (colorScheme === 'dark') darkMarks.set(width, mark);

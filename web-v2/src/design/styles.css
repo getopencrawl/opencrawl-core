@@ -999,14 +999,17 @@ img { max-width: 100%; }
 .oc-imprint-art {
   display: grid; place-items: center; border-radius: 5px; position: relative;
   background-color: var(--imprint-paper);
-  background-image: url('/assets/imprint-paper.png'),
-    radial-gradient(ellipse closest-side, var(--imprint-glow), var(--imprint-glow-middle) 40%, var(--imprint-glow-edge) 72%, transparent),
+  background-image: radial-gradient(ellipse closest-side, var(--imprint-glow), var(--imprint-glow-middle) 40%, var(--imprint-glow-edge) 72%, transparent),
     radial-gradient(ellipse at 4% 10%, var(--imprint-ink-blue), transparent 72%), radial-gradient(ellipse at 91% 87%, var(--imprint-ink-plum), transparent 68%);
-  background-repeat: repeat, no-repeat, no-repeat, no-repeat;
-  background-position: 0 0, center, center, center;
-  background-size: 256px 256px, min(88%, 580px) min(60%, 336px), 100% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: min(88%, 580px) min(60%, 336px), 100% 100%, 100% 100%;
 }
-.oc-imprint-art img {display: block; width: min(54%, 360px); height: auto}
+.oc-imprint-art::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: url('/assets/imprint-paper.png') repeat 0 0 / 256px 256px;
+}
+.oc-imprint-art img {position: relative; display: block; width: min(54%, 360px); height: auto}
 .oc-imprint-pane {display: grid; grid-template-rows: 1fr auto; justify-items: center; align-items: center; min-width: 0; padding: 24px}
 .oc-imprint-content {display: grid; gap: 24px; width: min(100%, 344px); padding-block: 32px}
 .oc-imprint-content h1 {margin: 0; font-size: 28px; line-height: 1.2; font-weight: 500; letter-spacing: -.025em}
@@ -1034,11 +1037,11 @@ img { max-width: 100%; }
     --quiet: var(--imprint-quiet-light); --surface-subtle: var(--imprint-control-light); --surface-raised: white; --surface: var(--imprint-surface-light);
     --control-line: var(--imprint-border-light); --accent: var(--imprint-link-light); --accent-hover: var(--imprint-link-hover-light);
   }
-
+  .oc-imprint-art::before {opacity: .24}
 }
 @media (max-width: 700px) {
   .oc-imprint {grid-template-columns: 1fr; grid-template-rows: 120px 1fr; padding: 0; gap: 0}
-  .oc-imprint-art {border-radius: 0; background-size: 256px 256px, 156px 92px, 100% 100%, 100% 100%}
+  .oc-imprint-art {border-radius: 0; background-size: 156px 92px, 100% 100%, 100% 100%}
   .oc-imprint-art img {width: 91px}
   .oc-imprint-pane {padding: 20px 24px}
   .oc-imprint-content .oc-button {min-height: 44px}
