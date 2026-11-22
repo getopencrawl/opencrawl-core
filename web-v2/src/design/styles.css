@@ -1018,6 +1018,7 @@ img { max-width: 100%; }
 .oc-imprint-alternate, .oc-imprint-footer {text-align: center; font-size: var(--text-sm)}
 .oc-imprint-footer a {color: inherit; text-decoration: underline}
 .oc-imprint-providers {display: flex; gap: 12px}
+.oc-imprint-providers > form {flex: 1}
 .oc-imprint-workspaces {display: grid; gap: 12px; min-width: 0}
 .oc-imprint-workspaces ul {list-style: none; margin: 0; padding: 4px; max-height: min(44svh, 340px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin}
 .oc-imprint-workspaces li + li {border-top: 1px solid color-mix(in srgb, var(--muted) 20%, transparent)}
