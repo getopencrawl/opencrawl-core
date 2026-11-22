@@ -223,7 +223,7 @@ test('keyword aliases rank by relevance and timeline browsing accepts no keyword
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
   handler=createOpenCrawlMcp({origin,authenticate:()=>({tenantId:'org',userId:'member'}),
-    search:{async search(_principal,input){calls.push(input);return {results:[],coverage:[{state:'ready'}]};}}});
+    search:{async search(_principal,input){assert.ok(input.query);calls.push(input);return {results:[],coverage:[{state:'ready'}]};},async browse(_principal,input){assert.equal(input.query,undefined);calls.push(input);return {results:[],coverage:[{state:'ready'}]};}}});
   t.after(async()=>{await handler.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
   const client=new Client({name:'search-order',version:'1'});
   await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp')));
@@ -243,7 +243,7 @@ test('keyword aliases rank by relevance and timeline browsing accepts no keyword
   const name='opencrawl_browse',currentSession={harness:'codex',sessionId:'this-chat'};
   assert.ok(!(await client.callTool({name,arguments:{currentSession,filters:bounds}})).isError);
   assert.deepEqual(calls.at(-1).currentSession,currentSession);
-  assert.equal(calls.at(-1).order,'newest');assert.equal(calls.at(-1).query,'');
+  assert.equal(calls.at(-1).order,'newest');assert.equal(calls.at(-1).query,undefined);
   assert.equal((await client.callTool({name,arguments:{query:'avatar'}})).isError,true);
   assert.equal(calls.length,7);
 });

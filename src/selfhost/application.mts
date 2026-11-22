@@ -156,6 +156,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   }
   const workspace=createWorkspaceSearch({sessions:search,connectors,capturePairs:replicasImport?.capturePairs});
   const authorizedSearch={
+    async browse(p:Principal,input:unknown){await authorize(p);const result=await workspace.browse(p,input);await authorize(p);return result;},
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
@@ -174,6 +175,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   }}):undefined;
   const setupObserver=createOnboardingObserver(setup?{cli:onboarding.cli,session:setup.session}:null);
   const query=createWorkspaceSearchHandler({search:authorizedSearch,authenticate});
+  const browse=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'browse'});
   const fetchPassage=createWorkspaceSearchHandler({search:authorizedSearch,authenticate,operation:'fetch'});
   const boardHandler=createBoardHandler({board,authenticate,sharedFiles:Boolean(filesHandler)});
   const mcp=createOpenCrawlMcp({usageActivity,origin:settings.url,revision:settings.revision,search:authorizedSearch,contextSuggestions:checkSuggestions,board,...(setup?{registerTools:(server,principal)=>registerSetupTools(server,principal,setup)}:{}),authenticate:async(req,res)=>{
@@ -259,6 +261,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
           await authorize(fresh.principal);
         });
       }
+      if(url.pathname==='/api/browse')return await browse(req,res);
       if(url.pathname==='/api/search')return await query(req,res);
       if(url.pathname==='/api/search/fetch')return await fetchPassage(req,res);
       if(url.pathname==='/api/setup'||url.pathname.startsWith('/api/setup/'))return setupHandler?await setupHandler(req,res):respond(404,'Setup unavailable');

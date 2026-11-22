@@ -2,10 +2,10 @@ import {CliError, jsonRequest} from './oauth.ts';
 import {accessToken} from './session.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
-async function workspaceRequest(api: string, operation: 'search' | 'fetch', input: Record<string, unknown>, fetcher = fetch, pinnedToken?:string) {
+async function workspaceRequest(api: string, operation: 'search' | 'browse' | 'fetch', input: Record<string, unknown>, fetcher = fetch, pinnedToken?:string) {
   const configured = pinnedToken ?? await configuredToken('OPENCRAWL_TOKEN', api);
   let token = configured || await accessToken(api, undefined, fetcher);
-  const request = () => jsonRequest(`${api}/api/search${operation === 'fetch' ? '/fetch' : ''}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}, body: JSON.stringify(input), signal: AbortSignal.timeout(70_000)}, fetcher);
+  const request = () => jsonRequest(`${api}/api/${operation === 'fetch' ? 'search/fetch' : operation}`, {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}, body: JSON.stringify(input), signal: AbortSignal.timeout(70_000)}, fetcher);
   let result = await request();
   if (result.response.status === 401 && !pinnedToken && (!configured || workspaceIdentityEnabled())) {token = await configuredToken('OPENCRAWL_TOKEN', api, token) || await accessToken(api, token, fetcher);result = await request();}
   if (result.response.status === 401) throw new CliError('AUTH_REQUIRED', 'Sign in with opencrawl login, or configure your self-hosted search token.', 2);
@@ -15,7 +15,7 @@ async function workspaceRequest(api: string, operation: 'search' | 'fetch', inpu
   if (result.response.status === 409) throw new CliError('CONTENT_CHANGED', 'Passage changed. Fetch again from offset 0 without --content-version.');
   if (!result.response.ok) throw new CliError('SEARCH_UNAVAILABLE', 'Workspace search is unavailable on this deployment.');
   const data = result.body.data;
-  const valid = operation === 'search'
+  const valid = operation !== 'fetch'
     ? Array.isArray(data?.results) && Array.isArray(data?.coverage) && typeof data.partial === 'boolean'
     : data?.id === input.id && typeof data?.text === 'string' && typeof data?.version === 'string' && Number.isInteger(data?.offset) && Number.isInteger(data?.totalChars) && (data?.nextOffset === null || Number.isInteger(data?.nextOffset));
   if (result.body.schemaVersion !== 1 || !valid) throw new CliError('INVALID_RESPONSE', 'The service returned an invalid search response.');
@@ -26,10 +26,16 @@ async function workspaceRequest(api: string, operation: 'search' | 'fetch', inpu
 }
 // An import binds identity and every passage read to the same authenticated credential.
 export const memoryReader = (api:string,token:string) => ({
-  search:(input:Record<string,unknown>)=>workspaceRequest(api,'search',input,fetch,token),
+  search:(input:Record<string,unknown>)=>searchWorkspace(api,input,fetch,token),
   fetch:(input:Record<string,unknown>)=>workspaceRequest(api,'fetch',input,fetch,token),
 });
-export const searchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'search', input, fetcher);
+export function searchWorkspace(api: string, input: Record<string, unknown>, fetcher = fetch, pinnedToken?:string) {
+  if (input.query === '' && (input.order === 'newest' || input.order === 'oldest')) {
+    const {query, match, ...options} = input;
+    return workspaceRequest(api, 'browse', options, fetcher, pinnedToken);
+  }
+  return workspaceRequest(api, 'search', input, fetcher, pinnedToken);
+}
 export const fetchWorkspace = (api: string, input: Record<string, unknown>, fetcher = fetch) => workspaceRequest(api, 'fetch', input, fetcher);
 
 // Date-only flags name whole UTC days. Timestamps retain their explicit offset.

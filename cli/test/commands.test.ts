@@ -26,7 +26,9 @@ test('agent command errors keep stdout JSON, stable exit codes and credential-fr
 test('search date aliases reach the HTTP request and browsing stays keyword-free', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'opencrawl-search-bounds-'));
   const requests: unknown[] = [];
+  const paths: string[] = [];
   const server = Bun.serve({hostname:'127.0.0.1',port:0,async fetch(req) {
+    paths.push(new URL(req.url).pathname);
     requests.push(await req.json());
     return Response.json({schemaVersion:1,data:{results:[],coverage:[{source:'sessions',state:'ready'}],partial:false}});
   }});
@@ -46,7 +48,9 @@ test('search date aliases reach the HTTP request and browsing stays keyword-free
     expect(requests).toHaveLength(3);
     expect(requests[0]).toMatchObject({query:'avatar',filters:bounds});
     expect(requests[1]).toEqual(requests[0]);
-    expect(requests[2]).toMatchObject({query:'',order:'oldest',filters:{after:bounds.after}});
+    expect(paths).toEqual(['/api/search','/api/search','/api/browse']);
+    expect(requests[2]).not.toHaveProperty('query');
+    expect(requests[2]).toMatchObject({order:'oldest',filters:{after:bounds.after}});
     for (const args of [['search','avatar','--order','newest'],['search','avatar','--order','oldest'],['browse','avatar'],['browse','--match','all']]) {
       expect((await run(...args)).code).toBe(64);
     }

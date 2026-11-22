@@ -21,7 +21,7 @@ const ctx={harness:'codex',sessionId:'shared'};
 const entry=(query,current=ctx)=>agentSearchEntry('opencrawl_search_v1',{query,currentSession:current});
 const identity=async(_p,rows)=>rows;
 
-test('Overview pages through visible keyword queries while totals include keyword-free calls',async t=>{
+test('Overview pages through keyword queries and excludes chronological reads from search totals',async t=>{
   const db=await applicationDatabaseFixture(t),activity=createSearchActivity(db);
   await activity.ready();
   for(let i=0;i<26;i++)await activity.agentCall(alice,entry('keyword '+i));
@@ -37,7 +37,7 @@ test('Overview pages through visible keyword queries while totals include keywor
   assert.deepEqual(new Set(queries),new Set(Array.from({length:26},(_,i)=>'keyword '+i)));
   await assert.rejects(activity.page(alice,{kind:'agent',before:first.next},identity),/cursor/i);
   await assert.rejects(activity.page(other,{...request,before:first.next},identity),/cursor/i);
-  assert.equal((await activity.totals(alice)).agentSearches,30);
+  assert.equal((await activity.totals(alice)).agentSearches,28);
 });
 
 test('authenticated call accounting, scoped paging and idempotent proactive outcomes on PostgreSQL',async t=>{
