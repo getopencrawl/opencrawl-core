@@ -10,12 +10,20 @@ import {nativeInstallCommand,nativePathCommand} from '../../../src/sessions/cli-
 export function readBrowserDocument() {
   const element = document.getElementById('opencrawl-page');
   if (!element) return null;
-  const result = z.object({signedIn:z.boolean(),page:z.unknown()}).parse(JSON.parse(element.textContent || ''));
+  const result = z.object({signedIn:z.boolean(),page:z.unknown(),frame:z.literal('imprint').optional()}).parse(JSON.parse(element.textContent || ''));
   // Capture setup may carry a credential. Remove its inert bootstrap after reading.
   element.remove();
   return result;
 }
-export function DocumentFrame({signedIn,children}: {signedIn:boolean;children:ReactNode}) {
+export function DocumentFrame({signedIn,children,frame}: {signedIn:boolean;children:ReactNode;frame?:'imprint'}) {
+  if (frame === 'imprint') return <div className="oc-imprint">
+    <a className="oc-skip-link" href="#main">Skip to content</a>
+    <div className="oc-imprint-art" aria-hidden="true"><picture>
+      <source media="(prefers-color-scheme: light)" srcSet="/assets/imprint-light.svg"/>
+      <img src="/assets/opencrawl-mark.svg" alt=""/>
+    </picture></div>
+    <main id="main" className="oc-imprint-pane">{children}</main>
+  </div>;
   return <FocusedFrame reloadHome footer={signedIn ? <form method="post" action="/auth/logout"><Button type="submit" variant="quiet">Sign out</Button></form> : undefined}><main id="main" className="oc-document">{children}</main></FocusedFrame>;
 }
 function CallbackDocument({page}: {page:CallbackPage}) {

@@ -67,3 +67,25 @@
   --agent-identity-34: hsl(340 62% 74%);
   --agent-identity-35: hsl(350 62% 74%);
 }
+
+.oc-imprint {
+  --imprint-canvas: #19181b;
+  --imprint-paper: #17162a;
+  --imprint-glow: rgb(144 140 255 / .23);
+  --imprint-glow-middle: rgb(134 131 250 / .16);
+  --imprint-glow-edge: rgb(123 119 236 / .05);
+  --imprint-ink-blue: #292a50;
+  --imprint-ink-plum: #312437;
+  --imprint-canvas-light: #f2f0f3;
+  --imprint-text-light: #28252b;
+  --imprint-strong-light: #221f24;
+  --imprint-muted-light: #655e69;
+  --imprint-quiet-light: #77717b;
+  --imprint-control-light: #faf9fb;
+  --imprint-surface-light: #fff;
+  --imprint-border-light: #aaa4af;
+  --imprint-link-light: #5049be;
+  --imprint-link-hover-light: #37319d;
+  --imprint-paper-light: #acacf2;
+  --imprint-registration: #28253f;
+}
