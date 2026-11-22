@@ -13,7 +13,6 @@ type Period = typeof periods[number];
 const dayLength = 86_400_000;
 const shortDate = new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
 const time = new Intl.DateTimeFormat(undefined, {hour: 'numeric', minute: '2-digit', second: '2-digit'});
-const dateTime = new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'medium'});
 const zone = new Intl.DateTimeFormat('en-US', {timeZoneName: 'shortGeneric'}).formatToParts().find(part=>part.type==='timeZoneName')?.value;
 const formatMtok = new Intl.NumberFormat('en-US', {maximumFractionDigits: 2});
 const refresh = {staleMilliseconds: 60_000, autoRefreshMilliseconds: 60_000};
@@ -24,13 +23,14 @@ function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names
   const identity = [human, row.agentName].filter(Boolean).join(' / ') || 'Unidentified searcher';
   const query = row.queries.join('\n').trim();
   const at = new Date(row.at);
+  const fullTimestamp = at.toLocaleString();
   return <>
     <tr className="usage-query-row" onClick={() => setExpanded(open => !open)}>
       <td><span className="usage-agent" role="img" tabIndex={0} aria-label={identity} data-tooltip={identity}>
         <AgentAvatar name={row.agentName || row.at}/>
       </span></td>
       <td className="usage-query" title={query}>{query.split('\n')[0]}</td>
-      <td><time dateTime={row.at} title={at.toLocaleString()}>{(expanded || showDate ? dateTime : time).format(at)}</time></td>
+      <td><time dateTime={row.at} title={fullTimestamp}>{expanded || showDate ? fullTimestamp : time.format(at)}</time></td>
       <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query}><Icon name="chevron-down" size={14}/></Button></td>
     </tr>
     {expanded && <tr><td colSpan={4} className="usage-query-detail">

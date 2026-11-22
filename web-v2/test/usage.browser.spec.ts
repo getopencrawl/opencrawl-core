@@ -108,7 +108,7 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   const toggle = row.getByRole('button');
   const timestamp = row.locator('time');
   const compactTime = await timestamp.innerText();
-  const fullTime = await timestamp.evaluate((element: HTMLTimeElement) => new Date(element.dateTime).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'medium'}));
+  const fullTime = await timestamp.evaluate((element: HTMLTimeElement) => new Date(element.dateTime).toLocaleString());
   await row.getByText('agent query 0', {exact: true}).click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await expect(timestamp).toHaveText(fullTime);
