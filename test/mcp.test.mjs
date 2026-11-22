@@ -37,6 +37,41 @@ test('runtime tools use the authenticated principal across concurrent requests',
   assert.equal((await fetch(origin + '/mcp')).status, 401);
 });
 
+test('Devin prompt checks return evidence using the signed-in member and never a workload credential', async t => {
+  let handler;
+  const server = createServer((req,res) => handler(req,res));
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  const calls = [];
+  handler = createOpenCrawlMcp({origin, authenticate: req => {
+    const userId = req.headers.authorization?.slice(7);
+    if (!userId) return null;
+    if (userId === 'worker') return {tenantId:'t',userId,owner:{kind:'shared',provider:'devin',sessionId:'other',organizationId:'org'}};
+    return {tenantId:'t',userId};
+  }, contextSuggestions: async (principal,input,signal) => {
+    assert.equal(signal.aborted,false);
+    calls.push([principal.userId,input]);
+    return {results:[{id:'permitted-'+principal.userId,text:'historical source'}]};
+  }});
+  t.after(async () => {await handler.close(); await new Promise(resolve => server.close(resolve));});
+  const clients = await Promise.all(['member-a','member-b','worker'].map(async id => {
+    const client = new Client({name:'devin',version:'1'});
+    await client.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'),{requestInit:{headers:{authorization:'Bearer '+id}}}));
+    t.after(() => client.close());
+    return client;
+  }));
+  const args = {sessionId:'devin-'+'c'.repeat(32),eventId:'prompt-1',topic:'release QA'};
+  const invoke = (client,body) => client.callTool({name:'opencrawl_context_suggestions_v1',arguments:body});
+  const [a,b,worker] = await Promise.all(clients.map(client => invoke(client,args)));
+  assert.equal(JSON.parse(a.content[0].text).results[0].id,'permitted-member-a');
+  assert.equal(JSON.parse(b.content[0].text).results[0].id,'permitted-member-b');
+  assert.equal(worker.isError,true);
+  assert.deepEqual(JSON.parse((await invoke(clients[0],{...args,topic:'/oc-incognito release QA'})).content[0].text).results,[]);
+  assert.equal((await invoke(clients[0],{...args,tenantId:'forged'})).isError,true);
+  assert.equal(calls.length,2);
+  for (const [,input] of calls) assert.deepEqual(input,{currentSession:{harness:'devin',sessionId:args.sessionId},eventId:'prompt-1',role:'user',message:'release QA'});
+});
+
 test('MCP serves exactly two tools without skills or resources through real SDK clients', async t => {
   let handler;
   const server = createServer((req, res) => handler(req, res));
