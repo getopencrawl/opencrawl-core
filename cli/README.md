@@ -12,7 +12,7 @@ macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 ```
 
-The native installer makes `opencrawl` available on PATH. If it updates your shell configuration, open a new terminal or use the command it prints for your current shell.
+If the installer updates your shell PATH, open a new terminal or run the command it prints.
 
 For agent setup, use `sh -s -- --connect`. Self-hosted users can append `--api URL`.
 
@@ -32,20 +32,16 @@ npm install -g @getopencrawl/cli
 
 Linux setup supports x64 and ARM64 systems with glibc.
 
-Run `opencrawl` in a terminal to start or resume setup. After setup it shows help.
-You can reopen setup with `opencrawl setup`. Choose OpenCrawl Cloud or enter your
-self-hosted workspace address, then sign in through your browser. Use the arrow
-keys to move, Space to toggle a checkbox, and Enter to select a button.
+Run `opencrawl setup` to choose your workspace, recording agents and history imports.
+Each run starts fresh and reuses your workspace sign-in. Arrows move, Space toggles
+a checkbox, and Enter confirms. Compatible detected agents start checked. To opt
+out, choose **Do not record any sessions on this machine**.
 
-Choose the agents whose new sessions you want to record. To skip recording,
-choose **Do not record any sessions on this machine**. Setup asks about importing
-past sessions separately. Workspace admins can then invite teammates one email at a
-time, or press Esc to skip. Self-hosted admins can share the private links from
-Team settings. Open the selected agent when prompted to finish its
-native connection. You can use the web app while setup is in progress.
-
-Each interactive run asks you to choose again and reuses your sign-in for that workspace. Compatible detected agents start checked. If an agent needs a CLI update, its row shows the required command and version. Selecting it saves a pending choice until you install the prerequisite and rerun setup. **⚠ Needs reinstall** flags a missing or damaged
-installation. History import requires a separate confirmation.
+An agent that needs a CLI update shows the required command and version. If you
+select it, recording stays pending until you install the prerequisite and rerun
+setup. **⚠ Needs reinstall** flags a damaged installation. History import
+requires a separate confirmation. Admins can invite teammates or press Esc to
+skip. Open the selected agent when prompted to finish its native connection.
 
 Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
 `setup --yes --json`, and read `setup status --local --json`. For bounded imports,
@@ -78,7 +74,6 @@ or startup fails, capture stays on the existing collector and a later invocation
 retries. Hooks do not wait for installation or startup. Disabled capture and
 custom launchers are preserved. On eligible Macs, setup offers background capture
 as a separate choice. A selected service must report readiness to finish setup.
-`opencrawl setup` retries without changing saved choices.
 
 Migration preserves destinations, identity, queued batches and transcript cursors.
 The daemon watches enrolled sessions and recovers pending hook notices without
