@@ -37,7 +37,12 @@ test('Imprint follows the system palette and keeps the action on screen', async 
     for (const width of [1440,390,320]) {
       await page.setViewportSize({width,height:800});
       await page.goto('/auth-fixture/imprint');
-      await expect(page.getByRole('button',{name:'Continue'})).toBeInViewport();
+      const action = page.getByRole('button',{name:'Continue'});
+      await expect(action).toBeInViewport();
+      const heading = await page.getByRole('heading',{name:'Welcome to OpenCrawl'}).boundingBox();
+      const button = await action.boundingBox();
+      expect(button!.y - (heading!.y + heading!.height)).toBeCloseTo(24, 0);
+      expect(button!.x).toBeCloseTo(heading!.x, 0);
       const art = page.locator('.oc-imprint-art');
       expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain('/assets/opencrawl-mark.svg');
       const grain = await art.evaluate(el => {

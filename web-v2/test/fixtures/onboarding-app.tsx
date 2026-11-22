@@ -13,7 +13,7 @@ import {CallbackChoices, readContinuation} from '../../src/application/callback-
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
 import {UsagePage} from '../../src/pages/usage.tsx';
-import {DailyBarChart} from '../../src/design/components.tsx';
+import {DailyBarChart, PageHeader} from '../../src/design/components.tsx';
 import {DiagnosticsPage, SearchPlaygroundPage} from '../../src/pages/diagnostics.tsx';
 import {BoardNavigation} from '../../src/pages/board.tsx';
 import type {ConsoleDataAdapter} from '../../src/pages/types.ts';
@@ -103,7 +103,7 @@ function Fixture() {
     <Route path="/signed-out" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'message',heading:'You’re signed out',detail:'You have signed out of OpenCrawl.',href:'/auth/login',action:'Sign in'}}/></DocumentFrame>}/>
     <Route path="/team-fixture" element={<ConsoleDataProvider scopeKey="team-fixture" onAccessFailure={() => {}}><TeamPage adapter={teamAdapter}/></ConsoleDataProvider>} />
     <Route path="/auth-fixture/claude-return" element={<DocumentFrame signedIn><ProductDocument page={{kind:'oauth-return',url:'claude://claude.ai/mcp-auth-callback/sdk?code=example&state=bound'}}/></DocumentFrame>}/>
-    <Route path="/auth-fixture/imprint" element={<DocumentFrame signedIn={false} frame="imprint"><section className="oc-imprint-content"><h1>Welcome to OpenCrawl</h1><Button>Continue</Button></section></DocumentFrame>}/>
+    <Route path="/auth-fixture/imprint" element={<DocumentFrame signedIn={false} frame="imprint"><section className="oc-imprint-content"><PageHeader title="Welcome to OpenCrawl"/><Button>Continue</Button></section></DocumentFrame>}/>
     <Route path="/auth-fixture/login" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'login',next:'/device?user_code=TEST-1234'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/login-error" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'login',error:'The email or password is incorrect. Try again.'}}/></DocumentFrame>}/>
     <Route path="/auth-fixture/join" element={<DocumentFrame signedIn={false}><ProductDocument page={{kind:'auth',view:'join',email:'alex@example.com',invitation:'private-invitation'}}/></DocumentFrame>}/>
