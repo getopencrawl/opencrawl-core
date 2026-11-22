@@ -1,4 +1,4 @@
-import {desktopExecutables} from './desktop-runtime.ts';
+import {cursorEditorMinimum,desktopExecutables,executable} from './desktop-runtime.ts';
 import {isRegistrationMcp} from './registration-mcp.ts';
 import {devinManifest,readme,devinGuide} from '../../../plugins/opencrawl-sessions/assets.ts';
 import {existsSync, lstatSync, realpathSync, readFileSync, mkdirSync, unlinkSync, chmodSync, renameSync, mkdtempSync} from 'node:fs';
@@ -31,30 +31,40 @@ export const labels:Record<PluginClient,string> = {'claude-code':'Claude Code',c
 const marker = '.opencrawl-setup-plugin.json';
 const hash = (text:string|Buffer) => createHash('sha256').update(text).digest('hex');
 const json = (value:unknown) => JSON.stringify(value,null,2)+'\n';
-function context(options:PluginOptions) { return {home:options.home??homedir(),env:options.env??process.env,which:options.which??Bun.which}; }
-export function pluginInventory(options:PluginOptions={}) {
-  const {home,env,which}=context(options);
+function context(options:PluginOptions) {
+ const env=options.env??process.env;
+ return {home:options.home??homedir(),env,which:options.which??((name:string)=>Bun.which(name,{PATH:env.PATH}))};
+}
+export function pluginInventory(options:PluginOptions={},platform:NodeJS.Platform=process.platform) {
+  const {home,env}=context(options);
   return clients.filter(id=>id!=='devin'||env.OPENCRAWL_AUTH==='devin-cloud').map(id=>{
     if(id==='devin')return {id,label:labels[id],supported:true,detected:true};
     const roots = id==='codex' ? [env.CODEX_HOME||join(home,'.codex')]
       : id==='claude-code' ? [env.CLAUDE_CONFIG_DIR||join(home,'.claude')]
       : id==='cursor' ? [env.CURSOR_CONFIG_DIR||join(home,'.cursor')]
       : ['antigravity-cli','antigravity-app','antigravity-ide'].map(surface=>join(env.ANTIGRAVITY_HOME||join(home,'.gemini'),surface));
-    const command=id==='claude-code'?'claude':id==='antigravity'?'agy':id;
-    return {id,label:labels[id],supported:true,detected:roots.some(existsSync)||Boolean(which(command))||desktopExecutables(id,options).length>0||id==='cursor'&&Boolean(which('cursor-agent'))};
+    return {id,label:labels[id],supported:true,detected:roots.some(existsSync)||runtimeCandidates(id,options,platform).length>0};
   });
 }
 export const installerCommands:Record<LocalPluginClient,string>={'claude-code':'claude',codex:'codex',cursor:'cursor-agent',antigravity:'agy'};
 
 function runtimeCandidates(client:LocalPluginClient,options:PluginOptions,platform:NodeJS.Platform){
- const terminal=(options.which??Bun.which)(installerCommands[client]);
- return [...(terminal?[{executable:terminal,desktop:false}]:[]),...desktopExecutables(client,{...options,platform}).filter(path=>path!==terminal).map(executable=>({executable,desktop:true}))];
+ const {home,which}=context(options),command=installerCommands[client];
+ const terminals=new Set<string>();
+ const path=which(command);
+ if(path)terminals.add(path);
+ if((client==='antigravity'||client==='cursor')&&(platform==='darwin'||platform==='linux')){
+  const installed=join(home,'.local','bin',command);
+  if(executable(installed))terminals.add(installed);
+ }
+ return [...Array.from(terminals,executable=>({executable,desktop:false})),...desktopExecutables(client,{...options,platform}).map(executable=>({executable,desktop:true}))];
 }
 export async function recordingRuntime(client:LocalPluginClient,options:PluginOptions={},platform:NodeJS.Platform=process.platform,minimum=pluginRelease.packages.find(entry=>entry.harness===client)?.minimumHarnessVersion??''){
  const candidates=runtimeCandidates(client,options,platform);
  if(!minimum)return candidates[0];
  const {home,env}=context(options);
  for(const candidate of candidates){
+  if(client==='cursor'&&candidate.desktop)return candidate; // Validated using the editor's product manifest.
   const result=await (options.runner??runPluginCommand)(candidate.executable,['--version'],{...env,HOME:home,USERPROFILE:home},5000);
   if(result.code===0&&!result.timedOut&&supportsMinimumVersion(client,result.stdout?.trim()??'',minimum))return candidate;
  }
@@ -367,7 +377,8 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
           return result;
         };
         if(published?.minimumHarnessVersion&&!binary){
-          const message=labels[client]+' '+published.minimumHarnessVersion+' or later is required. Update the client, then run setup again.';
+          const requirement=client==='cursor'?'Cursor editor '+cursorEditorMinimum+' or later, or cursor-agent '+published.minimumHarnessVersion+' or later':labels[client]+' '+published.minimumHarnessVersion+' or later';
+          const message=requirement+' is required. Update the client, then run setup again.';
           results.push({client,status:'pending',message});
           humanTasks.push({id:client+':plugin_install',kind:'plugin_install',client,title:'Check '+labels[client],instruction:message});continue;
         }
@@ -399,7 +410,7 @@ export async function installSetupPlugins(api:string,selected:string[],options:P
         const unchanged=bundleMatches(directory,bundle,digest,client,origin,identity.name,configHome);
         const cursorHooksReceipt=join(marketRoot,'native-hooks.json');
         if(cursorArchive&&pathRoot!==cursorProfile&&stat(join(cursorProfile,'plugins','local',identity.name)))
-          throw new CliError('CURSOR_PLUGIN_LOCATION','A deployment plugin already exists under the custom Cursor configuration path. Resolve its location before installing in the Cursor CLI local plugins folder.');
+          throw new CliError('CURSOR_PLUGIN_LOCATION','A deployment plugin already exists under the custom Cursor configuration path. Resolve its location before installing in the Cursor local plugins folder.');
         if(client==='cursor'&&!published)await retireCursorSetupHooks(origin,pathRoot,true);
         options.validateBinding?.();
         const install=()=>{if(!unchanged)writeBundle(directory,bundle,client,origin,identity.name,configHome,pathRoot,published?.executable);};
