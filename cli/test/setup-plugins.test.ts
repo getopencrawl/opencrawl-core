@@ -105,8 +105,8 @@ test('confirmed Claude setup installs workspace sharing and retains edited permi
  const install=()=>installSetupPlugins(origin,['claude-code'],options);
  expect((await install()).results[0]?.status).toBe('prepared');
  const settings=read(file);
- const tools=['board_*','opencrawl_search_v1','opencrawl_search','search','fetch'].map(tool=>'mcp__plugin_opencrawl_opencrawl__'+tool);
- const shellRules=(process.platform==='win32'?['Bash','PowerShell']:['Bash']).flatMap(shell=>['board','search','fetch','files'].map(command=>shell+'(opencrawl '+command+' *)'));
+ const tools=['board_*','opencrawl_search_v1','opencrawl_search','search','opencrawl_browse','fetch'].map(tool=>'mcp__plugin_opencrawl_opencrawl__'+tool);
+ const shellRules=(process.platform==='win32'?['Bash','PowerShell']:['Bash']).flatMap(shell=>['board','search','browse','fetch','files'].map(command=>shell+'(opencrawl '+command+' *)'));
  expect(settings.permissions).toEqual({...permissions,allow:[...new Set([...permissions.allow,...shellRules,...tools])]});
  expect(settings.model).toBe('opus');
  expect(settings.autoMode.allow).toEqual(['$defaults']);
