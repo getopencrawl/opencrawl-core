@@ -35,13 +35,14 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'OpenCrawl installation failed.' }
 } finally { Remove-Item -Recurse -Force $scratch }
 
+$bin = if ($env:OPENCRAWL_INSTALL_DIR) { $env:OPENCRAWL_INSTALL_DIR } else { Join-Path $HOME '.local/bin' }
+$bin = [System.IO.Path]::GetFullPath($bin)
+if (($env:Path -split ';')[0] -ne $bin) { $env:Path = "$bin;$env:Path" }
 if ($CaptureNew) {
-  $bin = if ($env:OPENCRAWL_INSTALL_DIR) { $env:OPENCRAWL_INSTALL_DIR } else { Join-Path $HOME '.local/bin' }
   & (Join-Path $bin 'opencrawl.cmd') provision --capture-new --json
   if ($LASTEXITCODE -ne 0) { throw "OpenCrawl provisioning exited with code $LASTEXITCODE." }
 } elseif ($Setup) {
   if ([Environment]::UserInteractive -and ![Console]::IsInputRedirected -and ![Console]::IsErrorRedirected) {
-    $bin = if ($env:OPENCRAWL_INSTALL_DIR) { $env:OPENCRAWL_INSTALL_DIR } else { Join-Path $HOME '.local/bin' }
     & (Join-Path $bin 'opencrawl.cmd') setup
     if ($LASTEXITCODE -ne 0) { throw "OpenCrawl setup exited with code $LASTEXITCODE." }
   } else {

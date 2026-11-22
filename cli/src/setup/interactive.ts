@@ -14,7 +14,7 @@ import {inspectCodexHooks} from '../capture/codex-hooks.ts';
 import {publishSetup} from './api.ts';
 import {readSetupState} from './state.ts';
 
-type Options={entry?:()=>ReturnType<typeof import('./entry.ts').terminalSetupEntry>;values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
+type Options={values:Record<string,unknown>;readDestination:()=>{api?:string;explicit?:string};withOrigin:(api:string|undefined,run:()=>Promise<number>)=>Promise<number>;login:(api:string,ui:SetupUi)=>Promise<unknown>};
 type Dependencies={findConnection?:typeof findSetupConnection;createUi?:()=>SetupUi;setup?:typeof setupCommand;which?:(name:string)=>string|null;native?:(command:string,args:string[],ui:SetupUi,title?:string)=>Promise<number>;inspectCodex?:typeof inspectCodexHooks;pause?:(signal:AbortSignal)=>Promise<void>};
 
 async function nativeCommand(command:string,args:string[],ui:SetupUi,title?:string):Promise<number>{
@@ -76,7 +76,7 @@ async function connectNativeClient(
   const notify=(message:string)=>ui.progress('Continue in '+label,message);
   const code=await launchClaudeSetup(executable,{server:connection.name,prompt,needsLogin,returnToSetup:true},execute,notify);
   if(ui.signal.aborted)return 130;
-  if(code!==0)throw new CliError('NATIVE_SETUP_PENDING',label+' did not finish connecting. Retry to use your saved choices.',code);
+  if(code!==0)throw new CliError('NATIVE_SETUP_PENDING',label+' did not finish connecting. Run setup again to review your choices.',code);
  }
 }
 
@@ -94,15 +94,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
  const ui=createUi?createUi():(await import('./tui.tsx')).createSetupUi();
  let destination:ReturnType<Options['readDestination']>|undefined;
  try{
-  const entry=options.entry?.();
   if(!await ui.welcome())return 0;
-  if(entry)await entry.save(entry.api);
   for(;;){
    try{
-    if(!destination){
-     destination=options.readDestination();
-     if(!destination.explicit&&entry?.api)destination={api:entry.api};
-    }
+    destination??=options.readDestination();
     while(!destination.api){
      const hosting=await ui.hosting();
      if(hosting===null)return 0;
@@ -114,7 +109,6 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
     }
     const api=apiOrigin(destination.api??''),explicit=destination.explicit;
     destination={api,explicit};
-    await entry?.save(api);
     ui.progress('Connecting to your workspace','Checking your sign-in and available agents.',[api]);
     return await options.withOrigin(explicit,async()=>{
      const onProgress=(title:string,description:string,phase?:'installing')=>ui.progress(title,description,undefined,{animate:phase==='installing'});
@@ -132,14 +126,12 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       if(ui.signal.aborted)return 130;
      }
      if('status' in result&&result.status==='recording_off'){
-      await entry?.finish();
       await ui.action({title:'Setup saved',description:'No sessions will be recorded on this machine. No history import was started.',actions:[{id:'done',label:'Done'}]});return 0;
      }
      const history='history' in result?result.history:undefined;
      if('selections' in result&&result.selections&&!Object.values(result.selections.plugins).some(Boolean)){
       const state=history&&typeof history==='object'&&'state' in history?history.state:undefined;
       const description=state==='complete'?'Your history import is complete.':state==='queued'||state==='running'?'Past sessions are importing in the background.':'Check setup status for your history import.';
-      await entry?.finish();
       await ui.action({title:'Setup saved',description,details:['New-session recording is off.'],actions:[{id:'done',label:'Done'}]});
       return 0;
      }
@@ -175,12 +167,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       if(next&&'nextAction' in next&&(next.nextAction?.kind==='repair_plugin'||next.nextAction?.kind==='plugin_unavailable'||next.nextAction?.kind==='hook_trust_skipped')){
        const names=next.nextAction.deferredClients.map(id=>labels[id as PluginClient]??id);
        const importing=history&&typeof history==='object'&&'state' in history&&['queued','running'].includes(history.state);
-       await entry?.finish();
-       await ui.action({title:'Setup saved',description:'Recording setup is pending for '+names.join(', ')+'.',details:[...(importing?['Past sessions are importing in the background.']:[]),'Run opencrawl setup to retry later.'],actions:[{id:'done',label:'Done'}]});
+       await ui.action({title:'Setup saved',description:'Recording setup is pending for '+names.join(', ')+'.',details:[...(next.nextAction.kind==='repair_plugin'&&next.nextAction.reason?[next.nextAction.reason]:[]),...(importing?['Past sessions are importing in the background.']:[]),'Run opencrawl setup to retry later.'],actions:[{id:'done',label:'Done'}]});
        return 0;
       }
       if(next&&'nextAction' in next&&next.nextAction?.kind==='complete'){
-       await entry?.finish();
        await ui.action({title:'Setup complete',description:'Your selected agents are connected and verified.',details:['New-session recording is ready.',...(history&&typeof history==='object'&&'state' in history&&['queued','running'].includes(history.state)?['Past sessions are importing in the background.']:[])],actions:[{id:'done',label:'Done'}]});return 0;
       }
       const step=next&&'nextAction' in next?next.nextAction:undefined;
@@ -247,7 +237,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
     if(ui.signal.aborted||error instanceof CliError&&error.code==='SETUP_CANCELLED')return 130;
     const failure=filesystemError(error),known=failure instanceof CliError;
     const action=await ui.action({title:'Setup needs attention',description:known?failure.message:'Setup could not finish. Your saved choices are kept. Retry when ready.',error:true,actions:[{id:'retry',label:'Retry'},{id:'address',label:'Change workspace'},{id:'close',label:'Close'}]});
-    if(action==='address'){destination={};await entry?.save();continue;}
+    if(action==='address'){destination={};continue;}
     if(action!=='retry')return known?failure.exitCode:1;
    }
   }

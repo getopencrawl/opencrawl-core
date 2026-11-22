@@ -73,7 +73,7 @@ export async function update({force=false,fetcher=fetch,install,signal,now=Date.
 
 /** Install an already verified executable alongside older versions. Never modify
  * a running executable, a custom launcher, credentials, transcripts or queues. */
-export async function installBinary(source=process.execPath,v=version){
+export async function installBinary(source=process.execPath,v=version,configurePath=false){
   if(!stable(v))throw new CliError('INSTALL_UNAVAILABLE','Build or download a released OpenCrawl executable before installing.');
   return withFileLock(join(nativeRoot(),'install.lock'),async()=>{
     const directory=join(nativeRoot(),'versions',v),file=join(directory,process.platform==='win32'?'opencrawl.exe':'opencrawl');
@@ -101,6 +101,7 @@ export async function installBinary(source=process.execPath,v=version){
     const launcher=process.platform==='win32'?`@echo off\r\n"${selectedFile.replace(/%/g,'%%')}" %*\r\n`:undefined;
     if(launcher)atomicFile(entry,launcher);else{const temporary=entry+'.'+randomUUID()+'.tmp';try{symlinkSync(selectedFile,temporary);renameSync(temporary,entry);}finally{rmSync(temporary,{force:true});}}
     atomicJson(receiptFile,{managed:true,entry,version:selected,...launcher?{launcher}:{}});
-    return {version:selected,path:entry,installed:true};
+    const pathMessage=configurePath?(await import('./install-path.ts')).configureShellPath(entry):undefined;
+    return {version:selected,path:entry,installed:true,...(pathMessage&&{pathMessage})};
   });
 }

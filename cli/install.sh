@@ -38,6 +38,9 @@ tar -xzf "$scratch/$archive" -C "$scratch"
 if [ ! -s "$scratch/package/bin/opencrawl" ]; then echo 'OpenCrawl archive has no executable.' >&2; exit 1; fi
 chmod 755 "$scratch/package/bin/opencrawl"
 "$scratch/package/bin/opencrawl" install
+# A piped installer runs in a child shell. Its setup handoff and all child
+# commands can use the launcher immediately, before the next terminal starts.
+export PATH="${OPENCRAWL_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 
 # main/install.sh can install older pinned releases and runs before a new
 # stable binary is promoted. Use the capability of the downloaded package.

@@ -6,10 +6,10 @@ import {DEFAULT_API_ORIGIN} from '../src/oauth.ts';
 const unexpected=async():Promise<never>=>{throw Error('Unexpected question');};
 const ui=(override:Partial<SetupUi>):SetupUi=>({signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,progress:()=>{},choose:unexpected,action:unexpected,close:()=>{},native:async run=>run(),...override});
 
-test('Cloud skips address entry, and saved destinations skip both questions without becoming explicit',async()=>{
- for(const saved of [false,true]){
-  const expected=saved?'https://self-host.example.test':DEFAULT_API_ORIGIN;let calls=0;
-  const result=await runInteractiveSetup({values:{},readDestination:()=>saved?{api:expected}:{},withOrigin:async(origin,run)=>{expect(origin).toBe(saved?undefined:DEFAULT_API_ORIGIN);return run();},login:unexpected},{createUi:()=>ui(saved?{}:{hosting:async()=>'cloud'}),setup:async(action,api)=>{calls++;expect(action).toBe('run');expect(api).toBe(expected);return {status:'cancelled',humanTasks:[]};}});
+test('Cloud skips address entry, and an explicit destination skips both questions',async()=>{
+ for(const supplied of [false,true]){
+  const expected=supplied?'https://self-host.example.test':DEFAULT_API_ORIGIN;let calls=0;
+  const result=await runInteractiveSetup({values:{},readDestination:()=>supplied?{api:expected,explicit:expected}:{},withOrigin:async(origin,run)=>{expect(origin).toBe(expected);return run();},login:unexpected},{createUi:()=>ui(supplied?{}:{hosting:async()=>'cloud'}),setup:async(action,api)=>{calls++;expect(action).toBe('run');expect(api).toBe(expected);return {status:'cancelled',humanTasks:[]};}});
   expect(result).toBe(0);expect(calls).toBe(1);
  }
 });

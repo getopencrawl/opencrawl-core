@@ -12,6 +12,8 @@ macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 ```
 
+The native installer makes `opencrawl` available on PATH. If it updates your shell configuration, open a new terminal or use the command it prints for your current shell.
+
 For agent setup, use `sh -s -- --connect`. Self-hosted users can append `--api URL`.
 
 Windows PowerShell:
@@ -42,8 +44,7 @@ time, or press Esc to skip. Self-hosted admins can share the private links from
 Team settings. Open the selected agent when prompted to finish its
 native connection. You can use the web app while setup is in progress.
 
-Run `opencrawl setup` again to review saved recording choices. Choose **Continue**
-to keep installed plugins. **⚠ Needs reinstall** flags a missing or damaged
+Each interactive run asks you to choose again and reuses your sign-in for that workspace. Compatible detected agents start checked. If an agent needs a CLI update, its row shows the required command and version. Selecting it saves a pending choice until you install the prerequisite and rerun setup. **⚠ Needs reinstall** flags a missing or damaged
 installation. History import requires a separate confirmation.
 
 Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with

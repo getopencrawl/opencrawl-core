@@ -9,13 +9,13 @@ in the sidebar so you can return to it at any time.
 1. Install the [OpenCrawl CLI](https://github.com/getopencrawl/opencrawl-core/tree/main/cli#install) and run `opencrawl setup`.
 2. Select **Cloud** or **Self-hosted**. For self-hosted, paste your workspace address. If sign-in is needed, follow the approval in your browser and return to the terminal.
 3. Choose which agents should record new sessions. Use the arrow keys to move, Space to toggle items, and Enter to select a button. You can also choose **Do not record any sessions on this machine**.
-4. Choose whether to import past sessions when setup offers history for a selected agent. On eligible Macs, setup also offers a background capture service. Keeping the default uses recording hooks directly.
+4. Choose whether to import past sessions when setup offers history for a selected agent. On eligible Macs, setup also offers a background capture service. You can decline the background service to use recording hooks directly.
 5. Follow the selected agent’s native connection prompts. After a new session is captured, the agent verifies its connection and whether that session can be found. Open **Setup** in the workspace to see which checks have finished.
 
 Setup detects Claude Code, Codex, Cursor and Antigravity on macOS and on x64 or
 ARM64 Linux systems with glibc. Available history
-and native approval steps vary by agent. To continue an interrupted setup,
-run `opencrawl setup`. To read the choices saved on this machine,
+and native approval steps vary by agent. Run `opencrawl setup` to choose again.
+Setup reuses a valid sign-in for the workspace you select. To read the choices saved on this machine,
 run `opencrawl setup status --local --json`.
 
 ## Run setup on someone's behalf

@@ -44,7 +44,7 @@ export function createSetupUi(){
   invite:(props:InviteOptions)=>new Promise<void>(resolve=>show(<InviteScreen key={++serial} {...props} workspace={clean(props.workspace).replace(/\s+/g,' ').trim()} onContinue={resolve} onCancel={()=>{controller.abort();resolve();}}/>)),
   choose:async(screen:SelectionScreen):Promise<SelectionItem[]|null>=>{
    controller.signal.throwIfAborted();
-   if(!screen.items.length)return [];
+   if(screen.phase===2&&!screen.items.length)return [];
    return new Promise(resolve=>show(<SetupSelection key={++serial} screen={screen} standalone={false} onComplete={resolve}/>));
   },
   action:(props:Omit<Notice,'onAction'|'onCancel'>)=>new Promise<string|null>(resolve=>notice({...props,onAction:resolve})),

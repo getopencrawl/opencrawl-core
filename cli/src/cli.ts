@@ -338,11 +338,9 @@ export async function main(args = process.argv.slice(2)) {
       let explicitDestination=(parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL;
       if(humanSetup){
         const {runInteractiveSetup,showDeviceCode}=await import('./setup/interactive.ts');
-        const {terminalSetupEntry}=await import('./setup/entry.ts');
         return runInteractiveSetup({
-          entry:()=>terminalSetupEntry(explicitDestination),
           values:parsed.values,
-          readDestination:()=>({api:explicitDestination??readCaptureConfig()?.api,explicit:explicitDestination}),
+          readDestination:()=>({api:explicitDestination,explicit:explicitDestination}),
           withOrigin:withEnvironmentTokenOrigin,
           login:(api,ui)=>loginIdentity(api,{noBrowser:parsed.values['no-browser']===true,signal:ui.signal,
             onDevice:({url,code,canOpenBrowser})=>showDeviceCode(ui,url,code,canOpenBrowser)}),
@@ -370,7 +368,12 @@ export async function main(args = process.argv.slice(2)) {
     }
     const captureHandoff=command==='collect'&&['hook','daemon','upgrade-daemon'].includes(parsed.positionals[1]??'');
     // Installing the executable does not enroll or refresh native integrations.
-    if(command==='install'){if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');const data=await installBinary();emit(data,`Installed opencrawl ${data.version} at ${data.path}. Add its directory to PATH if needed.`);return 0;}
+    if(command==='install'){
+      if(!compiled())throw new CliError('INSTALL_UNAVAILABLE','Run install from a released executable.');
+      const data=await installBinary(process.execPath,version,true);
+      emit(data,'Installed opencrawl '+data.version+' at '+data.path+'.\n'+data.pathMessage);
+      return 0;
+    }
     if(command==='update'){const data=await updateCli();emit(data,data.updated?`Installed opencrawl ${data.version}. Your next invocation will use it.`:`opencrawl ${data.version} is current.`);return 0;}
     if(!['setup','logout','install','skills','verify-installation'].includes(command)&&!(command==='collect'&&parsed.positionals[1]!=='hook'))try{scheduleDaemonUpgrade();}catch{}
     const pluginHookInvocation=captureHandoff||hasPluginContext();

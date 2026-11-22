@@ -43,7 +43,7 @@ export function pluginInventory(options:PluginOptions={}) {
     return {id,label:labels[id],supported:true,detected:roots.some(existsSync)||Boolean(which(command))||id==='cursor'&&Boolean(which('cursor-agent'))};
   });
 }
-const installerCommands:Record<LocalPluginClient,string>={'claude-code':'claude',codex:'codex',cursor:'cursor-agent',antigravity:'agy'};
+export const installerCommands:Record<LocalPluginClient,string>={'claude-code':'claude',codex:'codex',cursor:'cursor-agent',antigravity:'agy'};
 
 /** The recording picker uses the same native command and version rule as installation. */
 export async function canInstallRecordingPlugin(id:string,options:PluginOptions={},platform:NodeJS.Platform=process.platform){

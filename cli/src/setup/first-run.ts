@@ -3,7 +3,6 @@ import {readCaptureConfig} from '../capture/runtime.ts';
 import {withEnvironmentTokenOrigin} from '../environment-token.ts';
 import {apiOrigin} from '../oauth.ts';
 import {readServerSetup,serverScope} from './api.ts';
-import {pendingSetupApi} from './entry.ts';
 import {nextSetupAction} from './next.ts';
 import {chosen,readSetupState,readStateKey,scopeKey,setupRoot,updateSetupState,type SetupState} from './state.ts';
 
@@ -30,7 +29,7 @@ export async function rememberFinishedSetup(state:SetupState){
 }
 
 export async function needsFirstRunSetup(requestedApi?:string,read=readServerSetup){
- const config=readCaptureConfig(),api=requestedApi?apiOrigin(requestedApi):pendingSetupApi();
+ const config=readCaptureConfig(),api=requestedApi?apiOrigin(requestedApi):undefined;
  if(!config||(api&&api!==config.api))return !unboundSetupComplete(api);
  if(!config.owner||config.authPending)return true;
  const scope={api:config.api,...config.owner};

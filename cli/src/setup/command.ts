@@ -20,7 +20,7 @@ import {defaultClaudeDesktopSessionsRoot} from '../capture/desktop-history.ts';
 import type {Harness,TranscriptHarness} from '../capture/parse.ts';
 import {setupInventory} from './inventory.ts';
 import {assertSetupAvailability,newSetupClientAvailable,selectOfferedGroup,setupAvailabilityMessage} from './availability.ts';
-import {canInstallRecordingPlugin,recordingInstallState,installSetupPlugins,type PluginResult} from './plugins.ts';
+import {canInstallRecordingPlugin,installerCommands,recordingInstallState,installSetupPlugins,type PluginResult} from './plugins.ts';
 import {installPublishedSetupPlugins,loadPublishedPackage,packageRelease,type LocalPluginClient,type CaptureMode} from './published-plugins.ts';
 import {daemonEligibility,daemonStartupGuidance,savedCaptureMode,requestedCaptureMode} from './capture-mode.ts';
 import {chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
@@ -287,7 +287,8 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  const sameOwner=boundConfig?.api===scope.api&&boundConfig.owner.tenantId===scope.tenantId&&boundConfig.owner.userId===scope.userId;
  const retainedMode=workload?'daemon':savedCaptureMode(previous,sameOwner?boundConfig:null);
  if(values['capture-mode']!==undefined&&!['run','plan','apply'].includes(action))throw new CliError('INVALID_USAGE','Change capture mode through setup or setup apply.',64);
- let captureMode=requestedCaptureMode(confirmedCaptureMode??values['capture-mode'],retainedMode);
+ const questionnaire=action==='run'&&interactive;
+ let captureMode=requestedCaptureMode(confirmedCaptureMode??values['capture-mode'],questionnaire?'hook':retainedMode);
  const eligibility=(selections:SetupSelections)=>workload?{eligible:true,reason:'Existing workload supervisor'}:modeEligibility(chosen(selections,'plugins'),platform);
  const checkMode=(selections:SetupSelections)=>{if(captureMode==='daemon'&&!eligibility(selections).eligible&&!(previous&&retainedMode==='daemon'))throw new CliError('SETUP_DAEMON_UNAVAILABLE',eligibility(selections).reason,2);};
  if(action==='wait'){
@@ -325,6 +326,15 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  const clients=setupInventory({api,platform,workload,registered,saved:interactive&&action==='run'?admitted?.selections:undefined,...(claudeOnly?{client:'claude-code' as const}:{})});
  const legacyForward:string[]|undefined=sameOwner?(boundConfig.disabled?[]:boundConfig.harnesses??['claude-code','codex']):undefined;
  const selections=preserveRecordingOff(defaultSelections(clients,previous?.selections,legacyForward),scope);
+ if(questionnaire){
+  // Fresh defaults for editable clients. Keep unrelated and grandfathered
+  // bindings intact until the user explicitly changes them.
+  for(const client of clients)if(newSetupClientAvailable(client.id,platform,registered)){
+   selections.plugins[client.id]=client.plugin&&client.detected;
+   selections.forward[client.id]=client.forward&&client.detected;
+   selections.history[client.id]=false;
+  }
+ }
  if(claudeOnly){
   // Targeting one client cannot silently enable discovered clients or replace
   // previously accepted choices for them.
@@ -369,17 +379,18 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    const prior=previous?.pluginResults?.find(row=>row.client===client.id);
    const installState=await inspectInstall(api,client.id as LocalPluginClient,prior?.status);
    const item={id:client.id,label:client.label,selected,installState};
-   if(!newSetupClientAvailable(client.id,platform,registered)&&!selected)return {...item,disabled:true};
+   const offered=newSetupClientAvailable(client.id,platform,registered);
+   if(!offered&&!selected)return {...item,disabled:true,detail:'Recording package unavailable for this platform'};
    if(await canInstall(client.id))return item;
-   if(!selected||!previous?.selections.forward[client.id]){
-    const known=installState!=='new'||prior||previous?.selections.plugins[client.id]||legacyForward?.includes(client.id);
-    return known?{...item,selected:false,disabled:true}:null;
-   }
-   // A missing CLI cannot silently revoke an existing recording choice.
-   optionalFailures!.set(client.id,{client:client.id as LocalPluginClient,status:'pending',message:'A compatible native CLI is required to install this integration.'});
-   return {...item,installState:'review' as const};
+   const id=client.id as LocalPluginClient;
+   const release=packageRelease(id);
+   const supported=release?.captureAvailable&&(!release.archives||release.archives[platform+'-'+process.arch]);
+   const detail=supported?'Requires '+installerCommands[id]+(release.minimumHarnessVersion?' '+release.minimumHarnessVersion+' or later':'')+' on PATH':'Recording package unavailable for this platform';
+   optionalFailures!.set(id,{client:id,status:'pending',message:client.label+' recording is pending. '+detail+'.'});
+   const retained=!offered&&!!admitted?.selections.forward[id];
+   return {...item,installState:'pending' as const,selected:retained,disabled:!supported&&!retained,detail};
   }));
-  const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.'+(options.some(item=>item?.id==='claude-code'||item?.id==='codex')?' '+participationNotice:''),noneLabel:'Do not record any sessions on this machine',items:options.filter(item=>item!==null)});
+  const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.'+(options.some(item=>item?.id==='claude-code'||item?.id==='codex')?' '+participationNotice:''),noneLabel:'Do not record any sessions on this machine',items:options});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
   const selectedIds=new Set(selected.filter(row=>row.selected).map(row=>row.id));
   for(const {id} of candidates){
@@ -390,8 +401,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   selections.history=Object.fromEntries(Object.keys(selections.history).map(id=>[id,previous?.selections.history[id]===true]));
   assertCaptureSelections(selections,previous?.selections);
   if([...selectedIds].some(id=>!optionalFailures?.has(id))&&eligibility(selections).eligible){
-   const firstInstall=!sameOwner&&!previous?.captureMode&&values['capture-mode']===undefined;
-   const service=await choose({phase:3,title:'Background capture',description:'Install background utility for more reliable session capture?',noneLabel:'Record without a background service',items:[{id:'daemon',label:'Install background service',selected:firstInstall||captureMode==='daemon'}]});
+   const service=await choose({phase:3,title:'Background capture',description:'Install background utility for more reliable session capture?',noneLabel:'Record without a background service',items:[{id:'daemon',label:'Install background service',selected:values['capture-mode']===undefined||captureMode==='daemon'}]});
    if(service===null)return {status:'cancelled',humanTasks:[]};
    captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';
   }

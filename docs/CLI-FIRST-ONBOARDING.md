@@ -8,10 +8,9 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    Ink TUI: workspace input, browser approval guidance, installation, history,
    verification, errors and completion share its frame and keyboard controls.
    The welcome screen explains recording and links to the OpenCrawl Cloud privacy notice.
-   Choose Cloud or Self-hosted when no destination is saved or explicitly
+   Choose Cloud or Self-hosted unless a destination is explicitly
    supplied. Cloud uses `https://app.getopencrawl.com`; only Self-hosted asks
-   for a workspace address. Back returns to the hosting choice. Saved addresses
-   and `--api` skip both questions. Complete browser sign-in if needed;
+   for a workspace address. Back returns to the hosting choice. An explicit `--api` or `OPENCRAWL_API_URL` skips both questions. Complete browser sign-in if needed;
    the TUI continues when approval arrives.
    Footer hints follow the focused control: arrows navigate choices or buttons,
    Left/Right edits the address, Space toggles checkboxes, and Enter activates
@@ -19,11 +18,11 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    only Enter to finish. Installation uses a moving violet trail while work
    runs, without claiming a measured percentage.
 2. **Record new sessions.** Setup shows Claude Code, Codex, Antigravity (agy),
-   and Cursor, with unavailable agents dimmed. Move with the arrow keys and toggle checkboxes with Space. Move to the
+   and Cursor. A missing or outdated agent CLI is labeled with its command and required version. Move with the arrow keys and toggle checkboxes with Space. Move to the
    bottom buttons and press Enter to activate one. Selecting an agent installs its integration and enables capture.
-   Detected agents start selected; saved off choices remain off. The final option
+   Compatible detected agents start selected on each interactive run. Selecting an agent with a missing prerequisite leaves its installation pending. The final option
    is **Do not record any sessions on this machine**. You can still import past sessions with recording off.
-   Eligible new installations offer the background utility preselected.
+   Eligible installations offer the background utility preselected.
 3. **Import past sessions.** A separate screen lists supported local histories,
    including agents you left out of ongoing recording. Each one-time import starts unchecked. Choose histories to import or **Skip history import**.
    If no eligible history exists, setup continues without another question.
@@ -33,7 +32,7 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    agents receive their native setup handoff. `setup next --json` checks every
    selected agent; one verified agent cannot make the whole installation complete.
 
-Run `opencrawl setup` again to review this workspace’s saved recording choices.
+Run `opencrawl setup` again to choose the workspace, recording agents, background utility and history import afresh. A valid sign-in is reused.
 Intact integrations show **Installed**. Setup reuses them and repairs missing
 files or registrations for the selected agents. Closing the history screen
 keeps the installed integrations. Skipping history preserves any existing

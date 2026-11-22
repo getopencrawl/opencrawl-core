@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os';
 const root=resolve(import.meta.dir,'..'),pkg=JSON.parse(readFileSync(join(root,'dist/cli/package.json'),'utf8'));
 const scratch=mkdtempSync(join(tmpdir(),'opencrawl-native-smoke-'));
 const systemBin=join(scratch,'system-bin');mkdirSync(systemBin);
-const env={...process.env,HOME:scratch,USERPROFILE:scratch,OPENCRAWL_CONFIG_HOME:join(scratch,'config'),XDG_CONFIG_HOME:join(scratch,'config'),XDG_CACHE_HOME:join(scratch,'cache'),XDG_DATA_HOME:join(scratch,'data'),OPENCRAWL_INSTALL_DIR:join(scratch,'bin'),CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex'),CURSOR_CONFIG_DIR:join(scratch,'.cursor'),ANTIGRAVITY_HOME:join(scratch,'.gemini'),OPENCRAWL_NO_UPDATE:'1',PATH:systemBin};
+const env={...process.env,HOME:scratch,USERPROFILE:scratch,SHELL:'/bin/bash',ZDOTDIR:scratch,OPENCRAWL_CONFIG_HOME:join(scratch,'config'),XDG_CONFIG_HOME:join(scratch,'config'),XDG_CACHE_HOME:join(scratch,'cache'),XDG_DATA_HOME:join(scratch,'data'),OPENCRAWL_INSTALL_DIR:join(scratch,'bin'),CLAUDE_CONFIG_DIR:join(scratch,'claude'),CODEX_HOME:join(scratch,'codex'),CURSOR_CONFIG_DIR:join(scratch,'.cursor'),ANTIGRAVITY_HOME:join(scratch,'.gemini'),OPENCRAWL_NO_UPDATE:'1',PATH:systemBin};
 for(const key of Object.keys(env))if(key.startsWith('OPENCRAWL_PLUGIN_')||['OPENCRAWL_TOKEN','OPENCRAWL_SESSIONS_TOKEN','OPENCRAWL_AUTH','OPENCRAWL_LAUNCHER','OPENCRAWL_NODE'].includes(key))delete (env as NodeJS.ProcessEnv)[key];
 if(process.platform==='win32')env.PATH=join(process.env.SystemRoot||'C:\\Windows','System32');
 else for(const name of ['sh','curl','uname','sed','grep','awk','sha256sum','shasum','mktemp','rm','tar','gzip','chmod','sysctl','ldd','tty']){const file=Bun.which(name);if(file)symlinkSync(file,join(systemBin,name));}
@@ -23,8 +23,8 @@ function snapshot(paths:string[]) {
 }
 let corrupt=false,apiRequests=0;
 const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request){const name=new URL(request.url).pathname.slice(1);if(!/^(SHA256SUMS|opencrawl-(darwin|linux|win32)-(arm64|x64)\.tgz)$/.test(name)){apiRequests++;return new Response('',{status:404});}if(corrupt&&name.endsWith('.tgz'))return new Response('corrupted download');return new Response(Bun.file(join(root,'native',name)));}});
+const windows=process.platform==='win32',powershell=windows?join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'):'';
 try{
-  const windows=process.platform==='win32',powershell=windows?join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'):'';
   const installer=windows?[powershell,'-NoProfile','-File',join(root,'install.ps1'),pkg.version]:['/bin/sh',join(root,'install.sh'),pkg.version];
   // Both profiles use the same fixture HOME/native roots. Only OpenCrawl's
   // profile differs; a binary install must not refresh the older global tree.
@@ -60,6 +60,10 @@ try{
   }
   const entry=join(env.OPENCRAWL_INSTALL_DIR,windows?'opencrawl.cmd':'opencrawl');
   if(!existsSync(entry))throw new Error('Installer did not create its command: '+installed);
+  const shellVersion=windows
+    ?await run([powershell,'-NoProfile','-Command',"$env:Path=[Environment]::GetEnvironmentVariable('Path','User')+';'+$env:Path; opencrawl --version"])
+    :await run(['/bin/bash','-ic','opencrawl --version']);
+  if(shellVersion!==pkg.version)throw new Error('A fresh shell could not find the installed CLI on PATH: '+shellVersion);
   const command=(args:string[])=>windows?[powershell,'-NoProfile','-Command',`& '${entry.replace(/'/g,"''")}' ${args.map(v=>"'"+v.replace(/'/g,"''")+"'").join(' ')}`]:[entry,...args];
   if(process.platform==='linux'){
     const result=JSON.parse(await run(command(['setup','--api',server.url.origin,'--json'])));
@@ -189,4 +193,14 @@ try{
   let rejected=false;try{await run(installer,{OPENCRAWL_DOWNLOAD_BASE:server.url.origin});}catch(error){if(!String(error).includes('checksum mismatch'))throw error;rejected=true;}
   if(!rejected||await run(command(['--version']))!==pkg.version)throw new Error('Corrupted download was accepted or damaged the active version');
   console.log('Native installer preserves other-profile skills/hooks and failed-install capture state; explicit skill activation and capture setup run without Node/npm/Bun on PATH.');
-}finally{server.stop(true);rmSync(scratch,{recursive:true,force:true});}
+}finally{
+  server.stop(true);
+  if(windows)await run([powershell,'-NoProfile','-Command',`$key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment',$true)
+    if ($key -and $key.GetValueNames() -contains 'Path') {
+      $raw=$key.GetValue('Path','','DoNotExpandEnvironmentNames')
+      $rest=($raw -split ';' | Where-Object { $_ -ne $env:OPENCRAWL_INSTALL_DIR }) -join ';'
+      if ($rest -ne $raw) { $key.SetValue('Path',$rest,$key.GetValueKind('Path')) }
+      $key.Dispose()
+    }`]);
+  rmSync(scratch,{recursive:true,force:true});
+}
