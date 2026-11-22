@@ -50,7 +50,7 @@ function environment(home:string){
   },{preconnect:()=>{}}) as typeof fetch});
  const calls:string[][]=[];
  const options={
-  home,env:{OPENCRAWL_CONFIG_HOME:configHome,CURSOR_CONFIG_DIR:root},command:[join(home,'opencrawl')],loadPackage,
+  home,applicationDirs:[],env:{OPENCRAWL_CONFIG_HOME:configHome,CURSOR_CONFIG_DIR:root},command:[join(home,'opencrawl')],loadPackage,
   which:(command:string)=>command==='cursor-agent'?join(home,'cursor-agent'):null,
   runner:async(command:string,args:string[])=>{
    calls.push([command,...args]);expect(command).toBe(join(home,'cursor-agent'));expect(args).toEqual(['--version']);
@@ -71,6 +71,20 @@ test('Cursor offers use the same native version requirement as the archive insta
  expect(await canInstallRecordingPlugin('cursor',f.options,'darwin')).toBe(true);
  expect(existsSync(f.dir)).toBe(false);
 }));
+
+test.skipIf(!['darwin','linux'].includes(process.platform))('a desktop-only Cursor installation can select and prepare the published archive',()=>fixture(async f=>{
+ const mac=process.platform==='darwin',apps=join(f.home,'apps'),root=join(apps,mac?'Cursor.app/Contents':'cursor');
+ const resources=join(root,mac?'Resources/app':'resources/app');
+ mkdirSync(resources,{recursive:true});
+ if(mac)mkdirSync(join(root,'MacOS'));
+ writeFileSync(join(root,mac?'MacOS/Cursor':'cursor'),'fixture',{mode:0o755});
+ writeFileSync(join(resources,'product.json'),JSON.stringify({applicationName:'cursor',version:'3.18.9'}));
+ const options={...f.options,applicationDirs:[apps],which:()=>null};
+ expect(await canInstallRecordingPlugin('cursor',options)).toBe(true);
+ expect((await f.install(options)).results[0]).toMatchObject({client:'cursor',status:'prepared',directory:f.dir});
+ expect(read(join(f.dir,'.cursor-plugin/plugin.json')).hooks).toBe('./hooks/hooks.json');
+ expect(f.calls).toEqual([]);
+}),60000);
 
 test('Cursor selection installs the pinned archive offline, binds both MCP files and resumes on current capture',()=>fixture(async f=>{
  const inventory=setupInventory({...f.options,api,platform:'darwin'});
