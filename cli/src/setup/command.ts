@@ -69,8 +69,9 @@ export function localSetupStatus(requestedApi?:string){
  if(state.scope.api!==scope.api||state.scope.tenantId!==scope.tenantId||state.scope.userId!==scope.userId||state.installationId!==config.installationId)throw new CliError('SETUP_SCOPE_CHANGED','Saved setup choices do not match the current installation, API and owner. No state was changed.',2);
  const selections=preserveRecordingOff(state.selections,scope,config);
  const pluginUpdates=config.disabled?[]:pendingPluginUpdates(state);
+ const automaticPluginUpdates=automaticUpdateClients(state);
  if(JSON.stringify(readLocalCaptureConfig())!==JSON.stringify(config))throw new CliError('SETUP_SCOPE_CHANGED','The local installation changed while reading status. Retry local status; no state was changed.',2);
- return {status:'local_status',freshness:'local-only',serverChecked:false,scopeSource:'saved-capture-config',scope,installationId:config.installationId,savedSelections:state.selections,selections,automaticPluginUpdates:automaticUpdateClients(state),...(pluginUpdates.length?{pluginUpdates}:{}),captureMode:savedCaptureMode(state,config),...(state.pluginResults?{pluginResults:state.pluginResults.map(({client,status,message})=>({client,status,message}))}:{}),...(state.worker?{worker:workerObservation(state.worker)}:{})};
+ return {status:'local_status',freshness:'local-only',serverChecked:false,scopeSource:'saved-capture-config',scope,installationId:config.installationId,savedSelections:state.selections,selections,...(automaticPluginUpdates.length?{automaticPluginUpdates}:{}),...(pluginUpdates.length?{pluginUpdates}:{}),captureMode:savedCaptureMode(state,config),...(state.pluginResults?{pluginResults:state.pluginResults.map(({client,status,message})=>({client,status,message}))}:{}),...(state.worker?{worker:workerObservation(state.worker)}:{})};
 }
 
 const availabilityBinding=({scope,installationId,savedSelections,selections}:ReturnType<typeof localSetupStatus>)=>JSON.stringify({scope,installationId,savedSelections,selections});
@@ -140,8 +141,11 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
   for(const candidate of updateCandidates(previous)){
    const row=previous.pluginResults?.find(row=>row.client===candidate.client);
    if(!selections.plugins[candidate.client]||!row?.captureAvailable||!row.source?.archive||
-      !verifiedInstallation(previous,candidate)||await recordingInstallState(scope.api,candidate.client,row.status)!=='installed')continue;
-   retained.set(candidate.client,{...row,client:candidate.client,status:row.status==='prepared'?'prepared':'unchanged'});
+      !verifiedInstallation(previous,candidate))continue;
+   const native=await recordingInstallState(scope.api,candidate.client,row.status);
+   if(native==='new'||native==='repair')continue;
+   retained.set(candidate.client,{...row,client:candidate.client,status:native==='review'||row.status==='prepared'?'prepared':'unchanged',
+    ...(native==='review'?{message:'The installed version was kept. Review its activation in the app.'}:{})});
   }
  }
  const packages=new Map<LocalPluginClient,Awaited<ReturnType<typeof loadPublishedPackage>>>();

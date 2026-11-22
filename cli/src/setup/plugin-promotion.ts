@@ -73,7 +73,7 @@ export async function promoteDirectoryPlugin(state:SetupState,client:Client,sign
   const binding:PluginBinding={client,api,pluginName:identity.name,configHome:home,nativeRoot:live};
   const active=verifyPluginBundle(binding),enrolled=read(join(live,'.opencrawl-binding.json')),source=read(join(live,'.opencrawl-source.json'));
   if(enrolled?.installationId!==installationId||enrolled.client!==client||enrolled.api!==api||enrolled.configHome!==home||
-    !isDeepStrictEqual(enrolled.owner,config.owner)||enrolled.captureMode!==(state.captureMode??'hook'))return false;
+    enrolled.owner?.tenantId!==config.owner.tenantId||enrolled.owner?.userId!==config.owner.userId||enrolled.captureMode!==(state.captureMode??'hook'))return false;
   const prior=state.pluginResults?.find(row=>row.client===client);
   if(!prior?.source?.archive||prior.source.repository!==pluginRelease.repository||prior.source.path!==pin.path||
     !['installed','unchanged','prepared'].includes(prior.status))return false;

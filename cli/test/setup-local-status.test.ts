@@ -53,6 +53,13 @@ test('local status reads only the exact saved binding, retains independent choic
  expect(result.output).not.toContain('"authenticated"');expect(result.output).not.toContain('"proof"');expect(result.output).not.toContain('"server":');
 }));
 
+test('local status shows only automatic updates granted to this installation',()=>fixture(async({state,save,invoke})=>{
+ state.pluginAutoUpdates={installationId:state.installationId!,clients:['codex','claude-code']};save();
+ expect(await invoke()).toMatchObject({code:0,data:{data:{automaticPluginUpdates:['codex']}}});
+ state.pluginAutoUpdates.installationId='different-machine';save();
+ expect((await invoke()).output).not.toContain('automaticPluginUpdates');
+}));
+
 test('local status includes the saved per-client repair reason',()=>fixture(async({state,save,invoke})=>{
  state.pluginResults=[{client:'codex',status:'pending',message:'Codex timed out during inventory.'}];save();
  expect((await invoke()).data).toMatchObject({data:{pluginResults:state.pluginResults}});

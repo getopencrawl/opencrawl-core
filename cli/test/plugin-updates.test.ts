@@ -98,7 +98,7 @@ test.skipIf(process.platform==='win32')('an opted-in local release exchanges int
   const {readSetupState}=await import('../src/setup/state.ts');
   const home=mkdtempSync(join(tmpdir(),'oc-auto-')),previous=process.env.OPENCRAWL_CONFIG_HOME;
   process.env.OPENCRAWL_CONFIG_HOME=home;
-  const owner={tenantId:scope.tenantId,userId:scope.userId},client='claude-code',installationId='test-machine';
+  const owner={tenantId:scope.tenantId,userId:scope.userId,name:'Local member'},client='claude-code',installationId='test-machine';
   const root=join(home,'opencrawl'),manager=join(root,'setup-plugins',client,setupPluginIdentity(api).key);
   const live=join(manager,'marketplace','opencrawl'),receipt=join(manager,'installed.json'),journal=join(manager,'update-transaction.json');
   const stateFile=join(root,'setup',scopeKey(scope)+'.json');
