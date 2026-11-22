@@ -229,6 +229,7 @@ export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sess
   })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
+const axisDate = new Intl.DateTimeFormat('en-US', {month:'short',day:'numeric',timeZone:'UTC'});
 const axisNumber = new Intl.NumberFormat('en-US', {notation: 'compact', maximumFractionDigits: 1});
 /** Round gridline steps (1, 2, 2.5, 5 x 10^n) so axis labels read cleanly. */
 function niceTicks(maximum: number) {
@@ -254,9 +255,9 @@ function daySegments(day: BarDay, seriesCount: number) {
 }
 
 /** Daily totals optionally broken into stacked series. Days can be inspected by mouse, keyboard or touch. */
-export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxisLabel, height = 220, line = false}: {
+export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxisLabel, height = 220, line = false, shortDates = false}: {
   days: readonly BarDay[]; label: string; unit: (value: number) => string;
-  series?: readonly {label: string}[]; xAxisLabel?: string; yAxisLabel?: string; height?: number; line?: boolean;
+  series?: readonly {label: string}[]; xAxisLabel?: string; yAxisLabel?: string; height?: number; line?: boolean; shortDates?: boolean;
 }) {
   const figure = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(760);
@@ -316,7 +317,7 @@ export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxis
         </g>;
       })}
       {line && <polyline className="report-trend-line" pointerEvents="none" points={days.map((day,i) => (left + (i + .5) * column) + ',' + y(day.value ?? 0)).join(' ')}/>}
-      {labels.map(i => <text key={i} className="report-bar-axis" x={left + (i + .5) * column} y={height - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>{days[i]!.date}</text>)}
+      {labels.map(i => <text key={i} className="report-bar-axis" x={left + (i + .5) * column} y={height - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>{shortDates ? axisDate.format(new Date(days[i]!.date)) : days[i]!.date}</text>)}
       {tip && <g className="report-bar-tip" pointerEvents="none">
         <rect x={tip.x} y={2} width={tip.boxWidth} height={42} rx="6"/>
         {tip.lines.map((line, i) => <text key={i} x={tip.x + 10} y={19 + i * 17} className={i ? 'report-bar-tip-value' : undefined}>{line}</text>)}

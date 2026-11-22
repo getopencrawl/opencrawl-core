@@ -12,11 +12,13 @@ const periods = ['7d', '30d', '90d', 'all'] as const;
 type Period = typeof periods[number];
 const dayLength = 86_400_000;
 const shortDate = new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
-const time = new Intl.DateTimeFormat(undefined, {hour: 'numeric', minute: '2-digit'});
+const time = new Intl.DateTimeFormat(undefined, {hour: 'numeric', minute: '2-digit', second: '2-digit'});
+const dateTime = new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'medium'});
+const zone = new Intl.DateTimeFormat('en-US', {timeZoneName: 'shortGeneric'}).formatToParts().find(part=>part.type==='timeZoneName')?.value;
 const formatMtok = new Intl.NumberFormat('en-US', {maximumFractionDigits: 2});
 const refresh = {staleMilliseconds: 60_000, autoRefreshMilliseconds: 60_000};
 
-function QueryRow({row, names}: {row: SearchActivityRow; names: MemberNames}) {
+function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names: MemberNames; showDate?: boolean}) {
   const [expanded, setExpanded] = useState(false);
   const human = names.get(row.userId);
   const identity = [human, row.agentName].filter(Boolean).join(' / ') || 'Unidentified searcher';
@@ -28,7 +30,7 @@ function QueryRow({row, names}: {row: SearchActivityRow; names: MemberNames}) {
         <AgentAvatar name={row.agentName || row.at}/>
       </span></td>
       <td className="usage-query" title={query}>{query.split('\n')[0]}</td>
-      <td><time dateTime={row.at} title={at.toLocaleString()}>{time.format(at)}</time></td>
+      <td><time dateTime={row.at} title={at.toLocaleString()}>{(showDate ? dateTime : time).format(at)}</time></td>
       <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query} onClick={() => setExpanded(!expanded)}><Icon name="chevron-down" size={14}/></Button></td>
     </tr>
     {expanded && <tr><td colSpan={4} className="usage-query-detail"><p>{query}</p><time dateTime={row.at}>{at.toLocaleString()}</time>{row.operation && ' / ' + row.operation}
@@ -36,7 +38,7 @@ function QueryRow({row, names}: {row: SearchActivityRow; names: MemberNames}) {
   </>;
 }
 
-const columns = <tr><th scope="col" aria-label="Agent"/><th scope="col">Query</th><th scope="col">Time</th><th scope="col" aria-label="Details"/></tr>;
+const columns = (label: string) => <tr><th scope="col" aria-label="Agent"/><th scope="col">Query</th><th scope="col">{label}{zone && ` (${zone})`}</th><th scope="col" aria-label="Details"/></tr>;
 
 function RecentQueries({adapter, scope, period, names}: {adapter: ActivityAdapter; scope: string; period: Period; names: MemberNames}) {
   const [open, setOpen] = useState(false);
@@ -59,12 +61,12 @@ function RecentQueries({adapter, scope, period, names}: {adapter: ActivityAdapte
   return <>
     {recent.error && <Notice tone="warning" actions={<Button onClick={recent.reload}>Try again</Button>}>Recent searches couldn’t update.</Notice>}
     {recent.loading && <LoadingState spinner label="Loading recent searches…"/>}
-    {entries.length > 0 && <Table label="Recent agent queries" className="usage-query-table"><thead>{columns}</thead><tbody>{entries.slice(0,5).map(row => <QueryRow key={row.id} row={row} names={names}/>)}</tbody></Table>}
+    {entries.length > 0 && <Table label="Recent agent queries" className="usage-query-table"><thead>{columns('Time')}</thead><tbody>{entries.slice(0,5).map(row => <QueryRow key={row.id} row={row} names={names}/>)}</tbody></Table>}
     {recent.data && !entries.length && <p className="report-note">No recent searches visible to you.</p>}
-    {(entries.length > 5 || recent.data?.next) && <Button className="usage-view-all" variant="quiet" onClick={() => setOpen(true)}>View all searches</Button>}
+    {(entries.length > 5 || recent.data?.next) && <Button className="usage-view-all" variant="quiet" aria-label="View all searches" onClick={() => setOpen(true)}>View all{!recent.data?.next && ' '+count(entries.length)} <Icon name="arrow-right" size={14}/></Button>}
     {open && <Dialog open onClose={() => setOpen(false)} title="Recent agent queries" className="usage-history-dialog">
-      <PagedList<SearchActivityRow,string> cacheKey={key} load={load} head={columns} className="usage-query-table" label="Agent queries" empty="No recent searches visible to you."
-        row={row => <QueryRow key={row.id} row={row} names={names}/>}/>
+      <PagedList<SearchActivityRow,string> cacheKey={key} load={load} head={columns('Date & time')} className="usage-query-table" label="Agent queries" empty="No recent searches visible to you."
+        row={row => <QueryRow key={row.id} row={row} names={names} showDate/>}/>
     </Dialog>}
   </>;
 }
@@ -116,14 +118,14 @@ export function UsageOverview({adapter, activity, scope, names}: {adapter: Conso
       <div className="usage-panes">
         <Section className="usage-pane" title="Recent searches">
           {calls.error && <Notice tone="warning" actions={<Button onClick={calls.reload}>Try again</Button>}>Search activity couldn’t update.</Notice>}
-          {calls.data && <DailyBarChart days={searches} label="Agent searches per day" unit={n=>plural(n,'search','searches')} height={118}/>}
+          {calls.data && <DailyBarChart days={searches} label="Agent searches per day" unit={n=>plural(n,'search','searches')} height={118} shortDates/>}
           {activity ? <RecentQueries adapter={activity} scope={scope} names={names} period={period}/> : <p className="report-note">Search activity unavailable.</p>}
         </Section>
         <Section className="usage-pane usage-token-pane" title="Indexed session tokens" actions={<div className="usage-segments" role="group" aria-label="Token chart display">
           {[false,true].map(mode=><Button variant="plain" key={String(mode)} aria-pressed={cumulative===mode} onClick={()=>setCumulative(mode)}>{mode?'Cumulative':'Daily'}</Button>)}</div>}>
           {indexed.error && <Notice tone="warning" actions={<Button onClick={indexed.reload}>Try again</Button>}>Indexed session tokens couldn’t update.</Notice>}
           {indexed.loading && <LoadingState spinner label="Loading indexed session tokens…"/>}
-          {indexed.data && <DailyBarChart days={tokenDays} label={cumulative?'Cumulative indexed session tokens':'Session tokens indexed per day'} unit={n=>count(n)+' tokens'} line={cumulative}/>}
+          {indexed.data && <DailyBarChart days={tokenDays} label={cumulative?'Cumulative indexed session tokens':'Session tokens indexed per day'} unit={n=>count(n)+' tokens'} line={cumulative} shortDates/>}
         </Section>
       </div>
     </Section>
