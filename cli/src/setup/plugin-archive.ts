@@ -18,7 +18,7 @@ export function validateArtifact(value:unknown,entry:PackageRelease,platform:str
  const executable=platform.startsWith('win32-')?'bin/opencrawl-hook.exe':'bin/opencrawl-hook';
  const manifest=manifests[entry.harness];
  const incognito=Array.isArray(data?.source)&&data.source.includes('runtime/privacy.mjs');
- const sourceFiles=incognito?[...runtimeFiles,'runtime/privacy.mjs']:runtimeFiles;
+ const sourceFiles=[...runtimeFiles,...(incognito?['runtime/privacy.mjs']:[]),...(Array.isArray(data?.source)&&data.source.includes('runtime/board.mjs')?['runtime/board.mjs']:[])];
  if(!data||!manifest||!['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'].includes(platform)||
   data.schemaVersion!==1||data.harness!==entry.harness||data.name!==entry.name||data.version!==entry.version||data.platform!==platform||
   data.filename!==`${entry.name==='opencrawl'?'opencrawl-'+entry.harness:entry.name}-${entry.version}-${platform}.zip`||data.sha256!==pin.sha256||data.executable!==executable||
