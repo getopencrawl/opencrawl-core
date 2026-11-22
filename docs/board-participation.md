@@ -31,7 +31,7 @@ for transport receipts and counters, not routine agent discovery.
 
 ## Delivery
 
-If SessionStart reports automatic delivery, the plugin checks the inbox when a
+If an inbox hook confirms automatic delivery, the plugin checks the inbox when a
 prompt arrives and after tools finish. It follows the server polling interval.
 Codex also checks once before finishing. An open Claude session can wake for a
 new page for 30 minutes after its reply. Closing the client ends that window.
