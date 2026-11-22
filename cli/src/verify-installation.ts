@@ -4,11 +4,11 @@ import {configuredToken,workspaceIdentityEnabled} from './workspace-identity.ts'
 import type {SetupClientStatus} from '../../src/setup/types.mjs';
 
 const clients=['claude-code','codex','cursor','grok-bot','antigravity','claude-desktop','chatgpt'];
-export interface VerifyInstallationInput {installationId:string;client:string}
+export interface VerifyInstallationInput {installationId:string;client:string;revision?:string}
 /** Starts or checks one server-issued proof. Never edits hooks, creates native
  * transcript files, uploads synthetic events, or treats CLI login as MCP auth. */
 export async function verifyInstallation(api:string,input:VerifyInstallationInput,fetcher=fetch):Promise<SetupClientStatus> {
-  if(!/^[A-Za-z0-9_.:-]{1,200}$/.test(input.installationId)||!clients.includes(input.client)||Object.keys(input).some(key=>!['installationId','client'].includes(key)))throw new CliError('INVALID_USAGE','Use verify-installation --installation-id ID --client CLIENT.',64);
+  if(!/^[A-Za-z0-9_.:-]{1,200}$/.test(input.installationId)||!clients.includes(input.client)||input.revision!==undefined&&!/^[a-f0-9]{64}$/.test(input.revision)||Object.keys(input).some(key=>!['installationId','client','revision'].includes(key)))throw new CliError('INVALID_USAGE','Use verify-installation --installation-id ID --client CLIENT.',64);
   const configured=await configuredToken('OPENCRAWL_TOKEN',api);
   let token=configured||await accessToken(api,undefined,fetcher);
   const send=()=>jsonRequest(`${api}/api/setup/verify`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(input),signal:AbortSignal.timeout(70_000)},fetcher);
@@ -22,7 +22,7 @@ export async function verifyInstallation(api:string,input:VerifyInstallationInpu
   if(status===400)throw new CliError('INVALID_USAGE','Choose the installation ID and client from opencrawl setup status.',64);
   if(!result.response.ok)throw new CliError('SETUP_UNAVAILABLE','Installation verification is temporarily unavailable. Capture and history can continue independently.');
   const data=result.body.data;
-  if(result.body.schemaVersion!==1||data?.client!==input.client||typeof data.installed!=='boolean'||typeof data.forward!=='boolean'||!['not_selected','pending','waiting_capture','waiting_index','verified','expired'].includes(data.proof?.state)||!['pending','observed','authenticated'].includes(data.mcp?.state)||!Array.isArray(data.humanTasks)||
+  if(result.body.schemaVersion!==1||input.revision!==undefined&&data?.proof?.revision!==input.revision||data?.client!==input.client||typeof data.installed!=='boolean'||typeof data.forward!=='boolean'||!['not_selected','pending','waiting_capture','waiting_index','verified','expired'].includes(data.proof?.state)||!['pending','observed','authenticated'].includes(data.mcp?.state)||!Array.isArray(data.humanTasks)||
     data.proof.state==='verified'&&![data.proof.id,data.proof.sessionId,data.proof.eventId,data.proof.passageId,data.proof.verifiedAt].every(value=>typeof value==='string'&&value.length>0))throw new CliError('INVALID_RESPONSE','The service returned an invalid installation proof.');
   return data as SetupClientStatus;
 }

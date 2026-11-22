@@ -28,13 +28,17 @@ export function validateArtifact(value:unknown,entry:PackageRelease,platform:str
 }
 
 /** Read regular allowlisted files into memory; never extract paths or run ZIP content. */
-export async function readPluginArchive(archive:Buffer,metadata:Buffer,entry:PackageRelease,platform:string,pin:ArchivePin){
+export async function readPluginArchive(archive:Buffer,metadata:Buffer,entry:PackageRelease,platform:string,pin:ArchivePin,historical=false){
  if(archive.length>maxArchive||metadata.length>16_384||fileHash(archive)!==pin.sha256||fileHash(metadata)!==pin.metadataSha256)throw invalid();
  try{
   const {executable,manifest:manifestFile,allowed}=validateArtifact(JSON.parse(metadata.toString('utf8')),entry,platform,pin);
+  // Older installation receipts pin both immutable digests but predate the
+  // three optional presentation/skill flags. Keep every runtime file mandatory.
+  const optional=historical?new Set(['assets/icon.svg','skills/oc-import-memories/SKILL.md','skills/oc-continue/SKILL.md']):new Set<string>();
+  for(const name of optional)allowed.add(name);
   const zip=await fromBufferPromise(archive,{lazyEntries:true,strictFileNames:true,validateEntrySizes:true});
   try{
-   if(zip.entryCount!==allowed.size)throw invalid();
+   if(zip.entryCount>allowed.size||zip.entryCount<allowed.size-optional.size)throw invalid();
    const files:Record<string,string>={},binaries:Record<string,Buffer>={},seen=new Set<string>();let textSize=0;
    for await(const entry of zip.eachEntry()){
     const name=entry.fileName,mode=entry.externalFileAttributes>>>16,limit=name===executable?MAX_PLUGIN_BINARY:MAX_PLUGIN_TEXT;
@@ -48,7 +52,7 @@ export async function readPluginArchive(archive:Buffer,metadata:Buffer,entry:Pac
     const bytes=Buffer.concat(chunks);
     if(name===executable)binaries[name]=bytes;else files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
    }
-   if(seen.size!==allowed.size)throw invalid();
+   if([...allowed].some(name=>!optional.has(name)&&!seen.has(name)))throw invalid();
    const manifest=JSON.parse(files[manifestFile]!);
    if(manifest.name!==entry.name||manifest.version!==entry.version)throw invalid();
    return {files,binaries,executable};
@@ -78,7 +82,7 @@ async function download(url:string,limit:number,release:PluginRelease,fetcher:ty
  }
  throw invalid();
 }
-export async function loadPluginArchive(entry:PackageRelease,release:PluginRelease,platform:string,{fetcher,cache,signal}:{fetcher:typeof fetch;cache:string;signal?:AbortSignal}){
+export async function loadPluginArchive(entry:PackageRelease,release:PluginRelease,platform:string,{fetcher,cache,signal,historical=false}:{fetcher:typeof fetch;cache:string;signal?:AbortSignal;historical?:boolean}){
  if(!['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-x64'].includes(platform))throw new CliError('PLUGIN_PLATFORM_UNAVAILABLE','This pinned plugin has no package for this machine. Existing plugins were preserved.',2);
  const pin=entry.archives?.[platform];
  if(!pin)throw new CliError('PLUGIN_PLATFORM_UNAVAILABLE','This pinned plugin has no package for this machine. Existing plugins were preserved.',2);
@@ -92,7 +96,7 @@ export async function loadPluginArchive(entry:PackageRelease,release:PluginRelea
  if(fileHash(metadata)!==pin.metadataSha256)throw invalid();
  try{validateArtifact(JSON.parse(metadata.toString('utf8')),entry,platform,pin);}catch{throw invalid();}
  archive??=await download(pin.url,maxArchive,release,fetcher,signal);
- const result=await readPluginArchive(archive,metadata,entry,platform,pin);
+ const result=await readPluginArchive(archive,metadata,entry,platform,pin,historical);
  if(!cached){atomicFile(zipPath,archive);atomicFile(metadataPath,metadata);}
  return {...result,archive:{platform,url:pin.url,sha256:pin.sha256,metadataSha256:pin.metadataSha256}};
 }

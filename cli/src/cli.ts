@@ -36,6 +36,7 @@ const help = `opencrawl — OpenCrawl CLI
 Usage: opencrawl <command> [--json] [--api <https-origin>]
 
   setup       Sign in, choose plugins and recording, and import history in the background
+  doctor      Repair this host and verify the selected apps
   verify-installation  Prove a selected client's fresh session is searchable
   login       Sign in with a browser approval and device code
   logout      Remove this deployment's credentials from this machine
@@ -138,6 +139,7 @@ Store OPENCRAWL_API_URL, OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN in the pla
 environment secrets instead of signing in on every new machine. --env-file writes them
 to a new private file and prints no secret.
 Updates are checked opportunistically every 3–6 hours, including capture hooks and workers.
+Run opencrawl doctor to repair and verify this host using its saved choices.
 Run opencrawl setup updates to check for managed plugin updates now.
 OPENCRAWL_NO_UPDATE=1 disables automatic updates.
 
@@ -319,12 +321,21 @@ export async function main(args = process.argv.slice(2)) {
     informational=hasLocalFlag(args)||Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'browse', 'fetch','board','skills','token','files'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'doctor', 'verify-installation', 'install', 'update', 'collect', 'search', 'browse', 'fetch','board','skills','token','files'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
     if (organizationId && process.env.OPENCRAWL_TOKEN?.trim()) throw new CliError('ENVIRONMENT_TOKEN_ACTIVE', 'Unset OPENCRAWL_TOKEN before selecting a workspace with your saved sign-in. Environment tokens remain bound to the workspace that issued them.', 2);
     if (parsed.values.client && !['skills','setup','verify-installation'].includes(command)) throw new CliError('INVALID_USAGE', 'Use --client with skills or installation verification.', 64);
+    if(command==='doctor'){
+      informational=true;
+      if(Object.keys(parsed.values).some(key=>!['api','json'].includes(key)))throw new CliError('INVALID_USAGE','Use opencrawl doctor [--api URL] [--json].',64);
+      const {hostDoctor}=await import('./setup/doctor.ts');
+      const result=await hostDoctor(parsed.values.api as string|undefined??process.env.OPENCRAWL_API_URL,args);
+      if('delegated' in result)return result.delegated;
+      process.stdout.write((json?JSON.stringify(result.data):result.human)+'\n');
+      return result.exit;
+    }
     if(command==='history'){
       informational=true;
       const explicit=(parsed.values.api as string|undefined)??process.env.OPENCRAWL_API_URL;

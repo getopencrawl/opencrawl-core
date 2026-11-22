@@ -7,6 +7,9 @@ import type {createWorkspaceSearch} from '../search/workspace.mjs';
 import {SETUP_CLIENTS,SETUP_PLUGIN_STATES} from './types.mjs';
 import type {SetupStatus,SetupClientStatus,SetupProof,SetupHumanTask} from './types.mjs';
 
+// The marker is already opaque to native clients. Keeping the generation in
+// that field lets old servers read every stored record during a rolling deploy.
+const markerRevision=(marker?:string)=>/^opencrawlverify[a-f0-9]{32}r([a-f0-9]{64})$/.exec(marker??'')?.[1];
 const identifier=z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/);
 export const setupInstallationSchema=z.strictObject({installationId:identifier,machine:z.strictObject({id:identifier,label:z.string().trim().min(1).max(100)}),clients:z.array(z.strictObject({
   client:z.enum(SETUP_CLIENTS),installed:z.boolean(),pluginState:z.enum(SETUP_PLUGIN_STATES).optional(),forward:z.boolean(),history:z.enum(['skip','import']),
@@ -14,6 +17,8 @@ export const setupInstallationSchema=z.strictObject({installationId:identifier,m
   hookTrust:z.enum(['unknown','pending','trusted','not_required']),
 })).min(1).max(SETUP_CLIENTS.length)}).refine(value=>new Set(value.clients.map(c=>c.client)).size===value.clients.length,'Duplicate clients');
 export const setupVerifySchema=z.strictObject({installationId:identifier,client:z.enum(SETUP_CLIENTS)});
+// Only the host doctor requests a new configuration generation. Native tools join its current challenge.
+const revisionVerifySchema=setupVerifySchema.extend({revision:z.string().regex(/^[a-f0-9]{64}$/).optional()});
 export const setupMcpVerifySchema=setupVerifySchema.extend({proofId:z.string().regex(/^[a-f0-9]{32}$/)});
 type Selection=z.infer<typeof setupVerifySchema>;
 import type {SetupState} from '../state/setup.mjs';
@@ -165,6 +170,9 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
     const {evidence,...observation}=client;
     const proof:SetupProof=evidence?{...evidence.proof}:{state:client.forward?'pending':'not_selected'};
     if(!['verified','not_selected'].includes(proof.state)&&proof.expiresAt&&instant(proof.expiresAt)<now().getTime())proof.state='expired';
+    const revision=markerRevision(proof.marker);
+    if(revision)proof.revision=revision;
+    if(!client.forward)delete proof.marker;
     const nativeReceipt = nativeMcpReceipt(evidence);
     const mcp:SetupClientStatus['mcp']=nativeReceipt?{state:'authenticated',observedAt:nativeReceipt}:evidence?.mcpCall?{state:'observed',observedAt:evidence.mcpCall.issuedAt}:{state:'pending'};
     const humanTasks:SetupHumanTask[]=[];
@@ -180,7 +188,7 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
       const updatedAt = latestReceipt(installation.updatedAt, ...clients.map(client => client.lastSeenAt)) ?? installation.updatedAt;
       return {...installation, updatedAt, clients};
     });
-    return {...data, pluginStateSupported:true, installations};
+    return {...data, pluginStateSupported:true, revisionProofSupported:true, installations};
   }
   function fresh(event:SessionEvent,since:string) {
     const time=instant(event.timestamp);return Number.isFinite(time)&&time>=instant(since)&&time<=now().getTime()+60_000;
@@ -266,17 +274,24 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
       });
     },
     async verify(principal:Principal,input:unknown):Promise<SetupClientStatus> {
-      admit(principal);const parsed=setupVerifySchema.safeParse(input);if(!parsed.success)fail(400,'Choose one installation and client.');
+      admit(principal);const parsed=revisionVerifySchema.safeParse(input);if(!parsed.success)fail(400,'Choose one installation and client.');
       const selection=parsed.data;
       await update(principal,data=>{
         const {client}=selected(data,selection);
         // A plugin is optional distribution. Verification still requires this
         // authenticated user's registered client and the actual proof below.
-        if(!client.evidence||client.evidence.proof.state!=='verified'&&instant(client.evidence.proof.expiresAt)<now().getTime()) {
-          const id=token(),capturing=client.forward&&isSessionHarness(client.client);client.evidence={proof:{state:capturing?'waiting_capture':'not_selected',id,...(capturing?{marker:'opencrawlverify'+id}:{}),issuedAt:now().toISOString(),expiresAt:new Date(now().getTime()+60*60_000).toISOString()}};
+        const proof=client.evidence?.proof;
+        // A fresh challenge invalidates the previous native MCP receipt, marker,
+        // capture and index evidence together. Concurrent checks of one revision join it.
+        const newGeneration=selection.revision!==undefined&&(markerRevision(proof?.marker)!==selection.revision||
+          now().getTime()-instant(proof?.issuedAt)>24*60*60_000);
+        if(newGeneration||!client.evidence||client.evidence.proof.state!=='verified'&&instant(client.evidence.proof.expiresAt)<now().getTime()) {
+          const id=token(),capturing=client.forward&&isSessionHarness(client.client),revision=selection.revision??markerRevision(proof?.marker);
+          client.evidence={proof:{state:capturing?'waiting_capture':'not_selected',id,...(capturing||revision?{marker:'opencrawlverify'+id+(revision?'r'+revision:'')}:{}),issuedAt:now().toISOString(),expiresAt:new Date(now().getTime()+60*60_000).toISOString()}};
         }
       });
       const initial=selected((await load(principal)).data,selection).client,evidence=initial.evidence;
+      if(selection.revision&&markerRevision(evidence?.proof.marker)!==selection.revision)fail(409,'Verification changed. Retry this client.');
       if(!evidence?.capture)return publicClient(initial);
       // These are the same authorized read operations used by native agents and CLI.
       // Exact provenance binds the result to this user, installation, harness and event.
@@ -292,7 +307,7 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
         const {client}=selected(data,selection);
         const current=client.evidence;
         if(!current||current.proof.id!==evidence.proof.id)fail(409,'Verification changed. Retry this client.');
-        current.proof={...current.proof,state:passageId?'verified':'waiting_index',...(passageId?{passageId,verifiedAt:now().toISOString()}:{verifiedAt:undefined,passageId:undefined})};
+        current.proof={...current.proof,state:passageId?'verified':'waiting_index',...(passageId?{passageId,verifiedAt:current.proof.verifiedAt??now().toISOString()}:{verifiedAt:undefined,passageId:undefined})};
         if(passageId&&current.mcpCall&&current.mcpNative?.sessionId===current.capture?.sessionId&&!data.firstWin)data.firstWin={installationId:selection.installationId,client:selection.client,verifiedAt:now().toISOString()};
         return publicClient(client);
       });

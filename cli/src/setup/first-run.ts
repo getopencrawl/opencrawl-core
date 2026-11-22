@@ -7,14 +7,14 @@ import {nextSetupAction} from './next.ts';
 import {chosen,readSetupState,readStateKey,scopeKey,setupRoot,updateSetupState,type SetupState} from './state.ts';
 
 // Recording can be declined before a capture configuration is ever created.
-function unboundSetupComplete(api?:string){
+export function unboundSetupComplete(api?:string){
  let files:string[];
  try{files=readdirSync(setupRoot());}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
  const states=files.filter(file=>/^[a-f0-9]{64}\.json$/.test(file)).map(file=>readStateKey(file.slice(0,-5)))
   .filter((state):state is SetupState=>state!==null&&(!api||state.scope.api===api))
   .sort((a,b)=>b.acceptedAt.localeCompare(a.acceptedAt));
  const latest=states[0];
- return Boolean(latest&&!latest.installationId&&latest.firstRun!=='choosing'&&!chosen(latest.selections,'plugins').length&&!chosen(latest.selections,'history').length);
+ return Boolean(latest&&!latest.installationId&&latest.firstRun!=='choosing'&&!chosen(latest.selections,'forward').length&&!chosen(latest.selections,'plugins').length&&!chosen(latest.selections,'history').length);
 }
 
 export async function rememberFinishedSetup(state:SetupState){

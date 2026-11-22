@@ -2,7 +2,7 @@ import {allowedTime,confirmedPermission,readPermission,permittedBatch,type Recor
 import {transcriptCheckpoint,transcriptIdentity,transcriptIdentityMatches} from './transcript-checkpoint.ts';
 import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, fstatSync, lstatSync, realpathSync, openSync, readSync, closeSync, unlinkSync, createReadStream} from 'node:fs';
 import {gzip} from 'node:zlib';
-import {promisify} from 'node:util';
+import {promisify,isDeepStrictEqual} from 'node:util';
 import {join, dirname, resolve, relative, sep, basename} from 'node:path';
 import {homedir, hostname} from 'node:os';
 import {compiled,commandForBinary} from '../distribution.ts';
@@ -75,7 +75,8 @@ export async function captureIdentity(config:CaptureConfig,token?:string,signal?
       config.installationId=current.installationId==='pending'?randomUUID():current.installationId;
       config.authPending=false;
     }
-    atomicJson(join(captureDir(),'config.json'),{...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})});
+    const next={...current,owner:principal,installationId:config.installationId,...(current.authPending?{authPending:false}:{})};
+    if(!isDeepStrictEqual(current,next))atomicJson(join(captureDir(),'config.json'),next);
   },20_000,signal);
   return {principal,recording,token:verifiedToken,gzip:Array.isArray(capabilities?.batchEncodings)&&capabilities.batchEncodings.includes('gzip'),cursor:capabilities?.harnesses?.includes('cursor')===true,antigravity:capabilities?.harnesses?.includes('antigravity')===true};
 }

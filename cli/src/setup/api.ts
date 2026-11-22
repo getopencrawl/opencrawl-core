@@ -7,7 +7,7 @@ import type {SetupHumanTask,SetupScope,SetupState} from './state.ts';
 type HookTrust='trusted'|'pending'|'unknown'|'not_required';
 type SetupHookObservation={scope:SetupScope;installationId:string;recordingSelected:boolean;review:CodexHookReview};
 type HookReport=SetupHookObservation & {onlyHooks?:true};
-export type SetupServerStatus={scope:{tenantId:string;userId:string};pluginStateSupported?:boolean;firstWin:unknown;installations:{installationId:string;clients:{client:string;installed?:boolean;pluginState?:string;history?:string;historyProgress?:unknown;forward?:boolean;hookTrust?:HookTrust;captureObservedAt?:string;mcp?:{state:string};proof?:{state:string};humanTasks:SetupHumanTask[]}[]}[]};
+export type SetupServerStatus={scope:{tenantId:string;userId:string};pluginStateSupported?:boolean;revisionProofSupported?:boolean;firstWin:unknown;installations:{installationId:string;clients:{client:string;installed?:boolean;pluginState?:string;history?:string;historyProgress?:unknown;forward?:boolean;hookTrust?:HookTrust;captureObservedAt?:string;mcp?:{state:string};proof?:{state:string};humanTasks:SetupHumanTask[]}[]}[]};
 export async function setupRequest(api:string,path:string,input?:unknown,fetcher=fetch,timeoutMs=30000):Promise<unknown>{
   const configured=await configuredToken('OPENCRAWL_TOKEN',api);let token=configured||await accessToken(api,undefined,fetcher);
   const send=()=>jsonRequest(api+path,{method:input===undefined?'GET':'POST',headers:{authorization:'Bearer '+token,...(input===undefined?{}:{'content-type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeoutMs)},fetcher);

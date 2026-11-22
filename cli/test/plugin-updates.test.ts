@@ -92,7 +92,7 @@ test('standing consent belongs to the installation and its selected local client
 });
 
 test.skipIf(process.platform==='win32')('an opted-in local release exchanges intact folders, rechecks consent, and finishes interrupted receipts',async()=>{
-  const {promoteDirectoryPlugin,retainsHookRegistrations}=await import('../src/setup/plugin-promotion.ts');
+  const {promoteDirectoryPlugin,retainsHookRegistrations,settlePromotion}=await import('../src/setup/plugin-promotion.ts');
   const {bindPublishedPackage}=await import('../src/setup/published-plugins.ts');
   const {writeBundle}=await import('../src/setup/plugins.ts');
   const {readSetupState}=await import('../src/setup/state.ts');
@@ -137,6 +137,16 @@ test.skipIf(process.platform==='win32')('an opted-in local release exchanges int
     const updated=get(receipt);
     expect(updated.digest).not.toBe(original.digest);
     expect(readSetupState(scope)?.pluginResults?.[0]?.source).toEqual(next.source);
+    const pending=join(manager,'pending-verification.json'),retained=get(pending);
+    expect(get(join(retained.directory,'bundle','.opencrawl-source.json'))).toEqual(old.source);
+    expect(await settlePromotion(selected,client,updated.digest,'resume')).toBe('pending');
+    expect(await settlePromotion(selected,client,updated.digest,'rollback')).toBe('rolled_back');
+    expect(get(join(live,'.opencrawl-source.json'))).toEqual(old.source);
+    expect(get(receipt).digest).toBe(original.digest);
+    expect(await run()).toBe(false);
+    rmSync(join(manager,'rejected-update.json'));
+    expect(await run()).toBe(true);
+    expect(await settlePromotion(selected,client,updated.digest,'verify')).toBe('verified');
     // Model a process interrupted between the directory exchange and receipt writes.
     json(receipt,oldReceipt);json(stateFile,{...selected,pluginAutoUpdates:undefined});
     json(journal,{installationId,client,oldDigest:original.digest,nextDigest:updated.digest,directory:join(manager,'swap-interrupted'),
