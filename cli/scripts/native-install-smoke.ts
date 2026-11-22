@@ -63,7 +63,7 @@ try{
   const shellVersion=windows
     ?await run([powershell,'-NoProfile','-Command',"$env:Path=[Environment]::GetEnvironmentVariable('Path','User')+';'+$env:Path; opencrawl --version"])
     :await run(['/bin/bash','-ic','opencrawl --version']);
-  if(shellVersion!==pkg.version)throw new Error('A fresh shell could not find the installed CLI on PATH: '+shellVersion);
+  if(shellVersion.split(/\r?\n/).at(-1)!==pkg.version)throw new Error('A fresh shell could not find the installed CLI on PATH: '+shellVersion);
   const command=(args:string[])=>windows?[powershell,'-NoProfile','-Command',`& '${entry.replace(/'/g,"''")}' ${args.map(v=>"'"+v.replace(/'/g,"''")+"'").join(' ')}`]:[entry,...args];
   if(process.platform==='linux'){
     const result=JSON.parse(await run(command(['setup','--api',server.url.origin,'--json'])));

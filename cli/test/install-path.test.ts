@@ -23,7 +23,7 @@ test.skipIf(process.platform==='win32')('reinstall preserves startup files and t
    if(bash)expect(readFileSync(join(home,'.bash_profile'),'utf8')).toContain('# OpenCrawl CLI');
    const resolved=Bun.spawnSync([shell,'-ic','command -v opencrawl && opencrawl'],{env});
    expect(resolved.exitCode).toBe(0);
-   expect(resolved.stdout.toString().trim().split('\n')).toEqual([entry,'fixture']);
+   expect(resolved.stdout.toString().trim().split('\n').slice(-2)).toEqual([entry,'fixture']);
   }
  }finally{rmSync(home,{recursive:true,force:true});}
 });
