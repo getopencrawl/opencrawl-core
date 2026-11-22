@@ -9,7 +9,7 @@ import type {ValueReports} from './value-report.mjs';
 import type {SessionOverlap, UsageSource, UsageHighlights, UsageDetails, UsageReport} from './reports.mjs';
 import {consoleFailure} from './console.mjs';
 import {dailyOverlap} from '../sessions/overlap.mjs';
-type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'> & Partial<Pick<ReturnType<typeof createSessionSearch>, 'tokenTotals' | 'tokenSessions'>>;
+type Sessions = Pick<ReturnType<typeof createSessionSearch>, 'usage' | 'overlap'> & Partial<Pick<ReturnType<typeof createSessionSearch>, 'tokenTotals' | 'tokenSessions' | 'tokensBySessionStart'>>;
 import {rangeDays, tokenSessionsRequest, type UsageRange, type TokenUsage, type TokenSessionPage, type DailyCount, type TokenSession} from './usage-range.mjs';
 import type {SearchActivityRow} from './search-activity.mjs';
 /**
@@ -171,7 +171,13 @@ export function usageServices(options: (principal: Principal) => UsageOptions) {
       details: (principal: Principal, range: UsageRange = '30d') => usageReport({...options(principal), days: rangeDays(range), part: 'details'}),
     },
     usageTokens: {
-      usage: (principal: Principal, range: UsageRange) => tokenUsage(options(principal), range),
+      async usage(principal: Principal, range: UsageRange, basis?: 'session-start'): Promise<TokenUsage> {
+        const services = options(principal);
+        if (basis !== 'session-start') return tokenUsage(services, range);
+        if (!services.search?.tokensBySessionStart) throw consoleFailure(503, 'Indexed session tokens are unavailable.');
+        const result = await services.search.tokensBySessionStart(principal, {team: principal.tenantId.startsWith('org_'), days: rangeDays(range)});
+        return {source: 'index', range, ...result};
+      },
       sessions: (principal: Principal, input: unknown) => tokenSessionPage(options(principal), input),
     },
   };

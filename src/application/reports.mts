@@ -82,10 +82,10 @@ export interface BoardReport {
   next: number | null;
 }
 export interface ConsoleDataAdapter {
-  callTotals?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
-  usageTokens?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenUsage & {cacheScope:string}>;
+  callTotals?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal,basis?:'events'):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
+  usageTokens?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal,basis?:'session-start'):Promise<import('./usage-range.mjs').TokenUsage & {cacheScope:string}>;
   tokenSessions?(input:import('./usage-range.mjs').TokenSessionsRequest,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenSessionPage & {cacheScope:string}>;
-  searchHistory?(input:import('./search-activity.mjs').HistoryRequest,signal:AbortSignal):Promise<import('./search-activity.mjs').SearchActivityPage & {cacheScope:string}>;
+  searchHistory?(input:import('./search-activity.mjs').HistoryRequest & {basis?:'events'},signal:AbortSignal):Promise<import('./search-activity.mjs').SearchActivityPage & {cacheScope:string}>;
   usageHighlights?(signal: AbortSignal): Promise<UsageHighlights & {cacheScope: string}>;
   usageDetails?(signal: AbortSignal, range?: import('./usage-range.mjs').UsageRange): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;

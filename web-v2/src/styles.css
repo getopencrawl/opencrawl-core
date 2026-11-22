@@ -9,3 +9,69 @@
 .usage-toolbar > .oc-tabs { border-bottom: 0; margin-bottom: 0; }
 .usage-toolbar > .oc-select { width: auto; flex-shrink: 0; }
 @media (max-width: 600px) { .usage-toolbar { flex-direction: column-reverse; align-items: stretch; padding-top: var(--space-2); } }
+
+.usage-report:has(.usage-overview) .usage-toolbar { margin-bottom: var(--space-3); }
+.usage-overview { container-type: inline-size; }
+.usage-overview .report-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: var(--space-2); margin: 0 0 var(--space-4); }
+.usage-overview .report-metric { padding: var(--space-3); gap: var(--space-1); user-select: text; }
+.usage-overview .report-metric dt { text-transform: none; letter-spacing: normal; font-size: var(--text-sm); }
+.usage-overview .report-metric-value { font-size: clamp(1.75rem,3cqi,2.25rem); letter-spacing: -.035em; }
+.usage-overview .report-metric-note { font-size: var(--text-xs); }
+.usage-charts.report-panel { padding: 0; gap: 0; overflow: visible; }
+.usage-period,.usage-period > span,.usage-segments { display: flex; align-items: center; }
+.usage-period { justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line); }
+.usage-period > span { gap: var(--space-2); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.usage-period small { color: var(--muted); }
+.usage-segments { padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.usage-segments .oc-button { min-height: 26px; padding: 2px var(--space-2); font-size: var(--text-xs); color: var(--muted); }
+.usage-segments .oc-button[aria-pressed=true] { background: var(--surface-raised); color: var(--strong); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.usage-panes { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.usage-pane { position: relative; min-width: 0; padding: var(--space-3) var(--space-4); margin: 0; }
+.usage-pane .oc-section-heading { min-height: 34px; align-items: center; }
+.usage-pane .oc-section-heading h2 { font-size: var(--text-body); }
+.usage-pane .report-bar-chart svg { height: 118px; }
+.usage-token-pane { border-left: 1px solid var(--line); }
+.usage-token-pane .report-bar-chart svg { height: 220px; }
+.report-trend-line { stroke: var(--brand-face); stroke-width: 2; fill: none; }
+.usage-view-all { position: absolute; top: var(--space-3); right: var(--space-4); font-size: var(--text-xs); }
+.usage-query-table table { table-layout: fixed; width: 100%; border-collapse: collapse; }
+.usage-query-table :is(td,th) { padding: var(--space-2) var(--space-1); text-align: left; font-size: var(--text-sm); border-bottom: 1px solid var(--line); }
+.usage-query-table :is(td,th):first-child { width: 32px; }
+.usage-query-table :is(td,th):nth-child(3) { width: 88px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-query-table :is(td,th):last-child { width: 28px; }
+.usage-query-table .oc-button { min-height: 24px; padding: 2px; }
+.usage-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-agent { display: inline-flex; position: relative; align-items: center; vertical-align: middle; }
+.usage-agent .oc-agent-avatar { width: 24px; height: 24px; margin: 0; }
+.usage-agent:is(:hover,:focus-visible)::after { content: attr(data-tooltip); position: absolute; left: 100%; z-index: 2; white-space: nowrap; padding: var(--space-1) var(--space-2); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-control); }
+.usage-query-table .usage-query-detail { white-space: normal; overflow-wrap: anywhere; text-align: left; color: var(--muted); }
+.usage-query-detail p { white-space: pre-wrap; color: var(--text); }
+.usage-history-dialog { width: min(720px,94vw); }
+.usage-history-dialog .oc-dialog-body { max-height: 65dvh; overflow: auto; }
+@container (max-width: 649px) {
+  .usage-overview .report-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .usage-overview .report-metric:last-child { grid-column: 1/-1; }
+}
+@container (max-width: 720px) {
+  .usage-panes { grid-template-columns: minmax(0,1fr); }
+  .usage-token-pane { border: 0; border-top: 1px solid var(--line); }
+}
+@container (max-width: 559px) {
+  .usage-overview .report-metrics { grid-template-columns: minmax(0,1fr); gap: var(--space-1); }
+  .usage-overview .report-metric { grid-template-columns: minmax(90px,.5fr) minmax(0,1fr); grid-template-rows: auto auto; column-gap: var(--space-2); }
+  .usage-overview .report-metric dd { display: contents; }
+  .usage-overview .report-metric dt { grid-column: 2; }
+  .usage-overview .report-metric-value { grid-column: 1; grid-row: 1/3; align-self: center; }
+  .usage-overview .report-metric-note { grid-column: 2; }
+  .usage-period,.usage-pane { padding-inline: var(--space-2); }
+  .usage-segments .oc-button { padding-inline: var(--space-1); }
+}
+
+.usage-overview .report-metric dt { color: var(--text); font-weight: 550; }
+.usage-overview .usage-pane:first-child .report-bar { fill: var(--quiet); }
+.usage-token-pane .report-bar,.usage-token-pane .report-trend-line { fill: var(--accent); }
+.usage-token-pane .report-trend-line { fill: none; stroke: var(--accent); }
+.usage-query-table thead th { font-weight: 500; text-transform: none; letter-spacing: normal; }
+.usage-query-table .usage-query { font-weight: 500; }
+.usage-history-dialog .usage-query-table :is(th,td):nth-child(3) { width: clamp(90px,25vw,176px); white-space: normal; }
+.usage-view-all { display: inline-flex; align-items: center; gap: var(--space-1); }

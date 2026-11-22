@@ -229,6 +229,7 @@ export function ActivityChart({daily}: {daily: ReadonlyArray<{date: string; sess
   })}</svg><figcaption><span>{daily[0]!.date}</span><span>Peak {sessions(peak)} a day</span><span>{daily.at(-1)!.date}</span></figcaption></figure>;
 }
 
+const axisDate = new Intl.DateTimeFormat('en-US', {month:'short',day:'numeric',timeZone:'UTC'});
 const axisNumber = new Intl.NumberFormat('en-US', {notation: 'compact', maximumFractionDigits: 1});
 /** Round gridline steps (1, 2, 2.5, 5 x 10^n) so axis labels read cleanly. */
 function niceTicks(maximum: number) {
@@ -254,9 +255,9 @@ function daySegments(day: BarDay, seriesCount: number) {
 }
 
 /** Daily totals optionally broken into stacked series. Days can be inspected by mouse, keyboard or touch. */
-export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxisLabel}: {
+export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxisLabel, height = 220, line = false, shortDates = false}: {
   days: readonly BarDay[]; label: string; unit: (value: number) => string;
-  series?: readonly {label: string}[]; xAxisLabel?: string; yAxisLabel?: string;
+  series?: readonly {label: string}[]; xAxisLabel?: string; yAxisLabel?: string; height?: number; line?: boolean; shortDates?: boolean;
 }) {
   const figure = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(760);
@@ -270,7 +271,7 @@ export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxis
   }, [days.length]);
   if (!days.length) return <p className="report-note">Nothing yet.</p>;
   const ticks = niceTicks(Math.max(0, ...days.map(day => day.value ?? 0)));
-  const top = ticks.at(-1)!, height = 220, left = 52, right = 8, plotTop = 12, plotBottom = 192;
+  const top = ticks.at(-1)!, left = 52, right = 8, plotTop = 12, plotBottom = height - 28;
   const column = (width - left - right) / days.length;
   const y = (value: number) => plotBottom - value / top * (plotBottom - plotTop);
   const describe = (day: typeof days[number]) => `${day.date}: ${day.value == null ? 'not tracked' : unit(day.value)}`;
@@ -311,11 +312,12 @@ export function DailyBarChart({days, label, unit, series = [], xAxisLabel, yAxis
           {parts ? parts.map((part, i) => {
             const base = y(sum); sum += part;
             return part > 0 && <rect key={i} className={`report-stack-segment report-series-${i % 6}`} x={x} y={y(sum)} width={barWidth} height={base - y(sum)}/>;
-          }) : <rect className={stacked ? 'report-bar-unclassified' : 'report-bar'} x={x} y={plotBottom - barHeight} width={barWidth} height={barHeight} rx="2"/>}
+          }) : !line && <rect className={stacked ? 'report-bar-unclassified' : 'report-bar'} x={x} y={plotBottom - barHeight} width={barWidth} height={barHeight} rx="2"/>}
           <rect className="report-bar-hit" x={left + index * column} y={plotTop} width={column} height={plotBottom - plotTop} onMouseEnter={() => setActive(index)} onPointerDown={() => setActive(index)}/>
         </g>;
       })}
-      {labels.map(i => <text key={i} className="report-bar-axis" x={left + (i + .5) * column} y={height - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>{days[i]!.date}</text>)}
+      {line && <polyline className="report-trend-line" pointerEvents="none" points={days.map((day,i) => (left + (i + .5) * column) + ',' + y(day.value ?? 0)).join(' ')}/>}
+      {labels.map(i => <text key={i} className="report-bar-axis" x={left + (i + .5) * column} y={height - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>{shortDates ? axisDate.format(new Date(days[i]!.date)) : days[i]!.date}</text>)}
       {tip && <g className="report-bar-tip" pointerEvents="none">
         <rect x={tip.x} y={2} width={tip.boxWidth} height={42} rx="6"/>
         {tip.lines.map((line, i) => <text key={i} x={tip.x + 10} y={19 + i * 17} className={i ? 'report-bar-tip-value' : undefined}>{line}</text>)}

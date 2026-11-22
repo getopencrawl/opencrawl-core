@@ -45,11 +45,15 @@ export function aggregate(db: DatabaseSync, fts: string, where: Sql, score: Sql,
       let inline = true;
       for (const [name, raw] of Object.entries(childSpecs)) {
         const metric = object(raw), types = Object.keys(metric), type = types[0];
-        if (types.length !== 1 || !['min', 'max', 'term_count'].includes(type)) {inline = false; break;}
+        if (types.length !== 1 || !['min', 'max', 'term_count', 'sum', 'value_count'].includes(type)) {inline = false; break;}
         if (type === 'term_count') {
           const {field, value} = termCount(metric[type]);
           const predicate = new QueryCompiler(fts).query({term: {[field]: value}}, false);
           summaries.push({name, sql: `count(DISTINCT CASE WHEN ${predicate.sql} THEN d.rowid END)`, args: predicate.args, date: false});
+        } else if (type === 'sum' || type === 'value_count') {
+          const opts = object(metric[type]); keys(opts, ['field']); const f = field(opts.field);
+          const aggregate = type === 'sum' ? 'sum(m.value)' : 'count(m.value)';
+          summaries.push({name, sql: `sum(coalesce((SELECT ${aggregate} FROM json_each(d.document, '${f.path}') m),0))`, args: [], date: false});
         } else {
           const opts = object(metric[type]); keys(opts, ['field']); const f = field(opts.field);
           summaries.push({name, sql: `${type}((SELECT ${type}(${f.date ? 'epoch(m.value)' : 'm.value'}) FROM json_each(d.document, '${f.path}') m))`, args: [], date: f.date});

@@ -51,3 +51,29 @@ test('token endpoints require fresh access, a valid range and only trusted scope
   for (const body of ['{"range":"all","offset":-1}', '{"range":"all","offset":5000}', '{"range":"all","userId":"bob"}']) assert.equal((await api(request(sessions, body), sessions, context)).status, 400, body);
   assert.deepEqual(calls, ['7d', '7d']);
 });
+
+test('Overview reads the session-start inventory even when the deployment has a meter', async () => {
+  const reads = [];
+  const usage = usageServices(p => ({principal:p, tokens:{usage:()=>assert.fail('unexpected billing read')}, search:{
+    tokensBySessionStart:async (who,window)=>{reads.push([who,window]);return {total:17,daily:[{date:'2026-11-17',count:17}]};},
+  }}));
+  assert.equal((await usage.usageTokens.usage(principal, 'all', 'session-start')).total,17);
+  assert.deepEqual(reads,[[principal,{days:null,team:true}]]);
+});
+
+test('Overview resolves registered names only after history visibility and workspace admission', async () => {
+  const scopes = [];
+  const row = {id:'event',userId:'alice',sessionId:'session',harness:'codex'};
+  const api=createConsoleApi({url:'https://example.test',usageActivity:{page:async(p,input,basis)=>{
+    assert.equal(p,principal);assert.deepEqual(input,{kind:'agent'});assert.equal(basis,'events');
+    return {rows:[row,{...row,id:'unlinked',sessionId:null}],next:null};
+  }},activityBoard:{read:async(key,load)=>{scopes.push(key);return load({agentNames:async ids=>{assert.equal(ids.length,1);return {[ids[0]]:'Otter'};}});}}});
+  const route='/api/console/usage/search-history';
+  const request=()=>({url:route,async *[Symbol.asyncIterator](){yield Buffer.from(JSON.stringify({kind:'agent',basis:'events'}));}});
+  const context={principal,user:{id:principal.userId},member:{},cacheScope:'a',admitted:true,revalidate:async()=>true};
+  const result=await api(request(),route,context);
+  assert.equal(result.status,200);assert.equal(result.body.rows[0].agentName,'Otter');assert.equal(result.body.rows[1].agentName,undefined);
+  const denied=await api(request(),route,{...context,revalidate:async()=>false});
+  assert.equal(denied.status,403);assert.doesNotMatch(JSON.stringify(denied.body),/Otter/);
+  assert.equal(new Set(scopes).size,1);
+});

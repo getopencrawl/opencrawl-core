@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react';
-import {ProactiveTab, SearchesTab, From, SessionLink, scoped} from './search-activity.tsx';
+import {ProactiveTab, SearchesTab, scoped} from './search-activity.tsx';
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
@@ -10,16 +10,13 @@ import type {ConsoleDataAdapter, UsageReport} from './types.js';
 import {ago, compact, count, harnessName, memberName, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
 import type {UsageMember, UsageSource} from './usage-model.ts';
 import type {UsageSection} from '../../../src/application/reports.mjs';
-import type {TokenSession, UsageRange} from '../../../src/application/usage-range.mjs';
+import type {UsageRange} from '../../../src/application/usage-range.mjs';
 import {reconcileUsage, usageSectionFailed} from './usage-recovery.ts';
-import {PagedList} from './usage-list.tsx';
+import {UsageOverview} from './usage-overview.tsx';
 
 const refreshPolicy = {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000, reconcile: reconcileUsage};
-const tokenRefresh = {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000};
 type Tab = 'overview' | 'searches' | 'proactive' | 'team' | 'activity' | 'sources';
-type TokenAdapter = Required<Pick<ConsoleDataAdapter, 'usageTokens' | 'tokenSessions'>>;
 const ranges: ReadonlyArray<{value: UsageRange; label: string}> = [{value: '30d', label: 'Last 30 days'}, {value: '7d', label: 'Last 7 days'}, {value: 'all', label: 'All time'}];
-const tokens = (value: number) => plural(value, 'token');
 
 export function useUsage(adapter: ConsoleDataAdapter) {
   const resource = useConsoleResource<UsageReport>(consoleResourceKey(adapter, 'usage'), signal => adapter.usage(signal), refreshPolicy);
@@ -150,35 +147,6 @@ function DataSources({report, now, retry}: {report: UsageReport; now: number; re
   </>;
 }
 
-/** Overview: session tokens (with the other billed counts beside them), tokens per day, then sessions. */
-function OverviewTab({adapter, scope, range, names}: {adapter: TokenAdapter; scope: string; range: UsageRange; names: MemberNames}) {
-  const {data, error, loading, reload} = useConsoleResource([...consoleResourceKey(adapter, 'usage-tokens'), range], async signal => scoped(scope, await adapter.usageTokens(range, signal)), tokenRefresh);
-  return <>
-    {error && <Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Session tokens couldn’t update.</Notice>}
-    {loading && !data && <LoadingState spinner label="Loading session tokens…"/>}
-    {data && <Section className="report-panel" headingLevel={3} title={data.source === 'meter' ? 'Tokens stored' : 'Session tokens indexed'}
-      description={data.source === 'meter'
-        ? 'Everything OpenCrawl holds for this workspace: history you imported (backfill) plus sessions captured live, and memories. The number is the total stored now; each bar is the total stored that day.'
-        : 'Tokens from captured sessions, imported history (backfill) and live capture together, by the day each session happened.'} actions={<span className="report-chart-total" title={count(data.total)}>{compact(data.total)}</span>}>
-      <DailyBarChart days={data.daily.map(day => ({date: day.date, value: day.count}))} label={data.source === 'meter' ? 'Tokens stored each day' : 'Session tokens indexed per day'}
-        unit={data.source === 'meter' ? value => `${count(value)} tokens stored` : tokens}/>
-    </Section>}
-    <Section className="report-panel" headingLevel={3} title="Sessions">
-      <PagedList<TokenSession, number> cacheKey={[...consoleResourceKey(adapter, 'usage-token-sessions'), range]} label="Sessions" className="usage-search-history" empty="No sessions in this period."
-        load={async (offset, signal) => scoped(scope, await adapter.tokenSessions({range, ...offset ? {offset} : {}}, signal))}
-        head={<tr><th scope="col">Session</th><th scope="col">From</th><th scope="col">Tokens</th><th scope="col">Last active</th></tr>}
-        row={(row, index) => <tr key={`${row.userId}:${row.harness}:${row.sessionId}:${index}`}>
-          <td><SessionLink userId={row.userId} harness={row.harness} sessionId={row.sessionId}/></td>
-          <td><From userId={row.userId} harness={row.harness} names={names}/></td>
-          <td title={count(row.tokens)}>{compact(row.tokens)}</td>
-          <td>{row.lastAt ? <time dateTime={row.lastAt} title={row.lastAt}>{ago(row.lastAt)}</time> : 'Unavailable'}</td>
-        </tr>}/>
-      {data?.memories ? <p className="report-note usage-memories">Memories: <strong title={count(data.memories)}>{compact(data.memories)}</strong> tokens stored. They are part of the total above and are not listed by session.</p> : null}
-      <p className="report-note">The list shows sessions you can see. The total includes every session.</p>
-    </Section>
-  </>;
-}
-
 type PageProps = {showActivity?: string; adapter: ConsoleDataAdapter; setupPrompt?: string; reportScope?: string};
 
 function useTeamReport(adapter: ConsoleDataAdapter, scope: string | undefined, range: UsageRange) {
@@ -216,34 +184,30 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
   const [range, setRange] = useState<UsageRange>('30d');
   const scope = reportScope ?? showActivity;
   const activity = showActivity && adapter.callTotals && adapter.searchHistory ? {adapter: adapter as ActivityAdapter, scope: showActivity} : undefined;
-  const tokenAdapter = scope && adapter.usageTokens && adapter.tokenSessions ? adapter as TokenAdapter : undefined;
+  const hasOverview = Boolean(scope && adapter.usageTokens);
   const team = useTeamReport(adapter, scope, range);
   const ranged = Boolean(scope && adapter.usageDetails);
-  usePrefetchedRanges(Boolean(team.data) && Boolean(scope), range, [
+  usePrefetchedRanges(tab !== 'overview' && Boolean(team.data) && Boolean(scope), range, [
     ...ranged ? [{key: (r: UsageRange) => [...consoleResourceKey(adapter, 'usage-details'), r], read: async (r: UsageRange, signal: AbortSignal) => ({workspace: null, ...scoped(scope!, await adapter.usageDetails!(signal, r))})}] : [],
-    ...tokenAdapter ? [
-      {key: (r: UsageRange) => [...consoleResourceKey(tokenAdapter, 'usage-tokens'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(scope!, await tokenAdapter.usageTokens(r, signal))},
-      {key: (r: UsageRange) => [...consoleResourceKey(tokenAdapter, 'usage-token-sessions'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(scope!, await tokenAdapter.tokenSessions({range: r}, signal))},
-    ] : [],
     ...activity ? [{key: (r: UsageRange) => [...consoleResourceKey(activity.adapter, 'call-totals'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(activity.scope, await activity.adapter.callTotals(r, signal))}] : [],
   ]);
   const names: MemberNames = new Map((team.data?.members ?? []).flatMap(member => member.userId ? [[member.userId, memberName(member)] as const] : []));
   const tabs: Array<{value: Tab; label: string}> = [
-    ...tokenAdapter ? [{value: 'overview' as const, label: 'Overview'}] : [],
-    ...activity ? [{value: 'searches' as const, label: 'Searches'}, {value: 'proactive' as const, label: 'Proactive context'}] : [],
+    ...hasOverview ? [{value: 'overview' as const, label: 'Overview'}] : [],
+    ...activity ? [{value: 'searches' as const, label: 'Searches'}, {value: 'proactive' as const, label: 'Proactive suggestions'}] : [],
     {value: 'team', label: 'Team'},
     {value: 'activity', label: 'Activity'},
     {value: 'sources', label: 'Sources'},
   ];
   const current: Tab = tabs.some(item => item.value === tab) ? tab : tabs[0]!.value;
-  return <Page title="Usage" description="Tokens stored, searches and team activity for this workspace." bodyClassName="usage-report" actions={setupPrompt ? <CopyPromptButton text={setupPrompt}/> : undefined}>
+  return <Page title="Usage" bodyClassName="usage-report" actions={setupPrompt && current !== 'overview' ? <CopyPromptButton text={setupPrompt}/> : undefined}>
     <div className="usage-toolbar">
       <Tabs label="Usage" items={tabs} value={current} onChange={value => setTab(value as Tab)}/>
-      <Select aria-label="Date range" value={range} onChange={event => setRange(event.target.value as UsageRange)}>
+      {current !== 'overview' && <Select aria-label="Date range" value={range} onChange={event => setRange(event.target.value as UsageRange)}>
         {ranges.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
-      </Select>
+      </Select>}
     </div>
-    {current === 'overview' && tokenAdapter && scope && <OverviewTab adapter={tokenAdapter} scope={scope} range={range} names={names}/>}
+    {current === 'overview' && scope && hasOverview && <UsageOverview adapter={adapter} activity={activity?.adapter} scope={scope} names={names}/>}
     {current === 'searches' && activity && <SearchesTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {current === 'proactive' && activity && <ProactiveTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {(current === 'activity' || current === 'sources') && <>

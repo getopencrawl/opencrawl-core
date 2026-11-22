@@ -41,8 +41,8 @@ const adapter: OnboardingAdapter = {
 const never = new AbortController().signal;
 const usageAdapter: ConsoleDataAdapter = {usage: signal => request('/api/console/usage', signal), search: async () => ({}), board: async () => ({messages: [], topicSummaries: [], next: null})};
 const progressiveUsageAdapter: ConsoleDataAdapter = {...usageAdapter,
-  callTotals:(range,signal)=>request('/api/console/usage/calls',signal,{range}),
-  usageTokens:(range,signal)=>request('/api/console/usage/tokens',signal,{range}),
+  callTotals:(range,signal,basis)=>request('/api/console/usage/calls',signal,{range,basis}),
+  usageTokens:(range,signal,basis)=>request('/api/console/usage/tokens',signal,{range,basis}),
   tokenSessions:(input,signal)=>request('/api/console/usage/token-sessions',signal,input),
   searchHistory:(input,signal)=>request('/api/console/usage/search-history',signal,input),
   usageHighlights: signal => request('/api/console/usage/highlights', signal),

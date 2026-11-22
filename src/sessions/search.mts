@@ -151,6 +151,43 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
         firstAt:a.first.value_as_string??null,lastAt:a.last.value_as_string??null,
         daily:throughToday(a.daily.buckets.map(b=>({date:b.key_as_string,events:b.doc_count,sessions:b.sessions.count.value})),today,date=>({date,events:0,sessions:0})),people};
     },
+    /** Attribute all canonical indexed text in a session to its earliest event, including imported history. */
+    async tokensBySessionStart(principal: Principal, {team = false, days = 30, now = Date.now()}: {team?: boolean; days?: number | null; now?: number} = {}) {
+      sessionScope(principal);
+      if (principal.captureAccess !== undefined) fail(403, 'Session read access required');
+      const {since, today, until} = usageWindow(days, now);
+      const filter = [{term: {tenantId: principal.tenantId}}, ...(team ? [] : [{term: {[f('userId')]: principal.userId}}]),
+        {term: {[f('chunk')]: 0}}, {range: {[f('timestamp')]: {lte: until}}}];
+      // A single search view keeps concurrent indexing from moving a session across pages.
+      const result = await resolve(principal).collection('session').search(principal, {size: 0, track_total_hits: true, query: {bool: {filter}},
+        aggs: {sessions: {multi_terms: {terms: ['userId','harness','sessionId'].map(key => ({field: f(key)})), size: 50000, order: {_key: 'asc'}},
+          aggs: {start: {min: {field: f('timestamp')}}, tokens: {sum: {field: f('capturedTokens')}}, counted: {value_count: {field: f('capturedTokens')}}}}}});
+      const grouped = result.aggregations?.sessions;
+      if (result.timed_out || result._shards?.failed || result.hits.total?.relation !== 'eq' || grouped?.sum_other_doc_count !== 0 || !Array.isArray(grouped.buckets)) {
+        throw new Error('Incomplete session token inventory');
+      }
+      type Bucket = {doc_count: number; start: {value: number}; tokens: {value: number}; counted: {value: number}};
+      const byDay = new Map<string, number>();
+      let events = 0, total = 0;
+      for (const bucket of grouped.buckets as unknown as Bucket[]) {
+        if (!Number.isFinite(bucket.start?.value) || !Number.isSafeInteger(bucket.tokens?.value) || bucket.tokens.value < 0 || bucket.counted?.value !== bucket.doc_count) {
+          throw new Error('Incomplete indexed session');
+        }
+        events += bucket.doc_count;
+        const date = dayOf(bucket.start.value);
+        if (since && date < since) continue;
+        byDay.set(date, (byDay.get(date) ?? 0) + bucket.tokens.value);
+        total += bucket.tokens.value;
+      }
+      if (events !== result.hits.total.value || !Number.isSafeInteger(total)) throw new Error('Incomplete session token inventory');
+      const start = since ?? [...byDay.keys()].sort()[0];
+      const daily = [];
+      for (let at = start ? Date.parse(start) : Infinity; at <= Date.parse(today); at += 86400000) {
+        const date = dayOf(at);
+        daily.push({date, count: byDay.get(date) ?? 0});
+      }
+      return {total, daily};
+    },
     /** Captured tokens of session events in the window, by the UTC day each event happened. */
     async tokenTotals(principal: Principal,{team=false,days=30,now=Date.now()}: {team?: boolean; days?: number | null; now?: number}={}) {
       sessionScope(principal);
