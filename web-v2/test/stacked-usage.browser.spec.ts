@@ -6,6 +6,9 @@ test('daily stacks preserve proportions, zero days and untracked days with a key
   const legend = page.getByRole('list', {name: 'Series breakdown'}), status = page.getByRole('status');
   await expect(page.getByText('Date (UTC)', {exact:true})).toBeVisible();
   await expect(page.getByText('Items', {exact:true})).toBeVisible();
+  const fontSizes = await page.locator('.report-bar-axis, .report-bar-axis-title, .report-stack-caption li, .report-stack-summary').evaluateAll(nodes =>
+    nodes.map(node => parseFloat(getComputedStyle(node).fontSize)));
+  expect(Math.min(...fontSizes)).toBeGreaterThanOrEqual(13);
   await chart.focus(); await page.keyboard.press('Home');
   await expect(status).toHaveText('2026-11-17: 10 items. Sessions 2 items. Documents 3 items. Memories 5 items');
   const bounds = await chart.locator('.is-active .report-stack-segment').evaluateAll(nodes => nodes.map(node =>
