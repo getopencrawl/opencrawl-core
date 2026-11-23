@@ -154,8 +154,12 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
   }
   if (harness === 'claude-code') {
     if (['user','assistant'].includes(record.type)) {
-      if(record.type==='user'&&record.isMeta===true)return null;
-      kind=record.type==='user'&&record.origin?.kind==='task-notification'?'automation_message':'message';data=record.message;
+      if(record.type==='user'&&record.origin?.kind==='peer'){
+        kind='automation_message';data={source:'peer',content:record.message?.content};
+      }else{
+        if(record.type==='user'&&record.isMeta===true)return null;
+        kind=record.type==='user'&&record.origin?.kind==='task-notification'?'automation_message':'message';data=record.message;
+      }
     }
     else if (['custom-title','ai-title'].includes(record.type)) {
       const title=record.type==='custom-title'?record.customTitle:record.aiTitle;

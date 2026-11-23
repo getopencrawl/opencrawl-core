@@ -31,6 +31,9 @@ test('SDK queued prompt remains conversation with native blocks and source ident
   const peer=parseRecord('claude-code',{...r,attachment:{...r.attachment,isMeta:true,origin:{kind:'peer'}}},123)!;
   expect(peer).toMatchObject({kind:'automation_message',nativeId:'queued',data:{source:'peer',content:r.attachment.prompt}});
   expect(peer.data.role).toBeUndefined();
+  const directPeer={type:'user',isMeta:true,origin:{kind:'peer'},message:{role:'user',content:r.attachment.prompt}};
+  expect(parseRecord('claude-code',directPeer,123)).toMatchObject({kind:'automation_message',data:peer.data});
+  expect(parseRecord('claude-code',{...directPeer,origin:{}},123)).toBeNull();
   expect(parseRecord('claude-code',{...r,attachment:{...r.attachment,isMeta:true}},123)?.kind).toBe('message');
   expect(parseRecord('claude-code',{...r,attachment:{...r.attachment,commandMode:'notification'}},123)?.kind).toBe('attachment');
   expect(parseRecord('claude-code',{type:'attachment',attachment:{type:'instructions',instructions:'injected setup'}},0)).toBeNull();
