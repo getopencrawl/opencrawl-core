@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "node ./verification/board-host-hooks/hook.mjs",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node ./verification/board-host-hooks/hook.mjs",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "node ./verification/board-host-hooks/hook.mjs",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "node ./verification/board-host-hooks/hook.mjs",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "stop": [
+      {
+        "command": "node ./verification/board-host-hooks/hook.mjs",
+        "timeout": 3,
+        "failClosed": false,
+        "loop_limit": 1
+      }
+    ]
+  }
+}
