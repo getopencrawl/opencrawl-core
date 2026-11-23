@@ -10,6 +10,7 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
  let answer:SelectionItem[]|null|undefined;const app=await renderReady(<SetupSelection screen={screen} onComplete={value=>{answer=value;}}/>);
  try{
   await waitForFrame(app,'› [x] Claude Code');
+  expect(app.lastFrame()).not.toContain(updateLabel);
   expect(app.lastFrame()).not.toContain('sharing instructions');
   await pressAndRead(app,'?','? Hide details');
   expect(app.lastFrame()?.replace(/\s+/g,' ')).toContain('sharing instructions to Claude Code and Codex.');
@@ -68,40 +69,34 @@ test('empty history does not open another interactive screen',async()=>{
 });
 
 const updateLabel='Keep OpenCrawl plugins up to date (Recommended)';
-test('one checkbox controls updates for selected recording agents',async()=>{
- const items=screen.items.slice(0,2).map(item=>({...item,selected:false,autoUpdate:false}));
+const updateScreen:SelectionScreen={phase:4,title:updateLabel,items:screen.items.slice(0,2).map(item=>({...item,selected:false}))};
+test('the update step shows just one checkbox and toggles all selected agents together',async()=>{
  let answer:SelectionItem[]|null|undefined;
- const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={value=>{answer=value;}}/>);
+ const app=await renderReady(<SetupSelection screen={updateScreen} onComplete={value=>{answer=value;}}/>);
  try{
-  expect(app.lastFrame()).not.toContain(updateLabel);
-  await pressAndRead(app,' ','[ ] '+updateLabel);
-  await pressAndRead(app,down,'› [ ] Codex');
-  await pressAndRead(app,down,'› [ ] Do not record');
-  await pressAndRead(app,down,'› [ ] '+updateLabel);
+  await waitForFrame(app,'› [ ] '+updateLabel);
+  const frame=app.lastFrame()!;
+  expect(frame.split(updateLabel)).toHaveLength(2);
+  expect(frame.match(/\[ \]/g)).toHaveLength(1);
+  expect(frame).not.toMatch(/Claude Code|Codex|Record new sessions|Do not record|manual/i);
   await pressAndRead(app,' ','› [x] '+updateLabel);
-  await pressAndRead(app,up,'› [ ] Do not record');
-  await pressAndRead(app,up,'› [ ] Codex');
-  await pressAndRead(app,' ','› [x] Codex');
-  expect(app.lastFrame()).toContain('[x] '+updateLabel);
-  await pressAndRead(app,down,'› [ ] Do not record');
-  await pressAndRead(app,down,'› [x] '+updateLabel);
+  await pressAndRead(app,down,'› [ Continue ]');
+  await pressAndRead(app,up,'› [x] '+updateLabel);
   await pressAndRead(app,' ','› [ ] '+updateLabel);
-  await pressAndRead(app,down,'› [ Reinstall & record ]');
+  await pressAndRead(app,' ','› [x] '+updateLabel);
+  await pressAndRead(app,down,'› [ Continue ]');
   app.stdin.write(enter);await tick();
-  expect(answer?.map(item=>[item.selected,item.autoUpdate])).toEqual([[true,false],[true,false]]);
+  expect(answer?.map(item=>item.selected)).toEqual([true,true]);
  }finally{app.unmount();}
 });
 
-test('continuing with mixed saved update choices preserves each agent’s choice',async()=>{
- const items=screen.items.slice(0,2).map(item=>({...item,selected:true,autoUpdate:item.id==='codex'}));
+test('continuing with mixed update preferences preserves each agent’s choice',async()=>{
+ const items=updateScreen.items.map(item=>({...item,selected:item.id==='codex'}));
  let answer:SelectionItem[]|null|undefined;
- const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={value=>{answer=value;}}/>);
+ const app=await renderReady(<SetupSelection screen={{...updateScreen,items}} onComplete={value=>{answer=value;}}/>);
  try{
-  await waitForFrame(app,'[-] '+updateLabel);
-  await pressAndRead(app,down,'› [x] Codex');
-  await pressAndRead(app,down,'› [ ] Do not record');
-  await pressAndRead(app,down,'› [-] '+updateLabel);
-  await pressAndRead(app,down,'› [ Reinstall & record ]');
+  await waitForFrame(app,'› [-] '+updateLabel);
+  await pressAndRead(app,down,'› [ Continue ]');
   app.stdin.write(enter);await tick();
   expect(answer).toEqual(items);
  }finally{app.unmount();}

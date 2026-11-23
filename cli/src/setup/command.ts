@@ -403,7 +403,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    }
    const prior=previous?.pluginResults?.find(row=>row.client===id);
    const installState=await inspectInstall(api,id as LocalPluginClient,prior?.status);
-   return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState,autoUpdate:previousGrant.includes(id)};
+   return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState};
   }));
   options.sort((a,b)=>Number(a.disabled)-Number(b.disabled));
   const selected=await choose({phase:1,title:'Record new sessions',description:'Choose which agents to record on this machine.',noneLabel:'Do not record any sessions on this machine',items:options});
@@ -416,14 +416,20 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   }
   selections.history=Object.fromEntries(Object.keys(selections.history).map(id=>[id,previous?.selections.history[id]===true]));
   assertCaptureSelections(selections,previous?.selections);
+  // A single checkbox represents the saved grants for the chosen recording agents.
+  // The mixed state retains each existing grant until the user toggles it.
+  const autoUpdateClients=previousGrant.filter(id=>!candidates.some(client=>client.id===id)&&selections.plugins[id]);
+  if(selectedIds.size){
+   const updates=await choose({phase:4,title:'Keep OpenCrawl plugins up to date (Recommended)',
+    items:options.filter(item=>selectedIds.has(item.id)).map(({id,label})=>({id,label,selected:previousGrant.includes(id)}))});
+   if(updates===null)return {status:'cancelled',humanTasks:[]};
+   autoUpdateClients.push(...updates.filter(row=>row.selected&&selectedIds.has(row.id)).map(row=>row.id));
+  }
   if(selectedIds.size&&eligibility(selections).eligible){
    const service=await choose({phase:3,title:'Background capture',description:'Install background utility for more reliable session capture?',noneLabel:'Record without a background service',items:[{id:'daemon',label:'Install background service',selected:values['capture-mode']===undefined||captureMode==='daemon'}]});
    if(service===null)return {status:'cancelled',humanTasks:[]};
    captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';
   }
-  const autoUpdateClients=selected.filter(row=>selectedIds.has(row.id)&&row.autoUpdate).map(row=>row.id);
-  // Targeted setup only edits the agents shown on this screen.
-  for(const id of previousGrant)if(!candidates.some(client=>client.id===id)&&selections.plugins[id])autoUpdateClients.push(id);
   const capture=chosen(selections,'plugins').length>0;
   if(capture){
    checkMode(selections);
