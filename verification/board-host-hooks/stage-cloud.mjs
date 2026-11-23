@@ -49,19 +49,15 @@ try{
       const p=join(base,key,'board',hash+'.json');if(fs.existsSync(p))checkpoint=JSON.parse(fs.readFileSync(p)).feeds?.direct;
     }
     const reads=fixture.events.filter(e=>e.op==='poll'&&e.ids?.length);
-    json(statusPath,{session,sent,reads:reads.map(r=>({lane:r.lane,ids:r.ids,session:r.session})),offers:fixture.events.filter(e=>e.op==='sync'&&e.ids.length).length,after:checkpoint?.after,pending:Boolean(checkpoint?.pending),wordSha256:createHash('sha256').update(word).digest('hex')});
+    json(statusPath,{session,sent,boardHttp:fixture.events.filter(e=>e.status).slice(-12).map(e=>[e.op,e.status]),reads:reads.map(r=>({lane:r.lane,ids:r.ids,session:r.session})),offers:fixture.events.filter(e=>e.op==='sync'&&e.ids.length).length,after:checkpoint?.after,pending:Boolean(checkpoint?.pending),wordSha256:createHash('sha256').update(word).digest('hex')});
   };
-  // Preserve the diagnostic hooks. The bound runtime receives the unchanged
-  // native payload. Limit this one test's idle window through the host timeout.
-  const hooksFile=join(resolve(workspace),'.cursor/hooks.json');
-  const hooks=JSON.parse(fs.readFileSync(hooksFile,'utf8'));
-  const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
-  const command=quote(process.execPath)+' '+quote(join(plugin,'bin/opencrawl-hook.mjs'))+' --root '+quote(plugin)+' --action ';
-  for(const [event,action] of [['beforeSubmitPrompt','capture'],['postToolUse','capture'],['stop','inbox']]){
-    hooks.hooks[event]??=[];
-    hooks.hooks[event].push({command:command+action,timeout:event==='stop'?10:7,failClosed:false,...(event==='stop'?{loop_limit:1}:{})});
-  }
-  json(hooksFile,hooks);
+  const workspaceProbe=join(resolve(workspace),'verification/board-host-hooks');
+  fs.mkdirSync(workspaceProbe,{recursive:true});
+  fs.copyFileSync(new URL('./observe-cloud.mjs',import.meta.url),join(workspaceProbe,'hook.mjs'));
+  json(join(workspaceProbe,'fixture-pointer.json'),{node:process.execPath,plugin});
+  const hooks={};
+  for(const event of ['beforeSubmitPrompt','postToolUse','stop'])hooks[event]=[{command:'node ./verification/board-host-hooks/hook.mjs',timeout:9,failClosed:false,...(event==='stop'?{loop_limit:1}:{})}];
+  json(join(resolve(workspace),'.cursor/hooks.json'),{version:1,hooks});
   report();const timer=setInterval(report,600);timer.unref();
   console.log(JSON.stringify({ready:true,statusPath,session,expiresMinutes:20}));
   setTimeout(()=>{clearInterval(timer);void stop();},20*60_000).unref();

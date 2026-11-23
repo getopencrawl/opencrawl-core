@@ -5,7 +5,7 @@ import {join,dirname} from 'node:path';
 import {spawnSync} from 'node:child_process';
 const pointer=JSON.parse(fs.readFileSync(new URL('./fixture-pointer.json',import.meta.url)));
 const raw=fs.readFileSync(0),event=JSON.parse(raw),kind=event.hook_event_name;
-const action=kind==='beforeSubmitPrompt'||kind==='postToolUse'?'capture':kind==='stop'?'inbox':undefined;
+const action=['beforeSubmitPrompt','postToolUse','stop'].includes(kind)?'cloud-inbox':undefined;
 if(!action){console.log('{}');process.exit(0);}
 const result=spawnSync(pointer.node,[join(pointer.plugin,'bin/opencrawl-hook.mjs'),'--root',pointer.plugin,'--action',action],{input:raw,timeout:kind==='stop'?18000:8000,maxBuffer:16384});
 let output;try{output=JSON.parse(result.stdout?.toString()||'{}');}catch{output={};}
