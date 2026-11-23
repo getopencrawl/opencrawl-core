@@ -231,10 +231,11 @@ function missingInboxRoute(api: string, error: unknown) {
 
 export function supportsAgentBoard(api:string){try{return JSON.parse(readFileSync(boardProtocolFile(api),'utf8')).board===2;}catch{return false;}}
 
-export function saveBoardRegistration(api: string, session: string, result: {workspace: string; agent: string; name: string | null; boardProtocol?:number;boardInbox?:boolean}) {
+export function saveBoardRegistration(api: string, session: string, result: {workspace: string; agent: string; name: string | null; boardProtocol?:number;boardInbox?:boolean;boardDirect?:boolean;boardReadReceipt?:boolean}) {
   if (typeof result.workspace !== 'string' || !result.workspace || !/^[a-f0-9]{64}$/.test(result.agent)) throw new CliError('BOARD_PROTOCOL_ERROR', 'Invalid board registration.', 2);
   // Separate from the listener checkpoint: capability refresh must never race it.
-  atomicJson(boardProtocolFile(api),{board:result.boardProtocol===2?2:1,...result.boardInbox===true?{inbox:true}:{}});
+  atomicJson(boardProtocolFile(api),{board:result.boardProtocol===2?2:1,...result.boardInbox===true?{inbox:true}:{},
+    ...(result.boardDirect===true && result.boardReadReceipt===true?{priorityReceipts:true}:{})});
   const file = boardStateFile(api, session);
   let saved: {workspace?: string; agent?: string; lastEmitted?: string} = {};
   try {saved = JSON.parse(readFileSync(file, 'utf8'));} catch (error: any) {if (error.code !== 'ENOENT') throw filesystemError(error, 'read local board registration');}

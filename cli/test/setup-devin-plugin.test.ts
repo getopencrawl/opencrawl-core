@@ -14,6 +14,8 @@ import {literal} from '../src/hook-runner.ts';
 import {captureDevinStartup,readCaptureConfig,captureDir} from '../src/capture/runtime.ts';
 import {atomicJson} from '../src/session.ts';
 import {withEnvironmentTokenOrigin} from '../src/environment-token.ts';
+import {devinInboxHook} from '../src/devin-inbox.ts';
+import {saveBoardRegistration} from '../src/board.ts';
 
 type Fixture={api:string;dir:string;bundle:string;profile:string;observations:Record<string,unknown>[];calls:string[];start:(session?:string)=>ReturnType<typeof startDevinPlugin>;setOwner:(id:string)=>void;setSession:(id:string)=>void;failPublish:(value:boolean)=>void;changeDuringSetup:(stage:'setup'|'capture')=>void};
 const nativeSession='devin-native-session',startup={hook_event_name:'SessionStart',source:'startup',session_id:nativeSession};
@@ -84,6 +86,37 @@ cloudRuntimeTest('Cloud bundle validation creates no local-client installation s
  expect(readCaptureConfig()).toBeNull();expect(f.calls).toHaveLength(0);expect(readDevinPlugin(f.api).recording).toBe(true);
  expect(existsSync(join(f.dir,'codex'))).toBe(false);expect(existsSync(join(f.dir,'claude'))).toBe(false);
 }));
+
+cloudRuntimeTest('Devin workload prioritizes mail, preserves deferred or denied pages and requires a matching served read',()=>fixture(async f=>{
+ await f.start();
+ saveBoardRegistration(f.api,nativeSession,{workspace:'fixture-tenant',agent:'a'.repeat(64),name:'reader',boardProtocol:2,boardInbox:true,boardDirect:true,boardReadReceipt:true});
+ const proof='b'.repeat(64),calls:string[]=[];
+ let served:Record<string,unknown>|null=null;
+ const request=async(_api:string,op:string,args:Record<string,unknown>)=>{
+  calls.push(op+'/'+args.delivery);
+  if(op==='v2/inbox')return {served};
+  return {messages:args.delivery==='direct'&&args.after!==3?[{id:3}]:[],next:3,notificationReceipt:proof};
+ };
+ const run=(kind:string,fields:Record<string,unknown>={})=>devinInboxHook(f.api,{hook_event_name:kind,session_id:nativeSession,...fields},request);
+ const first=await run('UserPromptSubmit',{prompt_id:'one'});
+ expect(first?.hookSpecificOutput?.additionalContext).toContain('"through":3');
+ expect(await run('Stop',{stop_hook_active:false})).toBeUndefined();
+ const again=await run('UserPromptSubmit',{prompt_id:'two'});
+ const args=JSON.parse(again!.hookSpecificOutput!.additionalContext.match(/ with (\{.*\})\./)![1]!);
+ const tool={tool_name:'mcp__'+setupPluginIdentity(f.api).name+'__board_inbox',tool_input:args};
+ const completed={...tool,tool_response:{success:true,error:null}};
+ await run('PostToolUse',{...tool,tool_response:{success:false}});
+ expect(calls).not.toContain('v2/inbox/direct');
+ await run('PostToolUse',completed);
+ expect(calls).toContain('v2/inbox/direct');
+ expect((await run('UserPromptSubmit',{prompt_id:'three'}))?.hookSpecificOutput?.additionalContext).toContain(args.readId);
+ served={...args,proof,first:3,next:3};
+ await run('PostToolUse',completed);
+ expect(await run('UserPromptSubmit',{prompt_id:'four'})).toBeUndefined();
+ const before=calls.length;
+ await expect(run('UserPromptSubmit',{session_id:'devin-other',prompt_id:'x'})).rejects.toThrow();
+ expect(calls.length).toBe(before);
+},false));
 
 cloudRuntimeTest('Cloud canonical runner invokes the pinned native CLI without ambient profile fallback',()=>fixture(async f=>{
  writeFileSync(join(f.dir,'opencrawl'),'#!/bin/sh\nprintf "%s\\n" "$@"\n',{mode:0o700});

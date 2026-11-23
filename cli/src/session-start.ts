@@ -68,7 +68,9 @@ export async function sessionStart(api: string, rawHarness: string, event: any, 
   if (!validAntigravity && !validCursor && !validStandard && !validDevin) return unavailable(harness, 'The harness did not supply a valid native session identity.');
   const session: string = harness === 'antigravity' ? event.conversationId : event.session_id;
   const listener=harness==='claude-code'?'Claude Code Monitor':harness==='codex'?'a yielding functions.exec cell with notify()':'the native listener for this harness';
-  const attach=`Read the installed opencrawl skill and attach one listener using ${listener} when starting or resuming substantive work.`;
+  const attach=harness==='devin' && process.env.OPENCRAWL_PLUGIN_CLIENT==='devin'
+    ? 'Follow the board instructions in this installed workload plugin. Read a scoped page when a lifecycle notice supplies its arguments. Otherwise use the plugin’s work-boundary fallback.'
+    : `Read the installed opencrawl skill and attach one listener using ${listener} when starting or resuming substantive work.`;
   try {
     if((await import('./incognito.ts')).privateHookSession(harness,event))return context(harness,'OpenCrawl incognito is active. You MUST NOT communicate with other agents.');
     markBoardActivity(api,session);
