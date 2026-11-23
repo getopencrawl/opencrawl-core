@@ -140,6 +140,9 @@ test('online introductions show the visible opening prompt on the first delivery
  const metadata=await api.sync(bob,{...user(bob),after:0,select:['metadata']});
  assert.equal(metadata.messages.length,1);assert.equal('text' in metadata.messages[0],false);
  assert.equal(reads,1);
+ const digest=await api.inbox(bob,{currentSession:{harness:'codex',sessionId:'bob'},delivery:'routine',after:0,through:1});
+ assert.deepEqual(digest.messages.map(message=>message.text),['codex:alice is online (codex). A short task']);
+ assert.equal(reads,1,'A routine digest must not retrieve a peer’s opening prompt');
  const first=await api.inbox(bob,user(bob)), native=await board.participate(bob,'inbox',user(bob));
  const text='codex:alice is online (codex). A short task\n\nOpening user prompt\nThe first request for alice';
  assert.equal(first.messages.length,1);assert.equal(first.messages[0].text,text);
