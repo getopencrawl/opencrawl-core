@@ -21,6 +21,28 @@ const ctx={harness:'codex',sessionId:'shared'};
 const entry=(query,current=ctx)=>agentSearchEntry('opencrawl_search_v1',{query,currentSession:current});
 const identity=async(_p,rows)=>rows;
 
+test('the keyword counter seeds retained searches once and survives text erasure and mixed-version writes',async t=>{
+  const db=await applicationDatabaseFixture(t);
+  await db.transaction(async client=>{
+    // The disposable namespace's own schema isolates the simulated installation from parallel tests.
+    await client.query('set local search_path to "'+db.identitySchema+'"');
+    const api=createSearchActivity({namespace:db.namespace,pool:client,transaction:run=>run(client)});
+    await api.ready();
+    await client.query('drop trigger opencrawl_count_keyword_searches on opencrawl_search_history; drop table opencrawl_keyword_search_days; drop function opencrawl_count_keyword_searches()');
+    const write=queries=>api.search(alice,{kind:'agent',operation:'Workspace',queries,...ctx});
+    await write(['older search']); await write(['  ']); await write([]);
+    await api.ready(); await api.ready();
+    await write(['later search']); await write(['']);
+    assert.equal((await api.totals(alice)).agentSearches,2);
+    assert.equal((await api.totals(alice)).daily.at(-1).agentSearches,2);
+    assert.equal((await api.totals(other)).agentSearches,0);
+    assert.equal((await api.page(alice,{kind:'agent'},identity)).rows.length,2);
+    await api.forget(alice,ctx); await api.ready();
+    assert.equal((await api.totals(alice)).agentSearches,2);
+    assert.equal((await api.totals(alice)).calls,5);
+  });
+});
+
 test('Overview pages through keyword queries and excludes chronological reads from search totals',async t=>{
   const db=await applicationDatabaseFixture(t),activity=createSearchActivity(db);
   await activity.ready();
@@ -37,7 +59,7 @@ test('Overview pages through keyword queries and excludes chronological reads fr
   assert.deepEqual(new Set(queries),new Set(Array.from({length:26},(_,i)=>'keyword '+i)));
   await assert.rejects(activity.page(alice,{kind:'agent',before:first.next},identity),/cursor/i);
   await assert.rejects(activity.page(other,{...request,before:first.next},identity),/cursor/i);
-  assert.equal((await activity.totals(alice)).agentSearches,28);
+  assert.equal((await activity.totals(alice)).agentSearches,27);
 });
 
 test('authenticated call accounting, scoped paging and idempotent proactive outcomes on PostgreSQL',async t=>{
@@ -189,10 +211,9 @@ test('restored calls count once in their original tenant and day and expose only
   await activity.importAgentCalls(other.tenantId,[{...search,owner:other.userId}]);
   await activity.agentCall(alice);
   const totals=await activity.totals(bob);
-  assert.deepEqual([totals.calls,totals.agentSearches,totals.proactiveChecks,totals.includesEarlierCalls],[3,1,0,true]);
+  assert.deepEqual([totals.calls,totals.agentSearches,totals.proactiveChecks,totals.includesEarlierCalls],[3,0,0,true]);
   assert.equal((await activity.totals(other)).calls,1);
   const {rows}=await activity.page(alice,{kind:'agent'},identity);
-  assert.equal(rows.length,1);
-  assert.deepEqual([rows[0].at,rows[0].operation,rows[0].queries,rows[0].sessionId,rows[0].outcome],[yesterday,'Board',[],null,'unknown']);
+  assert.deepEqual(rows,[]);
   assert.deepEqual((await activity.page(bob,{kind:'agent'},identity)).rows,[]);
 });
