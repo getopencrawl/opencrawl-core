@@ -24,7 +24,7 @@ export const agentThreadSchema=z.strictObject({workspace,threadId:messageId,...p
 export const agentSearchSchema=agentListSchema.extend({order:z.enum(['oldest','newest','relevance']).default('relevance')});
 const delivery = z.enum(['direct','routine']);
 export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,delivery:delivery.optional(),through:z.number().int().nonnegative().optional(),waitMs:z.number().int().min(0).max(20000).optional(),channels:z.array(channelSchema).optional(),after:z.number().int().nonnegative().optional()});
-export const agentInboxSchema=z.strictObject({workspace,...identity,delivery:delivery.optional(),after:z.number().int().nonnegative().optional(),through:z.number().int().nonnegative().optional(),acknowledge:z.string().regex(/^[a-f0-9]{64}$/, 'must be the full cursor returned by the board inbox').optional(),noticeOnly:z.boolean().default(false)});
+export const agentInboxSchema=z.strictObject({workspace,...identity,delivery:delivery.optional(),readId:z.uuid().optional().describe('Use the read ID supplied by a lifecycle notification.'),after:z.number().int().nonnegative().optional(),through:z.number().int().nonnegative().optional(),acknowledge:z.string().regex(/^[a-f0-9]{64}$/, 'must be the full cursor returned by the board inbox').optional(),noticeOnly:z.boolean().default(false)});
 export const agentPostSchema=z.strictObject({workspace,...identity,full:z.boolean().optional().describe('Return complete published messages instead of compact receipts.'),posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
   text:z.string().min(1),replyTo:messageId.optional(),threadId:messageId.optional().describe('Compatibility alias for replyTo.'),mentions:z.array(short).max(32).default([]),follow:z.boolean().default(true)})).min(1).max(20)});
 export const agentFollowSchema=z.strictObject({workspace,...identity,threadId:messageId,following:z.boolean().default(true)});
@@ -162,10 +162,25 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
     },
     async inbox(principal:Principal,input:unknown){
       const args=agentInboxSchema.parse(input),key=checked(principal,args);
+      if(args.readId && (!args.delivery || !args.currentSession))throw fail('A tracked page requires a native session and delivery type');
       if(args.delivery){
-        if(args.noticeOnly || args.acknowledge || args.after===undefined || args.through===undefined)throw fail('Use the supplied after and through bounds to read a notification');
-        return sync(principal,{workspace:args.workspace,currentSession:args.currentSession,agent:args.agent,session:args.session,
-          delivery:args.delivery,after:args.after,through:args.through});
+        const {delivery,after,through,readId,currentSession}=args;
+        if(args.acknowledge || after===undefined || through===undefined || args.noticeOnly && !readId)throw fail('Use the supplied after and through bounds to read a notification');
+        if(args.noticeOnly)return repository.read(key,async tx=>{
+          const {participant}=await resolveIdentity(tx,principal.userId,args);
+          const page=participant.servedInbox?.[delivery];
+          if(participant.left || participant.harness!==currentSession?.harness || page?.readId!==readId || page?.after!==after || page?.through!==through)return {served:null};
+          return {served:page};
+        });
+        const page=await sync(principal,{workspace:args.workspace,currentSession,agent:args.agent,session:args.session,delivery,after,through});
+        const first=page.messages[0]?.id,proof='notificationReceipt' in page ? page.notificationReceipt : undefined;
+        if(readId && typeof first==='number' && typeof proof==='string')await repository.transaction(key,async tx=>{
+          const {agent,participant}=await resolveIdentity(tx,principal.userId,args);
+          if(participant.left || participant.harness!==currentSession?.harness)throw fail('Session registration changed',409);
+          participant.servedInbox={...participant.servedInbox,[delivery]:{readId,after,through,first,next:page.next,proof}};
+          await tx.putParticipant(agent,participant);
+        });
+        return page;
       }
       if(args.after!==undefined || args.through!==undefined)throw fail('Bounds require a notification delivery type');
       if(args.noticeOnly&&args.acknowledge)throw fail('A notification cannot acknowledge messages');

@@ -320,3 +320,40 @@ test('an unavailable PostgreSQL listener leaves direct mail readable at the next
   const urgent=await post(api,bob,'direct-after-outage','Please review',{channel:'work',mentions:['codex:alice']});
   assert.deepEqual((await api.sync(alice,{...args,after:empty.next})).messages.map(m=>m.id),[urgent.messages[0].id]);
 });
+
+test('a tracked read confirms only the full records returned to that native session and lane',async t=>{
+  const {api}=await fixture(t);
+  const currentSession={harness:'antigravity',sessionId:'native-track'};
+  await api.presence(alice,{currentSession,name:'tracked-agent',task:'Verify delivery',announce:false});
+  const mention={channel:'work',mentions:['tracked-agent']};
+  const first=(await post(api,bob,'tracked-1','x'.repeat(15500),mention)).messages[0].id;
+  const last=(await post(api,bob,'tracked-2','y'.repeat(8000),mention)).messages[0].id;
+  const args={currentSession,after:first-1,through:last,delivery:'direct',readId:'c4a16c5d-1c5d-42b7-962b-6e3c81e41a32'};
+  const check=extra=>api.inbox(alice,{...args,noticeOnly:true,...extra});
+  assert.deepEqual(await check({}),{served:null});
+  const page=await api.inbox(alice,args);
+  assert.deepEqual(page.messages.map(m=>m.id),[first]);
+  assert.deepEqual((await check({})).served,{readId:args.readId,after:first-1,through:last,first,next:first,proof:page.notificationReceipt});
+  for(const extra of [{through:first},{delivery:'routine'},{readId:'917bc879-5cc9-4a8b-9825-caa77c318810'}])assert.deepEqual(await check(extra),{served:null});
+  await assert.rejects(check({workspace:other.tenantId}),{status:403});
+  const next=await api.inbox(alice,{...args,after:first});
+  assert.deepEqual(next.messages.map(m=>m.id),[last]);
+  assert.deepEqual(await check({}),{served:null});
+  await api.presence(alice,{currentSession,leave:true});
+  assert.deepEqual(await check({after:first}),{served:null});
+});
+
+test('an urgent mention bypasses a pending ordinary page and 260 subscribed posts',async t=>{
+  const {api}=await fixture(t),target=user(alice);
+  await api.presence(alice,{...target,channels:['busy-board'],announce:false});
+  for(let offset=0;offset<260;offset+=20){
+    await api.post(bob,{...user(bob),posts:Array.from({length:20},(_,i)=>({
+      id:'backlog-'+(offset+i),text:'Ordinary '+(offset+i),channel:'busy-board',follow:false
+    }))});
+  }
+  const pending=await api.inbox(alice,target);
+  const urgent=(await post(api,bob,'after-backlog','Urgent',{channel:'busy-board',mentions:['codex:alice']})).messages[0].id;
+  const page=await api.sync(alice,{...target,delivery:'direct',select:['id']});
+  assert.deepEqual(page.messages,[{id:urgent}]);
+  assert.deepEqual((await api.inbox(alice,target)).cursor,pending.cursor);
+});
