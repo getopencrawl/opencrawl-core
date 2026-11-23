@@ -5,7 +5,7 @@ export type PluginRelease={repository:string;ref:string;schemaVersion:1;bindingS
 // Both guided setup and the Replicas installer consume this verified release.
 export const pluginRelease:PluginRelease = {
   "repository": "getopencrawl/opencrawl-plugins",
-  "ref": "daeaa95055ec6638f7d841478abd43bac1702afd",
+  "ref": "52d818ac9a2020c86bd9cec8bfe32d8370bc00dd",
   "schemaVersion": 1,
   "bindingSchemaVersion": 1,
   "packages": [
@@ -13,41 +13,41 @@ export const pluginRelease:PluginRelease = {
       "harness": "claude-code",
       "name": "opencrawl",
       "path": "plugins/claude-code",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "capabilities": "capabilities.json",
       "captureAvailable": true,
       "daemonHandoff": true,
       "minimumHarnessVersion": "2.1.327",
       "archives": {
         "darwin-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-darwin-arm64.zip",
-          "sha256": "ad8411cf4f481c54e5ac102b21cbd63eeab19fac55f9fc1d7e45521ce9c9527d",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-darwin-arm64.json",
-          "metadataSha256": "0400807c5f56ca4d44e6d0780459c6af221696f5fc83ed76affa719ab56d46c7"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-darwin-arm64.zip",
+          "sha256": "80568671f70b4c1545991980e8da44817db986c1cd3c47d578a6ba7f7e4cf3e4",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-darwin-arm64.json",
+          "metadataSha256": "409d788d8c8330eabef4e73889d833508bee46563388fd6ed69c2d1f8382eebd"
         },
         "darwin-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-darwin-x64.zip",
-          "sha256": "7d0903653b22fd8dd2d6742acf8da1980a3888e081816e686039d0316eec8a5d",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-darwin-x64.json",
-          "metadataSha256": "a5198d571c151e96342f1be2a95c413ac68dbd9318119b2fdf1c271c3b1b58ac"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-darwin-x64.zip",
+          "sha256": "5dc4d3f785e134e6d1706a1287dac43262c5980ebb9088ade68b53e2d2eac227",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-darwin-x64.json",
+          "metadataSha256": "b86b9eb5f32ba7389b57d1f56237bd3a18e0294a202bb99d4a67a5e4393c1f90"
         },
         "linux-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-linux-arm64.zip",
-          "sha256": "88e71dee40803bce9419f4d10fe1af42262aa696eced0b3e2016f7fae229d7d4",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-linux-arm64.json",
-          "metadataSha256": "d0ba65e8cb5c6af9fc83bb2e7cf66a9d9b4a047775eea83fd07e0d8870430623"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-linux-arm64.zip",
+          "sha256": "4ac8b888520e8cfa102f3b82756b6a3fc0d699f209cba0eadb5c78679283d8b7",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-linux-arm64.json",
+          "metadataSha256": "bd62529bcba6eaaf209d479e19f660753321fb6442396cf2c4f62899daf341e8"
         },
         "linux-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-linux-x64.zip",
-          "sha256": "d82e755e584ebc168d73d651fde3c52a3db1bd75265697f79190dc1c474c7cb4",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-linux-x64.json",
-          "metadataSha256": "e4f90fb7b70ae408b4c755c2bde99a7c1ffc018da13b0ef43c2cee133f69cf76"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-linux-x64.zip",
+          "sha256": "6082940b038a63aaf4816a6804aed9945ad2ddda628d083daa2e0e3e9efb655e",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-linux-x64.json",
+          "metadataSha256": "c608585592538ac5631f713b69c88fe606b38b91b0a654b00d25eb2843530f06"
         },
         "win32-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-win32-x64.zip",
-          "sha256": "2b581ac2ff27e312a254653d5c60eb407430b8428c715d50ac1bfdc7251de59d",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-claude-code-0.3.5-win32-x64.json",
-          "metadataSha256": "6e65654ceea4b98b9cb515cfd491178020498cbec22e39f99224aef159061274"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-win32-x64.zip",
+          "sha256": "cf67c3ad4da6b9090f8f4a0d9b0ec09a957fe7741b3ffb867264b5d68850e278",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-claude-code-0.3.6-win32-x64.json",
+          "metadataSha256": "6475c935127e4c1515ffa989c2bf41f2136106364f7e36f68fc02b20bb842985"
         }
       },
       "memoryImportSkill": true,
@@ -58,41 +58,41 @@ export const pluginRelease:PluginRelease = {
       "harness": "codex",
       "name": "opencrawl",
       "path": "plugins/codex",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "capabilities": "capabilities.json",
       "captureAvailable": true,
       "daemonHandoff": true,
       "minimumHarnessVersion": "0.166.0",
       "archives": {
         "darwin-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-darwin-arm64.zip",
-          "sha256": "23d50182b090a5a10c178e349e07ab33b49bd786a6a12892158fd10ef4023687",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-darwin-arm64.json",
-          "metadataSha256": "ae4ac7e5dfabd19e380c46542770eed1162058faafd90f00840d6092d71c66d3"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-darwin-arm64.zip",
+          "sha256": "9c093ca02e3b123a3846586c821e9ff7315279016e6473b38ef99323a016c892",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-darwin-arm64.json",
+          "metadataSha256": "2743c74ac99b957bb86699039bcdc6cfd0e7d5f62810b4a786e3a41038cd4efc"
         },
         "darwin-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-darwin-x64.zip",
-          "sha256": "49ae4f6f38e12e830b10b7b79da1d3dd4883cc58a5dc44f217fd5c6af8cc93a2",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-darwin-x64.json",
-          "metadataSha256": "e845ff28d00b1fff785660b50606d7b34f4ec2b22bb708205a1675208f372782"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-darwin-x64.zip",
+          "sha256": "3ef124f89a874747788f4c5dbc2eeef78cfca136296f7d4f99758b6b70a0c51b",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-darwin-x64.json",
+          "metadataSha256": "19a903aad5b891c22c501c5c1e9b4fe463d51608411d9776fb5240d334d2f257"
         },
         "linux-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-linux-arm64.zip",
-          "sha256": "97287de47d3496849e55191219a6c961bf31fa536eb6fa7661a412d041583c1d",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-linux-arm64.json",
-          "metadataSha256": "d6deb11f3bfa05496a7e7ade3777338e3764183365ce86fef40f3ae58db1147c"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-linux-arm64.zip",
+          "sha256": "3455db729134ec1e5ceaf23f3f23dff0d6bc13263900190844f6807487f4d466",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-linux-arm64.json",
+          "metadataSha256": "de1021a0c2aa37fab65837ae0627e219a4ade3478d6e50ac883bb24e19e04dbe"
         },
         "linux-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-linux-x64.zip",
-          "sha256": "85f76534f8dd6d02dab2f921c421e5306e56f932595c8dd25d05f44d3b5bf486",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-linux-x64.json",
-          "metadataSha256": "788ce1a5b69e0d01af25d6daf8c5852c241291e6b55fe02694c9ee1bd4e68c0a"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-linux-x64.zip",
+          "sha256": "cb440df8169a43f52b5a2a29748604ab35d2c1b26725a3ed6a285369c6d8250c",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-linux-x64.json",
+          "metadataSha256": "35e93d6e558f3b33e6637e0764c6780a99f72d3ac57f4f81ca21efe002b833c7"
         },
         "win32-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-win32-x64.zip",
-          "sha256": "b8270d85a3b4a376839408f0415e149c84d283a42cbb509ce9c0b60284f6bed4",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-codex-0.3.5-win32-x64.json",
-          "metadataSha256": "903cb16255631ac0dda5497a24a8677603e69fbd7b47fb424d7f97b74b475e66"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-win32-x64.zip",
+          "sha256": "0a7162d5447c90e8d06278a0be790dc3d70af31a1a08d434b510b122717fd07c",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-codex-0.3.6-win32-x64.json",
+          "metadataSha256": "fda0c536e9d72e5b7b035e09565c15d4e38e007f23bb14d33627392cd836bc50"
         }
       },
       "memoryImportSkill": true,
@@ -103,41 +103,41 @@ export const pluginRelease:PluginRelease = {
       "harness": "cursor",
       "name": "opencrawl",
       "path": "plugins/cursor",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "capabilities": "capabilities.json",
       "captureAvailable": true,
       "daemonHandoff": true,
       "minimumHarnessVersion": "2026.11.17-f532c45",
       "archives": {
         "darwin-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-darwin-arm64.zip",
-          "sha256": "30c4bb38ee2fa0682a3238c3a445c05bb811ab35cf77439c11b88cabc77b2510",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-darwin-arm64.json",
-          "metadataSha256": "d32318f51f1cdc6066baad2cd4bc7d3793f4a950aef83c17efca43a4cfc524e3"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-darwin-arm64.zip",
+          "sha256": "f233541b0cf74f753aa6e6b9acebe1234eb14353c6aa2b08038e5c9df39c540c",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-darwin-arm64.json",
+          "metadataSha256": "0ba44c06b91c6e8319e67346f15b3a50325749b0eac4d196881a53f549e1662d"
         },
         "darwin-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-darwin-x64.zip",
-          "sha256": "2d54cd2ed79e9ce3c456f7f226f5d9b127023871cb3ae1320f4417d38544d7be",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-darwin-x64.json",
-          "metadataSha256": "960873a0e62e7f7c2ed9607aa8966b7f49d48b6a5bcf85100f97bef7fdaa8c3f"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-darwin-x64.zip",
+          "sha256": "9c9442c290a71f1bd3effeb2c4890f46aa073eeb804698bf3ec120fce4fff799",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-darwin-x64.json",
+          "metadataSha256": "7086230002422a73a7022c4f0fbd6667708a79803e67084a9807ebfb25155675"
         },
         "linux-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-linux-arm64.zip",
-          "sha256": "7159dd68a4120dd44301fd30f5d2e36bc8edb00a3887560862ee37b28524722e",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-linux-arm64.json",
-          "metadataSha256": "1ade2cdcd3d6ca29135e910207d1e476f82e7ab5840ca1b3eb53045983459c6f"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-linux-arm64.zip",
+          "sha256": "10a7448be5847dcc68d93d2be1cbaf9e55a2c57ade60ddff3aad96983d22b8f0",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-linux-arm64.json",
+          "metadataSha256": "cfa4c3b866fa9520f6460907a12c145a4552274860057f4ca662bf415cdc9fdd"
         },
         "linux-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-linux-x64.zip",
-          "sha256": "474363295b7117c95fc5e777e17bc7fc492ba24ab18b33489c9916fe933a3537",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-linux-x64.json",
-          "metadataSha256": "f248da115702e83f4f53105770a5b01f27e728971989491644ab5188a9005a76"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-linux-x64.zip",
+          "sha256": "4652d2a458211c27e493b9e85e59dcaa1c61e7bacc3340c9257bf578eda05279",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-linux-x64.json",
+          "metadataSha256": "b7c7b9d391936812d080295f23309b53bd30c3d3f43ae4f7e60660039f370f5b"
         },
         "win32-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-win32-x64.zip",
-          "sha256": "8cdf3a7590a541e6343d765da16ec0bc669f60465aeb11379de41f54af69c17f",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-cursor-0.3.5-win32-x64.json",
-          "metadataSha256": "afbdffbbc2f93b4cede46c94037e346e13fc3bbbc5bdb5b4918f5207ac8dba17"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-win32-x64.zip",
+          "sha256": "2908d274415c59089137f0c2f206adc56fa3ce8389ae2d90bb8b46f4a61bb153",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-cursor-0.3.6-win32-x64.json",
+          "metadataSha256": "e796be424d43b13680d4a9f849aa62a59711d3c2569066dabe60b5b126510554"
         }
       },
       "memoryImportSkill": true,
@@ -148,41 +148,41 @@ export const pluginRelease:PluginRelease = {
       "harness": "antigravity",
       "name": "opencrawl",
       "path": "plugins/antigravity",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "capabilities": "capabilities.json",
       "captureAvailable": true,
       "daemonHandoff": true,
       "minimumHarnessVersion": "1.5.9",
       "archives": {
         "darwin-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-darwin-arm64.zip",
-          "sha256": "723bc1b4501a14dd3d7fa24de3ae57d0be78aa3b66587e0147bb15eecbbcc67c",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-darwin-arm64.json",
-          "metadataSha256": "916d7c465de1112d65c460a1b3381cc4639516bddda3c0fe5b324136323aa27c"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-darwin-arm64.zip",
+          "sha256": "4705c15d4b3e5ba52ff6264127bb9c2651a822f0911ffeb2901ce8c6d17de357",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-darwin-arm64.json",
+          "metadataSha256": "ab14c85f8e20a5944ddd8994f79e94d3b94bdb41a55a18a394fcb7c6fb34ce58"
         },
         "darwin-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-darwin-x64.zip",
-          "sha256": "95523b150ba24fe0cd28be00abf6df1d05158d5144479f2d7549fd853ca08494",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-darwin-x64.json",
-          "metadataSha256": "3bf4730b5b1d2a7d81f0eec5a5685e1f879be53a2fbbe0cbea8f39eaa6b69963"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-darwin-x64.zip",
+          "sha256": "048d95a525309ee3513c6c1272d8cb605caf84864eebff44c77332e1c4e44500",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-darwin-x64.json",
+          "metadataSha256": "0f6545c0fc3d36d1acd6d08f65c03adf4bed73c0d609b65cd724d422117b82e6"
         },
         "linux-arm64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-linux-arm64.zip",
-          "sha256": "3246e1135775395a179c8f8185475e0b2859999195de894996f26205a3ab7248",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-linux-arm64.json",
-          "metadataSha256": "89183b429b42c2857d245ac26c91dff6c422d69396b5c96968b884240f4cb414"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-linux-arm64.zip",
+          "sha256": "b3303fa821416dd8e381ac28f45a9c88c42280f82d90be2e0914e0e541e5413b",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-linux-arm64.json",
+          "metadataSha256": "0707732e0df76ffcb1606fea50ec625a83665ab5aac3e8e06f0c24d02e74540b"
         },
         "linux-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-linux-x64.zip",
-          "sha256": "db5df7c69d0b90bd4a98a04aca909d10ed96a694801292f1256542bcea6d05be",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-linux-x64.json",
-          "metadataSha256": "fb52336e6e0e3801dfda37d54a1274cf65c8f2c99759a5a1c592526d58d8007e"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-linux-x64.zip",
+          "sha256": "50529f90e20673d9a7b5c31b77307bd8ed591011f10d74a497f8e72eddce4af6",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-linux-x64.json",
+          "metadataSha256": "c2b2ba2b08dedca6cd3d4005f7ee55963838258884a8b480b40f9bccb519a169"
         },
         "win32-x64": {
-          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-win32-x64.zip",
-          "sha256": "c07b7c371d1a5ba92d3206af5969972da280597c69da7113d227572ec440697e",
-          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/opencrawl-antigravity-0.3.5-win32-x64.json",
-          "metadataSha256": "c75095bbe2b7cce812a9c07748f36af16421aa80425e6cd1bbcb15d8ae9e3bb9"
+          "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-win32-x64.zip",
+          "sha256": "4b21dd97376b10f7b99cdb7be48c6ea263c16c3dba5ce001af11508b126b3e14",
+          "metadataUrl": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/opencrawl-antigravity-0.3.6-win32-x64.json",
+          "metadataSha256": "90182c97d595f8a09e70f16c9359e98ba4af75f5b8cdeb80bc330e2a2df537cb"
         }
       },
       "memoryImportSkill": true,
@@ -193,6 +193,6 @@ export const pluginRelease:PluginRelease = {
 };
 
 export const replicasPolicy = {
-  "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.5/replicas-codex-policy.mjs",
+  "url": "https://github.com/getopencrawl/opencrawl-plugins/releases/download/v0.3.6/replicas-codex-policy.mjs",
   "sha256": "f360fdc73d91b506e369a325219719fc33fb3a96951b807f2f2ad7bda272bcc5"
 };
