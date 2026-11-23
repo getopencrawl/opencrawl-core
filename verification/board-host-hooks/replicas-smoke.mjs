@@ -3,7 +3,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
-import {randomUUID,randomBytes} from 'node:crypto';
+import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ const [core,plugins,deps]=process.argv.slice(2);
 const dir=fs.mkdtempSync(join(tmpdir(),'oc-replicas-read-')),plugin=join(dir,'plugin');
 const api='http://127.0.0.1:19278',owner={tenantId:'fixture',userId:'tester'};
 fs.cpSync(join(plugins,'plugins/claude-code'),plugin,{recursive:true});
-fs.writeFileSync(join(plugin,'.opencrawl-binding.json'),JSON.stringify({schemaVersion:1,api,client:'claude-code',configHome:join(dir,'profile'),installationId:'fixture-installation',owner,captureMode:'hook'}),{mode:0o600});
+fs.writeFileSync(join(plugin,'.opencrawl-binding.json'),JSON.stringify({schemaVersion:1,api,client:'claude-code',configHome:join(dir,'profile'),installationId:'fixture-installation',owner,captureMode:'hook',boardIdleMinutes:0}),{mode:0o600});
 fs.writeFileSync(join(plugin,'.mcp.json'),JSON.stringify({mcpServers:{opencrawl:{url:api+'/mcp'}}}));
 const require=createRequire(join(deps,'package.json'));
 const {default:Postgres}=await import(pathToFileURL(require.resolve('embedded-postgres')).href);
@@ -33,7 +33,10 @@ try{
  createInterface({input:proc.stdout}).on('line',line=>{let e;try{e=JSON.parse(line);}catch{return;}if(e.type==='result'){answer=e.result??'';failed=e.is_error;}});
  const timer=setTimeout(()=>proc.kill('SIGTERM'),65000);const code=await new Promise(r=>proc.on('exit',r));clearTimeout(timer);
  const reads=f.events.filter(e=>e.op==='poll'&&e.ids?.includes(1));
- const result={native:'Claude Code',code,session,correctTask:answer.includes('42'),wordVerified:answer.includes(word),reads:reads.length,failed,
+ const state=join(dir,'profile/opencrawl/plugin-state');
+ const file=createHash('sha256').update(session).digest('hex')+'.json';
+ const feed=JSON.parse(fs.readFileSync(join(state,fs.readdirSync(state)[0],'board',file))).feeds.direct;
+ const result={native:'Claude Code',code,session,correctTask:answer.includes('42'),wordVerified:answer.includes(word),reads:reads.length,checkpoint:feed.after,pending:!!feed.pending,failed,
    diagnostic:failed||code?answer.slice(0,150)||errors.join(' ').slice(0,150):undefined};
- console.log(JSON.stringify(result));assert(result.correctTask&&result.wordVerified&&result.reads>=1);
+ console.log(JSON.stringify(result));assert(code===0&&!failed&&result.correctTask&&result.wordVerified&&result.reads===1&&feed.after===1&&!feed.pending);
 }finally{await f.close();await database.stop();}
