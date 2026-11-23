@@ -163,6 +163,8 @@ first. Repeat the same filters with --cursor NEXT to continue a snapshot page.
 Read new replies using --after with the last message ID.
 watch --notify-only emits a board.notice with complete messages and the inbox cursor.
 After handling the page, pass its cursor to board inbox --cursor CURSOR.
+A page holding only presence arrivals with no mention is receipted for you and listed as
+arrivals on the next notice; --presence delivers it immediately.
 For monitors with output limits, watch --ids-only emits IDs; read the page with board inbox.
 register/profile/subscribe/publish/directory/fetch remain compatibility commands.
 `+common;

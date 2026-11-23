@@ -188,3 +188,69 @@ test('monitor expiry, rearming and replay preserve the native session idle clock
  markNativeBoardActivity(api,{session_id:session,hook_event_name:'PostToolUse',tool_name:'Bash',tool_input:{command:'git status'}});
  expect(resumed.lastActivity()).toBeGreaterThan(base.getTime());
 });
+
+const arrival = (id: number, extra: Record<string, unknown> = {}) =>
+  ({id, from: 'peer', channel: 'presence', thread: id, replyTo: null, time: 't', text: 'peer is online', mentions: [], ...extra});
+
+test('a page of unaddressed arrivals is receipted by cursor without waking the chat', async () => {
+  const notices: any[] = [], receipts: string[] = [], cursor = 'a'.repeat(64), next = 'b'.repeat(64);
+  const pages = [
+    {batch: {receipt: '1'.repeat(64), messages: [arrival(1), arrival(2)], cursor, more: true}},
+    {batch: {receipt: '2'.repeat(64), messages: [arrival(3)], cursor: next, more: false}},
+    {batch: {receipt: '3'.repeat(64), messages: [{...arrival(4), channel: 'fleet', text: 'Review this'}], cursor, more: false}},
+  ];
+  const waits: number[] = [];
+  await watchBoard({session: 's', once: true, notice: 'full', request: async () => pages.shift(),
+    emit: value => notices.push(value), warn: () => {}, delay: async ms => {waits.push(ms);},
+    acknowledge: async () => {throw Error('Notice receipted by batch');},
+    acknowledgeRoutine: async value => {receipts.push(value);}});
+  expect(receipts).toEqual([cursor, next]);
+  expect(notices.map(notice => notice.ids)).toEqual([[4]]);
+  // The quiet arrivals reach the chat with the next notice it has to read anyway.
+  expect(notices[0].arrivals).toEqual([1, 2, 3].map(id => ({id, from: 'peer', time: 't', text: 'peer is online'})));
+  // The second page follows the first immediately; only the drained inbox waits.
+  expect(waits).toHaveLength(1);
+});
+
+test('a mention, a reply, a mixed page or an opt-in still delivers arrivals', async () => {
+  const cursor = 'c'.repeat(64);
+  const deliver = async (messages: unknown[], quiet = true, page: Record<string, unknown> = {cursor, more: false}) => {
+    const notices: any[] = [];
+    await watchBoard({session: 's', once: true, notice: 'full',
+      request: async () => ({batch: {receipt: 'd'.repeat(64), messages, ...page}}),
+      emit: value => notices.push(value), warn: () => {}, acknowledge: async () => {},
+      ...(quiet ? {acknowledgeRoutine: async () => {throw Error('Deliverable page receipted silently');}} : {})});
+    return notices.length;
+  };
+  expect(await deliver([arrival(1, {mentions: ['me']})])).toBe(1);
+  expect(await deliver([arrival(1, {replyTo: 9})])).toBe(1);
+  expect(await deliver([arrival(1), arrival(2, {channel: 'fleet'})])).toBe(1);
+  expect(await deliver([arrival(1, {mentions: undefined})])).toBe(1);
+  expect(await deliver([arrival(1)], false)).toBe(1);
+  // A legacy page has no cursor to receipt, so it is delivered as before.
+  expect(await deliver([arrival(1)], true, {})).toBe(1);
+});
+
+test('a failed silent receipt retries the same page and never drops it', async () => {
+  const receipts: string[] = [], warnings: string[] = [], cursor = 'e'.repeat(64);
+  let calls = 0;
+  await watchBoard({session: 's', notice: 'full', delay: async () => {}, emit: () => {throw Error('Arrival delivered');},
+    warn: message => warnings.push(message), acknowledge: async () => {},
+    request: async () => ++calls < 3 ? {batch: {receipt: 'f'.repeat(64), messages: [arrival(1)], cursor, more: false}} : {left: true},
+    acknowledgeRoutine: async value => {receipts.push(value); if (receipts.length === 1) throw Error('offline');}});
+  expect(receipts).toEqual([cursor, cursor]);
+  expect(warnings).toEqual(['Board connection unavailable; retrying with backoff.', 'Board connection restored.']);
+});
+
+test('quiet arrivals are reported once and bounded to the most recent', async () => {
+  const notices: any[] = [], cursor = 'a'.repeat(64);
+  const real = (id: number) => ({batch: {receipt: String(id % 10).repeat(64), messages: [{...arrival(id), channel: 'fleet'}], cursor, more: false}});
+  const pages: any[] = [
+    {batch: {receipt: '1'.repeat(64), messages: Array.from({length: 60}, (_, id) => arrival(id + 1)), cursor, more: true}},
+    real(102), real(103), {left: true},
+  ];
+  await watchBoard({session: 's', notice: 'full', request: async () => pages.shift(), delay: async () => {},
+    emit: value => notices.push(value), warn: () => {}, acknowledge: async () => {}, acknowledgeRoutine: async () => {}});
+  expect(notices[0].arrivals.map((entry: {id: number}) => entry.id)).toEqual(Array.from({length: 50}, (_, index) => index + 11));
+  expect(notices[1]).not.toHaveProperty('arrivals');
+});

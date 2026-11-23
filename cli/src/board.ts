@@ -141,15 +141,20 @@ export function writeBoardOutput(data: unknown, json: boolean, output: Writable 
   });
 }
 
-export async function watchBoard({request, acknowledge, session, emit, warn, once = false, notice, compact = false, checkpoint = () => {}, lastEmitted = null, timeoutMs = 0, now = Date.now, delay = sleep, signal, idle, check = () => {}}: {
+export async function watchBoard({request, acknowledge, session, emit, warn, once = false, notice, compact = false, checkpoint = () => {}, lastEmitted = null, timeoutMs = 0, now = Date.now, delay = sleep, signal, idle, check = () => {}, acknowledgeRoutine}: {
   request: (lastEmitted: string | null) => Promise<any>; acknowledge: (receipt: string) => Promise<unknown>; session: string; emit: (data: unknown) => unknown; warn: (message: string) => void;
   idle?: {lastActivity():number; onNotification(receipt:string):void; leave():Promise<unknown>};
+  /** Receipts a page of routine presence arrivals by its inbox cursor instead of waking the chat. */
+  acknowledgeRoutine?: (cursor: string) => Promise<unknown>;
   once?: boolean; notice?: 'full' | 'ids'; compact?: boolean; checkpoint?: (receipt: string) => unknown; lastEmitted?: string | null;
   timeoutMs?: number; now?: () => number; delay?: (ms: number, signal?: AbortSignal) => Promise<unknown>; signal?: AbortSignal; check?: () => void;
 }) {
   const deadline = timeoutMs ? now() + timeoutMs : Infinity;
   const active=()=>{check();signal?.throwIfAborted();};
   let emitted = lastEmitted, failures = 0;
+  // Arrivals receipted without a wake-up ride along with the next delivered
+  // notice, so a chat still learns who joined and what they are doing.
+  let arrivals: {id: number; from?: unknown; time?: unknown; text?: unknown}[] = [];
   while (now() < deadline) {
     let wait = 10_000;
     try {
@@ -158,7 +163,15 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
       active();
       if (result.left === true) return;
       if (!(batch === null || (batch && /^[a-f0-9]{64}$/.test(batch.receipt) && Array.isArray(batch.messages) && batch.messages.length > 0))) throw new CliError('BOARD_PROTOCOL_ERROR', 'Invalid inbox batch.', 2);
-      if (batch && batch.receipt !== emitted) {
+      if (batch && notice === 'full' && acknowledgeRoutine && routinePresence(batch)) {
+        // Nothing here asks this chat to act. Receipt the page so it is not
+        // offered again, and read the next page without waiting.
+        await acknowledgeRoutine(batch.cursor);
+        arrivals = [...arrivals, ...batch.messages.map(({id, from, time, text}: any) => ({id, from, time, text}))].slice(-quietArrivalLimit);
+        if (failures) warn('Board connection restored.');
+        failures = 0;
+        if (batch.more) continue;
+      } else if (batch && batch.receipt !== emitted) {
         if (notice) {
           const ids = batch.messages.map((message: {id: number}) => message.id);
           const content = notice === 'ids' ? {} : {
@@ -166,7 +179,8 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
             more: batch.more ?? false,
             cursor: batch.cursor ?? null,
           };
-          await emit({type: 'board.notice', ids, ...content});
+          await emit({type: 'board.notice', ids, ...content, ...(arrivals.length ? {arrivals} : {})});
+          arrivals = [];
         }
         else for(const message of compactDelivery(batch.messages)){active();await emit(message);}
         active();
@@ -180,7 +194,7 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
       if (batch && !notice) await acknowledge(batch.receipt);
       if (failures) warn('Board connection restored.');
       failures = 0;
-      if (batch && once) return;
+      if (batch && once && !(notice === 'full' && acknowledgeRoutine && routinePresence(batch))) return;
       wait = Math.max(1000, Math.min(30_000, Number(result.pollAfterMs) || 10_000));
     } catch (error) {
       if(signal?.aborted)return;
@@ -202,6 +216,17 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
     try{await delay(Math.min(wait + Math.floor(Math.random() * 500), Math.max(0, Math.min(deadline,idleDeadline) - now())),signal);}
     catch(error){if(signal?.aborted)return;throw error;}
   }
+}
+
+/** The most recent quiet arrivals kept for the next delivered notice. */
+export const quietArrivalLimit = 50;
+
+/** A complete page holding only arrival announcements addressed to nobody.
+ * A mention, a reply or any other channel makes the whole page deliverable. */
+export function routinePresence(batch: {cursor?: unknown; messages: {channel?: unknown; mentions?: unknown; replyTo?: unknown}[]}) {
+  return typeof batch.cursor === 'string' && /^[a-f0-9]{64}$/.test(batch.cursor) && batch.messages.every(message =>
+    message.channel === 'presence' && Array.isArray(message.mentions) && message.mentions.length === 0 &&
+    (message.replyTo === null || message.replyTo === undefined));
 }
 
 function listenerLifetime(output:Writable=process.stdout) {
@@ -385,6 +410,8 @@ export async function boardCommand(operation: string, api: string, values: Optio
       idle:{...listenerActivity(api,session),leave:()=>boardRequest(api,'leave',scoped({session}),fetch,{signal:lifetime.signal})}, once: operation === 'wait', notice, compact: values.compact === true,
       request:poll,
       acknowledge: receipt=>boardRequest(api,'ack',scoped({session,receipt}),fetch,{signal:lifetime.signal}), checkpoint,
+      ...(values.presence === true ? {} : {acknowledgeRoutine: (cursor: string) =>
+        boardRequest(api, 'v2/inbox', scoped({session, acknowledge: cursor}), fetch, {signal: lifetime.signal})}),
       lastEmitted:!notice && typeof workspace === 'string' && workspace === saved.workspace ? saved.lastEmitted : null, emit,
       warn: message => process.stderr.write(`opencrawl: ${message}\n`),signal:lifetime.signal,check:lifetime.check,
       });
