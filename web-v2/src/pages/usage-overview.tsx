@@ -109,7 +109,7 @@ export function UsageOverview({adapter, activity, scope, names}: {adapter: Conso
   }
   return <div className="usage-overview">
     <MetricGrid items={[
-      {label:'Agent searches', value:reading(Boolean(known),calls.loading,count(searchCount)), note:'Times agents searched OpenCrawl.'},
+      {label:'Agent searches', value:reading(Boolean(known),calls.loading,count(searchCount)), note:'Keyword searches run by your agents.'},
       {label:'OpenCrawl context edits', value:reading(Boolean(known),calls.loading,count(edits)), note:'Automatic searches with a match.'},
       {label:'Session tokens indexed', value:<>{reading(Boolean(indexed.data),indexed.loading,tokenCount > 0 && tokenCount < 5000 ? '<0.01' : formatMtok.format(tokenCount/1e6))}{indexed.data && <small> Mtok</small>}</>, title:indexed.data ? count(tokenCount)+' tokens' : undefined, note:'Searchable agent session text.'},
     ]}/>
