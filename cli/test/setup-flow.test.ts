@@ -2,6 +2,7 @@ import {profileSetupCommand} from '../src/setup/invocation.ts';
 import {sessionStart} from '../src/session-start.ts';
 import {test,expect,spyOn} from 'bun:test';
 import * as publishedPlugins from '../src/setup/published-plugins.ts';
+import {pluginRelease} from '../src/setup/plugin-release.ts';
 import {createServer} from 'node:http';
 import {mkdtempSync,mkdirSync,writeFileSync,appendFileSync,readFileSync,readdirSync,realpathSync,statSync,rmSync,existsSync,copyFileSync,cpSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -1191,7 +1192,7 @@ test('unavailable daemon and cancelled daemon question make no enrollment change
 // Both the CLI and the fake version command run under the fixture's disposable HOME.
 test.skipIf(!process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR||process.platform!=='darwin'||process.arch!=='arm64')('published Cursor apply and resume use the normal CLI and publish scoped observations',()=>fixture(async(api,dir,observations,setClient)=>{
  const release=publishedPlugins.packageRelease('cursor')!,platform='darwin-arm64',pin=release.archives![platform]!;
- const cache=join(dir,'config','opencrawl','setup','packages',release.ref!,'cursor',platform);
+ const cache=join(dir,'config','opencrawl','setup','packages',release.ref??pluginRelease.ref,'cursor',platform);
  mkdirSync(cache,{recursive:true});
  for(const [url,file] of [[pin.url,pin.sha256+'.zip'],[pin.metadataUrl,pin.metadataSha256+'.json']] as const){
   copyFileSync(join(process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR!,new URL(url).pathname.split('/').pop()!),join(cache,file));
