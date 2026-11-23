@@ -9,5 +9,5 @@ const action=kind==='beforeSubmitPrompt'||kind==='postToolUse'?'capture':kind===
 if(!action){console.log('{}');process.exit(0);}
 const result=spawnSync(pointer.node,[join(pointer.plugin,'bin/opencrawl-hook.mjs'),'--root',pointer.plugin,'--action',action],{input:raw,timeout:kind==='stop'?18000:8000,maxBuffer:16384});
 let output;try{output=JSON.parse(result.stdout?.toString()||'{}');}catch{output={};}
-fs.appendFileSync(join(dirname(pointer.plugin),'callbacks.jsonl'),JSON.stringify({event:kind,session:event.conversation_id,status:result.status,error:result.error?.code??null,stderr:result.stderr?.toString().slice(0,100),keys:Object.keys(output)})+'\n',{mode:0o600});
+fs.appendFileSync(join(dirname(pointer.plugin),'callbacks.jsonl'),JSON.stringify({event:kind,session:event.conversation_id,generation:event.generation_id,version:event.cursor_version,stopStatus:event.status,loop:event.loop_count,loopType:typeof event.loop_count,status:result.status,error:result.error?.code??null,stderr:result.stderr?.toString().slice(0,100),keys:Object.keys(output)})+'\n',{mode:0o600});
 process.stdout.write(JSON.stringify(output)+'\n');
