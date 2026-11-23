@@ -13,7 +13,6 @@ type Period = typeof periods[number];
 const dayLength = 86_400_000;
 const shortDate = new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
 const time = new Intl.DateTimeFormat(undefined, {hour: 'numeric', minute: '2-digit', second: '2-digit'});
-const dateTime = new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'medium'});
 const zone = new Intl.DateTimeFormat('en-US', {timeZoneName: 'shortGeneric'}).formatToParts().find(part=>part.type==='timeZoneName')?.value;
 const formatMtok = new Intl.NumberFormat('en-US', {maximumFractionDigits: 2});
 const refresh = {staleMilliseconds: 60_000, autoRefreshMilliseconds: 60_000};
@@ -22,19 +21,22 @@ function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names
   const [expanded, setExpanded] = useState(false);
   const human = names.get(row.userId);
   const identity = [human, row.agentName].filter(Boolean).join(' / ') || 'Unidentified searcher';
-  const query = row.queries.join('\n') || 'Query unavailable';
+  const query = row.queries.join('\n').trim();
   const at = new Date(row.at);
+  const fullTimestamp = at.toLocaleString();
   return <>
-    <tr>
+    <tr className="usage-query-row" onClick={() => setExpanded(open => !open)}>
       <td><span className="usage-agent" role="img" tabIndex={0} aria-label={identity} data-tooltip={identity}>
         <AgentAvatar name={row.agentName || row.at}/>
       </span></td>
       <td className="usage-query" title={query}>{query.split('\n')[0]}</td>
-      <td><time dateTime={row.at} title={at.toLocaleString()}>{(showDate ? dateTime : time).format(at)}</time></td>
-      <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query} onClick={() => setExpanded(!expanded)}><Icon name="chevron-down" size={14}/></Button></td>
+      <td><time dateTime={row.at} title={fullTimestamp}>{expanded || showDate ? fullTimestamp : time.format(at)}</time></td>
+      <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query}><Icon name="chevron-down" size={14}/></Button></td>
     </tr>
-    {expanded && <tr><td colSpan={4} className="usage-query-detail"><p>{query}</p><time dateTime={row.at}>{at.toLocaleString()}</time>{row.operation && ' / ' + row.operation}
-      {row.sessionId && <> / <SessionLink {...row}/></>}</td></tr>}
+    {expanded && <tr><td colSpan={4} className="usage-query-detail">
+      <p>{query}</p>
+      {row.sessionId && row.harness && <SessionLink {...row} label="View session"/>}
+    </td></tr>}
   </>;
 }
 
@@ -43,14 +45,14 @@ const columns = (label: string) => <tr><th scope="col" aria-label="Agent"/><th s
 function RecentQueries({adapter, scope, period, names}: {adapter: ActivityAdapter; scope: string; period: Period; names: MemberNames}) {
   const [open, setOpen] = useState(false);
   const range = period === '7d' ? '7d' : '30d'; // Query text is retained for 30 days.
-  const key = [...consoleResourceKey(adapter, 'observed-search-history'), scope, range];
+  const key = [...consoleResourceKey(adapter, 'observed-query-history'), scope, range];
   async function load(before: string | undefined, signal: AbortSignal): Promise<SearchActivityPage> {
     const rows: SearchActivityRow[] = [];
     let next = before;
     // A privacy-filtered page can be empty even while more visible queries follow.
     do {
-      const page = scoped(scope, await adapter.searchHistory({kind: 'agent', range, basis: 'events', before: next}, signal));
-      rows.push(...page.rows);
+      const page = scoped(scope, await adapter.searchHistory({kind: 'agent', range, basis: 'events', withQuery: true, before: next}, signal));
+      rows.push(...page.rows.filter(row => !row.withheld && row.queries.some(query => query.trim())));
       if (!page.next || page.next === next || rows.length >= (before ? 1 : 5)) return {rows, next: page.next === next ? null : page.next};
       next = page.next;
     } while (!signal.aborted);
@@ -107,7 +109,7 @@ export function UsageOverview({adapter, activity, scope, names}: {adapter: Conso
   }
   return <div className="usage-overview">
     <MetricGrid items={[
-      {label:'Agent searches', value:reading(Boolean(known),calls.loading,count(searchCount)), note:'Times agents searched OpenCrawl.'},
+      {label:'Agent searches', value:reading(Boolean(known),calls.loading,count(searchCount)), note:'Keyword searches run by your agents.'},
       {label:'OpenCrawl context edits', value:reading(Boolean(known),calls.loading,count(edits)), note:'Automatic searches with a match.'},
       {label:'Session tokens indexed', value:<>{reading(Boolean(indexed.data),indexed.loading,tokenCount > 0 && tokenCount < 5000 ? '<0.01' : formatMtok.format(tokenCount/1e6))}{indexed.data && <small> Mtok</small>}</>, title:indexed.data ? count(tokenCount)+' tokens' : undefined, note:'Searchable agent session text.'},
     ]}/>

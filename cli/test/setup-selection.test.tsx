@@ -10,15 +10,25 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
  let answer:SelectionItem[]|null|undefined;const app=await renderReady(<SetupSelection screen={screen} onComplete={value=>{answer=value;}}/>);
  try{
   await waitForFrame(app,'› [x] Claude Code');
+  expect(app.lastFrame()).not.toContain('sharing instructions');
+  await pressAndRead(app,'?','? Hide details');
+  expect(app.lastFrame()?.replace(/\s+/g,' ')).toContain('sharing instructions to Claude Code and Codex.');
+  expect(app.lastFrame()?.replace(/\s+/g,' ')).toContain('workspace’s credit policy');
   expect(app.lastFrame()).toMatch(/Codex[^\n]*⚠ Needs reinstall/);
   expect(app.lastFrame()).toContain('Reinstall & record');
   expect(app.lastFrame()!.indexOf('Antigravity')).toBeGreaterThan(app.lastFrame()!.indexOf('Do not record'));
   await pressAndRead(app,' ','› [ ] Claude Code');expect(answer).toBeUndefined();
+  expect(app.lastFrame()).toContain('sharing instructions to Codex.');
+  expect(app.lastFrame()).not.toContain('Claude Code also allows');
   await pressAndRead(app,down,'› [x] Codex');
   await pressAndRead(app,down,'› [ ] Cursor');
   await pressAndRead(app,down,'› [ ] Do not record');
   await pressAndRead(app,' ','› [x] Do not record');
   expect(app.lastFrame()).toContain('[ ] Codex');
+  expect(app.lastFrame()).not.toContain('sharing instructions');
+  expect(app.lastFrame()).toContain('No recording plugins are selected.');
+  await pressAndRead(app,'?','? What gets installed?');
+  expect(app.lastFrame()).not.toContain('No recording plugins are selected.');
   await pressAndRead(app,down,'› [ Continue ]');expect(answer).toBeUndefined();
   await pressAndRead(app,right,'› [ Cancel ]');
   await pressAndRead(app,up,'› [x] Do not record');
@@ -55,4 +65,44 @@ test('Cancel and Ctrl+C return no approval',async()=>{
 });
 test('empty history does not open another interactive screen',async()=>{
  expect(await chooseSetupItems({...screen,phase:2,items:[],emptyMessage:'No history found.'})).toEqual([]);
+});
+
+const updateLabel='Keep OpenCrawl plugins up to date (Recommended)';
+test('one checkbox controls updates for selected recording agents',async()=>{
+ const items=screen.items.slice(0,2).map(item=>({...item,selected:false,autoUpdate:false}));
+ let answer:SelectionItem[]|null|undefined;
+ const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={value=>{answer=value;}}/>);
+ try{
+  expect(app.lastFrame()).not.toContain(updateLabel);
+  await pressAndRead(app,' ','[ ] '+updateLabel);
+  await pressAndRead(app,down,'› [ ] Codex');
+  await pressAndRead(app,down,'› [ ] Do not record');
+  await pressAndRead(app,down,'› [ ] '+updateLabel);
+  await pressAndRead(app,' ','› [x] '+updateLabel);
+  await pressAndRead(app,up,'› [ ] Do not record');
+  await pressAndRead(app,up,'› [ ] Codex');
+  await pressAndRead(app,' ','› [x] Codex');
+  expect(app.lastFrame()).toContain('[x] '+updateLabel);
+  await pressAndRead(app,down,'› [ ] Do not record');
+  await pressAndRead(app,down,'› [x] '+updateLabel);
+  await pressAndRead(app,' ','› [ ] '+updateLabel);
+  await pressAndRead(app,down,'› [ Reinstall & record ]');
+  app.stdin.write(enter);await tick();
+  expect(answer?.map(item=>[item.selected,item.autoUpdate])).toEqual([[true,false],[true,false]]);
+ }finally{app.unmount();}
+});
+
+test('continuing with mixed saved update choices preserves each agent’s choice',async()=>{
+ const items=screen.items.slice(0,2).map(item=>({...item,selected:true,autoUpdate:item.id==='codex'}));
+ let answer:SelectionItem[]|null|undefined;
+ const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={value=>{answer=value;}}/>);
+ try{
+  await waitForFrame(app,'[-] '+updateLabel);
+  await pressAndRead(app,down,'› [x] Codex');
+  await pressAndRead(app,down,'› [ ] Do not record');
+  await pressAndRead(app,down,'› [-] '+updateLabel);
+  await pressAndRead(app,down,'› [ Reinstall & record ]');
+  app.stdin.write(enter);await tick();
+  expect(answer).toEqual(items);
+ }finally{app.unmount();}
 });

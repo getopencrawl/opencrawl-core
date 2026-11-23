@@ -10,7 +10,7 @@ import type {SelectionScreen,SelectionItem} from './select.ts';
 type ProgressOptions={
  animate?:boolean;
  prompt?:string;
- waiting?:{spinner:string;onSkip:()=>void};
+ waiting?:{spinner:string;onSkip?:()=>void};
 };
 
 const clean=(text:string)=>stripVTControlCharacters(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,'');
@@ -31,8 +31,8 @@ export function createSetupUi(){
  const notice=(props:Notice,key:number|'progress'=++serial)=>show(<NoticeScreen key={key} {...props} title={clean(props.title)} description={clean(props.description)} details={props.details?.map(clean)} prompt={props.prompt&&clean(props.prompt)}/>);
  const progress=(title:string,description:string,details?:string[],{animate,prompt,waiting}:ProgressOptions={})=>{
   controller.signal.throwIfAborted();
-  notice({title,description,details,animate,prompt,
-   ...(waiting&&{spinner:clean(waiting.spinner),actions:[{id:'skip',label:'Skip for now'}],onAction:waiting.onSkip}),
+  notice({title,description,details,animate,prompt,spinner:waiting&&clean(waiting.spinner),
+   ...(waiting?.onSkip&&{actions:[{id:'skip',label:'Skip for now'}],onAction:waiting.onSkip}),
    onCancel:()=>{controller.abort();notice({title:'Stopping setup',description:'Finishing the current step. Your saved choices will be kept.'});}},'progress');
  };
  const close=()=>{app?.unmount();app?.cleanup();app=undefined;};

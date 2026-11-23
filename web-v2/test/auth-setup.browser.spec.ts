@@ -30,14 +30,34 @@ test('device approval submits the code shown in the terminal', async ({page}) =>
 });
 
 test('Imprint follows the system palette and keeps the action on screen', async ({page}) => {
+  const markBounds = () => page.locator('.oc-imprint-art img').boundingBox();
+  const darkMarks = new Map<number, Awaited<ReturnType<typeof markBounds>>>();
   for (const colorScheme of ['dark','light'] as const) {
     await page.emulateMedia({colorScheme});
     for (const width of [1440,390,320]) {
       await page.setViewportSize({width,height:800});
       await page.goto('/auth-fixture/imprint');
-      await expect(page.getByRole('button',{name:'Continue'})).toBeInViewport();
+      const action = page.getByRole('button',{name:'Continue'});
+      await expect(action).toBeInViewport();
+      const heading = await page.getByRole('heading',{name:'Welcome to OpenCrawl'}).boundingBox();
+      const button = await action.boundingBox();
+      expect(button!.y - (heading!.y + heading!.height)).toBeCloseTo(24, 0);
+      expect(button!.x).toBeCloseTo(heading!.x, 0);
       const art = page.locator('.oc-imprint-art');
-      expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain(colorScheme==='dark'?'opencrawl-mark':'imprint-light');
+      expect(await art.locator('img').evaluate(img=>(img as HTMLImageElement).currentSrc)).toContain('/assets/opencrawl-mark.svg');
+      const grain = await art.evaluate(el => {
+        const layer = getComputedStyle(el, '::before');
+        return {image:layer.backgroundImage, size:layer.backgroundSize, opacity:Number(layer.opacity)};
+      });
+      expect(grain.image).toContain('/assets/imprint-paper.png');
+      expect(grain.size).toBe('256px 256px');
+      expect(grain.opacity).toBeGreaterThan(0);
+      if (colorScheme === 'light') expect(grain.opacity).toBeLessThan(.35);
+      else expect(grain.opacity).toBe(1);
+      const mark = await markBounds();
+      expect(mark?.width).toBeGreaterThan(0);
+      if (colorScheme === 'dark') darkMarks.set(width, mark);
+      else expect(mark).toEqual(darkMarks.get(width));
       const poster=await art.boundingBox(), pane=await page.getByRole('main').boundingBox();
       expect(width>700 ? poster!.x+poster!.width<=pane!.x : poster!.y+poster!.height<=pane!.y).toBe(true);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);

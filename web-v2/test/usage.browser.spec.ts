@@ -89,7 +89,9 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await page.route('**/api/console/usage/search-history', route => {
     const input = route.request().postDataJSON();
     history.push(input);
-    return route.fulfill({json:{cacheScope:scope,rows:Array.from({length:input.before?2:7},(_,i)=>({...searchRow(i + (input.before?7:0),'agent'), agentName:i===0?'Otter':undefined})),next:input.before?null:page2}});
+    const keywords=Array.from({length:input.before?2:7},(_,i)=>({...searchRow(i + (input.before?7:0),'agent'), agentName:i===0?'Otter':undefined}));
+    const blanks=[[],[''],['  \t']].map((queries,i)=>({...searchRow(100+i,'agent'),queries}));
+    return route.fulfill({json:{cacheScope:scope,rows:[...blanks,...keywords],next:input.before?null:page2}});
   });
   await page.goto('/usage?split&activity');
   await expect(page.locator('.report-metric dt')).toHaveText(['Agent searches','OpenCrawl context edits','Session tokens indexed']);
@@ -100,12 +102,40 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await expect(right.locator('.report-bar-hit')).toHaveCount(30);
   const recent=page.getByRole('region',{name:'Recent agent queries',exact:true});
   await expect(recent.locator('tbody tr')).toHaveCount(5);
+  await expect(recent.locator('.usage-query')).toHaveText(Array.from({length:5},(_,i)=>'agent query '+i));
   await expect(recent.getByRole('img',{name:'Alex Example / Otter'})).toBeVisible();
+  const row = recent.getByRole('row').filter({has: page.getByRole('button', {name: 'Details for agent query 0', exact: true})});
+  const toggle = row.getByRole('button');
+  const timestamp = row.locator('time');
+  const compactTime = await timestamp.innerText();
+  const fullTime = await timestamp.evaluate((element: HTMLTimeElement) => new Date(element.dateTime).toLocaleString());
+  await row.getByText('agent query 0', {exact: true}).click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(timestamp).toHaveText(fullTime);
+  await expect(recent.locator('time')).toHaveCount(5);
+  await expect(recent.locator('.usage-query-detail')).toHaveText(/^agent query 0\s*View session$/);
+  await recent.getByText('agent query 0', {exact: true}).last().click();
+  await expect(recent.getByRole('link', {name: 'View session', exact: true})).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s0');
+  await timestamp.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(timestamp).toHaveText(compactTime);
+  expect(compactTime).not.toEqual(fullTime);
+  await row.getByRole('img').click();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await toggle.press('Space');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await page.getByRole('button',{name:'View all searches'}).click();
   const dialog=page.getByRole('dialog',{name:'Recent agent queries'});
   await expect(dialog.locator('tbody tr').first()).toContainText('agent query 0');
   await dialog.locator('tbody tr').last().scrollIntoViewIfNeeded();
   await expect(dialog.locator('tbody tr')).toHaveCount(9);
+  const lastRow = dialog.locator('tbody tr').last();
+  await lastRow.getByRole('cell').nth(1).click();
+  await expect(dialog.getByRole('link', {name: 'View session', exact: true})).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s8');
+  await expect(dialog.locator('time')).toHaveCount(9);
   await page.keyboard.press('Escape');
   await expect(recent.locator('tbody tr')).toHaveCount(5);
   await page.getByRole('button',{name:'90 days',exact:true}).click();
@@ -117,7 +147,7 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await page.getByRole('button',{name:'Cumulative',exact:true}).click();
   await expect(page.getByRole('img',{name:'Cumulative indexed session tokens'}).locator('polyline')).toBeVisible();
   expect(receipts.tokens).toEqual(['all']);
-  expect(history).toContainEqual({kind:'agent',range:'30d',basis:'events',before:page2});
+  expect(history).toContainEqual({kind:'agent',range:'30d',basis:'events',withQuery:true,before:page2});
 });
 
 test('Searches and Proactive context each count, chart and list only their own events for the selected range', async ({page}) => {

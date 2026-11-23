@@ -5,20 +5,17 @@ export async function launchAntigravitySetup(
   executable: string,
   server: string,
   prompt: string,
-  needsLogin: boolean,
+  signInMenu: 'mcp' | 'plugin' | undefined,
   ui: Pick<SetupUi, 'action' | 'signal'>,
   execute: (command: string, args: string[]) => Promise<number>,
 ): Promise<number> {
-  if (needsLogin) {
+  if (signInMenu) {
     const choice = await ui.action({
       title: 'Connect Antigravity',
-      description: 'In Antigravity, enter /mcp and select this workspace.',
-      details: [
-        server,
-        'If connected, continue to the verification task. For a sign-in request, follow the browser instructions in Antigravity.',
-        ...(server.endsWith('_opencrawl')?['If your version lists this connection under /plugin, open '+server.slice(0,-'_opencrawl'.length)+' and choose Sign in.']:[]),
-        'When connected, close the menu with Esc and enter /quit. Setup will open your saved task.',
-      ],
+      description: signInMenu==='plugin'
+        ? 'Open /plugin, select '+server.slice(0,-'_opencrawl'.length)+', and choose Sign in.'
+        : 'Open /mcp, select '+server+', and sign in if prompted.',
+      details: ['Once connected, press Esc and type /quit to continue setup.'],
       actions: [{id: 'open', label: 'Open Antigravity'}, {id: 'close', label: 'Close'}],
     });
     if (choice !== 'open') return 2;

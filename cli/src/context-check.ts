@@ -97,7 +97,7 @@ async function execute(store:CheckStore,task:CheckTask,checkPlugin:()=>void,{rep
 
 /** A saved suggestion preference overrides the recording default for its client. */
 export async function contextCheckCommand(args:string[],input:Readable=process.stdin,output:Pick<NodeJS.WriteStream,'write'>=process.stdout):Promise<number>{
-  if(args.includes('--help')){output.write('Usage: opencrawl context-suggestions enable|disable|status|feedback [--harness NAME] [--api ORIGIN] [--json]\nRepeat --harness to select clients. Suggestions are on by default for clients recording new sessions. Their trusted native hooks send redacted prompts and bounded recent context to the selected deployment under its credit policy. Disable without --harness to turn off all clients.\n');return 0;}
+  if(args.includes('--help')){output.write('Usage: opencrawl context-suggestions enable|disable|status|feedback [--harness NAME] [--api ORIGIN] [--json]\nRepeat --harness to select clients. Suggestions are on by default for clients recording new sessions. Eligible prompts are redacted and checked against your workspace for related work. Disable without --harness to turn off all clients.\n');return 0;}
   const silent=args[0]==='hook'||args[0]==='run';let store:CheckStore|undefined,telemetryGuard:()=>void=()=>{};
   try{
     const {values,positionals}=parseArgs({args,allowPositionals:true,options:{api:{type:'string'},harness:{type:'string',multiple:true},task:{type:'string'},check:{type:'string'},rating:{type:'string'},source:{type:'string'},result:{type:'string'},json:{type:'boolean'},help:{type:'boolean'}}});
@@ -110,7 +110,7 @@ export async function contextCheckCommand(args:string[],input:Readable=process.s
       const settings=action==='status' ? checkSettings(binding,config!)
         : await updateCheckSettings(binding,selected.length?selected as CheckHarness[]:CHECK_HARNESSES,action==='enable');
       const data={api,harnesses:settings.harnesses,enabled:settings.harnesses.length>0};
-      output.write(values.json?JSON.stringify({schemaVersion:1,data})+'\n':`Context suggestions ${data.enabled?'enabled for '+data.harnesses.join(', '):'disabled'} at ${api}.\n`+(action==='enable'?'Checks use this deployment’s credit policy. Run opencrawl setup, review any native hook trust prompt, then start a fresh session. Existing recording choices are unchanged.\n':''));return 0;
+      output.write(values.json?JSON.stringify({schemaVersion:1,data})+'\n':`Context suggestions ${data.enabled?'enabled for '+data.harnesses.join(', '):'disabled'} at ${api}.\n`+(action==='enable'?'Run opencrawl setup, review any native hook trust prompt, then start a fresh session. Existing recording choices are unchanged.\n':''));return 0;
     }
     if(action==='feedback'){
       const harness=values.harness?.[0] as CheckHarness,settings=checkSettings(binding,config!);

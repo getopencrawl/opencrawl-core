@@ -86,6 +86,15 @@
   --imprint-border-light: #aaa4af;
   --imprint-link-light: #5049be;
   --imprint-link-hover-light: #37319d;
-  --imprint-paper-light: #acacf2;
-  --imprint-registration: #28253f;
+}
+
+@media (prefers-color-scheme: light) {
+  .oc-imprint {
+    --imprint-paper: #d9d6e4;
+    --imprint-ink-blue: #c9c9e3;
+    --imprint-ink-plum: #e6d8df;
+    --imprint-glow: rgb(255 252 249 / .57);
+    --imprint-glow-middle: rgb(255 252 249 / .35);
+    --imprint-glow-edge: rgb(255 252 249 / .10);
+  }
 }

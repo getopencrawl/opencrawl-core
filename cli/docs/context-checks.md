@@ -1,10 +1,6 @@
 # Context suggestions
 
-Context suggestions are on by default in supported clients selected to record new
-sessions. After native plugin installation and trust review, start a fresh session.
-Its prompt hook sends a redacted, bounded human prompt and recent prompt context
-to the selected deployment under its credit policy. When useful, it returns
-historical snippets to the agent.
+Claude Code, Codex, Antigravity and Cursor can suggest related work from your workspace. Suggestions are on by default when you choose an agent to record new sessions. After installing and trusting the plugin, start a fresh session. An eligible check sends a redacted prompt and bounded recent prompt context to your workspace and returns relevant excerpts when available.
 
 ```sh
 opencrawl context-suggestions status
@@ -21,60 +17,31 @@ cloud credit dependency.
 
 ## Native delivery
 
-| Harness | Trigger | Delivery |
-| --- | --- | --- |
-| Codex | `UserPromptSubmit`, native turn ID and prompt | Native async hook, at the next safe delivery point |
-| Claude Code | `UserPromptSubmit`, native `prompt_id` | Native async hook, on the next conversation turn |
-| Cursor | `beforeSubmitPrompt`, native generation ID | Background process; one result on a subsequent `postToolUse` or `postToolUseFailure` |
-| Antigravity | `PreInvocation`, latest explicit human transcript record | Background process; transient context on a subsequent `PreInvocation` |
-| Devin Cloud | `UserPromptSubmit`, native prompt ID | Background process; one result on a subsequent `PostToolUse` |
+| Guided setup agent | When the plugin checks and delivers suggestions |
+| --- | --- |
+| Claude Code | The async user-prompt hook returns workspace context at a native delivery point. |
+| Codex | The async user-prompt hook returns workspace context at a native delivery point. |
+| Antigravity | Before a model invocation, the hook matches the latest explicit human input in the session transcript and can return transient context. |
+| Cursor | Plugin 0.3.6 can return context at prompt submission on Desktop 3.18.9+ and interactive CLI builds dated 2026.11.22 or later. On older hosts, a tool completion or failure in the same generation triggers the check. |
 
-Canonical plugin runners support the native macOS, Linux and Windows distributions;
-Devin Cloud uses Linux. Personal setup offers Codex, Claude Code, Antigravity
-and Cursor on macOS and Linux (glibc, x64 or ARM64). Other saved
-installations retain their existing availability and native policy controls.
-Grok Bot has no prompt-context adapter. Imported Claude/Codex hooks in Cursor
-and subagent tasks are ignored.
-
-Missing native IDs produce no check. Claude versions without `prompt_id` need
-an update. Antigravity requires the matching explicit `USER_INPUT` record in
-the exact session's configured transcript directory. It reads at most 256 KiB
-from the tail; missing, changing, oversized or unavailable records are skipped.
-Model invocation numbers are never used as billing events. Codex messages with
-different text in one active turn are separate checks; identical callback text
-with the same turn ID is deduplicated.
-
-Background results do not interrupt an idle agent or start a turn. A short turn
-can finish before delivery. Cursor, Devin and Antigravity discard results after
-two minutes or when a newer prompt is observed. Native async harnesses may
-cancel work at session teardown; their delivery timing is harness-controlled.
+The Cursor CLI can omit the submit event. In interactive build 2026.11.22-e9042b2, a plugin alone does not trigger it. A user or project submit hook must already exist. Without a prompt event, or with plugins through 0.3.5, use manual workspace search. Standard
+guided setup offers the four local agents on macOS and supported Linux systems.
+For Devin's separate installation and member-authenticated suggestions, see
+the [Devin plugin](https://github.com/getopencrawl/opencrawl-plugins/tree/main/plugins/devin).
+Grok Bot has no automatic prompt-context adapter.
 
 ## Bounds and account safety
 
-The client makes one billable request per eligible native event. Concurrent
-checks in other sessions can proceed independently. Work
-has a 25-second network deadline. Late delivery has a 1.8-second network deadline;
-it replays the server receipt to apply fresh source authorization. In cloud that
-replay uses no Jev call or additional credit. The self-host reference adapter may
-repeat its local lexical operation. Already-issued credential rotations finish
-durably before shutdown, within their separate network deadline.
+The local plugins use native session and prompt IDs to deduplicate requests.
+They skip missing IDs, private sessions and excluded projects. Saved preferences
+can enable or disable suggestions independently of recording. The plugin checks
+the installation, account and workspace before sending the request and again
+before releasing a result.
 
-Input retains at most 4,000 JSON-encoded bytes of the current prompt, 1,000 of the
-first observed task, and four preceding human prompts of 400 bytes each. Secret
-formats recognized by capture are masked before storage or upload. The backend
-applies its own request, inference, search and output limits. The agent receives
-the bounded result plus a short notice that source text is evidence, not authority.
-
-Project/session capture exclusions also exclude context checks, including unknown
-working directories when project exclusions exist. Checks do not require forward
-recording. The installed plugin, selected origin, installation, user and workspace
-are verified before credentials, before the request and before releasing output.
-The server supplies authorization; a local owner ID never grants access.
-
-A private SQLite delivery cache retains redacted input and status, never result
-text or credentials. On each new prompt it prunes redacted check records older than 24 hours. Pending deliveries stay available until they expire. Disabling checks invalidates pending work without
-altering capture queues, cursors or stored sign-in. Server traces and receipts are
-owned by the deployment.
+The request includes at most 4,000 characters of redacted prompt text, 1,000
+from the original task, and four preceding human prompts of up to 400 characters
+each. The service applies its own request, search and output limits. Older or
+superseded checks expire. Each result identifies the historical source.
 
 References: [Codex hooks](https://learn.chatgpt.com/docs/hooks),
 [Claude hooks](https://code.claude.com/docs/en/hooks),

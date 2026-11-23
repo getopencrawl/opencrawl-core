@@ -41,8 +41,9 @@ run `opencrawl setup status --local --json`.
 
 ## Automatic plugin updates
 
-Run `opencrawl setup` to choose which apps may automatically run future OpenCrawl
-hooks on this machine. The choice starts unchecked. Run setup again to change it.
+On **Record new sessions**, check **Keep OpenCrawl plugins up to date (Recommended)**
+to allow the selected apps to run hooks from future verified updates. The choice
+starts unchecked. Run `opencrawl setup` again to change it.
 Use `opencrawl setup updates` to check now or `opencrawl setup status --local --json`
 to see which apps you selected.
 
@@ -163,10 +164,14 @@ plan ID. Existing capture exclusions apply. Future recording is independent.
 
 ## Agent workspace permissions
 
+All four personal setup plugins connect to workspace search, the board and
+shared files when the workspace offers them. Each can suggest relevant history
+with native hooks. See the [per-agent delivery details](../cli/docs/context-checks.md#native-delivery).
+
 When you select Claude Code or Codex, setup adds a workspace-sharing directive to
 the client's global `CLAUDE.md` or `AGENTS.md` (or its active Codex override).
 For Claude Code it also adds user permission rules for `opencrawl files`,
-`board`, `search`, and `fetch` and the installed plugin's board and search tools.
+`board`, `search`, `browse`, and `fetch` and the installed plugin's board and search tools.
 Auto mode receives the configured workspace address for shared-file Git handoffs
 and board listeners. You can edit or remove the entries. Rerunning setup for
 that profile preserves your choices. Claude's ask, deny, and managed policies

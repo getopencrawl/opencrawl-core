@@ -8,6 +8,8 @@ import {maskPatterns} from '../sessions/credential-patterns.mjs';
 
 const windowStart = "((now() at time zone 'UTC')::date - 29)";
 const pageSize=25;
+// Apply the same definition to retained receipts, new inserts and event history.
+const keywordSearch = `kind='agent' and array_to_string(queries,'') ~ '[^[:space:]]'`;
 const scope=(p:Principal)=>{
   if(!p?.tenantId || !p.userId) throw Error('Verified activity scope required');
   return [p.tenantId,p.userId];
@@ -74,6 +76,26 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
             agent bigint not null default 0,proactive bigint not null default 0,non_silent bigint not null default 0,delivered bigint not null default 0,
             primary key(namespace,tenant_id,day));`);
         await db.query('insert into opencrawl_activity_start(namespace,cursor_key) values($1,$2) on conflict do nothing',[namespace,randomBytes(32)]);
+        // A committed table means its seed and insert trigger both committed. This also
+        // covers writes from older application processes during a rolling release.
+        if (!(await db.query("select to_regclass('opencrawl_keyword_search_days') as installed")).rows[0].installed) {
+          await db.query(`lock table opencrawl_search_history in share row exclusive mode;
+            create table opencrawl_keyword_search_days(namespace text not null,tenant_id text not null,day date not null,
+              searches bigint not null,primary key(namespace,tenant_id,day));
+            insert into opencrawl_keyword_search_days
+              select namespace,tenant_id,(at at time zone 'UTC')::date,count(*) from opencrawl_search_history
+              where ${keywordSearch} group by 1,2,3;
+            create function opencrawl_count_keyword_searches() returns trigger language plpgsql as $$
+            begin
+              insert into opencrawl_keyword_search_days as d
+                select namespace,tenant_id,(at at time zone 'UTC')::date,count(*) from inserted
+                where ${keywordSearch} group by 1,2,3 order by 1,2,3
+                on conflict(namespace,tenant_id,day) do update set searches=d.searches+excluded.searches;
+              return null;
+            end; $$;
+            create trigger opencrawl_count_keyword_searches after insert on opencrawl_search_history
+              referencing new table as inserted for each statement execute function opencrawl_count_keyword_searches();`);
+        }
         cursorKey=(await db.query('select cursor_key from opencrawl_activity_start where namespace=$1',[namespace])).rows[0].cursor_key;
       });
     },
@@ -170,7 +192,9 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
               (select min(day) from opencrawl_call_days where namespace=$1 and tenant_id=$2)) as tracked
           from opencrawl_activity_start s where s.namespace=$1
         ), r as (select *,case $3 when '7d' then today-6 when '30d' then today-29 else tracked end as from_day from b),
-        sd as (select day,agent,proactive,non_silent,delivered from opencrawl_search_days where namespace=$1 and tenant_id=$2 and day>=(select from_day from r)),
+        sd as (select day,coalesce(k.searches,0) as agent,s.proactive,s.non_silent,s.delivered from opencrawl_search_days s
+          left join opencrawl_keyword_search_days k using(namespace,tenant_id,day)
+          where namespace=$1 and tenant_id=$2 and day>=(select from_day from r)),
         cd as (select day,calls,earlier_calls from opencrawl_call_days where namespace=$1 and tenant_id=$2 and day>=(select from_day from r))
         select to_char(r.tracked,'YYYY-MM-DD') as tracked,
           (select coalesce(sum(calls),0) from cd) as calls,(select coalesce(sum(earlier_calls),0) from cd) as earlier,
@@ -186,11 +210,12 @@ export function createSearchActivity(database:Pick<ApplicationDatabase,'pool'|'n
         daily:(r.daily as [string,unknown,unknown][]).map(([date,agent,edits])=>({date,agentSearches:value(agent),nonSilent:value(edits)}))};
     },
     async page(p:Principal,input:HistoryRequest,visible: (p:Principal,rows:SearchActivityRow[])=>Promise<SearchActivityRow[]>):Promise<SearchActivityPage>{
-      const {kind,before,range,edits}=historyRequest.parse(input);
+      const {kind,before,range,edits,withQuery}=historyRequest.parse(input);
       const owner=readScope(p);
-      const audience=JSON.stringify([namespace,...owner,kind,range??'30d',Boolean(edits)]);
+      const audience=JSON.stringify([namespace,...owner,kind,range??'30d',Boolean(edits),...(withQuery ? ['withQuery'] : [])]);
       const start=range==='7d'?"((now() at time zone 'UTC')::date - 6)":windowStart;
       const window=`namespace=$1 and tenant_id=$2 and kind=$4 and at>=${start} at time zone 'UTC' ${edits?"and kind='proactive' and returned>0":''}
+        ${kind==='agent' || withQuery ? 'and '+keywordSearch : ''}
         ${before?'and (at,id)<($5::timestamptz,$6::uuid)':''}`;
       const end=`order by at desc,id desc limit ${pageSize+1}`;
       // Two disjoint index seeks. A workspace's unlinked searches cannot force a

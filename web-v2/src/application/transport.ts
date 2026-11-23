@@ -33,3 +33,12 @@ export async function rpcWrite<T>(operation:()=>Promise<T>,signal?:AbortSignal):
   catch(error){if(error instanceof ConsoleApiError&&[401,402,403].includes(error.status))invalidate=false;throw error;}
   finally{if(invalidate&&!signal?.aborted&&typeof window!=='undefined')window.dispatchEvent(new Event('opencrawl:console-mutated'));}
 }
+
+/** Post a browser document action while the current React frame stays mounted. */
+export async function postDocumentAction(action:string, fields:URLSearchParams, signal:AbortSignal):Promise<unknown> {
+  const url=new URL(action,window.location.href);
+  if(url.origin!==window.location.origin)throw new Error('Expected a same-origin form action.');
+  const response=await fetch(url,{method:'POST',credentials:'same-origin',redirect:'error',
+    headers:{Accept:'application/json'},body:fields,signal});
+  return response.json();
+}

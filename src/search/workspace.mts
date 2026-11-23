@@ -85,68 +85,74 @@ export function createWorkspaceSearch({capturePairs,sessions, connectors,memorie
       return value;
     } catch {fail(400, 'Invalid or expired search cursor; repeat the original search.');}
   }
+  async function readPage(principal: Principal, input: unknown) {
+    sessionScope(principal);
+    if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
+    const parsed = workspaceSearchSchema.safeParse(input);
+    if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, currentSession, includeCurrentSession, includeToolOutputs, limit, dedupe, groupBy and cursor. Use filters.after/before with keywords. Time ordering requires an empty query.');
+    // Preserve the original dedupe=false inspection contract for older clients.
+    if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
+    const {cursor, ...query} = parsed.data;
+    if (!query.currentSession && principal.owner?.provider === 'devin')
+      query.currentSession = currentSessionSchema.parse({harness: 'devin', sessionId: principal.owner.sessionId});
+    const fingerprint = hash([principal.tenantId, principal.userId, query]);
+    const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
+    const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];
+    const groups = await Promise.all(selected.map(async source => {
+      const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
+      if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
+      let result;
+      try {result = await adapter.search(principal, {query: query.query, match: query.match, filters:query.filters, order:query.order, ...(query.sessionId ? {sessionId: query.sessionId} : {}), ...(source==='sessions'?{currentSession:query.currentSession,includeCurrentSession:query.includeCurrentSession,includeToolOutputs:query.includeToolOutputs}:{}), limit: WINDOW});}
+      catch(caught){const error=serviceError(caught);
+        if ([401, 403].includes(error.status ?? 0)) throw error;
+        return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};
+      }
+      if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
+      return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
+    }));
+    const sessionGroup=groups.find(g=>g.source==='sessions');
+    const captures=capturePairs&&sessionGroup&&(query.dedupe||query.groupBy==='session')
+      ?await matchCaptures(principal,sessionGroup.hits,capturePairs,sessions?.captureFingerprints,query.dedupe):undefined;
+    if(captures?.sessions.size&&sessionGroup&&sessions?.readableHits){
+      const allowed=await sessions.readableHits(principal,sessionGroup.hits);
+      sessionGroup.hits=sessionGroup.hits.filter((_,i)=>allowed[i]);
+    }
+    const ranked: WorkspaceHit[] = [];
+    for (let rank = 0; rank < WINDOW; rank++) for (const group of groups) {
+      const hit = group.hits[rank]; if (!hit) continue;
+      const result=workspaceHit(group.source, hit, rank + 1);ranked.push(result);
+    }
+    if(query.order!=='relevance')ranked.sort((a,b)=>{
+      const time=(h:WorkspaceHit)=>{const raw=h.provenance.modifiedAt||h.provenance.timestamp;return typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(String(raw||''));};
+      const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
+    });
+    const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
+    const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
+    const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
+    const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
+      const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
+      return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
+    }), offset = page.offset + results.length;
+    const next = offset < grouped.results.length ? encode({fingerprint, offset, expires: page.expires}) : null;
+    const coverage = groups.map(({source, state, hits, truncated}) => ({source, state, candidates: hits.length, truncated}));
+    const partial = coverage.some(g => g.state === 'unavailable' || g.state === 'pending');
+    const unclassifiedSessionCandidates=groups.filter(group=>group.source==='sessions').reduce((count,group)=>count+group.hits.filter(hit=>typeof hit.containsToolOutput!=='boolean').length,0);
+    return {query: query.query, searchContext:{currentSession:query.currentSession??null,
+      currentSessionStatus:query.currentSession?(query.includeCurrentSession?'included':'excluded'):'unavailable',
+      currentSessionExcluded:Boolean(query.currentSession)&&!query.includeCurrentSession,toolOutputsIncluded:query.includeToolOutputs,
+      unclassifiedSessionCandidates,...(unclassifiedSessionCandidates&&!query.includeToolOutputs?{warning:'Some session candidates predate tool-output classification. Legacy embedded tool outputs may remain until the server metadata migration completes.'}:{})},
+      results, next, coverage, partial, deduplicated: deduped.suppressed, grouped:grouped.suppressed,
+      truncated: Boolean(next) || coverage.some(g => g.truncated),
+      windowExhausted: !next && coverage.some(g => g.truncated),
+      ...(query.facets.length?{facets:candidateFacets(ranked,query.facets),facetScope:'authorized_candidate_window'}:{}),
+      pagination: 'live', ranking: query.order==='relevance'?(prioritized.demoted?'source_rank_interleave_with_approval_demotion':'source_rank_interleave'):query.order, candidateLimitPerSource: WINDOW};
+  }
   return {
-    async search(principal: Principal, input: unknown) {
-      sessionScope(principal);
-      if (principal.captureAccess === 'write') fail(403, 'Capture credentials cannot search workspace data.');
-      const parsed = workspaceSearchSchema.safeParse(input);
-      if (!parsed.success) fail(400, 'Invalid search request. Check query, source, match, filters, order, facets, select, excerptChars, sessionId, currentSession, includeCurrentSession, includeToolOutputs, limit, dedupe, groupBy and cursor. Use filters.after/before with keywords. Time ordering requires an empty query.');
-      // Preserve the original dedupe=false inspection contract for older clients.
-      if(!parsed.data.dedupe&&(input as {groupBy?:unknown}).groupBy===undefined)parsed.data.groupBy='none';
-      const {cursor, ...query} = parsed.data;
-      if (!query.currentSession && principal.owner?.provider === 'devin')
-        query.currentSession = currentSessionSchema.parse({harness: 'devin', sessionId: principal.owner.sessionId});
-      const fingerprint = hash([principal.tenantId, principal.userId, query]);
-      const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
-      const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];
-      const groups = await Promise.all(selected.map(async source => {
-        const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
-        if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
-        let result;
-        try {result = await adapter.search(principal, {query: query.query, match: query.match, filters:query.filters, order:query.order, ...(query.sessionId ? {sessionId: query.sessionId} : {}), ...(source==='sessions'?{currentSession:query.currentSession,includeCurrentSession:query.includeCurrentSession,includeToolOutputs:query.includeToolOutputs}:{}), limit: WINDOW});}
-        catch(caught){const error=serviceError(caught);
-          if ([401, 403].includes(error.status ?? 0)) throw error;
-          return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};
-        }
-        if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
-        return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
-      }));
-      const sessionGroup=groups.find(g=>g.source==='sessions');
-      const captures=capturePairs&&sessionGroup&&(query.dedupe||query.groupBy==='session')
-        ?await matchCaptures(principal,sessionGroup.hits,capturePairs,sessions?.captureFingerprints,query.dedupe):undefined;
-      if(captures?.sessions.size&&sessionGroup&&sessions?.readableHits){
-        const allowed=await sessions.readableHits(principal,sessionGroup.hits);
-        sessionGroup.hits=sessionGroup.hits.filter((_,i)=>allowed[i]);
-      }
-      const ranked: WorkspaceHit[] = [];
-      for (let rank = 0; rank < WINDOW; rank++) for (const group of groups) {
-        const hit = group.hits[rank]; if (!hit) continue;
-        const result=workspaceHit(group.source, hit, rank + 1);ranked.push(result);
-      }
-      if(query.order!=='relevance')ranked.sort((a,b)=>{
-        const time=(h:WorkspaceHit)=>{const raw=h.provenance.modifiedAt||h.provenance.timestamp;return typeof raw==='number'?raw:typeof raw==='string'&&/^\d{10}(\.\d+)?$/.test(raw)?Number(raw)*1000:Date.parse(String(raw||''));};
-        const at=time(a),bt=time(b);return (Number.isFinite(at)&&Number.isFinite(bt)?(at-bt)*(query.order==='newest'?-1:1):Number.isFinite(at)?-1:Number.isFinite(bt)?1:0)||a.id.localeCompare(b.id);
-      });
-      const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
-      const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
-      const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
-      const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
-        const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
-        return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
-      }), offset = page.offset + results.length;
-      const next = offset < grouped.results.length ? encode({fingerprint, offset, expires: page.expires}) : null;
-      const coverage = groups.map(({source, state, hits, truncated}) => ({source, state, candidates: hits.length, truncated}));
-      const partial = coverage.some(g => g.state === 'unavailable' || g.state === 'pending');
-      const unclassifiedSessionCandidates=groups.filter(group=>group.source==='sessions').reduce((count,group)=>count+group.hits.filter(hit=>typeof hit.containsToolOutput!=='boolean').length,0);
-      return {query: query.query, searchContext:{currentSession:query.currentSession??null,
-        currentSessionStatus:query.currentSession?(query.includeCurrentSession?'included':'excluded'):'unavailable',
-        currentSessionExcluded:Boolean(query.currentSession)&&!query.includeCurrentSession,toolOutputsIncluded:query.includeToolOutputs,
-        unclassifiedSessionCandidates,...(unclassifiedSessionCandidates&&!query.includeToolOutputs?{warning:'Some session candidates predate tool-output classification. Legacy embedded tool outputs may remain until the server metadata migration completes.'}:{})},
-        results, next, coverage, partial, deduplicated: deduped.suppressed, grouped:grouped.suppressed,
-        truncated: Boolean(next) || coverage.some(g => g.truncated),
-        windowExhausted: !next && coverage.some(g => g.truncated),
-        ...(query.facets.length?{facets:candidateFacets(ranked,query.facets),facetScope:'authorized_candidate_window'}:{}),
-        pagination: 'live', ranking: query.order==='relevance'?(prioritized.demoted?'source_rank_interleave_with_approval_demotion':'source_rank_interleave'):query.order, candidateLimitPerSource: WINDOW};
+    search: readPage,
+    async browse(principal: Principal, input: unknown) {
+      const parsed = workspaceBrowseSchema.safeParse(input);
+      if (!parsed.success) fail(400, 'Invalid timeline request. Use a time order and filters.');
+      return readPage(principal, {...parsed.data, query: ''});
     },
     async fetch(principal: Principal, input: unknown) {
       sessionScope(principal);
@@ -205,8 +211,8 @@ export function createWorkspaceSearch({capturePairs,sessions, connectors,memorie
 }
 
 /** Shared CLI/self-host/hosted HTTP protocol; authentication stays in the runtime. */
-export function createWorkspaceSearchHandler({search, authenticate, operation = 'search'}: {search?: ReturnType<typeof createWorkspaceSearch>; authenticate: Authenticate; operation?: 'search' | 'fetch'}): HttpHandler {
-  if (!['search', 'fetch'].includes(operation)) throw new Error('Invalid workspace operation');
+export function createWorkspaceSearchHandler({search, authenticate, operation = 'search'}: {search?: ReturnType<typeof createWorkspaceSearch>; authenticate: Authenticate; operation?: 'search' | 'browse' | 'fetch'}): HttpHandler {
+  if (!['search', 'browse', 'fetch'].includes(operation)) throw new Error('Invalid workspace operation');
   return async (req, res) => {
     const send = (status: number, value: Record<string, unknown>) => {res.writeHead(status, {'content-type': 'application/json', 'cache-control': 'no-store'});res.end(JSON.stringify({schemaVersion: 1, ...value}));};
     try {
