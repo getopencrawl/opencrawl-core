@@ -26,13 +26,13 @@ export function HostingScreen({onComplete}:{onComplete:(hosting:Hosting|null)=>v
  const {focusNext,focusPrevious}=useFocusManager();
  useInput((input,key)=>{
   if(key.escape||(key.ctrl&&input==='c')){onComplete(null);return;}
-  if(key.downArrow)focusNext();
-  if(key.upArrow)focusPrevious();
+  if(key.rightArrow||key.downArrow)focusNext();
+  if(key.leftArrow||key.upArrow)focusPrevious();
  });
- return <SetupFrame title="Where is your workspace?" description="Choose how your workspace is hosted." footer={['↑ ↓ Move','Enter Select','Esc Cancel']}>
-  <Box flexDirection="column" marginTop={1} gap={1}>
-   <Box><SetupButton id="cloud" label="Cloud" autoFocus onPress={()=>onComplete('cloud')}/></Box>
-   <Box><SetupButton id="self-hosted" label="Self-hosted" onPress={()=>onComplete('self-hosted')}/></Box>
+ return <SetupFrame title="Where is your workspace?" description="Choose how your workspace is hosted." footer={['← → Move','Enter Select','Esc Cancel']}>
+  <Box marginTop={1} gap={2} flexWrap="wrap">
+   <SetupButton id="cloud" label="Cloud" autoFocus onPress={()=>onComplete('cloud')}/>
+   <SetupButton id="self-hosted" label="Self-hosted" onPress={()=>onComplete('self-hosted')}/>
   </Box>
  </SetupFrame>;
 }

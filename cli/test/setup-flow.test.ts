@@ -262,20 +262,20 @@ test('reinstalling a pending plugin leaves its next action visible',()=>fixture(
 
 test('TUI service retry preserves selections and does not ask for native verification first',async()=>fixture(async(api,_dir,_observations,setCodex)=>{
  let ready=false,choices=0,installs=0;const screens:string[]=[],operations:string[]=[];
- const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:title=>{screens.push(title);},choose:async screen=>{choices++;return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'||screen.phase===3&&item.id==='daemon'}));},action:async screen=>{
+ const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:title=>{screens.push(title);},choose:async screen=>{choices++;return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}));},action:async screen=>{
   screens.push(screen.title);
-  if(screen.title==='Background capture needs attention'){expect(screen.actions?.map(a=>a.label)).toEqual(['Record without a background service','Retry service','Close']);ready=true;setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});return 'retry';}
+  if(screen.title==='Background capture needs attention'){expect(screen.actions?.map(a=>a.label)).toEqual(['Retry service','Close']);ready=true;setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});return 'retry';}
   return 'done';
  },close:()=>{},native:async run=>run()};
  const result=await runInteractiveSetup({values:{},readDestination:()=>({api,explicit:api}),withOrigin:async(_origin,run)=>run(),login:async()=>{throw Error('Unexpected login');}},{createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{throw Error('Must repair service before native verification');},setup:(action,origin,values,dependencies)=>{
   operations.push(values.yes?'repair':action);return setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>ready,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})});
  }});
- expect(result).toBe(0);expect(installs).toBe(2);expect(operations.filter(x=>x==='run')).toHaveLength(1);expect(operations.filter(x=>x==='repair')).toHaveLength(1);expect(choices).toBe(4);expect(screens).not.toContain('Finish connecting your agents');expect(screens.at(-1)).toBe('Setup complete');
+ expect(result).toBe(0);expect(installs).toBe(2);expect(operations.filter(x=>x==='run')).toHaveLength(1);expect(operations.filter(x=>x==='repair')).toHaveLength(1);expect(choices).toBe(3);expect(screens).toContain('Installing background service');expect(screens).not.toContain('Finish connecting your agents');expect(screens.at(-1)).toBe('Setup complete');
 }));
 
 test('failed supervision stops before launching Claude native sign-in',async()=>fixture(async api=>{
  let nativeCalls=0;const screens:string[]=[];
- const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='claude-code'||screen.phase===3&&item.id==='daemon'})),action:async screen=>{screens.push(screen.title);return 'close';},close:()=>{},native:async run=>run()};
+ const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='claude-code'})),action:async screen=>{screens.push(screen.title);return 'close';},close:()=>{},native:async run=>run()};
  const code=await runInteractiveSetup({values:{client:['claude-code']},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,resolveRuntime:async()=>({executable:'/fixture/claude',desktop:false}),native:async()=>{nativeCalls++;return 0;},pause:async()=>{throw Error('Unexpected wait');},setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>false,installPlugins:async()=>({results:[{client:'claude-code',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
  expect(code).toBe(2);expect(nativeCalls).toBe(0);expect(screens).toEqual(['Background capture needs attention']);
 }));
@@ -383,14 +383,14 @@ test('exiting hook review stops polling and keeps the saved recording choice',()
  expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.selections.forward.codex).toBe(true);
 }));
 
-test('failed service can switch to direct recording inside the TUI without another questionnaire or queue loss',async()=>fixture(async(api,_dir,_observations,setCodex)=>{
+test('closing a failed service install preserves its pending state and queued data',async()=>fixture(async api=>{
  let choices=0,stops=0,installs=0;let installationId:string|undefined;const queued=()=>join(captureDir(),'queue','preserved.json');
- const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>{choices++;return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'||screen.phase===3&&item.id==='daemon'}));},action:async screen=>{
-  if(screen.title==='Background capture needs attention'){installationId=readCaptureConfig()?.installationId;mkdirSync(dirname(queued()),{recursive:true});writeFileSync(queued(),'retain queued bytes');setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});return 'direct';}
-  expect(screen.title,screen.description).toBe('Setup complete');return 'done';
+ const ui:SetupUi={invite:async()=>{throw Error("Unexpected invite prompt");},signal:new AbortController().signal,welcome:async()=>true,hosting:async()=>'self-hosted',workspace:async()=>({kind:'address',api}),progress:()=>{},choose:async screen=>{choices++;return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}));},action:async screen=>{
+  if(screen.title==='Background capture needs attention'){installationId=readCaptureConfig()?.installationId;mkdirSync(dirname(queued()),{recursive:true});writeFileSync(queued(),'retain queued bytes');return 'close';}
+  throw Error('Unexpected screen: '+screen.title);
  },close:()=>{},native:async run=>run()};
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:async(_origin,run)=>run(),login:async()=>{}},{createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{throw Error('Unexpected polling');},setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,modeEligibility:()=>({eligible:true,reason:'Fixture'}),daemonReady:async()=>false,installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},stopDaemon:()=>{stops++;},installPlugins:async()=>({results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
- expect(code).toBe(0);expect(choices).toBe(4);expect(stops).toBe(1);expect(installs).toBe(1);expect(readFileSync(queued(),'utf8')).toBe('retain queued bytes');expect(readCaptureConfig()?.installationId).toBe(installationId);expect(readCaptureConfig()?.harnesses).toEqual(['codex']);expect(readCaptureConfig()?.captureWorker).toBeUndefined();expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('hook');
+ expect(code).toBe(2);expect(choices).toBe(3);expect(stops).toBe(0);expect(installs).toBe(1);expect(readFileSync(queued(),'utf8')).toBe('retain queued bytes');expect(readCaptureConfig()?.installationId).toBe(installationId);expect(readCaptureConfig()?.harnesses).toEqual(['codex']);expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toMatchObject({captureMode:'daemon',worker:{supervised:false}});
 }));
 async function legacySetupCommand(action:string,api:string,values:Parameters<typeof realSetupCommand>[2],dependencies:NonNullable<Parameters<typeof realSetupCommand>[3]>={}){
  const scope={api,tenantId:'tenant',userId:'user'};
@@ -1167,41 +1167,37 @@ test('changing recording and skipping a new import preserves the approved file s
  expect(readCaptureConfig()).toMatchObject({harnesses:[],historyHarnesses:['codex']});
 }));
 
-test('eligible interactive runs offer the utility afresh and unattended repair preserves a decline',()=>fixture(async api=>{
- const phases:number[]=[];let installs=0;
- const dependencies={modeEligibility:()=>({eligible:true,reason:'Fixture local supervisor'}),installPlugins:async(_api:string,_clients:string[],options?:Parameters<typeof installSetupPlugins>[2])=>{expect(options?.captureMode).toBe('hook');return {results:[{client:'codex' as const,status:'installed' as const,captureAvailable:true,daemonHandoff:true}],humanTasks:[]};},installDaemon:async()=>{installs++;throw Error('Declined service must not install');},launchHistory:()=>({state:'not_started'})};
- const declineService=(expectedDefault:boolean)=>async(screen:SelectionScreen)=>{
-  phases.push(screen.phase);
-  if(screen.phase===1)expect(screen.description).toBe('Choose which agents to record on this machine.');
-  if(screen.phase===3){
-   expect(screen.description).toBe('Install background utility for more reliable session capture?');
-   expect(screen.items.find(item=>item.id==='daemon')?.selected).toBe(expectedDefault);
-  }
-  return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}));
- };
- await setupCommand('run',api,{}, {...dependencies,interactive:true,choose:declineService(true)});
- expect(phases).toEqual([1,4,3,2]);expect(installs).toBe(0);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('hook');
- expect(readCaptureConfig()?.backgroundStartup).toBe(false);expect(readCaptureConfig()?.captureWorker).toBeUndefined();
- await setupCommand('run',api,{}, {...dependencies,interactive:true,choose:declineService(true)});
- await setupCommand('run',api,{yes:true,json:true}, {...dependencies,choose:async()=>{throw Error('Resume must not ask again');}});expect(installs).toBe(0);
+test('eligible recording installs the service before history without a service question',()=>fixture(async api=>{
+ const steps:(number|string)[]=[];
+ await setupCommand('run',api,{},{
+  interactive:true,modeEligibility:()=>({eligible:true,reason:'Fixture supervisor'}),
+  choose:async screen=>{steps.push(screen.phase);return screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}));},
+  installPlugins:async(_api,_clients,options)=>{expect(options?.captureMode).toBe('daemon');steps.push('plugin');return {results:[{client:'codex',status:'installed',captureAvailable:true,daemonHandoff:true}],humanTasks:[]};},
+  installDaemon:async()=>{steps.push('service');return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};}
+ });
+ expect(steps).toEqual([1,4,'plugin','service',2]);
+ expect(readCaptureConfig()?.backgroundStartup).toBe(true);
+ expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toMatchObject({captureMode:'daemon',worker:{supervised:true}});
 }));
 
-test('accepting the default installs the utility after its plugin, and opt-out preserves the queue',()=>fixture(async(api,dir)=>{
- let installs=0,stops=0;const modes:string[]=[];
- const dependencies={modeEligibility:()=>({eligible:true,reason:'Fixture supervisor'}),stopDaemon:()=>{stops++;},installPlugins:async(_api:string,_clients:string[],options?:Parameters<typeof installSetupPlugins>[2])=>{modes.push(options?.captureMode??'missing');return {results:[{client:'codex' as const,status:'installed' as const,captureAvailable:true,daemonHandoff:true}],humanTasks:[]};},installDaemon:async()=>{installs++;return {kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'};},launchHistory:()=>({state:'not_started'})};
- await setupCommand('run',api,{}, {...dependencies,interactive:true,choose:async screen=>screen.phase===3?screen.items:screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'}))});
- expect(installs).toBe(1);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.captureMode).toBe('daemon');
- await setupCommand('run',api,{yes:true,json:true},dependencies);expect(installs).toBe(2);
- const queue=join(dir,'config/opencrawl/capture/queue/keep.json');writeFileSync(queue,'pending bytes');
- await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'hook'},dependencies);
- expect(stops).toBe(1);expect(installs).toBe(2);expect(modes).toEqual(['daemon','daemon','hook']);expect(readFileSync(queue,'utf8')).toBe('pending bytes');
- expect(readCaptureConfig()?.captureWorker).toBeUndefined();expect(readCaptureConfig()?.backgroundStartup).toBe(false);
+test('eligible apply requires the service and migrates an older hook installation without losing its queue',()=>fixture(async(api,dir)=>{
+ const choices={plugins:'codex',forward:'codex',history:'none'};
+ const supported={...setupCodex,modeEligibility:()=>({eligible:true,reason:'Fixture supervisor'})};
+ await setupCommand('apply',api,{...choices,yes:true,'capture-mode':'hook'},{...setupCodex,modeEligibility:()=>({eligible:false,reason:'Fixture without service support'})});
+ const before=readCaptureConfig(),queue=join(dir,'config/opencrawl/capture/queue/keep.json');
+ writeFileSync(queue,'pending bytes');
+ expect(await setupCommand('plan',api,choices,supported)).toMatchObject({captureMode:'daemon'});
+ await expect(setupCommand('apply',api,{...choices,yes:true,'capture-mode':'hook'},supported)).rejects.toMatchObject({code:'SETUP_DAEMON_REQUIRED'});
+ expect(readCaptureConfig()).toEqual(before);
+ await setupCommand('run',api,{yes:true,json:true},supported);
+ expect(readCaptureConfig()).toMatchObject({installationId:before!.installationId,backgroundStartup:true});
+ expect(readFileSync(queue,'utf8')).toBe('pending bytes');
 }));
 
-test('unavailable daemon and cancelled daemon question make no enrollment changes',()=>fixture(async api=>{
+test('unavailable daemon and cancellation before installation make no enrollment changes',()=>fixture(async api=>{
  await expect(setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'daemon'},{modeEligibility:()=>({eligible:false,reason:'Unsupported host'})})).rejects.toMatchObject({code:'SETUP_DAEMON_UNAVAILABLE'});
  expect(readCaptureConfig()).toBeNull();
- const answer=await setupCommand('run',api,{}, {interactive:true,modeEligibility:()=>({eligible:true,reason:'Fixture'}),choose:async screen=>screen.phase===3?null:screen.items.map(row=>({...row,selected:row.id==='codex'}))});
+ const answer=await setupCommand('run',api,{}, {interactive:true,modeEligibility:()=>({eligible:true,reason:'Fixture'}),choose:async screen=>screen.phase===4?null:screen.items.map(row=>({...row,selected:row.id==='codex'}))});
  expect(answer).toMatchObject({status:'cancelled'});expect(readCaptureConfig()).toBeNull();
  expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();
 }));
@@ -1218,7 +1214,7 @@ test.skipIf(!process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR||process.platform!=='
  writeFileSync(join(dir,'cursor-agent'),'#!/bin/sh\n[ "$#" = 1 ] && [ "$1" = "--version" ] || exit 1\necho '+release.minimumHarnessVersion+'\n',{mode:0o755});
  const preload=join(dir,'offline.ts');
  writeFileSync(preload,'const fetchLocal = globalThis.fetch; globalThis.fetch = (url, init) => { if(new URL(url).origin !== '+JSON.stringify(api)+') throw Error("Only the fixture server is available"); return fetchLocal(url, init); };');
- const env={...process.env,CURSOR_CONFIG_DIR:join(dir,'.cursor'),OPENCRAWL_NO_UPDATE:'1'};
+ const env={...process.env,SSH_CONNECTION:'fixture',CURSOR_CONFIG_DIR:join(dir,'.cursor'),OPENCRAWL_NO_UPDATE:'1'};
  const run=async(args:string[])=>{
   const child=Bun.spawn([process.execPath,'--preload',preload,join(import.meta.dir,'../src/cli.ts'),'setup',...args,'--api',api,'--json'],{env,stdout:'pipe',stderr:'pipe'});
   const [code,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
@@ -1267,7 +1263,7 @@ test('a saved daemon choice on an ineligible host remains selected but cannot cl
 
 test('failed daemon stop cannot leave a green saved worker observation',()=>fixture(async api=>{
  await setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'daemon'},setupCodex);
- await expect(setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'hook'},{...setupCodex,stopDaemon:()=>{throw Error('stop refused');}})).rejects.toThrow('stop refused');
+ await expect(setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'hook'},{...setupCodex,modeEligibility:()=>({eligible:false,reason:'Unsupported host'}),stopDaemon:()=>{throw Error('stop refused');}})).rejects.toThrow('stop refused');
  expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.worker).toMatchObject({kind:'configuring',supervised:false});
  expect(await setupCommand('next',api,{})).toMatchObject({nextAction:{kind:'repair_worker'}});
 }));

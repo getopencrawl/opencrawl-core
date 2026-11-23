@@ -27,7 +27,7 @@ Automatic plugin updates follow the versions pinned by the CLI for apps selected
 1. Install the [OpenCrawl CLI](https://github.com/getopencrawl/opencrawl-core/tree/main/cli#install) and run `opencrawl setup`.
 2. Select **Cloud** or **Self-hosted**. For self-hosted, paste your workspace address. If sign-in is needed, follow the approval in your browser and return to the terminal.
 3. Choose which agents should record new sessions. Use the arrow keys to move, Space to toggle items, and Enter to select a button. You can also choose **Do not record any sessions on this machine**.
-4. Choose whether to import past sessions when setup offers history for a selected agent. On eligible Macs, setup also offers a background capture service. You can decline the background service to use recording hooks directly.
+4. Choose whether to import past sessions when setup offers history for a selected agent. When you enable recording on an eligible local Mac, setup installs and verifies the background capture service automatically.
 5. Follow the selected agent’s native connection prompts. After a new session is captured, the agent verifies its connection and whether that session can be found. Open **Setup** in the workspace to see which checks have finished.
 
 Setup detects Claude Code, Codex, Cursor and Antigravity on macOS and on x64 or

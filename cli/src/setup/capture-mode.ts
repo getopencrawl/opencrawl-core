@@ -18,7 +18,7 @@ export function daemonStartupGuidance(paths:string[],platform:NodeJS.Platform=pr
   let actual=posix.resolve(path);if(process.platform==='darwin'){try{actual=realpathSync(path);}catch{}}
   return /^\/Volumes\/[^/]+(?:\/|$)/.test(actual);
  });
- return 'Background service startup was not confirmed. Recording is not verified.'+(mounted?' This installation uses a mounted volume; macOS background access may differ from terminal access.':'')+' Fix the host-service issue and retry, or choose recording without a background service. Your queued uploads are kept.';
+ return 'Background service startup was not confirmed. Recording is not verified.'+(mounted?' This installation uses a mounted volume; macOS background access may differ from terminal access.':'')+' Fix the host-service issue and retry. Your queued uploads are kept.';
 }
 export function savedCaptureMode(state:SetupState|null,config:CaptureConfig|null):CaptureMode{
  if(state?.captureMode)return state.captureMode;

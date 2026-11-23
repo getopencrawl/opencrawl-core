@@ -151,10 +151,10 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        displayedInstruction=undefined;
        const status=await setup('status',api,{json:true},{interactive:false});
        const worker=status&&'worker' in status?status.worker:undefined;
-       const action=await ui.action({title:'Background capture needs attention',description:worker?.reason??next.nextAction.instruction,error:true,actions:[{id:'direct',label:'Record without a background service'},{id:'retry',label:'Retry service'},{id:'close',label:'Close'}]});
-       if(action!=='retry'&&action!=='direct')return 2;
-       ui.progress(action==='direct'?'Keeping session recording':'Starting background capture',action==='direct'?'Removing the background service. Your recording choices and queued uploads are kept.':'Retrying the service with your saved choices.',undefined,{animate:true});
-       const repaired=await setup('run',api,{yes:true,json:true},{interactive:false,onProgress,...(action==='direct'?{confirmedCaptureMode:'hook' as const}:{})});
+       const action=await ui.action({title:'Background capture needs attention',description:worker?.reason??next.nextAction.instruction,error:true,actions:[{id:'retry',label:'Retry service'},{id:'close',label:'Close'}]});
+       if(action!=='retry')return 2;
+       ui.progress('Starting background capture','Retrying the service with your saved choices.',undefined,{animate:true});
+       const repaired=await setup('run',api,{yes:true,json:true},{interactive:false,onProgress});
        if(!repaired)return 2;
        continue;
       }

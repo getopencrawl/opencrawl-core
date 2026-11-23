@@ -1,7 +1,7 @@
 import type {RecordingInstallState} from './plugins.ts';
 export type SelectionItem={id:string;label:string;selected:boolean;detail?:string;installState?:RecordingInstallState;disabled?:boolean};
 export type SelectionScreen={title:string;items:SelectionItem[];emptyMessage?:string} & (
- {phase:1|2|3;description:string;noneLabel:string} |
+ {phase:1|2;description:string;noneLabel:string} |
  {phase:4;description?:never;noneLabel?:never}
 );
 

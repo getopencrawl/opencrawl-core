@@ -22,7 +22,7 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    Move with the arrow keys and toggle checkboxes with Space. Move to the
    bottom buttons and press Enter to activate one. Press **?** to see what the selected plugins install, including any global profile changes.
    Compatible detected agents start selected on each interactive run. Unavailable local integrations appear unchecked and disabled below **Do not record any sessions on this machine**. You can still import past sessions with recording off.
-   Eligible installations offer the background utility preselected.
+   On eligible local Macs, setup installs and verifies the background service as part of recording setup.
 3. **Import past sessions.** A separate screen lists supported local histories,
    including agents you left out of ongoing recording. Each one-time import starts unchecked. Choose histories to import or **Skip history import**.
    If no eligible history exists, setup continues without another question.
@@ -36,7 +36,7 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    `setup next --json` checks every
    selected agent; one verified agent cannot make the whole installation complete.
 
-Run `opencrawl setup` again to choose the workspace, recording agents, background utility and history import afresh. A valid sign-in is reused.
+Run `opencrawl setup` again to choose the workspace, recording agents and history import afresh. A valid sign-in is reused.
 Intact integrations show **Installed**. Setup reuses them and repairs missing
 files or registrations for the selected agents. Closing the history screen
 keeps the installed integrations. Skipping history preserves any existing

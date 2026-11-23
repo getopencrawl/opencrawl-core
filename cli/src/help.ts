@@ -52,7 +52,7 @@ setup report-hooks publishes the native review for the saved installation withou
   --plugins IDS   Harness IDs to install: comma-separated IDs, all, or none
   --forward IDS   Same harness IDs as --plugins; installation enables capture
   --history IDS   One-time import from supported harness IDs, all, or none
-  --capture-mode hook|daemon  Capture in hooks, or use an optional eligible background service
+  --capture-mode hook|daemon  Capture mode (setup requires the service for eligible recording agents)
   --plan-id ID    Bind consent to the exact scope, choices and history preview
   --yes          Apply only after the user confirms the displayed choices
   setup status   Read saved choices, human tasks and background import progress

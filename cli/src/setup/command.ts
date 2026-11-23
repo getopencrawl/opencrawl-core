@@ -36,7 +36,7 @@ import {verifyInstallation} from '../verify-installation.ts';
 import {formatSetupCommand,setupCommandForSelf,profileSetupCommand} from './invocation.ts';
 export {formatSetupCommand} from './invocation.ts';
 type Values=Record<string,unknown>;
-type Dependencies={skipCodexHooks?:boolean;finishOnboarding?:boolean;canInstall?:(id:string)=>Promise<boolean>;inspectInstall?:typeof recordingInstallState;confirmedCaptureMode?:'hook';modeEligibility?:typeof daemonEligibility;stopDaemon?:typeof uninstallCaptureDaemon;platform?:NodeJS.Platform;command?:string[];login?:()=>Promise<unknown>;installPlugins?:typeof installSetupPlugins;launchHistory?:typeof startHistoryWorker;choose?:typeof chooseSetupItems;interactive?:boolean;inspectHooks?:typeof inspectCodexHooks;installDaemon?:typeof installCaptureDaemon;daemonReady?:typeof waitForDaemonReady;expectedScope?:SetupScope;validateCapturePrincipal?:(principal:unknown)=>void;onProgress?:(title:string,description:string,phase?:'installing')=>void};
+type Dependencies={skipCodexHooks?:boolean;finishOnboarding?:boolean;canInstall?:(id:string)=>Promise<boolean>;inspectInstall?:typeof recordingInstallState;modeEligibility?:typeof daemonEligibility;stopDaemon?:typeof uninstallCaptureDaemon;platform?:NodeJS.Platform;command?:string[];login?:()=>Promise<unknown>;installPlugins?:typeof installSetupPlugins;launchHistory?:typeof startHistoryWorker;choose?:typeof chooseSetupItems;interactive?:boolean;inspectHooks?:typeof inspectCodexHooks;installDaemon?:typeof installCaptureDaemon;daemonReady?:typeof waitForDaemonReady;expectedScope?:SetupScope;validateCapturePrincipal?:(principal:unknown)=>void;onProgress?:(title:string,description:string,phase?:'installing')=>void};
 function historyFiles(api:string,client?:'claude-code'):HistoryFile[]{if(process.env.OPENCRAWL_AUTH==='devin-cloud')return [];const previous=readCaptureConfig();return inventory(previous?.api===api?previous:{roots:{'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),codex:process.env.CODEX_HOME||join(homedir(),'.codex'),antigravity:process.env.ANTIGRAVITY_HOME||join(homedir(),'.gemini')},claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()},client??'all').files;}
 const list=(values:string[])=>values.length?values.join(','):'none';
 
@@ -182,10 +182,11 @@ async function applyClients(scope:SetupScope,selections:SetupSelections,installP
  // Plugin-owned clients can make progress independently.
  const preparedClient=plugins.results.some(row=>selections.plugins[row.client]&&['installed','unchanged','prepared'].includes(row.status));
  let worker:SetupWorker|undefined=mode==='hook'||!chosen(selections,'plugins').length?{kind:'not-required',supervised:false,harnesses:[],startup:false}:previous?.worker;
- if(mode==='daemon'&&!eligible&&chosen(selections,'plugins').length)worker={kind:'unavailable',status:'required',supervised:false,harnesses:forward,startup:false,reason:'The saved background-service choice is unavailable on this host or plugin version. No service was installed. Keep the saved choice or use setup to choose direct hook capture.'};
+ if(mode==='daemon'&&!eligible&&chosen(selections,'plugins').length)worker={kind:'unavailable',status:'required',supervised:false,harnesses:forward,startup:false,reason:'The configured background service is unavailable on this host or plugin version. Run guided setup to configure recording for this host.'};
  if((mode==='hook'||!chosen(selections,'plugins').length)&&(existing?.captureWorker||existing?.daemonRequested||existing?.backgroundStartup)){stopDaemon();}
  const supportsDaemon=plugins.results.every(row=>!selections.forward[row.client]||row.daemonHandoff!==false);
  if(mode==='daemon'&&eligible&&supportsDaemon&&(ready||preparedClient)&&configured.hookOwnership==='plugin'){
+  onProgress?.('Installing background service','Starting the service and checking that it can record your selected agents.','installing');
   if(configured.daemonRequested){
    let service:Awaited<ReturnType<typeof installCaptureDaemon>>|undefined;
    const activation=await upgradeCaptureDaemon({install:async(candidate,expectedConfig)=>service=await installDaemon(candidate,{expectedConfig}),ready:daemonReady});
@@ -255,7 +256,7 @@ export function nativeSetupPrompt(api:string,client:string,command=setupCommandF
  return `Finish OpenCrawl setup in this conversation. Run ${nextCommand} and follow nextAction. Reuse my saved choices. After the native verify_installation call, run setup wait --json with this same profile-bound CLI and follow its nextAction. Never ask me to reply just to wait for capture. After any reconciliation, read setup next again before reporting completion. Work only on ${client}. When this client is verified, tell the person it is connected and they can return to setup. Leave other clients to their own setup screens.`;
 }
 
-async function executeSetup(action:string,api:string,values:Values,{platform=process.platform,command=setupCommandForSelf(),login,installPlugins=installPublishedSetupPlugins,modeEligibility=daemonEligibility,stopDaemon=uninstallCaptureDaemon,launchHistory=startHistoryWorker,choose=chooseSetupItems,inspectHooks=inspectCodexHooks,installDaemon=installCaptureDaemon,daemonReady=waitForDaemonReady,expectedScope,validateCapturePrincipal,onProgress,confirmedCaptureMode,finishOnboarding=false,skipCodexHooks=false,inspectInstall=recordingInstallState,canInstall=id=>canInstallRecordingPlugin(id,{},platform),interactive=Boolean(process.stdin.isTTY&&process.stderr.isTTY&&!values.json)}:Dependencies={}){
+async function executeSetup(action:string,api:string,values:Values,{platform=process.platform,command=setupCommandForSelf(),login,installPlugins=installPublishedSetupPlugins,modeEligibility=daemonEligibility,stopDaemon=uninstallCaptureDaemon,launchHistory=startHistoryWorker,choose=chooseSetupItems,inspectHooks=inspectCodexHooks,installDaemon=installCaptureDaemon,daemonReady=waitForDaemonReady,expectedScope,validateCapturePrincipal,onProgress,finishOnboarding=false,skipCodexHooks=false,inspectInstall=recordingInstallState,canInstall=id=>canInstallRecordingPlugin(id,{},platform),interactive=Boolean(process.stdin.isTTY&&process.stderr.isTTY&&!values.json)}:Dependencies={}){
  const requestedClients=Array.isArray(values.client)?values.client:values.client===undefined?[]:[values.client];
  const claudeOnly=requestedClients.length===1&&requestedClients[0]==='claude-code'&&['run','plan','apply'].includes(action);
  if(['run','plan','apply'].includes(action)&&requestedClients.length&&!claudeOnly)throw new CliError('INVALID_USAGE','Use opencrawl setup to choose detected agents, or --plugins and --forward for an explicit selection. --client claude-code limits the preview to Claude Code.',64);
@@ -307,9 +308,14 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  const retainedMode=workload?'daemon':savedCaptureMode(previous,sameOwner?boundConfig:null);
  if(values['capture-mode']!==undefined&&!['run','plan','apply'].includes(action))throw new CliError('INVALID_USAGE','Change capture mode through setup or setup apply.',64);
  const questionnaire=action==='run'&&interactive;
- let captureMode=requestedCaptureMode(confirmedCaptureMode??values['capture-mode'],questionnaire?'hook':retainedMode);
+ const requestedMode=requestedCaptureMode(values['capture-mode'],questionnaire?'hook':retainedMode);
  const eligibility=(selections:SetupSelections)=>workload?{eligible:true,reason:'Existing workload supervisor'}:modeEligibility(chosen(selections,'plugins'),platform);
- const checkMode=(selections:SetupSelections)=>{if(captureMode==='daemon'&&!eligibility(selections).eligible&&!(previous&&retainedMode==='daemon'))throw new CliError('SETUP_DAEMON_UNAVAILABLE',eligibility(selections).reason,2);};
+ const installationMode=(selections:SetupSelections):CaptureMode=>{
+  if(!chosen(selections,'forward').length||!eligibility(selections).eligible)return requestedMode;
+  if(values['capture-mode']==='hook')throw new CliError('SETUP_DAEMON_REQUIRED','Recording with these agents requires the background service. Run setup without --capture-mode hook.',2);
+  return 'daemon';
+ };
+ const checkMode=(captureMode:CaptureMode,selections:SetupSelections)=>{if(captureMode==='daemon'&&!eligibility(selections).eligible&&!(previous&&retainedMode==='daemon'))throw new CliError('SETUP_DAEMON_UNAVAILABLE',eligibility(selections).reason,2);};
  if(action==='wait'){
   if(!previous)throw new CliError('SETUP_NOT_STARTED','Run opencrawl setup first.');
   const progress=await waitForSetup(()=>{const saved=readSetupState(scope);if(!saved)throw new CliError('SETUP_SCOPE_CHANGED','Saved setup was removed while waiting.');const local=localSetupStatus(api);if(local.installationId!==previous.installationId)throw new CliError('SETUP_SCOPE_CHANGED','The local installation changed while waiting.');return {...saved,selections:preserveRecordingOff(saved.selections,scope)};},{skipCodexHooks,read:()=>readServerSetup(api),verify:(installationId,client)=>verifyInstallation(api,{installationId,client})});
@@ -319,10 +325,10 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  if(action==='next'){
   if(!previous)throw new CliError('SETUP_NOT_STARTED','Run opencrawl setup first.');
   const effective={...previous,selections:preserveRecordingOff(previous.selections,scope)};
-  return {status:'next_action',scope,installationId:effective.installationId,selections:effective.selections,captureMode,nextAction:nextSetupAction(effective,server)};
+  return {status:'next_action',scope,installationId:effective.installationId,selections:effective.selections,captureMode:retainedMode,nextAction:nextSetupAction(effective,server)};
  }
  if(changing&&!workload){if(admitted&&(scopeKey(admitted.scope)!==scopeKey(scope)||previous?.installationId!==admitted.installationId||availabilityBinding(localSetupStatus(api))!==availabilityBinding(admitted)))throw new CliError('SETUP_SCOPE_CHANGED','The setup owner or installation changed after the local availability check.');assertSetupAvailability(platform,values,admitted?.selections,registered);}
- if(action==='status')return {status:'status',scope,captureMode,selections:previous?.selections??null,history:previous?.historyJob??null,...(previous?.worker?{worker:workerObservation(previous.worker)}:{}),server,humanTasks:await tasks(server,previous,inspectHooks)};
+ if(action==='status')return {status:'status',scope,captureMode:retainedMode,selections:previous?.selections??null,history:previous?.historyJob??null,...(previous?.worker?{worker:workerObservation(previous.worker)}:{}),server,humanTasks:await tasks(server,previous,inspectHooks)};
  if(action==='verify'){
   const client=Array.isArray(values.client)?values.client[0]:values.client;
   if(!previous?.installationId||typeof client!=='string')throw new CliError('INVALID_USAGE',`Run \`${formatSetupCommand(['setup','--api',api],command)}\` first, then \`${formatSetupCommand(['setup','verify','--api',api,'--client','CLIENT'],command)}\`.`,64);
@@ -339,7 +345,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   if(!previous.installationId&&previous.firstRun==='complete'&&!chosen(selected,'plugins').length&&!chosen(selected,'history').length){
    return {status:'recording_off',scope,installationId:undefined,selections:selected,humanTasks:[]};
   }
-  const state=await applyClients(scope,selected,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,captureMode,eligibility(selected).eligible,stopDaemon,onProgress,inspectHooks);
+  const state=await applyClients(scope,selected,installPlugins,command,installDaemon,validateCapturePrincipal,['darwin','linux'].includes(platform)&&!process.env.OPENCRAWL_AUTH,daemonReady,installationMode(selected),eligibility(selected).eligible,stopDaemon,onProgress,inspectHooks);
   return completed(state);
  }
  const clients=setupInventory({api,platform,workload,registered,saved:interactive&&action==='run'?admitted?.selections:undefined,...(claudeOnly?{client:'claude-code' as const}:{})});
@@ -366,6 +372,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  // Only exact admitted choices can retain deferred clients, even implicitly.
  if(!workload)assertSetupAvailability(platform,Object.fromEntries((['plugins','forward','history'] as const).map(group=>[group,list(chosen(selections,group))])),admitted?.selections,registered);
  if(!interactive||action!=='run'){assertPluginSelection(selections);if(!workload)assertCaptureSelections(selections,previous?.selections);}
+ let captureMode=questionnaire?requestedMode:installationMode(selections);
  const retainedHistory=workload?[]:Object.keys(previous?.selections.history??{}).filter(client=>!newSetupClientAvailable(client,platform,registered));
  const availableHistory=()=>[...historyFiles(api,claudeOnly?'claude-code':undefined).filter(file=>!retainedHistory.includes(file.harness)&& (workload||newSetupClientAvailable(file.harness,platform,registered))),...(previous?.historyJob?.files??[]).filter(file=>retainedHistory.includes(file.harness))];
  const optionalFailures=action==='run'&&interactive?new Map<string,PluginResult>():undefined;
@@ -426,14 +433,10 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    if(updates===null)return {status:'cancelled',humanTasks:[]};
    autoUpdateClients.push(...updates.filter(row=>row.selected&&selectedIds.has(row.id)).map(row=>row.id));
   }
-  if(selectedIds.size&&eligibility(selections).eligible){
-   const service=await choose({phase:3,title:'Background capture',description:'Install background utility for more reliable session capture?',noneLabel:'Record without a background service',items:[{id:'daemon',label:'Install background service',selected:values['capture-mode']===undefined||captureMode==='daemon'}]});
-   if(service===null)return {status:'cancelled',humanTasks:[]};
-   captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';
-  }
+  captureMode=installationMode(selections);
   const capture=chosen(selections,'plugins').length>0;
   if(capture){
-   checkMode(selections);
+   checkMode(captureMode,selections);
    onProgress?.('Installing session capture tooling','Connecting the selected agents and enabling session recording.','installing');
   }else onProgress?.('Saving your choices','Turning off new-session recording for this workspace on this machine.');
   const recorded=await saveRecording();
@@ -458,7 +461,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  const notice=participationNotice(chosen(selections,'plugins'));
  const plan=async()=>({status:'confirmation_required',...(workload||registered?{}:{availability:setupAvailabilityMessage}),scope,clients,selections,captureMode,daemon:eligibility(selections),...(notice?{participationNotice:notice}:{}),...(selections.plugins.cursor?{nativeHooks:'Cursor setup installs the deployment-specific plugin and its recording hooks in the local plugins folder.'}:{}),historyBenefit,history:{files:files.length,bytes:files.reduce((n,f)=>n+f.bytes,0)},planId,humanTasks:await tasks(server,previous,inspectHooks),applyCommand:formatSetupCommand(['setup','apply','--api',api,...(claudeOnly?['--client','claude-code']:[]),'--plugins',list(chosen(selections,'plugins')),'--forward',list(chosen(selections,'forward')),'--history',list(chosen(selections,'history')),'--capture-mode',captureMode,'--plan-id',planId,'--yes','--json'],command)});
  if(action!=='apply'||values.yes!==true)return plan();
- checkMode(selections);
+ checkMode(captureMode,selections);
  if(values['plan-id']!==undefined&&values['plan-id']!==planId)throw new CliError('SETUP_PLAN_CHANGED',`The workspace, choices or available history changed. Review \`${formatSetupCommand(['setup','--api',api,'--json'],command)}\` again before applying.`,2);
  if(values['plan-id']===undefined&&!['plugins','forward','history'].every(group=>typeof values[group]==='string'))throw new CliError('SETUP_CONFIRMATION_REQUIRED','Use the applyCommand after the user confirms its choices, or specify all three selections with --yes.',64);
  if(!chosen(selections,'plugins').length&&!chosen(selections,'history').length)return recordingOff(await finishChoices(await saveRecording()));

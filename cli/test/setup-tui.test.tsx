@@ -62,12 +62,12 @@ test('setup hints span the bottom row and wrap as whole shortcuts on resize',asy
    return app.lastFrame()!.split('\n');
   };
   const wide=await resize(90),line=wide[22]!;
-  expect(line.slice(2,10)).toBe('↑ ↓ Move');
+  expect(line.slice(2,10)).toBe('← → Move');
   expect(line.trimEnd().length).toBe(88);
   expect(line.indexOf('Enter Select')).toBeGreaterThan(30);
   expect(line.trimEnd().endsWith('Esc Cancel')).toBe(true);
   const narrow=await resize(28);
-  expect(narrow[21]).toContain('↑ ↓ Move');
+  expect(narrow[21]).toContain('← → Move');
   expect(narrow[21]).toContain('Enter Select');
   expect(narrow[22]).toContain('Esc Cancel');
   app.rerender(<NoticeScreen title="Installing" description="Installing the plugin." onCancel={()=>{}}/>);
@@ -79,7 +79,9 @@ test('hosting is a single choice selected with arrows and Enter, with cancellati
   let answer:Hosting|null|undefined;const app=render(<HostingScreen onComplete={value=>{answer=value;}}/>);
   try{
    await tick();app.stdin.write(' ');await tick();expect(answer).toBeUndefined();
-   if(choice==='self-hosted'){app.stdin.write(down);await tick();}
+   expect(app.lastFrame()).toMatch(/› \[ Cloud \][^\n]*\[ Self-hosted \]/);
+   await pressAndRead(app,right,'› [ Self-hosted ]');
+   if(choice!=='self-hosted')await pressAndRead(app,'\u001b[D','› [ Cloud ]');
    app.stdin.write(choice===null?'\u001b':enter);await tick();expect(answer).toBe(choice);
   }finally{app.unmount();}
  }

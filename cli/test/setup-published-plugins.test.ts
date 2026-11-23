@@ -69,7 +69,7 @@ test('daemon requires a supported local host and handoff capability; new profile
 
 test('failed mounted-volume service offers recovery without claiming a privacy diagnosis',()=>{
  const message=daemonStartupGuidance(['/Volumes/Proof/bin/opencrawl','/Volumes/Proof/profile'],'darwin');
- expect(message).toContain('startup was not confirmed');expect(message).toContain('mounted volume');expect(message).toContain('without a background service');expect(message).not.toContain('permission was denied');
+ expect(message).toContain('startup was not confirmed');expect(message).toContain('mounted volume');expect(message).toContain('Fix the host-service issue and retry');expect(message).not.toContain('permission was denied');
  expect(daemonStartupGuidance(['/usr/local/bin/opencrawl','/Users/example/.config'],'darwin')).not.toContain('mounted volume');
  expect(daemonStartupGuidance(['/Volumes/Proof/bin/opencrawl'],'linux')).not.toContain('mounted volume');
 });
