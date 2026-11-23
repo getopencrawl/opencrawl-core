@@ -406,7 +406,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState,autoUpdate:previousGrant.includes(id)};
   }));
   options.sort((a,b)=>Number(a.disabled)-Number(b.disabled));
-  const selected=await choose({phase:1,title:'Record new sessions',description:'Choose which agents save new sessions to your workspace. They can also suggest related work.',noneLabel:'Do not record any sessions on this machine',items:options});
+  const selected=await choose({phase:1,title:'Record new sessions',description:'Choose which agents to record on this machine.',noneLabel:'Do not record any sessions on this machine',items:options});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
   const eligibleIds=new Set(options.filter(item=>!item.disabled).map(item=>item.id));
   const selectedIds=new Set(selected.filter(row=>row.selected&&eligibleIds.has(row.id)).map(row=>row.id));

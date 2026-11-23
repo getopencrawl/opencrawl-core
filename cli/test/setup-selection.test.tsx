@@ -10,7 +10,10 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
  let answer:SelectionItem[]|null|undefined;const app=await renderReady(<SetupSelection screen={screen} onComplete={value=>{answer=value;}}/>);
  try{
   await waitForFrame(app,'› [x] Claude Code');
+  expect(app.lastFrame()).not.toContain('sharing instructions');
+  await pressAndRead(app,'?','? Hide details');
   expect(app.lastFrame()?.replace(/\s+/g,' ')).toContain('sharing instructions to Claude Code and Codex.');
+  expect(app.lastFrame()?.replace(/\s+/g,' ')).toContain('workspace’s credit policy');
   expect(app.lastFrame()).toMatch(/Codex[^\n]*⚠ Needs reinstall/);
   expect(app.lastFrame()).toContain('Reinstall & record');
   expect(app.lastFrame()!.indexOf('Antigravity')).toBeGreaterThan(app.lastFrame()!.indexOf('Do not record'));
@@ -23,6 +26,9 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
   await pressAndRead(app,' ','› [x] Do not record');
   expect(app.lastFrame()).toContain('[ ] Codex');
   expect(app.lastFrame()).not.toContain('sharing instructions');
+  expect(app.lastFrame()).toContain('No recording plugins are selected.');
+  await pressAndRead(app,'?','? What gets installed?');
+  expect(app.lastFrame()).not.toContain('No recording plugins are selected.');
   await pressAndRead(app,down,'› [ Continue ]');expect(answer).toBeUndefined();
   await pressAndRead(app,right,'› [ Cancel ]');
   await pressAndRead(app,up,'› [x] Do not record');

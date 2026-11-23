@@ -20,7 +20,7 @@ Interactive setup on macOS connects a workspace and installs recording for the s
 2. **Record new sessions.** Setup shows Claude Code, Codex, Antigravity (agy),
    and Cursor. Setup also detects Claude Code and Codex when a desktop app provides them.
    Move with the arrow keys and toggle checkboxes with Space. Move to the
-   bottom buttons and press Enter to activate one. Selecting an agent installs its integration and enables capture.
+   bottom buttons and press Enter to activate one. Press **?** to see what the selected plugins install, including any global profile changes.
    Compatible detected agents start selected on each interactive run. Unavailable local integrations appear unchecked and disabled below **Do not record any sessions on this machine**. You can still import past sessions with recording off.
    Eligible installations offer the background utility preselected.
 3. **Import past sessions.** A separate screen lists supported local histories,
@@ -29,7 +29,11 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    Cursor history import is not currently supported.
 4. Complete any required native agent sign-in/trust clicks. Claude-only setup
    can open Claude Code and continue verification automatically. Other selected
-   agents receive their native setup handoff. `setup next --json` checks every
+   agents receive their native setup handoff. For Codex, approve the hooks in
+   either Codex Desktop or Codex CLI, then send the verification prompt in a
+   new chat in either client using the same profile. **Skip for now** leaves
+   Codex pending and continues with the other selected agents.
+   `setup next --json` checks every
    selected agent; one verified agent cannot make the whole installation complete.
 
 Run `opencrawl setup` again to choose the workspace, recording agents, background utility and history import afresh. A valid sign-in is reused.

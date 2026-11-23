@@ -23,6 +23,7 @@ import {needsFirstRunSetup} from '../src/setup/first-run.ts';
 import {findSetupConnection} from '../src/setup/native-mcp.ts';
 import {runInteractiveSetup} from '../src/setup/interactive.ts';
 import type {SetupUi} from '../src/setup/tui.tsx';
+const approvedCodexHooks=async():Promise<CodexHookReview>=>({state:'observed',total:12,pending:0,disabled:0});
 const setupCommand=(action:string,api:string,values:Parameters<typeof realSetupCommand>[2],dependencies:NonNullable<Parameters<typeof realSetupCommand>[3]>={})=>realSetupCommand(action,api,values,{platform:'darwin',canInstall:async()=>true,modeEligibility:()=>({eligible:values['capture-mode']==='daemon'||Boolean(readCaptureConfig()?.captureWorker||readCaptureConfig()?.daemonRequested),reason:'Fixture supervisor'}),daemonReady:async()=>true,installDaemon:async()=>({kind:'launchd',status:'installed',supervised:true,label:'fixture',path:'fixture'}),...dependencies});
 
 test('authenticated setup registers the Git helper on apply and repairs it on rerun',async()=>{
@@ -165,11 +166,11 @@ test('full human TUI keeps installation, history and pending verification in its
   screens.push(screen.title);
   return 'done';
  },close:()=>{closed=true;},native:async run=>run()};
- const result=await runInteractiveSetup({values:{},readDestination:()=>({}),withOrigin:async(origin,run)=>{expect(origin).toBe(api);return run();},login:async()=>{throw Error('Unexpected sign-in');}},{createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{
+ const result=await runInteractiveSetup({values:{},readDestination:()=>({}),withOrigin:async(origin,run)=>{expect(origin).toBe(api);return run();},login:async()=>{throw Error('Unexpected sign-in');}},{createUi:()=>ui,resolveRuntime:async()=>undefined,inspectCodex:approvedCodexHooks,pause:async()=>{
   expect(screens.at(-1)).toBe('Verify the Codex connection');
   if(++polls===3)setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});
  },setup:(action,origin,values,dependencies)=>setupCommand(action,origin,values,{...dependencies,installPlugins:async()=>({results:[{client:'codex',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})});
- expect(result).toBe(0);expect(closed).toBe(true);expect(screens).toContain('Installing session capture tooling');expect(polls).toBe(3);expect(screens.indexOf('Invite Example Team')).toBeGreaterThan(screens.indexOf('Installing session capture tooling'));expect(screens.indexOf('Invite Example Team')).toBeLessThan(screens.indexOf('Checking setup'));expect(_observations).toContainEqual({tenantId:'tenant',userId:'user',email:'teammate@example.test'});expect(screens.slice(screens.indexOf('Checking setup'))).toEqual(['Checking setup','Verify the Codex connection','Setup complete']);
+ expect(result).toBe(0);expect(closed).toBe(true);expect(screens).toContain('Installing session capture tooling');expect(polls).toBe(3);expect(screens.indexOf('Invite Example Team')).toBeGreaterThan(screens.indexOf('Installing session capture tooling'));expect(screens.indexOf('Invite Example Team')).toBeLessThan(screens.indexOf('Checking setup'));expect(_observations).toContainEqual({tenantId:'tenant',userId:'user',email:'teammate@example.test'});expect(screens.slice(screens.indexOf('Checking setup'))).toEqual(['Checking setup','Approve OpenCrawl hooks','Checking setup','Verify the Codex connection','Setup complete']);
  expect(readCaptureConfig()?.harnesses).toEqual(['codex']);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.selections.history.codex).toBe(false);
 },false,'codex',true));
 
@@ -225,7 +226,7 @@ test('a failed plugin leaves history and healthy agents usable and can be retrie
  };
  const failure={client:'cursor' as const,status:'error' as const,message:'Installer no longer available.'};
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:async()=>{}},{
-  createUi:()=>ui,resolveRuntime:async()=>undefined,pause:async()=>{expect(++polls).toBe(1);setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});},
+  createUi:()=>ui,resolveRuntime:async()=>undefined,inspectCodex:approvedCodexHooks,pause:async()=>{expect(++polls).toBe(1);setCodex({installed:true,mcp:{state:'authenticated'},proof:{state:'verified'}});},
   setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,
    installPlugins:async()=>({results:[failure,{client:'codex',status:'installed'}],humanTasks:[{client:'cursor',id:'repair',kind:'plugin_install',title:'Resolve Cursor plugin installation',instruction:'Retry installation'}]}),
    launchHistory:()=>{historyJobs++;return {state:'queued'};}
@@ -296,18 +297,19 @@ test('Codex hook approval refreshes without input and advances to a user-opened 
   choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&item.id==='codex'})),
   action:async screen=>{actions.push(screen.title);return 'done';},
   progress:(title,description,details,options)=>{
-   if(options?.waiting){
+   if(options?.waiting?.onSkip){
     waitingScreens++;
-    expect(title).toBe('Review OpenCrawl hooks');
-    expect(description).toBe('ChatGPT Desktop or Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
-    expect(details).toEqual(['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.']);
-    expect(options.waiting.spinner).toBe('Checking whether OpenCrawl hooks are trusted…');
+    expect(title).toBe('Approve OpenCrawl hooks');
+    expect(description).toBe('Choose either option:');
+    expect(details).toEqual(['Codex Desktop','Open Settings → Hooks → From Plugins → OpenCrawl. Select “Trust all”.','\nCodex CLI','Run `codex` in another terminal. At “Hooks need review”, review the pending hooks and select “Trust all and continue”.']);
+    expect(options.waiting.spinner).toBe('Waiting for approval…');
    }
    if(title==='Verify the Codex connection'){
     expect(reviews).toHaveLength(0);
-    expect(description).toContain('Hooks approved');
+    expect(description).toBe('Start a new chat in Codex CLI or Codex Desktop and send:');
     expect(options?.prompt).toBe('Finish OpenCrawl setup for '+api+' using my saved choices.');
-    expect(details?.[0]).toBe('Keep this terminal open. Setup will continue when Codex connects.');
+    expect(details).toEqual([]);
+    expect(options?.waiting).toEqual({spinner:'Waiting for Codex to connect…'});
     handoffs++;
    }
   }
@@ -334,7 +336,8 @@ test('skipping hook trust during inspection saves Codex as pending and continues
   signal:new AbortController().signal,welcome:async()=>true,hosting:unexpected,workspace:unexpected,invite:unexpected,native:unexpected,close:()=>{},
   choose:async screen=>screen.items.map(item=>({...item,selected:screen.phase===1&&['codex','cursor'].includes(item.id)})),
   progress:(title,_description,_details,options)=>{
-   if(options?.waiting){visited.push('trust');skip=options.waiting.onSkip;}
+   if(options?.waiting?.onSkip){visited.push('trust');skip=options.waiting.onSkip;}
+   if(title==='Verify the Codex connection')throw Error('Skipped Codex was sent to verification');
    if(title==='Open Cursor'){
     visited.push('cursor');
     expect(options?.prompt).toContain('verify_installation tools for cursor');
@@ -348,7 +351,7 @@ test('skipping hook trust during inspection saves Codex as pending and continues
   }
  };
  const code=await runInteractiveSetup({values:{},readDestination:()=>({api}),withOrigin:(_origin,run)=>run(),login:unexpected},{
-  createUi:()=>ui,resolveRuntime:async()=>({executable:'/native/codex',desktop:false}),native:unexpected,pause:async()=>{},
+  createUi:()=>ui,resolveRuntime:async()=>undefined,native:unexpected,pause:async()=>{},
   inspectCodex:()=>{skip!();return inspection.promise;},
   setup:(action,origin,values,deps)=>setupCommand(action,origin,values,{...deps,installPlugins:async()=>({results:[{client:'codex',status:'installed'},{client:'cursor',status:'installed'}],humanTasks:[]}),launchHistory:()=>({state:'not_started'})})
  });
@@ -505,7 +508,7 @@ test('Claude opens verification on its connected legacy server while workspace p
  expect(code).toBe(0);expect(calls).toHaveLength(1);
 },false,'claude-code'));
 
-test('Antigravity opens native consent first and resumes its saved task after an incomplete attempt', async () => {
+test.each(['verify','connect'])('Antigravity opens native consent first and handles retry choice %s', async retry => {
  await fixture(async (api, dir, _observations, setClient) => {
   mkdirSync(join(dir, 'agy', 'antigravity-cli'), {recursive: true});
   const screens: string[] = [];
@@ -517,10 +520,11 @@ test('Antigravity opens native consent first and resumes its saved task after an
    action: async screen => {
     screens.push(screen.title);
     if (screen.title === 'Connect Antigravity') {
-     expect(screen.details).toContain('opencrawl_opencrawl');
+     expect(screen.description).toBe(calls.length===0?'Open /mcp, select opencrawl_opencrawl, and sign in if prompted.':'Open /plugin, select opencrawl, and choose Sign in.');
+     expect(screen.details).toEqual(['Once connected, press Esc and type /quit to continue setup.']);
      return 'open';
     }
-    if (screen.title === 'Antigravity verification is pending') return 'verify';
+    if (screen.title === 'Antigravity verification is pending') return retry;
     expect(screen.title).toBe('Setup complete');
     return 'done';
    },
@@ -532,7 +536,7 @@ test('Antigravity opens native consent first and resumes its saved task after an
    native: async (command, args) => {
     expect(command).toBe('/native/agy');
     calls.push(args);
-    if (calls.length === 3) setClient({installed: true, mcp: {state: 'authenticated'}, proof: {state: 'verified'}});
+    if (calls.length === (retry==='verify'?3:4)) setClient({installed: true, mcp: {state: 'authenticated'}, proof: {state: 'verified'}});
     return 0;
    },
    setup: (action, origin, values, deps) => setupCommand(action, origin, values, {...deps,
@@ -544,8 +548,9 @@ test('Antigravity opens native consent first and resumes its saved task after an
   expect(calls[0]).toEqual([]);
   expect(calls[1]?.[0]).toBe('--prompt-interactive');
   expect(calls[1]?.[1]).toContain('setup next --api ' + api);
-  expect(calls[2]).toEqual(calls[1]);
-  expect(screens).toEqual(['Connect Antigravity', 'Antigravity verification is pending', 'Setup complete']);
+  expect(calls.at(-1)).toEqual(calls[1]);
+  if(retry==='connect')expect(calls[2]).toEqual([]);
+  expect(screens).toEqual(['Connect Antigravity','Antigravity verification is pending',...(retry==='connect'?['Connect Antigravity']:[]),'Setup complete']);
  }, false, 'antigravity');
 });
 test('Claude setup separates capture from history and gives the agent one continuation command',async()=>fixture(async(api,dir)=>{
@@ -1148,7 +1153,7 @@ test('eligible interactive runs offer the utility afresh and unattended repair p
  const dependencies={modeEligibility:()=>({eligible:true,reason:'Fixture local supervisor'}),installPlugins:async(_api:string,_clients:string[],options?:Parameters<typeof installSetupPlugins>[2])=>{expect(options?.captureMode).toBe('hook');return {results:[{client:'codex' as const,status:'installed' as const,captureAvailable:true,daemonHandoff:true}],humanTasks:[]};},installDaemon:async()=>{installs++;throw Error('Declined service must not install');},launchHistory:()=>({state:'not_started'})};
  const declineService=(expectedDefault:boolean)=>async(screen:SelectionScreen)=>{
   phases.push(screen.phase);
-  if(screen.phase===1)expect(screen.description).toBe('Choose which agents save new sessions to your workspace. They can also suggest related work.');
+  if(screen.phase===1)expect(screen.description).toBe('Choose which agents to record on this machine.');
   if(screen.phase===3){
    expect(screen.description).toBe('Install background utility for more reliable session capture?');
    expect(screen.items.find(item=>item.id==='daemon')?.selected).toBe(expectedDefault);

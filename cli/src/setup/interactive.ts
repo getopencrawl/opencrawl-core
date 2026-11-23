@@ -27,10 +27,11 @@ async function waitForCodexHookTrust(ui:SetupUi,inspect:()=>ReturnType<typeof se
  const signal=AbortSignal.any([controller.signal,ui.signal]);
  const skipped=Promise.withResolvers<'skipped'>();
  ui.progress(
-  'Review OpenCrawl hooks',
-  'ChatGPT Desktop or Codex Desktop: Open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.',
-  ['Codex CLI: In another terminal, run `codex`. At “Hooks need review”, select “Trust all and continue” to trust every pending hook.'],
-  {waiting:{spinner:'Checking whether OpenCrawl hooks are trusted…',onSkip:()=>skipped.resolve('skipped')}}
+  'Approve OpenCrawl hooks',
+  'Choose either option:',
+  ['Codex Desktop','Open Settings → Hooks → From Plugins → OpenCrawl. Select “Trust all”.',
+   '\nCodex CLI','Run `codex` in another terminal. At “Hooks need review”, review the pending hooks and select “Trust all and continue”.'],
+  {waiting:{spinner:'Waiting for approval…',onSkip:()=>skipped.resolve('skipped')}}
  );
  const poll=async()=>{
   for(;;){
@@ -58,12 +59,13 @@ async function connectNativeClient(
  needsLogin=needsLogin&&!connection.skipLogin;
  const prompt=nativeConnectionPrompt(setupPrompt,connection.name,api);
  if(client==='antigravity'){
+  let signInMenu:'mcp'|'plugin'|undefined=needsLogin?'mcp':undefined;
   if(retryAntigravity){
    const retry=await ui.action({title:'Antigravity verification is pending',description:'Reopen Antigravity to check the connection or sign in again.',actions:[{id:'verify',label:'Retry verification'},{id:'connect',label:'Review connection'},{id:'later',label:'Finish later'}]});
    if(retry!=='verify'&&retry!=='connect')return retry==='later'?0:2;
-   needsLogin=retry==='connect';
+   signInMenu=retry==='verify'?undefined:connection.name.endsWith('_opencrawl')?'plugin':'mcp';
   }
-  const code=await launchAntigravitySetup(executable,connection.name,prompt,needsLogin,ui,execute);
+  const code=await launchAntigravitySetup(executable,connection.name,prompt,signInMenu,ui,execute);
   if(code!==0||ui.signal.aborted)return code||130;
  }else{
   const choice=await ui.action({
@@ -175,11 +177,11 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
       }
       const step=next&&'nextAction' in next?next.nextAction:undefined;
       const client=step?.kind==='native_tool'?step.arguments.client:step&&'client' in step?step.client:undefined;
-      const runtime=(step?.kind==='native_tool'||step?.kind==='review_setup')&&(client==='claude-code'||client==='codex'||client==='antigravity')?await resolveRuntime(client):undefined;
+      const runtime=(step?.kind==='native_tool'||step?.kind==='review_setup')&&(client==='claude-code'||client==='antigravity')?await resolveRuntime(client):undefined;
       const executable=runtime?.executable;
       const recordingSetup=next&&'installationId' in next&&'selections' in next?next:undefined;
       const recordsCodex=client==='codex'&&recordingSetup?.selections?.forward.codex;
-      if(step?.kind==='native_tool'&&recordsCodex&&executable&&!codexTrust){
+      if(step?.kind==='native_tool'&&recordsCodex&&!codexTrust){
        const state=recordingSetup.scope&&readSetupState(recordingSetup.scope);
        if(!state||state.installationId!==recordingSetup.installationId)throw new CliError('SETUP_SCOPE_CHANGED','The installation changed before hook review.');
        const observation=await waitForCodexHookTrust(ui,()=>setupHookStatus(api,inspectCodex),pause);
@@ -192,7 +194,7 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        ui.progress('Checking setup','Checking the remaining setup steps.');
        continue;
       }
-      const label=runtime?.desktop?(client==='codex'?'ChatGPT Desktop or Codex Desktop':'Claude Desktop’s Code tab'):labels[client as PluginClient]??client;
+      const label=runtime?.desktop&&client==='claude-code'?'Claude Desktop’s Code tab':labels[client as PluginClient]??client;
       const remainingClientPrompt=codexTrust==='skipped'&&label
        ?`Finish OpenCrawl setup for ${api} in ${label}. Use the OpenCrawl plugin’s installation_status and verify_installation tools for ${client} with my saved choices. I skipped Codex setup for now.`
        :undefined;
@@ -204,17 +206,17 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        ui.progress('Checking setup','Checking the connection to '+label+'.');
        continue;
       }
-      let title:string,description:string,prompt:string|undefined,details:string[]=[];
+      let title:string,description:string,prompt:string|undefined,details:string[]=[],waiting:{spinner:string}|undefined;
       if(label&&(step?.kind==='native_tool'||step?.kind==='review_setup')){
-       title='Open '+label;
-       description='Start a new chat in '+label+' and send this message.';
        prompt=remainingClientPrompt??'Finish OpenCrawl setup for '+api+' using my saved choices.';
-       details=['Keep this terminal open. Setup will continue when '+label+' connects.'];
        if(client==='codex'){
-        title=runtime?.desktop?'Verify the desktop connection':'Verify the Codex connection';
-        if(codexTrust==='trusted')description=runtime?.desktop?'Hooks approved. Start a new Work or Code session and send this message.':'Hooks approved. Start a new chat in Codex and send this message.';
-        if(step.kind==='native_tool'&&step.requiresSignIn)details.push('If Codex asks you to sign in to OpenCrawl, approve the connection.');
-        if(recordsCodex&&!executable)details.push('Open ChatGPT Desktop or Codex Desktop. In the app, open Settings → Hooks. Under From Plugins, select OpenCrawl and click Trust all.');
+        title='Verify the Codex connection';
+        description='Start a new chat in Codex CLI or Codex Desktop and send:';
+        waiting={spinner:'Waiting for Codex to connect…'};
+       }else{
+        title='Open '+label;
+        description='Start a new chat in '+label+' and send this message.';
+        details=['Keep this terminal open. Setup will continue when '+label+' connects.'];
        }
       }else if(label&&step?.kind==='wait_capture'){
        title='Checking '+label;
@@ -225,9 +227,9 @@ export async function runInteractiveSetup(options:Options,{createUi,setup=setupC
        if(client)reconciled.delete(client);
        continue;
       }
-      const instruction=JSON.stringify([title,description,prompt,details]);
+      const instruction=JSON.stringify([title,description,prompt,details,waiting]);
       if(displayedInstruction!==instruction){
-       ui.progress(title,description,details,{prompt});
+       ui.progress(title,description,details,{prompt,waiting});
        displayedInstruction=instruction;
       }
       await pause(ui.signal);
