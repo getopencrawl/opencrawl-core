@@ -44,7 +44,8 @@ test('searchable capture alone stays pending until native Claude MCP is verified
   await page.goto('/setup?full-app');
   const tile = page.getByRole('listitem').filter({has:page.getByRole('heading', {name:'Test Mac'})});
   await expect(tile).toContainText('No connected agents');
-  await expect(tile.locator('.oc-presence, time')).toHaveCount(0);
+  await expect(tile.locator('.oc-computer-contact time')).toBeVisible();
+  await expect(tile.locator('.oc-agent-contact')).toHaveCount(0);
   await expect(tile).not.toContainText('Claude Code');
   data.setup!.installations[0]!.clients[0]!.mcp.state='authenticated';
   await expect(tile).toContainText('Claude Code',{timeout:6000});
@@ -52,7 +53,8 @@ test('searchable capture alone stays pending until native Claude MCP is verified
   data.setup!.installations[0]!.clients = [];
   data.setup!.installations[0]!.updatedAt = new Date().toISOString();
   await expect(tile).toContainText('No connected agents',{timeout:6000});
-  await expect(tile.locator('.oc-presence, time')).toHaveCount(0);
+  await expect(tile.locator('.oc-computer-contact time')).toBeVisible();
+  await expect(tile.locator('.oc-agent-contact')).toHaveCount(0);
 });
 
 test('computer tiles show connected agent names and allow connecting another agent', async ({page}) => {

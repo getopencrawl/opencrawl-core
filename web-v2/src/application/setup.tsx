@@ -53,12 +53,12 @@ function ComputerTile({installation, now}: {installation: Installation; now: num
 
   return <li className="oc-computer-tile">
     <h3>{installation.machine.label}<Icon name="monitor" size={16}/></h3>
-    {agents.length > 0 ? <>
-      <LastSeen at={installation.updatedAt} now={now}/>
+    <LastSeen at={installation.updatedAt} now={now}/>
+    {agents.length > 0 ?
       <dl className="oc-computer-agents" aria-label="Connected agents and their last contact">
         {agents.map(agent => <LastSeen key={agent.client} agent={clientNames[agent.client]} at={agent.lastSeenAt} now={now}/>)}
       </dl>
-    </> : <p className="oc-computer-empty">No connected agents</p>}
+    : <p className="oc-computer-empty">No connected agents</p>}
   </li>;
 }
 
@@ -82,7 +82,7 @@ export function SetupPage({status, error, mcpUrl}: {mcpUrl: string; status: NonN
   const {installations} = status;
   return <Page className="oc-management-page" title="Setup">
     {error && <Notice tone="danger">{error}</Notice>}
-    <Section className="oc-management-panel" title="Connect a host" description="Run this command in a terminal on the computer where your agents run. Sign in and choose which agents to connect.">
+    <Section className="oc-management-panel" title="Connect a host" description="On the host, run this in a terminal. Sign in and choose which agents to connect.">
       <AgentInstructions mcpUrl={mcpUrl}/>
     </Section>
     <Section className="oc-source-section oc-computers-section" title="Your hosts">

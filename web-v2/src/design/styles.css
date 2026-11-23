@@ -334,7 +334,7 @@ img { max-width: 100%; }
 .oc-table-container td:last-child { white-space: nowrap; }
 
 .oc-install-instructions > .oc-tabs { margin-bottom: var(--space-3); }
-.oc-install-instructions .command-token { display: inline; }
+.oc-install-instructions .command-token { display: inline-block; max-width: 100%; overflow-wrap: anywhere; vertical-align: top; }
 
 .oc-computers-section { margin-bottom: var(--space-6); }
 .oc-computers-section > .oc-section-heading { align-items: center; }
