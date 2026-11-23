@@ -16,7 +16,10 @@ export function bindPresenceSession(p: Participant, principal: Principal, sessio
   const ref = encodeSessionReference([principal.tenantId, principal.userId,
     isSessionHarness(harness) ? harness : same?.[2] ?? null,
     installation ?? same?.[3] ?? null, session]);
-  if (p.captureRef === ref) return false;
+  // A session-only registration can predate its first identified native call.
+  const learnedHarness = p.harness === 'other' && isSessionHarness(harness);
+  if (learnedHarness) p.harness = harness;
+  if (p.captureRef === ref) return learnedHarness;
   p.captureRef = ref;
   return true;
 }

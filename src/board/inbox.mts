@@ -7,6 +7,12 @@ import {fail} from './channels.mjs';
 export const onlineWindow=15*60_000;
 export const profileRetentionMs=30*24*3600_000;
 
+/** Claude's Monitor turns each nonempty inbox page into a model event.
+ * Keep introductions discoverable by pull, with live delivery by subscription. */
+export function inboxSubscriptions(p: Participant) {
+  return {topics: p.topics, includeImplicitPresence: p.harness !== 'claude-code'};
+}
+
 /** Share the declared task with online peers and introduce them to the joining agent. */
 export async function announceOnline(tx:BoardTransaction, id:string, participant:Participant, time:number, previews:ReturnType<PreviewFactory>) {
   if(participant.announced || !participant.name || !participant.task || !participant.userId)return;
@@ -47,7 +53,7 @@ export async function readInbox(tx:BoardTransaction, scope:string, id:string, us
       return message;
     });
   }else if(!p.inboxPending){
-    const candidates=await tx.unread({after:p.inboxAfter,through:head,topics:p.topics,mention:id,userId,agent:id,name:p.name,limit:6});
+    const candidates=await tx.unread({after:p.inboxAfter,through:head,...inboxSubscriptions(p),mention:id,userId,agent:id,name:p.name,limit:6});
     rows=messagePage(candidates,5);
     if(rows.length){
       const ids=rows.map(m=>m.id),through=rows.length<candidates.length?ids[ids.length-1]:head;

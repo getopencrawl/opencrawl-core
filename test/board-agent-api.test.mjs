@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {boardStateFixture,boardTenant} from './fixtures/board-state.mjs';
 import {authorizedBoard} from '../dist/src/application/board.mjs';
+import {createBoardAnnouncementWriter} from '../dist/src/board/announcements.mjs';
 const alice={tenantId:'team-a',userId:'alice'},bob={...alice,userId:'bob'},other={tenantId:'team-b',userId:'alice'};
 const user=(principal)=>({session:principal.userId});
 async function fixture(t){const f=await boardStateFixture(t),board=f.make({recentSessions:{list(){throw Error('Board messages must not discover sessions');}}});
@@ -111,6 +112,68 @@ test('the handled cursor is independent of stdout, stable under concurrency, and
  assert.deepEqual(next.messages.map(m=>m.id),[3]);assert.notEqual(next.cursor,page.cursor);
  assert.deepEqual(await api.inbox(alice,{...user(alice),acknowledge:page.cursor}),next);
  assert.deepEqual(await api.inbox(alice,{...user(alice),acknowledge:next.cursor}),{messages:[],cursor:null,more:false});
+});
+
+test('a burst of peer joins stays discoverable without occupying the Claude inbox',async t=>{
+ const {make,state}=await boardStateFixture(t),board=make(),api=board.agent;
+ const receiver={session:'reader'};
+ await board.participate(alice,'bootstrap',{...receiver,harness:'claude-code'});
+ await board.participate(alice,'profile',{...receiver,name:'reader',task:'Review results',announce:true});
+ await api.presence(bob,{...user(bob),name:'writer',task:'Run checks',announce:false});
+ await api.presence(alice,{...receiver,channels:['builds'],announce:false});
+ const {messages:[root]}=await api.post(alice,{...receiver,posts:[{id:'root',channel:'work',text:'Request review'}]});
+ for(let i=0;i<12;i++){
+   await api.presence(bob,{session:'peer-'+i,name:'peer-'+i,task:'Review change '+i});
+ }
+ assert.deepEqual(await api.inbox(alice,{...receiver,noticeOnly:true}),{ids:[],more:false});
+ assert.equal((await board.participate(alice,'inbox',receiver)).batch,null);
+ assert.equal((await api.agents(alice,{query:'peer-',limit:20})).agents.length,12);
+ assert.equal((await api.sync(alice,{...receiver,after:root.id,limit:20})).messages.length,12);
+ assert.equal((await api.inbox(bob,user(bob))).messages.length,5);
+
+ // Further joins interleaved with each real delivery reason. A mention in a
+ // human-authored presence thread must still arrive.
+ const expected=[];
+ async function send(id,text,options){
+   await api.presence(bob,{session:'extra-'+id,name:'extra-'+id,task:'Assist review'});
+   expected.push((await post(api,bob,id,text,options)).messages[0].id);
+ }
+ await send('mention','@reader ready',{channel:'presence'});
+ await send('build','Build complete',{channel:'builds'});
+ await send('reply','Reviewed',{replyTo:root.id});
+ const writer=createBoardAnnouncementWriter({state,tenantId:alice.tenantId});
+ expected.push((await writer.publish({id:'system',text:'Maintenance window'})).id);
+ const page=await api.inbox(alice,receiver);
+ assert.deepEqual(page.messages.map(m=>m.id),expected);
+ assert.deepEqual((await board.participate(alice,'inbox',receiver)).batch.messages.map(m=>m.id),expected);
+ assert.deepEqual(await api.inbox(alice,{...receiver,acknowledge:page.cursor}),{messages:[],cursor:null,more:false});
+});
+
+test('native identity fills in an unknown harness for subsequent session-only polls',async t=>{
+ const {make}=await boardStateFixture(t),board=make(),api=board.agent;
+ await api.presence(alice,{session:'reader',name:'reader',task:'Review',announce:false});
+ await api.presence(bob,{session:'first',name:'first-peer',task:'First review'});
+ const native={currentSession:{harness:'claude-code',sessionId:'reader'}};
+ assert.deepEqual((await api.inbox(alice,native)).messages,[]);
+ await api.presence(bob,{session:'second',name:'next-peer',task:'Second review'});
+ assert.deepEqual((await api.inbox(alice,{session:'reader'})).messages,[]);
+ assert.equal((await board.participate(alice,'inbox',{session:'reader'})).batch,null);
+});
+
+test('Claude can subscribe to live joins and finish an offered page after unsubscribing',async t=>{
+ const {make}=await boardStateFixture(t),board=make(),api=board.agent;
+ const receiver={currentSession:{harness:'claude-code',sessionId:'reader'}};
+ await api.presence(alice,{...receiver,name:'reader',task:'Track peer joins',channels:['presence']});
+ await api.presence(bob,{session:'first',name:'first-peer',task:'First review'});
+ const offered=await api.inbox(alice,receiver);
+ assert.equal(offered.messages.length,1);
+ assert.equal(offered.messages[0].from,'first-peer');
+ await api.presence(alice,{...receiver,channels:['presence'],channelMode:'remove'});
+ await api.presence(bob,{session:'second',name:'next-peer',task:'Second review'});
+ const replay=await api.inbox(alice,receiver);
+ assert.equal(replay.cursor,offered.cursor);
+ assert.deepEqual(replay.messages,offered.messages);
+ assert.deepEqual(await api.inbox(alice,{...receiver,acknowledge:offered.cursor}),{messages:[],cursor:null,more:false});
 });
 
 test('online introductions show the visible opening prompt on the first delivery in both directions',async t=>{

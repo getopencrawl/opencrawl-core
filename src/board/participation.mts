@@ -1,4 +1,4 @@
-import {announceOnline,onlineWindow,profileRetentionMs} from './inbox.mjs';
+import {announceOnline,inboxSubscriptions,onlineWindow,profileRetentionMs} from './inbox.mjs';
 import {bindPresenceSession,type PreviewFactory} from './presence-prompts.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {BoardRepository,BoardReader} from '../state/board.mjs';
@@ -116,7 +116,7 @@ export function createParticipation({scope,repository,now,requestCaptureErasure,
         if(!p.pending){
           // Select only deliverable rows; irrelevant history is skipped in SQL.
           // One lookahead row preserves the legacy through/more receipt boundary.
-          const unseen=await tx.unread({after:p.ackCursor,through:head,topics:p.topics,mention:id,userId:principal.userId,agent:id,name:p.name,limit:9});
+          const unseen=await tx.unread({after:p.ackCursor,through:head,...inboxSubscriptions(p),mention:id,userId:principal.userId,agent:id,name:p.name,limit:9});
           if(unseen.length||time>=p.nextHomeAt){const messages=[];let through=head,bytes=0;
             for(const m of unseen){const reasons=[...(m.onlineAudience?.includes(id)?['presence']:[]),...(m.mentions?.includes(id)?['mention']:[]),...(p.topics.includes(m.topic)?['channel']:[]),...(m.threadId&&p.followedThreads?.includes(m.threadId)&&!p.mutedThreads?.includes(m.threadId)?['thread']:[]),...(m.system&&m.threadId===undefined?['announcement']:[])];const {requestId,publication,onlineAudience,captureRef,...v}=m,message={...v,reasons},size=Buffer.byteLength(JSON.stringify(message));
               if(messages.length>=8||messages.length>0&&bytes+size>8192){through=m.id-1;break;}messages.push(message);bytes+=size;

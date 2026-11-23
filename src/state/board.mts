@@ -34,7 +34,7 @@ export interface BoardReader {
   directory(input:{after:number;limit:number;cutoff:number}):Promise<{agents:Array<{id:string;participant:BoardProfile}>;total:number}>;
   agents():Promise<BoardState['agents']>;
   topics():Promise<Array<{topic:string;posts:number;first:number;latest:{id:number;timestamp:number;name:string}}>>;
-  unread(input:{after:number;through:number;topics:string[];mention?:string;userId:string;agent:string;name:string;limit:number}):Promise<BoardMessage[]>;
+  unread(input:{after:number;through:number;topics:string[];includeImplicitPresence?:boolean;mention?:string;userId:string;agent:string;name:string;limit:number}):Promise<BoardMessage[]>;
   publication(input:{userId:string;agent:string;name:string;requestId:string;registered:boolean}):Promise<BoardMessage|null>;
 }
 export interface BoardTransaction extends BoardReader {
@@ -199,16 +199,16 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},
       async topics(){return (await query('SELECT topic,first_id,posts,latest FROM opencrawl_board_topics WHERE namespace=$1 AND tenant_hash=$2 ORDER BY first_id')).rows.map(row=>({topic:row.topic,first:Number(row.first_id),posts:Number(row.posts),latest:row.latest}));},
-      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m
+      async unread({after,through,topics,includeImplicitPresence=true,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m
         LEFT JOIN opencrawl_board_participants f ON f.namespace=m.namespace AND f.tenant_hash=m.tenant_hash AND f.agent=$8
         WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4
         AND (NOT m.record ? 'onlineAudience' OR m.record->'onlineAudience' ? $8)
-        AND (m.record->'onlineAudience' ? $8 OR m.record->'mentions' ? $6
+        AND (($11::boolean AND m.record->'onlineAudience' ? $8) OR m.record->'mentions' ? $6
           OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')
           OR ((m.topic=ANY($5::text[]) OR f.record->'followedThreads' @> jsonb_build_array((m.record->>'threadId')::bigint))
             AND (NOT m.record ? 'threadId' OR NOT coalesce(f.record->'mutedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint))))
         AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9))))))
-        ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
+        ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit,includeImplicitPresence])).rows.map(row=>row.record);},
       async publication({userId,agent,name,requestId,registered}){return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND author=$3 AND request_id=$4 AND(agent=$5 OR($6 AND lower(name)=lower($7) AND legacy_agent)) ORDER BY (agent=$5) DESC,id LIMIT 1`,[userId,requestId,agent,registered,name])).rows[0]?.record??null;},
       putParticipant,
       async prepareRegistration(id,name,cutoff){
