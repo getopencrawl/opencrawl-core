@@ -630,7 +630,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
                   if(block?.type==='tool_result')blocks(block.content);
                 }
               }
-              if(parsed.kind==='message' || parsed.kind==='agent_message')blocks(parsed.data?.content);
+              if(parsed.kind==='message' || parsed.kind==='agent_message' || (parsed.kind==='automation_message' && record.attachment?.type==='queued_command'))blocks(parsed.data?.content);
               // Antigravity's native GENERIC.media contains images actually returned
               // by a tool. Its arbitrary output text and tool arguments stay opaque.
               if(harness==='antigravity' && parsed.kind==='tool_result')blocks(parsed.data?.content);
