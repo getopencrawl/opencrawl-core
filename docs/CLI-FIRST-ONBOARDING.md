@@ -18,7 +18,8 @@ Interactive setup on macOS connects a workspace and installs recording for the s
    only Enter to finish. Installation uses a moving violet trail while work
    runs, without claiming a measured percentage.
 2. **Record new sessions.** Setup shows Claude Code, Codex, Antigravity (agy),
-   and Cursor. Claude Desktop (Code) and ChatGPT Desktop (Work) can use their own native runtimes. Move with the arrow keys and toggle checkboxes with Space. Move to the
+   and Cursor. Setup also detects Claude Code and Codex when a desktop app provides them.
+   Move with the arrow keys and toggle checkboxes with Space. Move to the
    bottom buttons and press Enter to activate one. Selecting an agent installs its integration and enables capture.
    Compatible detected agents start selected on each interactive run. Unavailable local integrations appear unchecked and disabled below **Do not record any sessions on this machine**. You can still import past sessions with recording off.
    Eligible installations offer the background utility preselected.

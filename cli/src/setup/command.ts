@@ -394,9 +394,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const prospectiveHistory=values.history===undefined?{}:selections.history;
   const candidates=clients.filter(client=>client.plugin&&client.forward);
   const previousGrant=automaticUpdateClients(sameOwner&&previous?.installationId===boundConfig?.installationId?previous:null);
-  const options=await Promise.all(candidates.map(async client=>{
-   const id=client.id;
-   const label=id==='claude-code'?'Claude Code / Claude Desktop (Code)':id==='codex'?'Codex / ChatGPT Desktop (Work)':client.label;
+  const options=await Promise.all(candidates.map(async ({id,label})=>{
    const offered=newSetupClientAvailable(id,platform,registered);
    if(!offered||!await canInstall(id)){
     let detail=offered?'No compatible local installation':'Unavailable on this platform';
