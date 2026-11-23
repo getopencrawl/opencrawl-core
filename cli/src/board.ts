@@ -152,6 +152,9 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
   const deadline = timeoutMs ? now() + timeoutMs : Infinity;
   const active=()=>{check();signal?.throwIfAborted();};
   let emitted = lastEmitted, failures = 0;
+  // Arrivals receipted without a wake-up ride along with the next delivered
+  // notice, so a chat still learns who joined and what they are doing.
+  let arrivals: {id: number; from?: unknown; time?: unknown; text?: unknown}[] = [];
   while (now() < deadline) {
     let wait = 10_000;
     try {
@@ -164,6 +167,7 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
         // Nothing here asks this chat to act. Receipt the page so it is not
         // offered again, and read the next page without waiting.
         await acknowledgeRoutine(batch.cursor);
+        arrivals = [...arrivals, ...batch.messages.map(({id, from, time, text}: any) => ({id, from, time, text}))].slice(-quietArrivalLimit);
         if (failures) warn('Board connection restored.');
         failures = 0;
         if (batch.more) continue;
@@ -175,7 +179,8 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
             more: batch.more ?? false,
             cursor: batch.cursor ?? null,
           };
-          await emit({type: 'board.notice', ids, ...content});
+          await emit({type: 'board.notice', ids, ...content, ...(arrivals.length ? {arrivals} : {})});
+          arrivals = [];
         }
         else for(const message of compactDelivery(batch.messages)){active();await emit(message);}
         active();
@@ -212,6 +217,9 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
     catch(error){if(signal?.aborted)return;throw error;}
   }
 }
+
+/** The most recent quiet arrivals kept for the next delivered notice. */
+export const quietArrivalLimit = 50;
 
 /** A complete page holding only arrival announcements addressed to nobody.
  * A mention, a reply or any other channel makes the whole page deliverable. */

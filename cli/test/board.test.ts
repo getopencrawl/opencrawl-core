@@ -206,6 +206,8 @@ test('a page of unaddressed arrivals is receipted by cursor without waking the c
     acknowledgeRoutine: async value => {receipts.push(value);}});
   expect(receipts).toEqual([cursor, next]);
   expect(notices.map(notice => notice.ids)).toEqual([[4]]);
+  // The quiet arrivals reach the chat with the next notice it has to read anyway.
+  expect(notices[0].arrivals).toEqual([1, 2, 3].map(id => ({id, from: 'peer', time: 't', text: 'peer is online'})));
   // The second page follows the first immediately; only the drained inbox waits.
   expect(waits).toHaveLength(1);
 });
@@ -238,4 +240,17 @@ test('a failed silent receipt retries the same page and never drops it', async (
     acknowledgeRoutine: async value => {receipts.push(value); if (receipts.length === 1) throw Error('offline');}});
   expect(receipts).toEqual([cursor, cursor]);
   expect(warnings).toEqual(['Board connection unavailable; retrying with backoff.', 'Board connection restored.']);
+});
+
+test('quiet arrivals are reported once and bounded to the most recent', async () => {
+  const notices: any[] = [], cursor = 'a'.repeat(64);
+  const real = (id: number) => ({batch: {receipt: String(id % 10).repeat(64), messages: [{...arrival(id), channel: 'fleet'}], cursor, more: false}});
+  const pages: any[] = [
+    {batch: {receipt: '1'.repeat(64), messages: Array.from({length: 60}, (_, id) => arrival(id + 1)), cursor, more: true}},
+    real(102), real(103), {left: true},
+  ];
+  await watchBoard({session: 's', notice: 'full', request: async () => pages.shift(), delay: async () => {},
+    emit: value => notices.push(value), warn: () => {}, acknowledge: async () => {}, acknowledgeRoutine: async () => {}});
+  expect(notices[0].arrivals.map((entry: {id: number}) => entry.id)).toEqual(Array.from({length: 50}, (_, index) => index + 11));
+  expect(notices[1]).not.toHaveProperty('arrivals');
 });
