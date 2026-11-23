@@ -37,8 +37,8 @@ Each run starts fresh and reuses your workspace sign-in. Arrows move, Space togg
 a checkbox, and Enter confirms. Compatible detected agents start checked. To opt
 out, choose **Do not record any sessions on this machine**.
 
-Setup also recognizes the runtimes in ChatGPT Desktop (Work) and Claude Desktop
-(Code). Open the desktop coding surface once to initialize its runtime. Unavailable
+If you use Claude Code or Codex through a desktop app, open the agent there
+once so setup can detect it. Unavailable
 agents appear disabled below the recording choices. **⚠ Needs reinstall** flags a damaged installation. History import
 requires a separate confirmation. Admins can invite teammates or press Esc to
 skip. Open the selected agent when prompted to finish its native connection.

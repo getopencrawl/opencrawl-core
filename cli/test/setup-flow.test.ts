@@ -189,7 +189,8 @@ test('only compatible local agents can be enabled, including after an earlier op
   choose:async screen=>{
    phases.push(screen.phase);
    if(screen.phase===1){
-    expect(screen.items[0]).toMatchObject({id:'codex',selected:true,disabled:false});
+    expect(screen.items[0]).toMatchObject({id:'codex',label:'Codex',selected:true,disabled:false});
+    expect(screen.items.find(row=>row.id==='claude-code')?.label).toBe('Claude Code');
     expect(screen.items.slice(1).every(row=>row.disabled&&!row.selected)).toBe(true);
     expect(screen.items.find(row=>row.id==='cursor')?.detail).toContain('No compatible local installation');
    }
@@ -569,7 +570,7 @@ test('recording Codex can independently import only Claude history after the sec
  writeFileSync(file,JSON.stringify({type:'user',sessionId:'claude-history',uuid:'one',message:{role:'user',content:'past session'}})+'\n');
  const steps:string[]=[],screens:SelectionScreen[]=[],launched:SetupState[]=[];
  const result=await setupCommand('run',api,{}, {interactive:true,choose:async screen=>{
-  if(screen.phase===4){expect(screen.items).toMatchObject([{id:'codex',selected:false}]);return screen.items.map(item=>({...item,selected:true}));}
+  if(screen.phase===4){expect(screen.items).toMatchObject([{id:'codex',label:'Codex',selected:false}]);return screen.items.map(item=>({...item,selected:true}));}
   screens.push(screen);steps.push('choose:'+screens.length);
   if(screens.length===1){expect(readSetupState({api,tenantId:'tenant',userId:'user'})).toBeNull();return screen.items.map(item=>({...item,selected:item.id==='codex'}));}
   expect(steps).toEqual(['choose:1','install','choose:2']);expect(launched).toHaveLength(0);expect(readSetupState({api,tenantId:'tenant',userId:'user'})?.historyJob).toBeUndefined();expect(screen.description).toBe(historyBenefit);expect(screen.items.map(item=>item.id)).toEqual(['claude-code','codex']);expect(screen.items.every(item=>!item.selected)).toBe(true);return screen.items.map(item=>({...item,selected:item.id==='claude-code'}));
