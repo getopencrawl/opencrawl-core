@@ -90,12 +90,12 @@ cloudRuntimeTest('Cloud bundle validation creates no local-client installation s
 cloudRuntimeTest('Devin workload prioritizes mail, preserves deferred or denied pages and requires a matching served read',()=>fixture(async f=>{
  await f.start();
  saveBoardRegistration(f.api,nativeSession,{workspace:'fixture-tenant',agent:'a'.repeat(64),name:'reader',boardProtocol:2,boardInbox:true,boardDirect:true,boardReadReceipt:true});
- const proof='b'.repeat(64),calls:string[]=[];
+ const proof='b'.repeat(64),calls:string[]=[],ids=[3];
  let served:Record<string,unknown>|null=null;
  const request=async(_api:string,op:string,args:Record<string,unknown>)=>{
   calls.push(op+'/'+args.delivery);
   if(op==='v2/inbox')return {served};
-  return {messages:args.delivery==='direct'&&args.after!==3?[{id:3}]:[],next:3,notificationReceipt:proof};
+  return {messages:args.delivery==='direct'?ids.filter(id=>id>Number(args.after??0)).map(id=>({id})):[],next:ids.at(-1),notificationReceipt:proof};
  };
  const run=(kind:string,fields:Record<string,unknown>={})=>devinInboxHook(f.api,{hook_event_name:kind,session_id:nativeSession,...fields},request);
  const first=await run('UserPromptSubmit',{prompt_id:'one'});
@@ -110,8 +110,17 @@ cloudRuntimeTest('Devin workload prioritizes mail, preserves deferred or denied 
  await run('PostToolUse',completed);
  expect(calls).toContain('v2/inbox/direct');
  expect((await run('UserPromptSubmit',{prompt_id:'three'}))?.hookSpecificOutput?.additionalContext).toContain(args.readId);
+ ids.push(4);
+ const extended=await run('UserPromptSubmit',{prompt_id:'extended'});
+ expect(extended?.hookSpecificOutput?.additionalContext).toContain('"through":4');
+ expect(extended?.hookSpecificOutput?.additionalContext).toContain(args.readId);
  served={...args,proof,first:3,next:3};
- await run('PostToolUse',completed);
+ const next=await run('PostToolUse',completed);
+ const newer=JSON.parse(next!.hookSpecificOutput!.additionalContext.match(/ with (\{.*\})\./)![1]!);
+ expect(newer.after).toBe(3);
+ expect(newer.readId).not.toBe(args.readId);
+ served={...newer,proof,first:4,next:4};
+ await run('PostToolUse',{...completed,tool_input:newer});
  expect(await run('UserPromptSubmit',{prompt_id:'four'})).toBeUndefined();
  const before=calls.length;
  await expect(run('UserPromptSubmit',{session_id:'devin-other',prompt_id:'x'})).rejects.toThrow();

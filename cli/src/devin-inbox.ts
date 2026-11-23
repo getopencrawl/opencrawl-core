@@ -51,10 +51,11 @@ export async function devinInboxHook(api:string,event:unknown,request=boardReque
        object(input.currentSession)&&input.currentSession.harness==='devin'&&input.currentSession.sessionId===currentSession.sessionId&&
        (input.delivery==='direct'||input.delivery==='routine')&&!input.noticeOnly){
       const feed=state[input.delivery],pending=feed.pending;
-      if(pending&&input.readId===pending.readId&&input.after===pending.after&&input.through===pending.through){
-        const {served}=await call('v2/inbox',{delivery:input.delivery,after:pending.after,through:pending.through,readId:pending.readId,noticeOnly:true});
+      if(pending&&input.readId===pending.readId&&input.after===pending.after&&Number.isSafeInteger(input.through)&&
+         typeof input.through==='number'&&input.through>=pending.first&&input.through<=pending.through){
+        const {served}=await call('v2/inbox',{delivery:input.delivery,after:pending.after,through:input.through,readId:pending.readId,noticeOnly:true});
         if(served?.readId===pending.readId&&served.proof===pending.proof&&served.first===pending.first&&served.after===pending.after&&
-           served.through===pending.through&&Number.isSafeInteger(served.next)&&served.next>=pending.first&&served.next<=pending.through){
+           served.through===input.through&&Number.isSafeInteger(served.next)&&served.next>=pending.first&&served.next<=input.through){
           feed.after=served.next;delete feed.pending;
           guard();atomicJson(file,state);
         }
@@ -69,7 +70,7 @@ export async function devinInboxHook(api:string,event:unknown,request=boardReque
           Number.isSafeInteger(row?.id)&&row.id>(i?rows[i-1]!.id:after??0)&&row.id<=page.next))return;
         const first=page.messages[0].id;
         feed.pending={after:pending?.after??first-1,first:pending?.first??first,proof:pending?.proof??page.notificationReceipt,
-          through:page.messages.at(-1).id,at:0,readId:randomUUID()};
+          through:page.messages.at(-1).id,at:0,readId:pending?.readId??randomUUID()};
       }else if(!pending){feed.after=page.next;return;}
       else if(kind==='Stop'||(!newPrompt&&Date.now()-pending.at<batchMs))return;
       const p=feed.pending!;
