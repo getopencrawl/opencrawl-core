@@ -6,7 +6,8 @@ export const wakeKey = (namespace:string, tenant:string) =>
   createHash('sha256').update(JSON.stringify([namespace, tenant])).digest('hex');
 
 export interface BoardWake {
-  wait(ms:number): Promise<void>;
+  /** False when the shared LISTEN socket disconnected during this wait. */
+  wait(ms:number): Promise<boolean>;
   close(): void;
 }
 
@@ -49,11 +50,13 @@ export function directPostListener(pool: Pool) {
     catch (error) { close(); throw error; }
     return {
       async wait(ms) {
+        if (active !== connection) return false;
         const timer = setTimeout(wake, ms);
         try { await signal.promise; } finally {
           clearTimeout(timer);
           signal = Promise.withResolvers<void>();
         }
+        return active === connection;
       },
       close
     };

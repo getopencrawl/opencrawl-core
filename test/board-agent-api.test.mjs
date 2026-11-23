@@ -324,6 +324,23 @@ test('an unavailable PostgreSQL listener leaves direct mail readable at the next
   assert.deepEqual((await api.sync(alice,{...args,after:empty.next})).messages.map(m=>m.id),[urgent.messages[0].id]);
 });
 
+test('a disconnected direct wait resubscribes before rechecking mail and caps repeated failures', async t=>{
+  const {api,repository}=await fixture(t);
+  const args={...user(alice),delivery:'direct',waitMs:2000};
+  let subscribed=0,closed=0;
+  repository.watchDirect=async()=>{
+    subscribed++;
+    if(subscribed===2)await post(api,bob,'during-reconnect','Direct mail',{channel:'work',mentions:['codex:alice']});
+    return {wait:async()=>false,close:()=>{closed++;}};
+  };
+  const page=await api.sync(alice,args);
+  assert.deepEqual(page.messages.map(m=>m.text),['Direct mail']);
+  assert.deepEqual([subscribed,closed],[2,2]);
+  const empty=await api.sync(alice,{...args,after:page.next});
+  assert.deepEqual(empty.messages,[]);
+  assert.deepEqual([subscribed,closed],[4,4]);
+});
+
 test('a tracked read confirms only the full records returned to that native session and lane',async t=>{
   const {api}=await fixture(t);
   const currentSession={harness:'antigravity',sessionId:'native-track'};

@@ -130,17 +130,24 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
     if(!args.waitMs || first.messages.length || 'left' in first || !repository.watchDirect)return first;
     // Listen before rechecking the durable log, covering a commit between the
     // first empty read and LISTEN. Late or coalesced signals are harmless.
-    const watch=await repository.watchDirect(key).catch(()=>undefined);
+    let watch=await repository.watchDirect(key).catch(()=>undefined);
     // The idle hook rechecks the durable feed on its next bounded request.
     if(!watch)return first;
     try {
       let pending=await read(first.next);
-      while(!pending.messages.length && !('left' in pending) && Date.now()<deadline){
-        await watch.wait(Math.max(0,deadline-Date.now()));
+      let retried=false;
+      while(watch && !pending.messages.length && !('left' in pending) && Date.now()<deadline){
+        if(!await watch.wait(Math.max(0,deadline-Date.now()))){
+          // Restore LISTEN before checking the log to cover posts during reconnection.
+          // One retry per request bounds the work during a sustained database outage.
+          watch.close();
+          watch=!retried && Date.now()<deadline ? await repository.watchDirect(key).catch(()=>undefined) : undefined;
+          retried=true;
+        }
         pending=await read(pending.next);
       }
       return pending;
-    } finally { watch.close(); }
+    } finally { watch?.close(); }
   }
   return {
     list,search:(principal:Principal,input:unknown)=>list(principal,agentSearchSchema.parse(input)),
