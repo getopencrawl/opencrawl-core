@@ -10,9 +10,9 @@ const searches=new Map([
 export function agentSearchEntry(tool:string|null,input:unknown):SearchEntry|undefined{
   const operation=tool&&searches.get(tool);
   if(!operation)return;
-  if(operation==='Workspace' && input && typeof input==='object' && 'query' in input && typeof input.query==='string' && !input.query.trim())return;
   const {query,harness,sessionId}=searchDetail(input);
-  return {kind:'agent',operation,queries:query===null?[]:[query],harness,sessionId};
+  if(!query?.trim())return;
+  return {kind:'agent',operation,queries:[query],harness,sessionId};
 }
 interface HttpCall {principal?:Principal; tool:string; entry?:SearchEntry}
 const active=new AsyncLocalStorage<HttpCall>();
