@@ -44,7 +44,18 @@ export function fixtureBoardState(){
       async directory({after,limit,cutoff}){const all=Object.entries(data.participants).filter(([,p])=>p.seen>cutoff).sort(([a,p],[b,q])=>q.seen-p.seen||a.localeCompare(b));return {total:all.length,agents:all.slice(after,after+limit).map(([id,p])=>({id,participant:{...copy(p),pending:p.pending?{...copy(p.pending),count:p.pending.messages.length}:null}}))};},
       async agents(){return copy(data.agents);},
       async topics(){const topics=new Map();for(const m of data.messages){const value=topics.get(m.topic)??{topic:m.topic,first:m.id,posts:0};value.posts++;value.latest={id:m.id,timestamp:m.timestamp,name:m.name};topics.set(m.topic,value);}return [...topics.values()];},
-      async unread({after,through,topics,mention,userId,agent,name,limit}){return copy(messages({after,through,limit:Infinity}).filter(m=>(!m.onlineAudience||m.onlineAudience.includes(agent))&&(m.onlineAudience?.includes(agent)||m.mentions?.includes(mention)||(topics.includes(m.topic)||data.participants[agent]?.followedThreads?.includes(m.threadId))&&!data.participants[agent]?.mutedThreads?.includes(m.threadId)||m.system&&m.threadId===undefined)&&!(m.author===userId&&(m.agent===agent||m.name.toLowerCase()===name.toLowerCase()&&(m.agent===boardIdentity(m.author,m.name)||data.participants[m.agent]?.name.toLowerCase()===name.toLowerCase())))).slice(0,limit));},
+      async unread({after,through,topics,mention,userId,agent,name,limit,delivery}){
+        const profile=data.participants[agent];
+        return copy(messages({after,through,limit:Infinity}).filter(m=>{
+          if(m.onlineAudience && !m.onlineAudience.includes(agent))return false;
+          if(m.author===userId && (m.agent===agent || m.name.toLowerCase()===name.toLowerCase() &&
+              (m.agent===boardIdentity(m.author,m.name) || data.participants[m.agent]?.name.toLowerCase()===name.toLowerCase())))return false;
+          const muted=profile?.mutedThreads?.includes(m.threadId);
+          const direct=m.mentions?.includes(mention) || !muted && profile?.followedThreads?.includes(m.threadId);
+          return direct ? delivery!=='routine' : delivery!=='direct' &&
+            (m.onlineAudience?.includes(agent) || topics.includes(m.topic) && !muted || m.system && m.threadId===undefined);
+        }).slice(0,limit));
+      },
       async publication({userId,agent,name,requestId,registered}){return copy(data.messages.find(m=>m.author===userId&&m.requestId===requestId&&(m.agent===agent||registered&&m.name.toLowerCase()===name.toLowerCase()&&m.agent===boardIdentity(m.author,m.name)))??null);},
       async putParticipant(id,value){data.participants[id]=copy(value);data.participantsPresent=true;},async removeParticipant(id){delete data.participants[id];},
       async putAgent(id,value){data.agents[id]=copy(value);},async removeAgent(id){delete data.agents[id];},

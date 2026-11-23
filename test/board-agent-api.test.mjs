@@ -255,3 +255,68 @@ test('channels, subscriptions and filters work beyond former count limits',async
  const removed=await api.presence(bob,{...user(bob),channelMode:'remove',channels:right,announce:false});
  assert.deepEqual(new Set(removed.channels),new Set([...channels,...left]));
 });
+
+test('direct sync bypasses a pending ordinary page and wakes on a committed mention or followed reply', {timeout:12000}, async t=>{
+  const {api,make}=await fixture(t);
+  const reader={...user(alice),delivery:'direct'};
+  await api.presence(alice,{...user(alice),channels:['chatter'],announce:false});
+  const routine=await post(api,bob,'routine','Background channel update',{channel:'chatter'});
+  const pending=await api.inbox(alice,user(alice));
+  assert.deepEqual(pending.messages.map(m=>m.id),[routine.messages[0].id]);
+  const root=(await post(api,alice,'root','Follow this thread',{channel:'work'})).messages[0];
+  const unrelated=(await post(api,bob,'other','Other thread',{channel:'chatter'})).messages[0];
+  const idle=await api.sync(alice,reader);
+  assert.deepEqual(idle.messages,[]);
+  // Use another board instance for notifications to exercise PostgreSQL,
+  // including the subscribe/recheck window across independent connections.
+  const sender=make().agent;
+  const live=api.sync(alice,{...reader,after:idle.next,waitMs:4500});
+  await sender.post(bob,{...user(bob),posts:[{id:'unrelated',replyTo:unrelated.id,text:'Ordinary reply'}]});
+  const urgent=(await post(sender,bob,'mention','Need attention',{channel:'work',mentions:['codex:alice']})).messages[0];
+  const first=await live;
+  assert.deepEqual(first.messages.map(m=>m.id),[urgent.id]);
+  const next=api.sync(alice,{...reader,after:first.next,waitMs:4500});
+  // Wait for a real LISTEN session to be established before posting.
+  await new Promise(resolve=>setTimeout(resolve,150));
+  const reply=(await post(sender,bob,'reply','Followed reply',{replyTo:root.id})).messages[0];
+  assert.deepEqual((await next).messages.map(m=>m.id),[reply.id]);
+  assert.deepEqual(await api.inbox(alice,user(alice)),{...pending,more:true});
+  await api.follow(alice,{...user(alice),threadId:root.id,following:false});
+  await post(sender,bob,'muted','Muted reply',{replyTo:root.id});
+  const mentioned=(await post(sender,bob,'override','Explicit mention',{replyTo:root.id,mentions:['codex:alice']})).messages[0];
+  assert.deepEqual((await api.sync(alice,{...reader,after:reply.id})).messages.map(m=>m.id),[mentioned.id]);
+  assert.deepEqual((await api.sync(other,{...reader,after:0})).messages,[]);
+  await assert.rejects(api.sync(alice,{session:'unregistered',delivery:'direct'}),{status:409});
+  await assert.rejects(api.sync(alice,{...reader,workspace:'team-b'}),{status:403});
+  await api.presence(alice,{...user(alice),leave:true});
+  assert.deepEqual((await api.sync(alice,{...reader,after:0})).messages,[]);
+});
+
+test('routine notification batches exclude direct mail and the inbox can replay the exact bounded read',async t=>{
+  const {api}=await fixture(t),target=user(alice);
+  await api.presence(alice,{...target,channels:['digest'],announce:false});
+  const postTo=async(id,extra={})=>(await post(api,bob,id,id,{channel:'digest',...extra})).messages[0].id;
+  const first=await postTo('routine-a'), direct=await postTo('direct',{mentions:['codex:alice']}), last=await postTo('routine-b');
+  const preview=await api.sync(alice,{...target,delivery:'routine',after:0,select:['id']});
+  assert.deepEqual(preview.messages,[{id:first},{id:last}]);
+  await postTo('later');
+  const args={...target,delivery:'routine',after:0,through:last};
+  const page=await api.inbox(alice,args);
+  assert.deepEqual(page.messages.map(m=>m.id),[first,last]);
+  assert.equal(page.notificationReceipt,preview.notificationReceipt);
+  assert.deepEqual(await api.inbox(alice,args),page);
+  const urgent=await api.inbox(alice,{...args,delivery:'direct'});
+  assert.deepEqual(urgent.messages.map(m=>m.id),[direct]);
+  assert.notEqual(urgent.notificationReceipt,page.notificationReceipt);
+  await assert.rejects(api.inbox(alice,{...args,acknowledge:'f'.repeat(64)}),{status:400});
+  await assert.rejects(api.sync(alice,{...target,delivery:'routine',waitMs:1}),{status:400});
+});
+
+test('an unavailable PostgreSQL listener leaves direct mail readable at the next check', async t => {
+  const {api,repository}=await fixture(t);
+  repository.watchDirect=async()=>{throw Error('Listener unavailable');};
+  const args={...user(alice),delivery:'direct',waitMs:200};
+  const empty=await api.sync(alice,args);
+  const urgent=await post(api,bob,'direct-after-outage','Please review',{mentions:['codex:alice']});
+  assert.deepEqual((await api.sync(alice,{...args,after:empty.next})).messages.map(m=>m.id),[urgent.messages[0].id]);
+});

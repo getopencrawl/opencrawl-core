@@ -3,6 +3,7 @@ import {z} from 'zod';
 import type {PoolClient} from 'pg';
 import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
+import {directPostListener, wakeKey, type BoardWake} from './board-wake.mjs';
 import {ensureSchemaIndex,type ApplicationDatabase} from './postgres.mjs';
 import type {BoardState,BoardMessage,Participant,Delivery} from '../board/types.mjs';
 import {systemIdentity,announcementChannel} from '../board/channels.mjs';
@@ -34,7 +35,7 @@ export interface BoardReader {
   directory(input:{after:number;limit:number;cutoff:number}):Promise<{agents:Array<{id:string;participant:BoardProfile}>;total:number}>;
   agents():Promise<BoardState['agents']>;
   topics():Promise<Array<{topic:string;posts:number;first:number;latest:{id:number;timestamp:number;name:string}}>>;
-  unread(input:{after:number;through:number;topics:string[];mention?:string;userId:string;agent:string;name:string;limit:number}):Promise<BoardMessage[]>;
+  unread(input:{delivery?:'direct'|'routine';after:number;through:number;topics:string[];mention?:string;userId:string;agent:string;name:string;limit:number}):Promise<BoardMessage[]>;
   publication(input:{userId:string;agent:string;name:string;requestId:string;registered:boolean}):Promise<BoardMessage|null>;
 }
 export interface BoardTransaction extends BoardReader {
@@ -57,6 +58,7 @@ interface SearchBoundary {rank:number;stamp:number;id:number}
 interface RankedMessage<T> {record:T;id:string;stamp:string;rank:number}
 interface SearchPage<T> {total:number;through:number;messages:T[];facets?:Record<string,SearchFacet>;next:string|null}
 export interface BoardRepository {
+  watchDirect?(tenantHash:string):Promise<BoardWake>;
   read<T>(tenantHash:string,run:(reader:BoardReader)=>Promise<T>):Promise<T>;
   transaction<T>(tenantHash:string,run:(transaction:BoardTransaction)=>Promise<T>):Promise<T>;
   search(tenantHash:string,userId:string,args:BoardSearchInput,now:number):Promise<SearchPage<ReturnType<typeof visible>>>;
@@ -89,6 +91,7 @@ function* boardBatches<T>(rows:Iterable<T>):Generator<T[]>{
 }
 
 export function createPostgresBoardState(database:ApplicationDatabase) {
+  const listen = directPostListener(database.pool);
   const {namespace}=database;
   async function ready(){await database.ready();await database.transaction(async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl-board-schema-v1',0))");await client.query(`
     CREATE TABLE IF NOT EXISTS opencrawl_board_heads(namespace text NOT NULL,tenant_hash text NOT NULL,head bigint NOT NULL DEFAULT 0 CHECK(head>=0),usage jsonb NOT NULL,participants_present boolean NOT NULL DEFAULT false,PRIMARY KEY(namespace,tenant_hash));
@@ -199,16 +202,19 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},
       async topics(){return (await query('SELECT topic,first_id,posts,latest FROM opencrawl_board_topics WHERE namespace=$1 AND tenant_hash=$2 ORDER BY first_id')).rows.map(row=>({topic:row.topic,first:Number(row.first_id),posts:Number(row.posts),latest:row.latest}));},
-      async unread({after,through,topics,mention,userId,agent,name,limit}){return (await query(`SELECT m.record FROM opencrawl_board_messages m
+      async unread({after,through,topics,mention,userId,agent,name,limit,delivery}){return (await query(`SELECT m.record FROM opencrawl_board_messages m
         LEFT JOIN opencrawl_board_participants f ON f.namespace=m.namespace AND f.tenant_hash=m.tenant_hash AND f.agent=$8
+        CROSS JOIN LATERAL (SELECT m.record ? 'threadId' AND coalesce(f.record->'mutedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint) AS muted) thread
+        CROSS JOIN LATERAL (SELECT m.record->'mentions' ? $6 OR (m.record ? 'threadId' AND NOT thread.muted
+          AND f.record->'followedThreads' @> jsonb_build_array((m.record->>'threadId')::bigint)) AS eligible) direct
         WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id>$3 AND m.id<=$4
         AND (NOT m.record ? 'onlineAudience' OR m.record->'onlineAudience' ? $8)
-        AND (m.record->'onlineAudience' ? $8 OR m.record->'mentions' ? $6
-          OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')
-          OR ((m.topic=ANY($5::text[]) OR f.record->'followedThreads' @> jsonb_build_array((m.record->>'threadId')::bigint))
-            AND (NOT m.record ? 'threadId' OR NOT coalesce(f.record->'mutedThreads','[]'::jsonb) @> jsonb_build_array((m.record->>'threadId')::bigint))))
+        AND (CASE WHEN direct.eligible THEN $11::text IS DISTINCT FROM 'routine'
+          ELSE $11::text IS DISTINCT FROM 'direct' AND (m.record->'onlineAudience' ? $8
+            OR (m.topic='opencrawl' AND m.record->>'system'='true' AND NOT m.record ? 'threadId')
+            OR (m.topic=ANY($5::text[]) AND NOT thread.muted)) END)
         AND NOT(m.author=$7 AND(m.agent=$8 OR(lower(m.name)=lower($9) AND(m.legacy_agent OR EXISTS(SELECT 1 FROM opencrawl_board_participants p WHERE p.namespace=m.namespace AND p.tenant_hash=m.tenant_hash AND p.agent=m.agent AND lower(p.name)=lower($9))))))
-        ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit])).rows.map(row=>row.record);},
+        ORDER BY m.id LIMIT $10`,[after,through,topics,mention??'',userId,agent,name,limit,delivery??null])).rows.map(row=>row.record);},
       async publication({userId,agent,name,requestId,registered}){return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND author=$3 AND request_id=$4 AND(agent=$5 OR($6 AND lower(name)=lower($7) AND legacy_agent)) ORDER BY (agent=$5) DESC,id LIMIT 1`,[userId,requestId,agent,registered,name])).rows[0]?.record??null;},
       putParticipant,
       async prepareRegistration(id,name,cutoff){
@@ -226,7 +232,11 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       async removeParticipant(id){await query('DELETE FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
       async putAgent(id,value){await query('INSERT INTO opencrawl_board_agents(namespace,tenant_hash,agent,record,position) VALUES($1,$2,$3,$4,(SELECT coalesce(max(position),0)+1 FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2)) ON CONFLICT(namespace,tenant_hash,agent) DO UPDATE SET record=EXCLUDED.record',[id,value]);},
       async removeAgent(id){await query('DELETE FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);},
-      async append(input){const result=await query('UPDATE opencrawl_board_heads SET head=head+1 WHERE namespace=$1 AND tenant_hash=$2 RETURNING head');const message={...input,id:Number(result.rows[0].head)};if(!Number.isSafeInteger(message.id))throw fail('Board sequence exhausted');await insertMessage(message);return message;},
+      async append(input){const result=await query('UPDATE opencrawl_board_heads SET head=head+1 WHERE namespace=$1 AND tenant_hash=$2 RETURNING head');const message={...input,id:Number(result.rows[0].head)};if(!Number.isSafeInteger(message.id))throw fail('Board sequence exhausted');await insertMessage(message);
+        if (message.threadId !== undefined || message.mentions?.length) {
+          await client.query("SELECT pg_notify('opencrawl_board_direct', $1)", [wakeKey(namespace,key)]);
+        }
+        return message;},
       async addUsage(inputBytes,outputBytes){await query(`UPDATE opencrawl_board_heads SET usage=jsonb_build_object('calls',(usage->>'calls')::bigint+1,'inputBytes',(usage->>'inputBytes')::bigint+$3,'outputBytes',(usage->>'outputBytes')::bigint+$4) WHERE namespace=$1 AND tenant_hash=$2`,[inputBytes,outputBytes]);},
     };
   }
@@ -334,7 +344,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       return output;
     });
   }
-  return {ready,read,transaction,search,searchAgentMessages,importLegacy,exportLegacy,readIn:exportIn,projectIn};
+  return {watchDirect:(key:string)=>listen(wakeKey(namespace,key)),ready,read,transaction,search,searchAgentMessages,importLegacy,exportLegacy,readIn:exportIn,projectIn};
 }
 
 /** Validate before any DDL/import. Unknown fields fail instead of disappearing. */

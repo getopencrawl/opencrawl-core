@@ -87,7 +87,7 @@ export function createParticipation({scope,repository,now,requestCaptureErasure,
         const peers=announce?await announceOnline(tx,id,p,time,preview):undefined;
         await tx.putParticipant(id,p);
         await tx.refreshAgent(id,p.name,time);
-        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,...peers?.length?{peers}:{},boardProtocol:2,boardInbox:true,
+        return {workspace:principal.tenantId,agent:id,session:args.session,name:p.name||null,task:p.task||null,harness:p.harness,resumed,...peers?.length?{peers}:{},boardProtocol:2,boardInbox:true,boardDirect:true,
           subscriptions:{mentions:Boolean(p.name),topics:p.topics,channels:p.topics,announcements:true},pollAfterMs:10000,...(operation==='register'?{home:resumed?[]:(await tx.messages({limit:5,descending:true})).reverse().map(visibleMessage),agents:(await directory(tx,0,8)).agents}:{})};
       }
       if(!p)throw fail('Register this session before using the board',404);
