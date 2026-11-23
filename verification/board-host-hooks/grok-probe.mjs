@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 const script=fileURLToPath(import.meta.url),dir=dirname(script),state=join(dir,'.grok-probe-state');
 const mark='OC-GROK-ACCEPT-01A204FF';
 const file=join(homedir(),'.cursor/hooks.json'),command=JSON.stringify(process.execPath)+' '+JSON.stringify(script)+' event';
+const expiry=join(dir,'.count-until'),counter=join(dir,'.invocations');
 const events=['beforeSubmitPrompt','postToolUse','afterShellExecution','stop'];
 const json=(path,value)=>{const tmp=path+'.'+randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(tmp,JSON.stringify(value,null,2)+'\n',{mode:0o600});fs.renameSync(tmp,path);};
 const report=()=>fs.existsSync(state)?JSON.parse(fs.readFileSync(state)):null;
@@ -23,10 +24,17 @@ if(process.argv[2]==='install'||process.argv[2]==='remove'){
   if(keep.length)existing.hooks[key]=keep;else delete existing.hooks[key];
  }
  json(file,existing);
+ if(installing)json(expiry,Date.now()+10*60_000);
+ else if(fs.existsSync(expiry))fs.unlinkSync(expiry);
  console.log(JSON.stringify({installed:installing,events}));
 }else if(process.argv[2]==='report'){
- const s=report();console.log(JSON.stringify(s?{id:s.id,events:s.events,offers:s.offers}:{events:[],offers:[]}));
+ const s=report(),invocations=fs.existsSync(counter)?fs.statSync(counter).size:0;
+ console.log(JSON.stringify({invocations,events:s?.events??[],offers:s?.offers??[]}));
 }else if(process.argv[2]==='event'){
+ // Count process entry even when this version supplies neither a prompt nor
+ // a conversation ID. No data from other sessions is used by the counter.
+ if(fs.existsSync(expiry)&&Number(fs.readFileSync(expiry,'utf8'))>Date.now())
+  fs.appendFileSync(counter,'.',{mode:0o600});
  const timeout=setTimeout(()=>process.exit(0),700);let buf='';
  process.stdin.setEncoding('utf8');process.stdin.on('data',part=>{
   buf+=part;if(buf.length>262144)process.exit(0);
