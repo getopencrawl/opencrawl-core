@@ -1,7 +1,7 @@
 # OpenCrawl web application
 
 A reusable React operations console with strict TypeScript and one enforced
-Night design system. Runtime adapters provide already-authorized data and pages.
+Porcelain design system. Runtime adapters provide already-authorized data and pages.
 The package does not depend on hosted identity or commercial services.
 
 Install with `npm ci --prefix web-v2`; validate with `npm run check --prefix web-v2`.
