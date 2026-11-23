@@ -45,8 +45,8 @@ skip. Open the selected agent when prompted to finish its native connection.
 
 Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
 `setup --yes --json`, and read `setup status --local --json`. For bounded imports,
-see `opencrawl history --help`. In setup, choose which apps may run hooks from future
-OpenCrawl plugin updates. Check for updates now with `opencrawl setup updates`.
+see `opencrawl history --help`. On the recording screen, you can turn on automatic OpenCrawl plugin
+updates for the agents you select. Check for updates now with `opencrawl setup updates`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.

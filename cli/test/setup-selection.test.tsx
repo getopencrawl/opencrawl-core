@@ -56,3 +56,43 @@ test('Cancel and Ctrl+C return no approval',async()=>{
 test('empty history does not open another interactive screen',async()=>{
  expect(await chooseSetupItems({...screen,phase:2,items:[],emptyMessage:'No history found.'})).toEqual([]);
 });
+
+const updateLabel='Keep OpenCrawl plugins up to date (Recommended)';
+test('one checkbox controls updates for selected recording agents',async()=>{
+ const items=screen.items.slice(0,2).map(item=>({...item,selected:false,autoUpdate:false}));
+ let answer:SelectionItem[]|null|undefined;
+ const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={value=>{answer=value;}}/>);
+ try{
+  expect(app.lastFrame()).not.toContain(updateLabel);
+  await pressAndRead(app,' ','[ ] '+updateLabel);
+  await pressAndRead(app,down,'› [ ] Codex');
+  await pressAndRead(app,down,'› [ ] Do not record');
+  await pressAndRead(app,down,'› [ ] '+updateLabel);
+  await pressAndRead(app,' ','› [x] '+updateLabel);
+  await pressAndRead(app,up,'› [ ] Do not record');
+  await pressAndRead(app,up,'› [ ] Codex');
+  await pressAndRead(app,' ','› [x] Codex');
+  expect(app.lastFrame()).toContain('[x] '+updateLabel);
+  await pressAndRead(app,down,'› [ ] Do not record');
+  await pressAndRead(app,down,'› [x] '+updateLabel);
+  await pressAndRead(app,' ','› [ ] '+updateLabel);
+  await pressAndRead(app,down,'› [ Reinstall & record ]');
+  app.stdin.write(enter);await tick();
+  expect(answer?.map(item=>[item.selected,item.autoUpdate])).toEqual([[true,false],[true,false]]);
+ }finally{app.unmount();}
+});
+
+test('continuing with mixed saved update choices preserves each agent’s choice',async()=>{
+ const items=screen.items.slice(0,2).map(item=>({...item,selected:true,autoUpdate:item.id==='codex'}));
+ let answer:SelectionItem[]|null|undefined;
+ const app=await renderReady(<SetupSelection screen={{...screen,items}} onComplete={value=>{answer=value;}}/>);
+ try{
+  await waitForFrame(app,'[-] '+updateLabel);
+  await pressAndRead(app,down,'› [x] Codex');
+  await pressAndRead(app,down,'› [ ] Do not record');
+  await pressAndRead(app,down,'› [-] '+updateLabel);
+  await pressAndRead(app,down,'› [ Reinstall & record ]');
+  app.stdin.write(enter);await tick();
+  expect(answer).toEqual(items);
+ }finally{app.unmount();}
+});

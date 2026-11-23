@@ -394,6 +394,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  if(action==='run'&&interactive){
   const prospectiveHistory=values.history===undefined?{}:selections.history;
   const candidates=clients.filter(client=>client.plugin&&client.forward);
+  const previousGrant=automaticUpdateClients(sameOwner&&previous?.installationId===boundConfig?.installationId?previous:null);
   const options=await Promise.all(candidates.map(async client=>{
    const id=client.id;
    const label=id==='claude-code'?'Claude Code / Claude Desktop (Code)':id==='codex'?'Codex / ChatGPT Desktop (Work)':client.label;
@@ -405,7 +406,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    }
    const prior=previous?.pluginResults?.find(row=>row.client===id);
    const installState=await inspectInstall(api,id as LocalPluginClient,prior?.status);
-   return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState};
+   return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState,autoUpdate:previousGrant.includes(id)};
   }));
   options.sort((a,b)=>Number(a.disabled)-Number(b.disabled));
   const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.'+(options.some(item=>!item.disabled&&(item.id==='claude-code'||item.id==='codex'))?' '+participationNotice:''),noneLabel:'Do not record any sessions on this machine',items:options});
@@ -423,16 +424,9 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    if(service===null)return {status:'cancelled',humanTasks:[]};
    captureMode=service.some(item=>item.id==='daemon'&&item.selected)?'daemon':'hook';
   }
-  let autoUpdateClients:string[]=[];
-  if(selectedIds.size){
-   const previousGrant=new Set(automaticUpdateClients(sameOwner&&previous?.installationId===readCaptureConfig()?.installationId?previous:null));
-   const editable=options.filter(item=>selectedIds.has(item.id));
-   const consent=await choose({phase:4,title:'Automatically update OpenCrawl plugins on this machine?',
-    description:'Select the apps where future verified OpenCrawl updates may run new or changed hooks. If an app requires another approval, OpenCrawl keeps the current version active until the update can run.',
-    noneLabel:'Keep plugin updates manual',items:editable.map(item=>({id:item.id,label:item.label,selected:previousGrant.has(item.id),detail:item.id==='codex'?'Download only. Codex requires review.':item.id==='antigravity'?'Download only. The installer can interrupt recording.':process.platform==='win32'?'Download only on Windows.':undefined}))});
-   if(consent===null)return {status:'cancelled',humanTasks:[]};
-   autoUpdateClients=consent.filter(item=>item.selected&&selectedIds.has(item.id)).map(item=>item.id);
-  }
+  const autoUpdateClients=selected.filter(row=>selectedIds.has(row.id)&&row.autoUpdate).map(row=>row.id);
+  // Targeted setup only edits the agents shown on this screen.
+  for(const id of previousGrant)if(!candidates.some(client=>client.id===id)&&selections.plugins[id])autoUpdateClients.push(id);
   const capture=chosen(selections,'plugins').length>0;
   if(capture){
    checkMode(selections);

@@ -41,8 +41,9 @@ run `opencrawl setup status --local --json`.
 
 ## Automatic plugin updates
 
-Run `opencrawl setup` to choose which apps may automatically run future OpenCrawl
-hooks on this machine. The choice starts unchecked. Run setup again to change it.
+On **Record new sessions**, check **Keep OpenCrawl plugins up to date (Recommended)**
+to allow the selected apps to run hooks from future verified updates. The choice
+starts unchecked. Run `opencrawl setup` again to change it.
 Use `opencrawl setup updates` to check now or `opencrawl setup status --local --json`
 to see which apps you selected.
 
