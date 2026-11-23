@@ -106,10 +106,18 @@ export function Page({title, description, actions, bodyWidth = 'wide', bodyClass
     </div>
   </div>;
 }
-export function Section({title, description, actions, children, className = '', headingLevel = 2, ...props}: Omit<SurfaceProps, 'title'> & {title?: ReactNode; description?: ReactNode; actions?: ReactNode; headingLevel?: 2 | 3}) {
+export function Section({title, description, actions, actionNote, children, className = '', headingLevel = 2, ...props}: Omit<SurfaceProps, 'title'> & {title?: ReactNode; description?: ReactNode; actions?: ReactNode; actionNote?: ReactNode; headingLevel?: 2 | 3}) {
   const id = useId();
   const Heading = headingLevel === 3 ? 'h3' : 'h2';
-  return <section {...props} className={`oc-section ${className}`} aria-labelledby={title ? id : props['aria-labelledby']}>{(title || description || actions) && <div className="oc-section-heading"><div>{title && <Heading id={id}>{title}</Heading>}{description && <p>{description}</p>}</div>{actions && <div className="actions">{actions}</div>}</div>}{children}</section>;
+  const hasActionNote = Boolean(actions && actionNote);
+  return <section {...props} className={`oc-section ${className}${hasActionNote ? ' oc-section-with-action-note' : ''}`} aria-labelledby={title ? id : props['aria-labelledby']}>
+    {(title || description || actions) && <div className="oc-section-heading">
+      <div>{title && <Heading id={id}>{title}</Heading>}{description && <p>{description}</p>}</div>
+      {hasActionNote && <div className="oc-section-action-note">{actionNote}</div>}
+      {actions && <div className="actions">{actions}</div>}
+    </div>}
+    {children}
+  </section>;
 }
 export function Notice({tone = 'info', title, children, actions, className = ''}: {tone?: 'info' | 'success' | 'warning' | 'danger'; title?: string; children: ReactNode; actions?: ReactNode; className?: string}) {
   return <div className={`oc-notice oc-notice-${tone} ${className}`} role={tone === 'danger' ? 'alert' : 'status'}>

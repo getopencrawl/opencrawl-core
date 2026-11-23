@@ -4,7 +4,7 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {MemoryRouter} from '../src/router.tsx';
 import {AppShell} from '../src/app.tsx';
-import {Avatar, Button, Field, Input} from '../src/design/components.tsx';
+import {Avatar, Button, Field, Input, Section} from '../src/design/components.tsx';
 
 test('one registry owns active SPA navigation and page rendering', () => {
   const routes = [{path:'/', label:'Overview', element:createElement('h1', null, 'Overview page')}, {path:'/diagnostics', label:'Diagnostics', element:createElement('h1', null, 'Diagnostics page')}];
@@ -21,6 +21,16 @@ test('button preserves native busy semantics and cannot accidentally submit form
   const html = renderToStaticMarkup(createElement(Button, {'aria-busy':true}, 'Working'));
   assert.match(html, /type="button"/);
   assert.match(html, /aria-busy="true"/);
+});
+
+test('a section shows its action note only when the action is available', () => {
+  const render = (actions?: ReturnType<typeof createElement>) => renderToStaticMarkup(createElement(Section, {
+    title: 'Export', actionNote: 'Includes the current selection.', actions,
+  }));
+  const withAction = render(createElement(Button, null, 'Download'));
+  assert.match(withAction, /oc-section-action-note">Includes the current selection\./);
+  assert.match(withAction, /<button[^>]*>Download<\/button>/);
+  assert.doesNotMatch(render(), /oc-section-with-action-note|Includes the current selection/);
 });
 
 test('field associates its error with the input and visible label', () => {
