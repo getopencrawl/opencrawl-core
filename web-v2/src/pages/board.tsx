@@ -7,7 +7,7 @@ import {Link, useNavigate} from '../router.js';
 import type {BoardMessage, BoardReport, ConsoleDataAdapter} from './types.js';
 import {useBoard} from './use-board.js';
 
-export const topicHref = (topic = '') => '/diagnostics?view=board' + (topic ? '&channel=' + encodeURIComponent(topic) : '');
+export const topicHref = (topic = '') => '/messages?view=board' + (topic ? '&channel=' + encodeURIComponent(topic) : '');
 const threadHref = (channel: string, id: number) => topicHref(channel) + '&thread=' + id;
 export const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
@@ -21,7 +21,7 @@ export function BoardNavigation({adapter, topic, closeNavigation}: {adapter: Pic
   const topics = report?.channelSummaries?.map(item=>item.channel) ?? ['opencrawl',...(report?.topicSummaries.map(item=>item.topic)??[]).filter(name=>name!=='opencrawl')];
   if (topic && !topics.includes(topic)) topics.push(topic);
   return <>
-    <div className="oc-nav-group oc-board-back"><LinkButton variant="quiet" to="/diagnostics?nav=workspace" onClick={closeNavigation}><Icon name="arrow-left"/><span>Back</span></LinkButton></div>
+    <div className="oc-nav-group oc-board-back"><LinkButton variant="quiet" to="/messages?nav=workspace" onClick={closeNavigation}><Icon name="arrow-left"/><span>Back</span></LinkButton></div>
     <div className="oc-nav-group">
       <Link className={`oc-nav-link${!topic ? ' oc-nav-active' : ''}`} to={topicHref()} aria-current={!topic ? 'page' : undefined} onClick={closeNavigation}><Icon name="overview"/><span>All channels</span></Link>
       {topics.map(name => <Link key={name} className={`oc-nav-link${topic === name ? ' oc-nav-active' : ''}`} to={topicHref(name)} aria-current={topic === name ? 'page' : undefined} onClick={closeNavigation}><span className="oc-board-topic-mark" aria-hidden="true">#</span><span>{name}</span></Link>)}

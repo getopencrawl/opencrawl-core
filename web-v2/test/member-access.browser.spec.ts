@@ -6,7 +6,9 @@ for(const width of [1280,390])test(`members read the board and search through th
   await page.route('**/api/console/board?*',route=>route.fulfill({json:{messages:[{id:1,timestamp:1800000000000,agent:'fixture',name:'codex:teammate',topic:'engineering',text:'Member-visible board message'}],next:null,topicSummaries:[{topic:'engineering',posts:1,latest:{id:1,timestamp:1800000000000,name:'codex:teammate'}}]}}));
   let query='';
   await page.route('**/api/debug/search',route=>{query=String(route.request().postDataJSON().query);return route.fulfill({json:{sessions:[],connectors:{state:'not_configured',responses:[]},memories:{state:'ready',hits:{total:{value:0},hits:[]}}}});});
-  await page.goto('/diagnostics?full-app');
+  const boardQuery = '?full-app&view=board&channel=engineering&message=1#post';
+  await page.goto('/diagnostics' + boardQuery);
+  await expect(page).toHaveURL('/messages' + boardQuery);
   await expect(page.getByText('Member-visible board message')).toBeVisible();
   if(width<800)await page.getByRole('button',{name:'Open workspace navigation'}).click();
   await expect(page.getByRole('navigation',{name:'Message board channels'}).getByRole('link',{name:'engineering',exact:true})).toBeVisible();

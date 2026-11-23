@@ -2,7 +2,7 @@ import {test, expect} from '@playwright/test';
 import type {BoardMessage} from '../src/pages/types.js';
 
 const topic = 'café & notes/?';
-const thread = '/diagnostics?view=board&channel=' + encodeURIComponent(topic);
+const thread = '/messages?view=board&channel=' + encodeURIComponent(topic);
 const permalink = (id: number) => thread + '&message=' + id;
 const messages: BoardMessage[] = Array.from({length: 60}, (_, index) => ({id: index + 1, topic, agent: 'example-agent', name: 'codex:example', timestamp: 1_800_000_000_000 + index, text: `Message ${index + 1}\n\nFull message text.`}));
 
@@ -96,7 +96,7 @@ test('each outside margin scrolls its adjacent reader when a board thread is ope
 for (const width of [1440, 390]) {
   test(`message IDs provide keyboard-accessible SPA permalinks at ${width}px`, async ({page}, info) => {
     await page.setViewportSize({width, height: 900});
-    await page.goto('/diagnostics?view=stream');
+    await page.goto('/messages?view=stream');
     const link = page.getByRole('link', {name: 'Permalink to message #55', exact: true});
     await expect(link).toHaveAttribute('href', permalink(55));
     let documents = 0;
@@ -108,7 +108,7 @@ for (const width of [1440, 390]) {
     await expect(post).toContainText('Message 55');
     await expect(post).toHaveClass(/selected/);
     await page.screenshot({path: info.outputPath(`message-permalink-${width}.png`)});
-    await page.goBack(); await expect(page).toHaveURL('/diagnostics?view=stream');
+    await page.goBack(); await expect(page).toHaveURL('/messages?view=stream');
     await page.goForward(); await expect(post).toBeFocused();
     expect(documents).toBe(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -129,7 +129,7 @@ test('opening and reloading an older permalink reads its exact page without walk
 });
 
 test('a missing or wrong-topic message is explicit and invalid IDs do not become cursors', async ({page}) => {
-  await page.goto('/diagnostics?view=board&channel=another-topic&message=10');
+  await page.goto('/messages?view=board&channel=another-topic&message=10');
   await expect(page.getByText('Message #10 is unavailable in this channel.', {exact: true})).toBeVisible();
   await expect(page.locator('.oc-board-post')).toHaveCount(0);
   const reads: URLSearchParams[] = [];
@@ -159,7 +159,7 @@ for (const width of [1440, 390]) {
       const mixed = messages.slice(-8).map((post, index) => ({...post, topic: index % 2 ? 'engineering' : 'release', agent: index % 2 ? 'one' : 'two', name: index % 2 ? 'codex:one' : 'codex:two'}));
       return route.fulfill({json: {messages: mixed.filter(post => !query.get('channel') || post.topic === query.get('channel')).toReversed(), next: null, topicSummaries: ['engineering', 'release'].map(topic => ({topic, posts: 4, latest: {name: 'codex:one', timestamp: mixed.at(-1)!.timestamp}}))}});
     });
-    await page.goto('/diagnostics');
+    await page.goto('/messages');
     await expect(page.getByRole('heading', {name: 'All channels', exact: true})).toBeVisible();
     await expect(page.locator('.oc-board-post')).toHaveCount(8);
     await expect(page.getByText(/Showing \d+ messages/)).toHaveCount(0);
@@ -188,7 +188,7 @@ for (const width of [1440, 390]) {
     await expect(page).toHaveURL('/search');
     await expect(page.getByRole('heading', {name: 'Search playground'})).toBeVisible();
     await expect(page.getByLabel('Search query')).toBeVisible();
-    await page.goto('/diagnostics?view=search');
+    await page.goto('/messages?view=search');
     await expect(page).toHaveURL('/search');
   });
 }
@@ -244,14 +244,14 @@ for(const width of [1440,390])test(`thread pane preserves combined channel histo
   const root={...messages[29]!,threadId:30,replyCount:1};
   return route.fulfill({json:{threadRoot:root,messages:[{...root,id:61,text:'Reply in the side pane'}],next:null,topicSummaries:[]}});
  });
- await page.goto('/diagnostics?view=board');
+ await page.goto('/messages?view=board');
  await page.getByRole('button',{name:'Load older messages'}).click();
  const channel=page.locator('.oc-board-channel'),scroll=channel.getByLabel('Messages',{exact:true});
  await expect(channel.locator('.oc-board-post')).toHaveCount(39);
  const root=channel.locator('[data-board-anchor="post:30"]');await root.scrollIntoViewIfNeeded();
  const trigger=root.getByRole('link',{name:'Show thread for message #30',exact:true});await trigger.focus();
  const before=await scroll.evaluate(node=>node.scrollTop),element=await root.elementHandle();
- await page.keyboard.press('Enter');await expect(page).toHaveURL('/diagnostics?view=board&thread=30');
+ await page.keyboard.press('Enter');await expect(page).toHaveURL('/messages?view=board&thread=30');
  await expect(page.getByRole('complementary',{name:'Thread',exact:true})).toBeVisible();
  expect(await element!.evaluate(node=>node.isConnected)).toBe(true);
  await expect(channel.locator('.oc-board-post')).toHaveCount(39);
@@ -285,7 +285,7 @@ for(const width of [1440,390])test(`system announcement thread navigation and re
   const q=new URL(route.request().url()).searchParams;
   return route.fulfill({json:{messages:q.has('threadId')?[reply]:[root],...(q.has('threadId')?{threadRoot:root}:{}),next:null,topicSummaries:[],channelSummaries:[{channel:'opencrawl',readOnly:true,posts:2,latest:{name:'codex:client',timestamp:reply.timestamp}}]}});
  });
- await page.goto('/diagnostics?view=board&channel=opencrawl');
+ await page.goto('/messages?view=board&channel=opencrawl');
  await expect(page.getByText('System announcements. Agents can reply in threads.')).toBeVisible();
  await expect(page.getByText('Agent thread reply',{exact:true})).toHaveCount(0);
  let documents=0;page.on('request',r=>{if(r.isNavigationRequest()&&r.frame()===page.mainFrame())documents++;});

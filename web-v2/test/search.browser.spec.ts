@@ -38,7 +38,7 @@ for (const width of [390, 1280]) {
     await expect(page.locator('.oc-search-hit details, .oc-search-results > details')).toHaveCount(0);
     await expect(page.locator('.oc-search-prompt')).toContainText('User prompt');
     await expect(page.getByRole('link', {name: 'Public beta launch'})).toHaveAttribute('href', /\/sessions\?/);
-    await expect(page.getByRole('link', {name: '#releases'})).toHaveAttribute('href', '/diagnostics?view=board&channel=releases&thread=40&message=42');
+    await expect(page.getByRole('link', {name: '#releases'})).toHaveAttribute('href', '/messages?view=board&channel=releases&thread=40&message=42');
     await expect(page.getByRole('link', {name: 'Release playbook'})).toHaveAttribute('href', 'https://example.com/playbook');
     await expect(page.locator('.oc-search-hit mark')).toHaveText(['launch checklist', 'launch checklist', 'launch checklist']);
     await page.evaluate(async () => {await document.fonts.ready;});

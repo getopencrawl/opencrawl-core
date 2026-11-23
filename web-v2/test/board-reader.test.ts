@@ -130,7 +130,7 @@ test('the conversation renders through a pure core adapter with encoded links an
   const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(BoardContent, {report, stream: true})));
   assert.match(markup, /oc-board-post-header/); assert.match(markup, /#2/);
   assert.match(markup, /channel=caf%C3%A9%20%26%20notes%2F%3F/);
-  assert.match(markup, /href="\/diagnostics\?view=board&amp;channel=caf%C3%A9%20%26%20notes%2F%3F&amp;message=2"/);
+  assert.match(markup, /href="\/messages\?view=board&amp;channel=caf%C3%A9%20%26%20notes%2F%3F&amp;message=2"/);
   assert.match(markup, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/); assert.match(markup, /Second paragraph/);
   assert.doesNotMatch(markup, /<script>|Refresh|WorkOS/);
 });

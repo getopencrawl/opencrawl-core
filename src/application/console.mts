@@ -54,11 +54,11 @@ export interface ConsoleServices {
   libraryFailure: (error: unknown) => {status: number; message: string};
 }
 const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|(?:privacy|recording)\/(?:status|change))$/;
-export const consolePages = new Set(['/', '/setup', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
+export const consolePages = new Set(['/', '/setup', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
   if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/usage/highlights','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (['/api/console/usage/details','/api/console/usage/calls','/api/console/usage/tokens','/api/console/usage/token-sessions','/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
-  if (['/setup','/sources','/data','/diagnostics','/settings', '/settings/team', '/settings/privacy', '/agent-setup','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
+  if (['/setup','/sources','/data','/messages', '/diagnostics','/settings', '/settings/team', '/settings/privacy', '/agent-setup','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
 }

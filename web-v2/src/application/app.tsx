@@ -82,7 +82,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   };
   const onboarding = location.pathname.startsWith('/onboarding');
   const boardQuery = new URLSearchParams(location.search);
-  const boardNavigation = location.pathname === '/diagnostics' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search';
+  const boardNavigation = location.pathname === '/messages' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search';
   const boardTopic = boardQuery.get('view') === 'stream' ? '' : (boardQuery.get('channel')??boardQuery.get('topic'))?.trim() || '';
   const machineSetup = data ? Boolean(data.setup) : document.getElementById('root')?.dataset.setupMode !== 'guided';
   const canSetUpReplicas = data?.workspace.role === 'admin' && data.canInstallReplicas === true && Boolean(api.replicasSetup);
@@ -95,7 +95,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
     {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canSetUpReplicas={canSetUpReplicas} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
-    {path:'/diagnostics',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
+    {path:'/messages',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to={'/setup' + location.hash} replace/> : data ? <AgentOnboarding key={data.cacheScope} adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
@@ -108,7 +108,8 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
     {path:'/data',label:'Data controls',navigation:false,element:<Navigate to="/sources#data-controls" replace/>},
-    {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/diagnostics' + location.search} replace/>},
+    {path:'/diagnostics',label:'Message board',navigation:false,element:<Navigate to={'/messages' + location.search + location.hash} replace/>},
+    {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/messages' + location.search + location.hash} replace/>},
   ];
   if (!data) {
     const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={retry}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;

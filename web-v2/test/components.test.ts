@@ -7,12 +7,12 @@ import {AppShell} from '../src/app.tsx';
 import {Avatar, Button, Field, Input, Section} from '../src/design/components.tsx';
 
 test('one registry owns active SPA navigation and page rendering', () => {
-  const routes = [{path:'/', label:'Overview', element:createElement('h1', null, 'Overview page')}, {path:'/diagnostics', label:'Diagnostics', element:createElement('h1', null, 'Diagnostics page')}];
-  const html = renderToStaticMarkup(createElement(MemoryRouter, {initialEntries:['/diagnostics']}, createElement(AppShell, {workspace:{name:'Example workspace'}, routes})));
+  const routes = [{path:'/', label:'Overview', element:createElement('h1', null, 'Overview page')}, {path:'/messages', label:'Diagnostics', element:createElement('h1', null, 'Diagnostics page')}];
+  const html = renderToStaticMarkup(createElement(MemoryRouter, {initialEntries:['/messages']}, createElement(AppShell, {workspace:{name:'Example workspace'}, routes})));
   assert.equal((html.match(/<nav\b/g) || []).length, 1);
   assert.match(html, /<aside[^>]*class="oc-sidebar"/);
   assert.doesNotMatch(html, /oc-workspace-header|oc-app-header/);
-  assert.match(html, /aria-current="page"[^>]*class="oc-nav-link oc-nav-active"[^>]*href="\/diagnostics"/);
+  assert.match(html, /aria-current="page"[^>]*class="oc-nav-link oc-nav-active"[^>]*href="\/messages"/);
   assert.match(html, /Diagnostics page/);
   assert.doesNotMatch(html, /Overview page/);
 });
