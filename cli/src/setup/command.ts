@@ -28,7 +28,7 @@ import {daemonEligibility,daemonStartupGuidance,savedCaptureMode,requestedCaptur
 import {automaticUpdateClients,chosen,defaultSelections,historyBenefit,readSetupState,readStateKey,scopeKey,selectionDigest,updateSetupState,type SetupScope,type SetupState,type SetupWorker,type SetupHumanTask,type SetupSelections} from './state.ts';
 import {readServerSetup,serverScope,publishSetup,type SetupServerStatus} from './api.ts';
 import {historyJob,startHistoryWorker,runHistoryWorker} from './history-worker.ts';
-import {chooseSetupItems} from './select.ts';
+import {chooseSetupItems,participationNotice} from './select.ts';
 import {deferredPlugins,nextSetupAction} from './next.ts';
 import {pendingPluginUpdates,formatPluginUpdates,updateCandidates,verifiedInstallation} from './plugin-updates.ts';
 import {rememberFinishedSetup} from './first-run.ts';
@@ -38,7 +38,6 @@ export {formatSetupCommand} from './invocation.ts';
 type Values=Record<string,unknown>;
 type Dependencies={skipCodexHooks?:boolean;finishOnboarding?:boolean;canInstall?:(id:string)=>Promise<boolean>;inspectInstall?:typeof recordingInstallState;confirmedCaptureMode?:'hook';modeEligibility?:typeof daemonEligibility;stopDaemon?:typeof uninstallCaptureDaemon;platform?:NodeJS.Platform;command?:string[];login?:()=>Promise<unknown>;installPlugins?:typeof installSetupPlugins;launchHistory?:typeof startHistoryWorker;choose?:typeof chooseSetupItems;interactive?:boolean;inspectHooks?:typeof inspectCodexHooks;installDaemon?:typeof installCaptureDaemon;daemonReady?:typeof waitForDaemonReady;expectedScope?:SetupScope;validateCapturePrincipal?:(principal:unknown)=>void;onProgress?:(title:string,description:string,phase?:'installing')=>void};
 function historyFiles(api:string,client?:'claude-code'):HistoryFile[]{if(process.env.OPENCRAWL_AUTH==='devin-cloud')return [];const previous=readCaptureConfig();return inventory(previous?.api===api?previous:{roots:{'claude-code':process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),codex:process.env.CODEX_HOME||join(homedir(),'.codex'),antigravity:process.env.ANTIGRAVITY_HOME||join(homedir(),'.gemini')},claudeDesktopSessionsRoot:defaultClaudeDesktopSessionsRoot()},client??'all').files;}
-const participationNotice='Selected Claude Code and Codex profiles gain global workspace-sharing instructions. Claude Code also allows the OpenCrawl files, board and search tools.';
 const list=(values:string[])=>values.length?values.join(','):'none';
 
 function preserveRecordingOff(selections:SetupSelections,scope:SetupScope,config=readCaptureConfig()):SetupSelections{
@@ -409,7 +408,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
    return {id,label,selected:values.forward===undefined||selections.forward[id]===true,disabled:false,installState,autoUpdate:previousGrant.includes(id)};
   }));
   options.sort((a,b)=>Number(a.disabled)-Number(b.disabled));
-  const selected=await choose({phase:1,title:'Record new sessions',description:'Selected agents record sessions. Supported agents also check prompts for useful prior context under your deployment’s credit policy.'+(options.some(item=>!item.disabled&&(item.id==='claude-code'||item.id==='codex'))?' '+participationNotice:''),noneLabel:'Do not record any sessions on this machine',items:options});
+  const selected=await choose({phase:1,title:'Record new sessions',description:'Choose which agents save new sessions to your workspace. They can also suggest related work.',noneLabel:'Do not record any sessions on this machine',items:options});
   if(selected===null)return {status:'cancelled',humanTasks:[]};
   const eligibleIds=new Set(options.filter(item=>!item.disabled).map(item=>item.id));
   const selectedIds=new Set(selected.filter(row=>row.selected&&eligibleIds.has(row.id)).map(row=>row.id));
@@ -451,7 +450,8 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   return importApproved(available.filter(file=>selections.history[file.harness]));
  }
  const files=availableHistory().filter(file=>selections.history[file.harness]),planId=createHash('sha256').update(planDigest(scope,selections,files)+captureMode).digest('hex');
- const plan=async()=>({status:'confirmation_required',...(workload||registered?{}:{availability:setupAvailabilityMessage}),scope,clients,selections,captureMode,daemon:eligibility(selections),...(selections.plugins['claude-code']||selections.plugins.codex?{participationNotice}:{}),...(selections.plugins.cursor?{nativeHooks:'Cursor setup installs the deployment-specific plugin and its recording hooks in the local plugins folder.'}:{}),historyBenefit,history:{files:files.length,bytes:files.reduce((n,f)=>n+f.bytes,0)},planId,humanTasks:await tasks(server,previous,inspectHooks),applyCommand:formatSetupCommand(['setup','apply','--api',api,...(claudeOnly?['--client','claude-code']:[]),'--plugins',list(chosen(selections,'plugins')),'--forward',list(chosen(selections,'forward')),'--history',list(chosen(selections,'history')),'--capture-mode',captureMode,'--plan-id',planId,'--yes','--json'],command)});
+ const notice=participationNotice(chosen(selections,'plugins'));
+ const plan=async()=>({status:'confirmation_required',...(workload||registered?{}:{availability:setupAvailabilityMessage}),scope,clients,selections,captureMode,daemon:eligibility(selections),...(notice?{participationNotice:notice}:{}),...(selections.plugins.cursor?{nativeHooks:'Cursor setup installs the deployment-specific plugin and its recording hooks in the local plugins folder.'}:{}),historyBenefit,history:{files:files.length,bytes:files.reduce((n,f)=>n+f.bytes,0)},planId,humanTasks:await tasks(server,previous,inspectHooks),applyCommand:formatSetupCommand(['setup','apply','--api',api,...(claudeOnly?['--client','claude-code']:[]),'--plugins',list(chosen(selections,'plugins')),'--forward',list(chosen(selections,'forward')),'--history',list(chosen(selections,'history')),'--capture-mode',captureMode,'--plan-id',planId,'--yes','--json'],command)});
  if(action!=='apply'||values.yes!==true)return plan();
  checkMode(selections);
  if(values['plan-id']!==undefined&&values['plan-id']!==planId)throw new CliError('SETUP_PLAN_CHANGED',`The workspace, choices or available history changed. Review \`${formatSetupCommand(['setup','--api',api,'--json'],command)}\` again before applying.`,2);

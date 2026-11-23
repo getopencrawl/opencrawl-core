@@ -1,6 +1,6 @@
 import {useState} from 'react';
 import {Box,Text,render,useApp,useFocus,useFocusManager,useInput} from 'ink';
-import type {SelectionItem,SelectionScreen} from './select.ts';
+import {participationNotice,type SelectionItem,type SelectionScreen} from './select.ts';
 import {color,SetupFrame,SetupButton as Button} from './frame.tsx';
 const updatesId='setup:updates',noneId='setup:none',continueId='setup:continue',cancelId='setup:cancel';
 const choiceId=(id:string)=>'setup:choice:'+id;
@@ -34,12 +34,13 @@ export function SetupSelection({screen,onComplete,standalone=true}:{screen:Selec
   if(key.upArrow){if(inButtons)focus(selectedPlugins.length?updatesId:noneId);else focusPrevious();}
   if(inButtons&&(key.leftArrow||key.rightArrow))focus(activeId===continueId?cancelId:continueId);
  });
- const selected=items.filter(item=>item.selected).length;
+ const choices=items.filter(item=>item.selected);
+ const selected=choices.length;
+ const notice=screen.phase===1?participationNotice(choices.map(item=>item.id)):undefined;
  const first=items.find(item=>!item.disabled)?.id;
  let primary='Continue';
  if(screen.phase===2)primary=selected?'Import history':'Skip history';
  if(screen.phase===1){
-  const choices=items.filter(item=>item.selected);
   const install=choices.some(item=>item.installState==='new');
   const repair=choices.some(item=>item.installState==='repair');
   if(install&&repair)primary='Apply changes';
@@ -53,6 +54,7 @@ export function SetupSelection({screen,onComplete,standalone=true}:{screen:Selec
    <Box marginTop={1}><Choice id={noneId} label={screen.noneLabel} checked={selected===0} autoFocus={!first} onToggle={()=>setItems(current=>current.map(item=>({...item,selected:false})))}/></Box>
    {items.filter(item=>item.disabled).map(item=><Choice key={item.id} id={choiceId(item.id)} label={item.label} detail={item.detail} checked={false} disabled onToggle={()=>{}}/>)}
   </Box>
+  {notice&&<Box marginTop={1}><Text color={color.muted}>{notice}</Text></Box>}
   {items.some(item=>item.autoUpdate!==undefined)&&<Box display={selectedPlugins.length?'flex':'none'} marginTop={1}>
    <Choice id={updatesId} label="Keep OpenCrawl plugins up to date (Recommended)" checked={updateCount>0&&!allUpdating?'mixed':allUpdating}
     disabled={!selectedPlugins.length} onToggle={()=>setItems(current=>current.map(item=>item.autoUpdate===undefined?item:{...item,autoUpdate:!allUpdating}))}/>
