@@ -1,11 +1,11 @@
 import {useEffect, useRef, useState} from 'react';
-import {Button, ExternalLink, Field, IntegrationLogo, Notice, Section, Textarea} from '../design/components.tsx';
+import {Button, Dialog, ExternalLink, Field, Notice, Textarea} from '../design/components.tsx';
 import type {OnboardingAdapter} from './types.ts';
 
-export const replicasCapturePath = '/agent-setup#replicas-capture';
+export const replicasCapturePath = '/sources#replicas-capture';
 export const replicasCaptureGuide = 'https://docs.getopencrawl.com/agents/replicas-capture/';
 
-export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdapter['replicasSetup']>}) {
+export function ReplicasCaptureSetup({issue, onClose}: {onClose: () => void; issue: NonNullable<OnboardingAdapter['replicasSetup']>}) {
   const request = useRef<AbortController | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -13,10 +13,7 @@ export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdap
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState('');
   const [error, setError] = useState('');
-  useEffect(() => {
-    if (window.location.hash === '#replicas-capture') document.getElementById('replicas-capture')?.scrollIntoView();
-    return () => request.current?.abort();
-  }, []);
+  useEffect(() => () => request.current?.abort(), []);
   useEffect(() => {if (manual) {field.current?.focus(); field.current?.select();}}, [manual]);
   useEffect(() => {
     if (!copied) return;
@@ -46,8 +43,7 @@ export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdap
     }
   }
 
-  return <Section id="replicas-capture" className="oc-management-panel oc-provider-setup"
-    title={<><IntegrationLogo src="/assets/integrations/replicas.svg"/>Record new Replicas chats</>}
+  return <Dialog open onClose={onClose} title="Record new Replicas chats"
     description="Copy the setup prompt and paste it into a chat in the Replicas environment where you want to record Claude Code and Codex. The prompt expires in 30 minutes.">
     <div className="oc-form-measure stack-sm">
       {error && <Notice tone="danger">{error}</Notice>}
@@ -59,5 +55,5 @@ export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdap
         <ExternalLink href={replicasCaptureGuide}>Replicas capture guide</ExternalLink>
       </div>
     </div>
-  </Section>;
+  </Dialog>;
 }

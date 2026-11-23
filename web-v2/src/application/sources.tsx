@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import {Button, LinkButton, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Section, Navigate} from '../index.ts';
+import {Button, LinkButton, Dialog, EmptyState, Field, Icon, Input, LoadingState, Notice, Page, Section, Navigate, useLocation, useNavigate} from '../index.ts';
 import {ConsoleApiError, externalTarget, failureMessage} from './errors.ts';
 import type {SourceCard, SourcesAdapter} from './api.ts';
 import {useResource} from './resource';
@@ -8,7 +8,7 @@ import {ConnectorSetupDialog} from './connector-setup.tsx';
 import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connector-card.tsx';
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
-import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
+import {ReplicasCaptureSetup, replicasCapturePath} from '../onboarding/replicas-capture.tsx';
 import {DevinRecordingCard} from './devin-recording-card.tsx';
 import {ReplicasHistoryDialog} from './replicas-history-dialog.tsx';
 
@@ -20,6 +20,8 @@ export function SourcesPage({adapter, canConfigure = false, canSetUpReplicas = f
 }
 function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;canSetUpReplicas:boolean}) {
   const canConfigure = true;
+  const location = useLocation();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const {data, error, loading, reload, invalidate} = useResource(adapter.sources, {autoRefreshMilliseconds:refreshInterval, paused:pending !== null});
@@ -71,9 +73,12 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
 
   function replicasActions(source:SourceCard){
     const history=source.history;
-    const setup=canSetUpReplicas&&['syncing','synced','connected'].includes(source.state);
-    if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup?<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>:undefined;
-    return <div className="actions">{setup&&<LinkButton to={replicasCapturePath}>Set up capture</LinkButton>}
+    const setup = canSetUpReplicas && <LinkButton to={replicasCapturePath}>Set up capture</LinkButton>;
+    if (setup && ['disconnected','error'].includes(source.state)) return <div className="actions">
+      <Button variant="primary" disabled={pending !== null} aria-label="Connect Replicas" onClick={() => setReplicasSource(source)}>Connect</Button>{setup}
+    </div>;
+    if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup || undefined;
+    return <div className="actions">{setup}
       <Button disabled={pending!==null} onClick={()=>void run(source.provider,async request=>{
         await adapter.replicasHistory!({action:'stop',id:history.id},request.signal);
         if(current(request))setSuccess('Replicas import stopped. Your progress is saved.');
@@ -167,6 +172,8 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </>}
+    {data && canSetUpReplicas && !sources.some(source => source.provider === 'replicas' && adapter.replicasHistory) && <LinkButton to={replicasCapturePath}>Set up Replicas capture</LinkButton>}
+    {canSetUpReplicas && adapter.replicasSetup && location.hash === '#replicas-capture' && <ReplicasCaptureSetup issue={adapter.replicasSetup} onClose={() => navigate(location.pathname + location.search, {replace:true})}/>}
     {replicasSource&&<ReplicasHistoryDialog adapter={adapter} onClose={()=>setReplicasSource(null)} onConnected={result=>{setReplicasSource(null);setActionError('');setSuccess(result.phase==='complete'?'Replicas connected. No retained history was found.':'Replicas connected. Your history import started in the background.');void reload();}}/>}
     <Dialog open={confirmation !== null} onClose={() => {if (!pending) setConfirmation(null);}} title={`Disconnect ${confirmation?.name ?? 'source'}?`} description={confirmation ? disconnectDescription(confirmation) : undefined} actions={<><Button disabled={pending !== null} onClick={() => setConfirmation(null)}>Cancel</Button><Button variant="danger" disabled={pending !== null} onClick={remove}>{pending ? 'Disconnecting…' : 'Disconnect and delete'}</Button></>}>
       {actionError && <Notice tone="danger">{actionError}</Notice>}

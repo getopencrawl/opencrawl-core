@@ -5,7 +5,6 @@ import {Icon} from '../design/icons.tsx';
 import {CommandSnippet} from './copy.tsx';
 import {deriveOnboarding, hasReceipt, promptModel} from './model.ts';
 import {useOnboardingResource} from './resource.ts';
-import {ReplicasCaptureSetup} from './replicas-capture.tsx';
 import {OnboardingShell} from './shell.tsx';
 import type {OnboardingAdapter, OnboardingStatus} from './types.ts';
 
@@ -47,14 +46,12 @@ export interface AgentOnboardingProps {
   adapter: OnboardingAdapter;
   mcpUrl: string;
   setupPrompt: string;
-  replicasSetupPrompt?: string;
-  canInstallReplicas?: boolean;
   initialStatus?: OnboardingStatus;
   canInviteBeforeSetup?: boolean;
   presentation?: 'focused' | 'workspace';
 }
 
-export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplicas = false, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
+export function AgentOnboarding({adapter, mcpUrl, setupPrompt, initialStatus, canInviteBeforeSetup = false, presentation = 'focused'}: AgentOnboardingProps) {
   const progress = useOnboardingResource(signal => adapter.status(signal), {key:consoleResourceKey(adapter,'onboarding-status'), interval: 5000, initial: initialStatus});
   const status = progress.data ?? {};
   const [personalSetup,setPersonalSetup] = useState(false);
@@ -133,7 +130,6 @@ export function AgentOnboarding({adapter, mcpUrl, setupPrompt, canInstallReplica
             {presentation === 'focused' && !derived.complete && <p className="focus-reassurance">CLI sign-in, a successful MCP connection test, and a new session recording are required to open your workspace.</p>}
             {presentation === 'focused' && canInviteBeforeSetup && <div className="focus-action"><LinkButton to="/onboarding/invite" variant="quiet">Invite teammates now</LinkButton></div>}
           </section>}
-    {presentation === 'workspace' && !manual && canInstallReplicas && adapter.replicasSetup && <ReplicasCaptureSetup issue={adapter.replicasSetup}/>}
     <p className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : derived.complete ? `All required checks passed.${presentation === 'focused' ? ' Next is available.' : ''}` : progress.error ? 'We couldn’t check your progress. Try again.' : ''}</p>
   </>;
   return presentation === 'workspace'

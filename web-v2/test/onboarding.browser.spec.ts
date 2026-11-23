@@ -610,7 +610,7 @@ for (const width of [1280,390]) test(`shared setup does not ask each member to i
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
-for (const width of [1280,390]) test(`Replicas installation stays in workspace settings, outside onboarding at ${width}px`, async ({page,request}) => {
+for (const width of [1280,390]) test(`Replicas installation stays outside agent setup and onboarding at ${width}px`, async ({page,request}) => {
   await page.setViewportSize({width,height:844});
   await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{if(sessionStorage.getItem('deny'))throw new Error('denied');sessionStorage.setItem('copied',text);}}}));
   await page.goto('/onboarding');
@@ -622,16 +622,7 @@ for (const width of [1280,390]) test(`Replicas installation stays in workspace s
   await expect(page.getByRole('button',{name:'Install on Replicas',exact:true})).toHaveCount(0);
   await expect(page.getByRole('link',{name:'Open workspace',exact:true})).toBeVisible();
   await page.goto('/workspace/settings');
-  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
-  expect(await page.evaluate(()=>sessionStorage.getItem('copied'))).toContain('Use workspace_identity');
-  await page.evaluate(()=>sessionStorage.setItem('deny','yes'));
-  await page.reload();
-  await page.getByRole('button',{name:'Install on Replicas',exact:true}).click();
-  await expect(page.getByLabel('Prompt to copy')).toBeFocused();
-  await expect(page.getByLabel('Prompt to copy')).toHaveValue(/Install OpenCrawl in this Replicas environment/);
-  await page.getByRole('button',{name:'I’ve copied it'}).click();
-  await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
   await page.goto('/workspace/settings?role=member');
   await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
 });

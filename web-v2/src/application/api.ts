@@ -5,6 +5,7 @@ import type {OnboardingAdapter, OnboardingStatus} from '../onboarding/types.ts';
 export type {Bootstrap, SourceCard, TeamReport, WorkspaceRole} from '../../../src/application/types.mjs';
 
 export interface SourcesAdapter {
+  replicasSetup?: OnboardingAdapter['replicasSetup'];
   devinRecording?(input:import('../../../src/application/devin-recording-http.mjs').DevinRecordingInput,signal?:AbortSignal):Promise<import('../../../src/integrations/devin-recording.mjs').DevinRecordingStatus>;
   replicasHistory?(input:import('../../../src/integrations/replicas-import.mjs').ReplicasImportInput,signal?:AbortSignal):Promise<import('../../../src/integrations/replicas-import.mjs').ReplicasImportStatus>;
   sources(signal?: AbortSignal): Promise<{items: SourceCard[]}>;
@@ -25,7 +26,6 @@ export interface TeamAdapter {
 export interface ProductApi<B extends Bootstrap = Bootstrap> extends SourcesAdapter, TeamAdapter, ConsoleDataAdapter {
   bootstrap(signal?: AbortSignal): Promise<B>;
   library: LibraryAdapter;
-  replicasSetup?: OnboardingAdapter['replicasSetup'];
   onboardingStatus(signal?: AbortSignal): Promise<{data: OnboardingStatus}>;
   onboardingSources: OnboardingAdapter['sources'];
   onboardingInvitations: OnboardingAdapter['invitations'];

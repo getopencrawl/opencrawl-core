@@ -5,6 +5,7 @@ import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../ind
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
 import {RecordingSettings} from '../pages/recording-control.js';
+import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
 import {SetupPage} from './setup.tsx';
 import {PrivacySettings} from '../pages/privacy-settings.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
@@ -52,7 +53,6 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({callTotals:api.callTotals,searchHistory:api.searchHistory,usageTokens:api.usageTokens,tokenSessions:api.tokenSessions,usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board}), [api]);
   const libraryAdapter = api.library;
   const onboardingAdapter = useMemo<OnboardingAdapter>(() => ({
-    replicasSetup: api.replicasSetup,
     status: async signal => (await api.onboardingStatus(signal)).data,
     sources: api.onboardingSources, connectSource: (id, input, signal) => api.connect(id, input.apiKey, signal),
     ...(api.saveCredential ? {saveCredential: (id: string, value: string, signal: AbortSignal) => api.saveCredential!(id, value, signal)} : {}),
@@ -88,7 +88,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const canSetUpReplicas = data?.workspace.role === 'admin' && data.canInstallReplicas === true && Boolean(api.replicasSetup);
   const extensionRoutes=extensions?.routes?.({data, activated}) ?? [];
   const routes: ConsoleRoute[] = [
-    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error} replicasSetup={canSetUpReplicas ? api.replicasSetup : undefined}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
+    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage showActivity={data?.searchActivity?data.cacheScope:undefined} adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     ...extensionRoutes.filter(route=>route.group==='workspace'),
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
@@ -97,7 +97,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
     {path:'/messages',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
-    {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to={'/setup' + location.hash} replace/> : data ? <AgentOnboarding key={data.cacheScope} adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
+    {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to={'/setup' + location.hash} replace/> : data ? <AgentOnboarding key={data.cacheScope} adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
     {path:'/settings/privacy',label:'Privacy',group:'settings',element:<div key={data?.cacheScope} className="oc-management-page">
       <RecordingSettings adapter={libraryAdapter}/>
@@ -106,7 +106,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     ...extensionRoutes.filter(route=>route.group!=='workspace'),
     {path:'/settings',label:'Settings',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
-    {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
+    {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to={'/sources' + location.hash} replace/>},
     {path:'/data',label:'Data controls',navigation:false,element:<Navigate to="/sources#data-controls" replace/>},
     {path:'/diagnostics',label:'Message board',navigation:false,element:<Navigate to={'/messages' + location.search + location.hash} replace/>},
     {path:'/_/debug',label:'Diagnostics',navigation:false,element:<Navigate to={'/messages' + location.search + location.hash} replace/>},
@@ -117,11 +117,12 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     const route = routes.find(item => item.path === location.pathname);
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
+  if (location.hash === '#replicas-capture' && ['/setup', '/agent-setup'].includes(location.pathname)) return <Navigate to={replicasCapturePath} replace/>;
   if (data.setup && onboarding) return <Navigate to="/setup" replace/>;
   if (!data.setup && !data.onboarding.completed && !onboarding) return <Navigate to={data.onboarding.next} replace/>;
   if (onboarding && data.workspace.role !== 'admin' && location.pathname !== '/onboarding') return data.onboarding.completed ? <Navigate to="/" replace/> : <FinishMemberOnboarding api={api} onComplete={async () => {await refresh();navigate('/');}}/>;
   if (onboarding) return <ConsoleDataProvider scopeKey={data.cacheScope} onAccessFailure={invalidateAccess}><FocusedFrame footer={<SignOut/>}><Routes>
-    <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} replicasSetupPrompt={data.replicasSetupPrompt} canInstallReplicas={data.canInstallReplicas} canInviteBeforeSetup={data.canInvite && data.invitationPolicy?.beforeAgentSetup}/>}/>
+    <Route path="/onboarding" element={<AgentOnboarding adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} canInviteBeforeSetup={data.canInvite && data.invitationPolicy?.beforeAgentSetup}/>}/>
     <Route path="/onboarding/sources" element={<SourcesOnboarding adapter={onboardingAdapter} canConfigure={data.workspace.role === 'admin'}/>}/>
     <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;

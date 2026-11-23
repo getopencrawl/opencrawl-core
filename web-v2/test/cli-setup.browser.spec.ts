@@ -15,7 +15,9 @@ for(const viewport of [{width:1280,height:800},{width:390,height:844}])test(`inc
   await expect(command).toHaveText(installer);
   await page.evaluate(() => document.fonts.ready);
   expect(await command.evaluate(field => field.scrollHeight <= field.clientHeight + 1 && field.scrollWidth <= field.clientWidth + 1)).toBe(true);
-  await expect(page.getByRole('heading', {name:'Connect your first agent'})).toBeVisible();
+  await expect(page.getByRole('heading', {name:'Connect a host'})).toBeVisible();
+  await expect(page.getByText('No hosts connected yet.', {exact:false})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Your hosts'})).toBeVisible();
   const tabs = page.getByRole('tablist', {name:'Operating system'});
   await expect(tabs.getByRole('tab')).toHaveCount(2);
   await expect(tabs.getByRole('tab', {name:'macOS / Linux'})).toHaveAttribute('aria-selected','true');
@@ -86,12 +88,11 @@ test('computer tiles show connected agent names and allow connecting another age
     await page.setViewportSize({width, height:850});
     expect(await tiles.evaluateAll(items => items.every(el => el.scrollWidth <= el.clientWidth + 1))).toBe(true);
   }
-  await page.getByRole('button', {name:'Connect an agent', exact:true}).click();
-  const dialog = page.getByRole('dialog', {name:'Connect an agent'});
-  await expect(dialog.getByRole('button',{name:copyLabel}).locator('code')).toHaveText(installer);
-  await page.keyboard.press('Escape');
-  await expect(dialog).toBeHidden();
-  await expect(page.getByRole('button', {name:'Connect an agent', exact:true})).toBeFocused();
+  await page.setViewportSize({width:1280,height:800});
+  const command = page.getByRole('button',{name:copyLabel});
+  await expect(command.locator('code')).toHaveText(installer);
+  await expect(command).toBeInViewport();
+  expect((await command.boundingBox())!.y).toBeLessThan((await computers.boundingBox())!.y);
   await expect(computers).toBeVisible();
 });
 
@@ -194,10 +195,37 @@ test('a completed Replicas import leads to workspace capture setup',async({page}
   await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Clipboard denied');}}}));
   await page.goto('/sources?full-app');
   await page.getByRole('article',{name:'Replicas'}).getByRole('link',{name:'Set up capture'}).click();
-  await expect(page).toHaveURL(/\/setup#replicas-capture$/);
+  await expect(page).toHaveURL(/\/sources#replicas-capture$/);
+  await expect(page.getByRole('dialog',{name:'Record new Replicas chats'})).toBeVisible();
   await expect(page.getByRole('link',{name:'Replicas capture guide'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
   expect(issued).toBe(0);
   await page.getByRole('button',{name:'Install on Replicas'}).click();
   await expect(page.getByRole('textbox',{name:'Prompt to copy'})).toHaveValue('One-time fixture prompt for Replicas');
   expect(issued).toBe(1);
+  await page.getByRole('button',{name:'I’ve copied it'}).click();
+  await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
+  await page.getByRole('button',{name:'Close dialog'}).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('an admin can start capture before importing history and from published setup links',async({page})=>{
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
+  await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',state:'disconnected',auth:'api-key',scope:'team'}]}}));
+  await page.goto('/setup?full-app');
+  await expect(page.getByRole('button',{name:copyLabel})).toBeVisible();
+  await expect(page.getByText(/Replicas/)).toHaveCount(0);
+  await page.getByRole('navigation',{name:'Workspace navigation'}).getByRole('link',{name:'Integrations'}).click();
+  const card=page.getByRole('article',{name:'Replicas'});
+  await expect(card.getByRole('button',{name:'Connect Replicas'})).toBeVisible();
+  await card.getByRole('link',{name:'Set up capture'}).click();
+  await expect(page.getByRole('button',{name:'Install on Replicas'})).toBeVisible();
+  for (const path of ['/setup','/agent-setup']) {
+    await page.goto(path+'?full-app#replicas-capture');
+    await expect(page).toHaveURL(/\/sources#replicas-capture$/);
+    await expect(page.getByRole('dialog',{name:'Record new Replicas chats'})).toBeVisible();
+  }
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,workspace:{...bootstrap.workspace,role:'member'}}}));
+  await page.goto('/sources?full-app#replicas-capture');
+  await expect(page.getByRole('heading',{name:'Usage',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
 });

@@ -1,10 +1,8 @@
 import {useEffect, useState} from 'react';
-import {Button, Dialog, Icon, Notice, Page, Section, Tabs} from '../design/components.tsx';
+import {Icon, Notice, Page, Section, Tabs} from '../design/components.tsx';
 import {nativeInstallCommand} from '../../../src/sessions/cli-installation.mjs';
 import {CommandSnippet} from '../onboarding/copy.tsx';
 import {connectionCommands} from '../onboarding/model.ts';
-import {ReplicasCaptureSetup} from '../onboarding/replicas-capture.tsx';
-import type {OnboardingAdapter} from '../onboarding/types.ts';
 import {ago} from '../pages/usage-model.ts';
 import type {Bootstrap} from './api.ts';
 
@@ -25,7 +23,7 @@ function AgentInstructions({mcpUrl}: {mcpUrl: string}) {
   const text = platform === 'windows'
     ? `${windows.cli}\n${windows.recording}`
     : `${nativeInstallCommand()} -s -- --connect${apiArg}`;
-  return <div className="oc-form-measure oc-install-instructions">
+  return <div className="oc-install-instructions">
     <Tabs label="Operating system" items={platforms} value={platform} onChange={setPlatform}/>
     <CommandSnippet key={platform} label="Copy setup command" text={text}/>
   </div>;
@@ -80,21 +78,17 @@ function ComputerGrid({installations}: {installations: Installation[]}) {
   </ul>;
 }
 
-/** Setup is a progress page. Choices and continuation live in the CLI. */
-export function SetupPage({status, error, replicasSetup, mcpUrl}: {mcpUrl: string; status: NonNullable<Bootstrap['setup']>; error: string; replicasSetup?: OnboardingAdapter['replicasSetup']}) {
-  const [connecting, setConnecting] = useState(false);
-  const installations = status?.installations ?? [];
-  return <Page className="oc-management-page" title="Setup" description="Connect your coding agents to this workspace.">
-    {error && <Notice tone="danger">{error} Your saved choices are unchanged.</Notice>}
-    {installations.length > 0
-      ? <Section className="oc-source-section oc-computers-section" title="Your computers"
-          actions={<Button variant="primary" onClick={() => setConnecting(true)}><Icon name="plus" size={16}/>Connect an agent</Button>}>
-          <ComputerGrid installations={installations}/>
-        </Section>
-      : <Section className="oc-management-panel" title="Connect your first agent" description="Install OpenCrawl on the computer where your agent runs.">
-          <AgentInstructions mcpUrl={mcpUrl}/>
-        </Section>}
-    {replicasSetup && <ReplicasCaptureSetup issue={replicasSetup}/>}
-    {(installations.length > 0 || connecting) && <Dialog open={connecting} onClose={() => setConnecting(false)} title="Connect an agent" description="Install OpenCrawl on the computer where your agent runs."><AgentInstructions mcpUrl={mcpUrl}/></Dialog>}
+export function SetupPage({status, error, mcpUrl}: {mcpUrl: string; status: NonNullable<Bootstrap['setup']>; error: string}) {
+  const {installations} = status;
+  return <Page className="oc-management-page" title="Setup">
+    {error && <Notice tone="danger">{error}</Notice>}
+    <Section className="oc-management-panel" title="Connect a host" description="Run this command in a terminal on the computer where your agents run. Sign in and choose which agents to connect.">
+      <AgentInstructions mcpUrl={mcpUrl}/>
+    </Section>
+    <Section className="oc-source-section oc-computers-section" title="Your hosts">
+      {installations.length > 0
+        ? <ComputerGrid installations={installations}/>
+        : <p className="muted">No hosts connected yet. Your first host will appear here when it reports to OpenCrawl.</p>}
+    </Section>
   </Page>;
 }
