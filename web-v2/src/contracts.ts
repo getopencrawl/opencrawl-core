@@ -19,5 +19,6 @@ export interface NavigationItem {
   element: ReactNode;
   group?: 'workspace' | 'manage' | 'settings';
   navigation?: boolean;
+  badge?: ReactNode;
   end?: boolean;
 }
