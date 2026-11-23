@@ -154,8 +154,12 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
   }
   if (harness === 'claude-code') {
     if (['user','assistant'].includes(record.type)) {
-      if(record.type==='user'&&record.isMeta===true)return null;
-      kind=record.type==='user'&&record.origin?.kind==='task-notification'?'automation_message':'message';data=record.message;
+      if(record.type==='user'&&record.origin?.kind==='peer'){
+        kind='automation_message';data={source:'peer',content:record.message?.content};
+      }else{
+        if(record.type==='user'&&record.isMeta===true)return null;
+        kind=record.type==='user'&&record.origin?.kind==='task-notification'?'automation_message':'message';data=record.message;
+      }
     }
     else if (['custom-title','ai-title'].includes(record.type)) {
       const title=record.type==='custom-title'?record.customTitle:record.aiTitle;
@@ -169,7 +173,12 @@ export function parseRecord(harness: Harness, record: any, offset: number) {
       // Preserve the content blocks (including images) as conversation, without
       // treating system/task notifications or other queued modes as human input.
       if(attachment?.type==='queued_command' && attachment.commandMode==='prompt' && (typeof attachment.prompt==='string'||Array.isArray(attachment.prompt))) {
-        kind='message';data={role:'user',content:attachment.prompt};
+        if(attachment.origin?.kind==='peer'){
+          // A peer delivery has no Replicas user-message ID to resolve.
+          kind='automation_message';data={source:'peer',content:attachment.prompt};
+        }else{
+          kind='message';data={role:'user',content:attachment.prompt};
+        }
       } else {kind=attachment?.type==='remote_session_change'?'session_metadata':'attachment';data=attachment;}
     }
     else if (record.type === 'system' && /compact/.test(record.subtype ?? '')) {kind='compaction';data=record;}

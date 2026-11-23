@@ -28,6 +28,13 @@ test('SDK queued prompt remains conversation with native blocks and source ident
   const r={type:'attachment',uuid:'queued',timestamp:'2026-11-12T21:24:05.182Z',attachment:{type:'queued_command',commandMode:'prompt',source_uuid:'native-user',prompt:[{type:'text',text:'is capture working'},{type:'image',source:{type:'base64',data:'aGVsbG8='}}]}};
   const parsed=parseRecord('claude-code',r,123)!;
   expect(parsed.kind).toBe('message');expect(parsed.nativeId).toBe('queued');expect(parsed.data).toEqual({role:'user',content:r.attachment.prompt});
+  const peer=parseRecord('claude-code',{...r,attachment:{...r.attachment,isMeta:true,origin:{kind:'peer'}}},123)!;
+  expect(peer).toMatchObject({kind:'automation_message',nativeId:'queued',data:{source:'peer',content:r.attachment.prompt}});
+  expect(peer.data.role).toBeUndefined();
+  const directPeer={type:'user',isMeta:true,origin:{kind:'peer'},message:{role:'user',content:r.attachment.prompt}};
+  expect(parseRecord('claude-code',directPeer,123)).toMatchObject({kind:'automation_message',data:peer.data});
+  expect(parseRecord('claude-code',{...directPeer,origin:{}},123)).toBeNull();
+  expect(parseRecord('claude-code',{...r,attachment:{...r.attachment,isMeta:true}},123)?.kind).toBe('message');
   expect(parseRecord('claude-code',{...r,attachment:{...r.attachment,commandMode:'notification'}},123)?.kind).toBe('attachment');
   expect(parseRecord('claude-code',{type:'attachment',attachment:{type:'instructions',instructions:'injected setup'}},0)).toBeNull();
   expect(parseRecord('claude-code',{type:'user',isMeta:true,message:{role:'user',content:'injected skill'}},0)).toBeNull();
