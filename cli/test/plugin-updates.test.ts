@@ -101,7 +101,7 @@ test('standing consent belongs to the installation and its selected local client
   expect(automaticUpdateClients({...saved,selections:{...saved.selections,plugins:{codex:false,cursor:true}}})).toEqual(['cursor']);
 });
 
-test.skipIf(process.platform==='win32')('an opted-in local release exchanges intact folders, rechecks consent, and finishes interrupted receipts',async()=>{
+test.skipIf(process.platform==='win32').each(['current','legacy'])('an opted-in %s local release exchanges intact folders, rechecks consent, and finishes interrupted receipts',async(layout)=>{
   const {promoteDirectoryPlugin,retainsHookRegistrations,settlePromotion}=await import('../src/setup/plugin-promotion.ts');
   const {bindPublishedPackage}=await import('../src/setup/published-plugins.ts');
   const {writeBundle}=await import('../src/setup/plugins.ts');
@@ -123,6 +123,11 @@ test.skipIf(process.platform==='win32')('an opted-in local release exchanges int
     executable:'bin/opencrawl-hook',binaries:{'bin/opencrawl-hook':Buffer.from(version)},captureAvailable:true,daemonHandoff:true
   });
   const old=make('0.0.1','0'.repeat(64)),next=make(pin.version,archive.sha256);
+  if(layout==='legacy'){
+    old.source.path='local/'+client;
+    old.source.name='opencrawl-local-'+client;
+    old.source.archive!.url='https://github.com/'+pluginRelease.repository+'/releases/download/local-'+client+'-v'+old.source.version+'/'+old.source.name+'-'+old.source.version+'-'+platform+'.zip';
+  }
   const binding={configHome:home,installationId,owner,captureMode:'hook' as const,command:['/fixture/opencrawl']};
   const selected:SetupState={schemaVersion:1,scope,installationId,selections:{plugins:{[client]:true},forward:{[client]:true},history:{}},
     acceptedAt:'now',pluginAutoUpdates:{installationId,clients:[client]},pluginResults:[{client,status:'installed',source:old.source,captureAvailable:true}]};
