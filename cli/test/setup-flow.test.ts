@@ -574,15 +574,17 @@ test('the update step retains saved per-agent permissions until edited',()=>fixt
  const scope={api,tenantId:'tenant',userId:'user'};
  await setupCommand('apply',api,{yes:true,plugins:'codex,cursor',forward:'codex,cursor',history:'none'},setupCodex);
  await updateSetupState(scope,state=>({...state!,pluginAutoUpdates:{installationId:state!.installationId!,clients:['cursor']}}));
- const run=(updates?:boolean)=>setupCommand('run',api,{}, {...setupCodex,interactive:true,choose:async screen=>{
+ const run=(savedClients:string[],updates?:boolean)=>setupCommand('run',api,{}, {...setupCodex,interactive:true,choose:async screen=>{
   if(screen.phase===1)return screen.items.map(row=>({...row,selected:row.id==='codex'||row.id==='cursor'}));
   if(screen.phase!==4)return screen.items;
-  expect(screen.items).toMatchObject([{id:'codex',selected:false},{id:'cursor',selected:true}]);
+  expect(screen.items.map(row=>row.id)).toEqual(['codex','cursor']);
+  expect(screen.items.filter(row=>row.selected).map(row=>row.id)).toEqual(savedClients);
   return screen.items.map(row=>({...row,selected:updates??row.selected}));
  }});
- await run();
+ await run(['cursor']);
  expect(readSetupState(scope)?.pluginAutoUpdates?.clients).toEqual(['cursor']);
- await run(false);
+ await run(['cursor'],false);
+ await run([]);
  expect(readSetupState(scope)?.pluginAutoUpdates).toBeUndefined();
 }));
 test('recording Codex can independently import only Claude history after the second confirmation',async()=>fixture(async(api,dir,observations)=>{
@@ -592,8 +594,8 @@ test('recording Codex can independently import only Claude history after the sec
  const result=await setupCommand('run',api,{}, {interactive:true,choose:async screen=>{
   if(screen.phase===4){
    steps.push('updates');
-   expect(screen.items).toMatchObject([{id:'codex',selected:false}]);
-   return screen.items.map(item=>({...item,selected:true}));
+   expect(screen.items).toMatchObject([{id:'codex',selected:true}]);
+   return screen.items;
   }
   screens.push(screen);steps.push('choose:'+screens.length);
   if(screens.length===1){

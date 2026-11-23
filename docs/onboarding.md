@@ -41,9 +41,10 @@ run `opencrawl setup status --local --json`.
 
 ## Automatic plugin updates
 
-After choosing recording agents, check **Keep OpenCrawl plugins up to date (Recommended)**
-to allow the selected apps to run hooks from future verified updates. The choice
-starts unchecked. Run `opencrawl setup` again to change it.
+On a new installation, **Keep OpenCrawl plugins up to date (Recommended)** starts checked
+for the recording agents you selected. Leave it checked to allow those apps to run hooks
+from future verified updates, or clear it to update manually. Running `opencrawl setup`
+again shows your saved choices.
 Use `opencrawl setup updates` to check now or `opencrawl setup status --local --json`
 to see which apps you selected.
 

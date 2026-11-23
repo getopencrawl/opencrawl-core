@@ -69,24 +69,24 @@ test('empty history does not open another interactive screen',async()=>{
 });
 
 const updateLabel='Keep OpenCrawl plugins up to date (Recommended)';
-const updateScreen:SelectionScreen={phase:4,title:updateLabel,items:screen.items.slice(0,2).map(item=>({...item,selected:false}))};
-test('the update step shows just one checkbox and toggles all selected agents together',async()=>{
+const updateScreen:SelectionScreen={phase:4,title:updateLabel,items:screen.items.slice(0,2)};
+test('the update step shows one checked box and lets the user disable all selected agents together',async()=>{
  let answer:SelectionItem[]|null|undefined;
  const app=await renderReady(<SetupSelection screen={updateScreen} onComplete={value=>{answer=value;}}/>);
  try{
-  await waitForFrame(app,'› [ ] '+updateLabel);
+  await waitForFrame(app,'› [x] '+updateLabel);
   const frame=app.lastFrame()!;
   expect(frame.split(updateLabel)).toHaveLength(2);
-  expect(frame.match(/\[ \]/g)).toHaveLength(1);
+  expect(frame.match(/\[x\]/g)).toHaveLength(1);
   expect(frame).not.toMatch(/Claude Code|Codex|Record new sessions|Do not record|manual/i);
-  await pressAndRead(app,' ','› [x] '+updateLabel);
-  await pressAndRead(app,down,'› [ Continue ]');
-  await pressAndRead(app,up,'› [x] '+updateLabel);
   await pressAndRead(app,' ','› [ ] '+updateLabel);
+  await pressAndRead(app,down,'› [ Continue ]');
+  await pressAndRead(app,up,'› [ ] '+updateLabel);
   await pressAndRead(app,' ','› [x] '+updateLabel);
+  await pressAndRead(app,' ','› [ ] '+updateLabel);
   await pressAndRead(app,down,'› [ Continue ]');
   app.stdin.write(enter);await tick();
-  expect(answer?.map(item=>item.selected)).toEqual([true,true]);
+  expect(answer?.map(item=>item.selected)).toEqual([false,false]);
  }finally{app.unmount();}
 });
 

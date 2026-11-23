@@ -393,7 +393,8 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  if(action==='run'&&interactive){
   const prospectiveHistory=values.history===undefined?{}:selections.history;
   const candidates=clients.filter(client=>client.plugin&&client.forward);
-  const previousGrant=automaticUpdateClients(sameOwner&&previous?.installationId===boundConfig?.installationId?previous:null);
+  const savedInstallation=sameOwner&&previous?.installationId&&previous.installationId===boundConfig.installationId?previous:null;
+  const previousGrant=automaticUpdateClients(savedInstallation);
   const options=await Promise.all(candidates.map(async ({id,label})=>{
    const offered=newSetupClientAvailable(id,platform,registered);
    if(!offered||!await canInstall(id)){
@@ -421,7 +422,7 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
   const autoUpdateClients=previousGrant.filter(id=>!candidates.some(client=>client.id===id)&&selections.plugins[id]);
   if(selectedIds.size){
    const updates=await choose({phase:4,title:'Keep OpenCrawl plugins up to date (Recommended)',
-    items:options.filter(item=>selectedIds.has(item.id)).map(({id,label})=>({id,label,selected:previousGrant.includes(id)}))});
+    items:options.filter(item=>selectedIds.has(item.id)).map(({id,label})=>({id,label,selected:!savedInstallation||previousGrant.includes(id)}))});
    if(updates===null)return {status:'cancelled',humanTasks:[]};
    autoUpdateClients.push(...updates.filter(row=>row.selected&&selectedIds.has(row.id)).map(row=>row.id));
   }
