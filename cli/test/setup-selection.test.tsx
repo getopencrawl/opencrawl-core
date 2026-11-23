@@ -10,15 +10,19 @@ test('arrow navigation, Space checkboxes, exclusive opt-out and Enter on the foc
  let answer:SelectionItem[]|null|undefined;const app=await renderReady(<SetupSelection screen={screen} onComplete={value=>{answer=value;}}/>);
  try{
   await waitForFrame(app,'› [x] Claude Code');
+  expect(app.lastFrame()?.replace(/\s+/g,' ')).toContain('sharing instructions to Claude Code and Codex.');
   expect(app.lastFrame()).toMatch(/Codex[^\n]*⚠ Needs reinstall/);
   expect(app.lastFrame()).toContain('Reinstall & record');
   expect(app.lastFrame()!.indexOf('Antigravity')).toBeGreaterThan(app.lastFrame()!.indexOf('Do not record'));
   await pressAndRead(app,' ','› [ ] Claude Code');expect(answer).toBeUndefined();
+  expect(app.lastFrame()).toContain('sharing instructions to Codex.');
+  expect(app.lastFrame()).not.toContain('Claude Code also allows');
   await pressAndRead(app,down,'› [x] Codex');
   await pressAndRead(app,down,'› [ ] Cursor');
   await pressAndRead(app,down,'› [ ] Do not record');
   await pressAndRead(app,' ','› [x] Do not record');
   expect(app.lastFrame()).toContain('[ ] Codex');
+  expect(app.lastFrame()).not.toContain('sharing instructions');
   await pressAndRead(app,down,'› [ Continue ]');expect(answer).toBeUndefined();
   await pressAndRead(app,right,'› [ Cancel ]');
   await pressAndRead(app,up,'› [x] Do not record');

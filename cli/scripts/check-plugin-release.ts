@@ -30,6 +30,14 @@ for (const pkg of packages) {
   assert.equal(pkg.daemonHandoff, caps.daemonHandoff);
   assert.equal(pkg.minimumHarnessVersion, caps.minimumHarnessVersion);
   assert(caps.callbacks.length > 0);
+  // Guided setup offers recording and related-work suggestions for these agents.
+  // Check both the capability claim and the hook that the pinned package runs.
+  assert(caps.contextSuggestions === true || caps.callbacks.includes('context-suggestions'), harness+' must support suggestions');
+  const hooksPath = harness === 'antigravity' ? 'hooks.json' : 'hooks/hooks.json';
+  const hooks = (await download(path+'/'+hooksPath)).toString();
+  for (const action of ['capture', 'suggest']) {
+    assert(hooks.includes('--action '+action+'"'), harness+' is missing its '+action+' hook');
+  }
   assert.deepEqual(Object.keys(pkg.archives ?? {}).sort(), platforms);
   for (const [platform, archive] of Object.entries(pkg.archives ?? {})) {
     const url: string = 'https://github.com/'+repository+'/releases/download/v'+version+'/opencrawl-'+harness+'-'+version+'-'+platform;
