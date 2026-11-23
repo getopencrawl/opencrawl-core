@@ -28,6 +28,7 @@ export interface ConsoleExtensions<B extends Bootstrap> {
   document?: (page: unknown) => ReactNode | undefined;
   routes?: (context: ConsoleExtensionContext<B>) => ConsoleRoute[];
   decorateRoute?: (route: ConsoleRoute, data: B) => ConsoleRoute;
+  workspaceNotice?: (data: B) => ReactNode;
   teamFooter?: ReactNode;
   reloadKeys?: Record<string, readonly unknown[]>;
 }
@@ -85,9 +86,11 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const boardTopic = boardQuery.get('view') === 'stream' ? '' : (boardQuery.get('channel')??boardQuery.get('topic'))?.trim() || '';
   const machineSetup = data ? Boolean(data.setup) : document.getElementById('root')?.dataset.setupMode !== 'guided';
   const canSetUpReplicas = data?.workspace.role === 'admin' && data.canInstallReplicas === true && Boolean(api.replicasSetup);
+  const extensionRoutes=extensions?.routes?.({data, activated}) ?? [];
   const routes: ConsoleRoute[] = [
     ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error} replicasSetup={canSetUpReplicas ? api.replicasSetup : undefined}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage showActivity={data?.searchActivity?data.cacheScope:undefined} adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
+    ...extensionRoutes.filter(route=>route.group==='workspace'),
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
     {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canSetUpReplicas={canSetUpReplicas} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
@@ -100,7 +103,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
       <RecordingSettings adapter={libraryAdapter}/>
       {data?.sessionPrivacy && <PrivacySettings adapter={libraryAdapter}/>}
     </div>,pending:feedback => feedback ?? <LoadingState label="Loading privacy settings"/>},
-    ...(extensions?.routes?.({data, activated}) ?? []),
+    ...extensionRoutes.filter(route=>route.group!=='workspace'),
     {path:'/settings',label:'Settings',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/team',label:'Team',navigation:false,element:<Navigate to={'/settings/team' + location.search + location.hash} replace/>,pending:() => <Navigate to={'/settings/team' + location.search + location.hash} replace/>},
     {path:'/integrations',label:'Integrations',navigation:false,element:<Navigate to="/sources" replace/>},
@@ -122,7 +125,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
-  return <ConsoleDataProvider scopeKey={data.cacheScope} initial={seeds} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board channels' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
+  return <ConsoleDataProvider scopeKey={data.cacheScope} initial={seeds} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} workspaceNotice={extensions?.workspaceNotice?.(data)} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board channels' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
 }
 /** Members finish their personal setup without entering workspace administration. */
 function FinishMemberOnboarding({api,onComplete}:{api:Pick<ProductApi,'finishOnboarding'>;onComplete:()=>Promise<void>}) {

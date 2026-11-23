@@ -94,3 +94,12 @@ test('hidden Settings sections do not create tabs or an account entry', () => {
   assert.doesNotMatch(html, /href="\/settings\/billing"/);
   assert.doesNotMatch(render([hidden]), /oc-account-link/);
 });
+
+test('workspace notices precede page content and a navigation badge belongs to its link', () => {
+  const routes=[{path:'/',label:'Overview',badge:createElement('span',null,'Needs attention'),element:createElement('h1',null,'Overview page')}];
+  const html=renderToStaticMarkup(createElement(MemoryRouter,null,createElement(AppShell,{
+    workspace:{name:'Example workspace'},routes,workspaceNotice:createElement('aside',null,'Workspace notice'),
+  })));
+  assert.match(html, /<a[^>]+href="\/"[^>]*>[\s\S]*?Overview<\/span><span>Needs attention<\/span><\/a>/);
+  assert.match(html, /<main[^>]*><div class="oc-workspace-notice"><aside>Workspace notice<\/aside><\/div><div class="oc-content">/);
+});
