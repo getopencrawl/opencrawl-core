@@ -198,8 +198,19 @@ function organizationRequired(api: string, value: unknown) {
   return error;
 }
 
+type WorkspaceWelcome = {url:string; title:string; detail:string; openLabel:string; skipLabel:string};
+export function workspaceWelcome(api:string,value:unknown):WorkspaceWelcome | undefined {
+  if (!value || typeof value!=='object') return;
+  const fields=value as Record<string,unknown>;
+  const label=(text:unknown,limit:number):text is string => typeof text==='string' && text.trim().length>0 && text.length<=limit && !/[\p{Cc}\p{Cf}]/u.test(text);
+  const {path,title,detail,openLabel,skipLabel}=fields;
+  if (typeof path!=='string' || path.length>400 || !/^\/[a-zA-Z0-9][\w/=?&-]*$/.test(path) ||
+      !label(title,80) || !label(detail,240) || !label(openLabel,60) || !label(skipLabel,60)) return;
+  return {url:new URL(path,api).href,title,detail,openLabel,skipLabel};
+}
+
 export async function identity(api: string, fetcher = fetch, initialToken?: string): Promise<{
-  credential?: 'workspace-identity'; user: {id: string; email: string | null}; workspace?: {id: string; name: string | null};
+  welcome?: WorkspaceWelcome; credential?: 'workspace-identity'; user: {id: string; email: string | null}; workspace?: {id: string; name: string | null};
 }> {
   let token = initialToken ?? await accessToken(api, undefined, fetcher);
   let result = await jsonRequest(`${api}/api/cli/me`, {headers: {authorization: `Bearer ${token}`}}, fetcher);
@@ -221,12 +232,13 @@ export async function identity(api: string, fetcher = fetch, initialToken?: stri
   const workspace: unknown = result.body.data.workspace;
   if (workspace && typeof workspace === 'object' && 'id' in workspace && typeof workspace.id === 'string' && workspace.id.trim()
     && 'name' in workspace && (typeof workspace.name === 'string' || workspace.name === null)) {
-    return {...scope, user, workspace: {id: workspace.id, name: workspace.name}};
+    const welcome=workspaceWelcome(api,result.body.data.welcome);
+    return {...scope, user, workspace: {id: workspace.id, name: workspace.name}, ...(welcome && {welcome})};
   }
   return {...scope,user};
 }
 
-export async function loginIdentity(api:string,options:{organizationId?:string;noBrowser?:boolean;signal?:AbortSignal;onDevice?:(approval:{url:string;code:string;expiresIn:number;canOpenBrowser:boolean})=>void|Promise<void>}={}) {
+export async function loginIdentity(api:string,options:{organizationId?:string;noBrowser?:boolean;signal?:AbortSignal;onWelcome?:(welcome:WorkspaceWelcome,open:(()=>void)|undefined)=>Promise<void>;onDevice?:(approval:{url:string;code:string;expiresIn:number;canOpenBrowser:boolean})=>void|Promise<void>}={}) {
   const organizationId=options.organizationId;
   if(organizationId&&readSession(api))return selectOrganization(api,organizationId,token=>identity(api,fetch,token));
       const auth = await discover(api);
@@ -261,6 +273,11 @@ export async function loginIdentity(api:string,options:{organizationId?:string;n
       if (!verified) throw new CliError('INVALID_RESPONSE', 'Could not verify the selected workspace.');
       options.signal?.throwIfAborted();
       if (!organizationId) await saveSession(api, {auth, ...tokens});
+      if (verified.welcome && !organizationId) {
+        const welcome=verified.welcome;
+        if (options.onWelcome) await options.onWelcome(welcome,canOpenBrowser ? ()=>openBrowser(welcome.url) : undefined);
+        else process.stderr.write(welcome.title+'\n'+welcome.detail+'\n'+welcome.url+'\n');
+      }
   return verified;
 }
 
@@ -361,7 +378,16 @@ export async function main(args = process.argv.slice(2)) {
           readDestination:()=>({api:explicitDestination,explicit:explicitDestination}),
           withOrigin:withEnvironmentTokenOrigin,
           login:(api,ui)=>loginIdentity(api,{noBrowser:parsed.values['no-browser']===true,signal:ui.signal,
-            onDevice:({url,code,canOpenBrowser})=>showDeviceCode(ui,url,code,canOpenBrowser)}),
+            onDevice:({url,code,canOpenBrowser})=>showDeviceCode(ui,url,code,canOpenBrowser),
+            onWelcome:async(welcome,open)=>{
+              const choice=await ui.action({title:welcome.title,description:welcome.detail,
+                details:open ? undefined : [welcome.url],
+                actions:[{id:'open',label:welcome.openLabel},{id:'skip',label:welcome.skipLabel}]});
+              if (choice==='open') {
+                if (open) open();
+                else await ui.action({title:welcome.openLabel,description:welcome.url,actions:[{id:'continue',label:'Continue setup'}]});
+              }
+            }}),
         });
       }
       let destination=explicitDestination??readCaptureConfig()?.api;
