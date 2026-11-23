@@ -317,6 +317,6 @@ test('an unavailable PostgreSQL listener leaves direct mail readable at the next
   repository.watchDirect=async()=>{throw Error('Listener unavailable');};
   const args={...user(alice),delivery:'direct',waitMs:200};
   const empty=await api.sync(alice,args);
-  const urgent=await post(api,bob,'direct-after-outage','Please review',{mentions:['codex:alice']});
+  const urgent=await post(api,bob,'direct-after-outage','Please review',{channel:'work',mentions:['codex:alice']});
   assert.deepEqual((await api.sync(alice,{...args,after:empty.next})).messages.map(m=>m.id),[urgent.messages[0].id]);
 });
