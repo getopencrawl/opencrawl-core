@@ -3,7 +3,7 @@ import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs
 import {hkdfSync} from 'node:crypto';
 import {createSessionIngest} from '../sessions/ingest.mjs';
 import {sessionDeletionScheduler,sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
-import {selfhostTemporalSettings} from './temporal-settings.mjs';
+import {selfhostTemporalSettings,selfhostConnectorTransition} from './temporal-settings.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
@@ -40,9 +40,10 @@ export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=
 }
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const {database}=await selfhostState(env);
-  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env),services=selfhostServices(settings,store,database,env);
+  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env),config=selfhostTemporalSettings(env);
+  const services=selfhostServices(settings,store,database,env,selfhostConnectorTransition(env,settings.organizationId,config));
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
-  const config=selfhostTemporalSettings(env),{namespace}=config;
+  const {namespace}=config;
   const taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',deletionQueue=env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1';
   const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
   if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');

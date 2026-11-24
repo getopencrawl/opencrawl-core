@@ -3,7 +3,7 @@ import {sharedFilesLimits} from '../files/git-http.mjs';
 import {postgresSharedFiles} from '../files/store.mjs';
 import {createSearchActivity,startActivityRetention} from '../state/search-activity.mjs';
 import {loadContextSuggestions} from './context-suggestions.mjs';
-import {selfhostTemporalSettings} from './temporal-settings.mjs';
+import {selfhostTemporalSettings,selfhostConnectorTransition} from './temporal-settings.mjs';
 import {hkdfSync} from 'node:crypto';
 import {createReplicasImport} from '../integrations/replicas-import.mjs';
 import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs';
@@ -36,8 +36,8 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
   await identity.ready();
-  const services=selfhostServices(settings,store,database,env);
   const temporal=selfhostTemporalSettings(env);
+  const services=selfhostServices(settings,store,database,env,selfhostConnectorTransition(env,settings.organizationId,temporal));
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});

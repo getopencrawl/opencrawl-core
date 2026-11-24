@@ -1,5 +1,3 @@
-import {connectorTransitionScheduler} from '../connectors/temporal/client.mjs';
-import {selfhostTemporalSettings} from './temporal-settings.mjs';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {SelfhostSettings} from './settings.mjs';
 import {airbyteEnabled} from './settings.mjs';
@@ -23,7 +21,7 @@ import {createSlackOAuth,slackOAuthManifest} from '../integrations/slack-oauth.m
 import {createComposioOAuth} from '../integrations/composio.mjs';
 import {connectorSettingsStore} from '../integrations/connector-settings.mjs';
 import {errorInfo} from '../errors.mjs';
-export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env){
+export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env,onConnectorTransition?:Parameters<typeof createIntegrations>[0]['onConnectorTransition']){
   const enabled=airbyteEnabled(env);
   const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','notion','circleback','granola','linear'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
   definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
@@ -111,8 +109,6 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   }
   // An operator has no other record of why Airbyte refused a connection.
   const log=(event:string,data:Record<string,unknown>)=>console.error(JSON.stringify({event,...data,...(typeof data.message==='string'?{message:data.message.slice(0,2000)}:{})}));
-  const onConnectorTransition=connectorTransitionScheduler({...selfhostTemporalSettings(env),sourceId:'selfhost-'+settings.organizationId+'-v1',
-    generation:'v1',taskQueue:(env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1')+'-maintenance-v1'});
   const product=createIntegrations({onConnectorTransition,environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:authorization,providers,github,log});
   const integrations:ReturnType<typeof createIntegrations>={...product,
     async list(principal){const setup=await pending();return (await product.list(principal)).map(card=>setup[card.provider]?{...card,state:'setup-required' as const,setup:setup[card.provider]}:card);},
