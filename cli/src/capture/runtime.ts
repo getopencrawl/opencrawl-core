@@ -17,7 +17,7 @@ import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
 import {clientAppResolver} from './client-app.ts';
-import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
+import {cursorSession,cursorTranscript,cursorTranscriptBoundary,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {devinEvents,devinOverflow,devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
@@ -411,7 +411,7 @@ function leadingCodexRecord(fd: number, size: number, required: boolean) {
 }
 
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:Pick<HistoryFile,'bytes'|'ino'|'mtimeMs'|'scope'>,{sessionScoped=false,sessionPath}:{sessionScoped?:boolean,sessionPath?:string}={}) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:Pick<HistoryFile,'bytes'|'ino'|'mtimeMs'|'scope'>,{sessionScoped=false,sessionPath,discoverySince,parentSessionId}:{sessionScoped?:boolean,sessionPath?:string,discoverySince?:number,parentSessionId?:string}={}) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
@@ -481,6 +481,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       ? {harness,sessionId:agyHook?.sessionId??agyPath.sessionId,origin:agyPath.origin,originEvidence:agyPath.originEvidence,parentSessionId:null,sourcePath:path,...(agyHook?.cwd?{cwd:agyHook.cwd}:{})}
       : {harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path});
     if(agyHook?.cwd&&!meta.cwd)meta={...meta,cwd:agyHook.cwd};
+    if(scoped&&parentSessionId)meta.parentSessionId=parentSessionId;
     if(agyPath&&(!meta.origin||meta.origin==='unknown'))meta={...meta,origin:agyPath.origin,originEvidence:agyPath.originEvidence};
     const expectedSession=scoped?(scoped.agentId?scoped.sessionId+':'+scoped.agentId:scoped.sessionId):null;
     let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
@@ -604,7 +605,13 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
             if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd || meta.clientApp!==priorMeta.clientApp)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
-            const parsed=auditMessage?parseRecord(harness,record,position):null;
+            let parsed=auditMessage?parseRecord(harness,record,position):null;
+            if(parsed&&discoverySince!==undefined){
+              const time=typeof parsed.timestamp==='string'?Date.parse(parsed.timestamp):NaN;
+              // Touching/restoring an inactive file does not grant history
+              // consent. Undated bytes need a new file or an established cursor.
+              if(Number.isFinite(time)?time<discoverySince:!(old.forwardBoundary||old.offset>0&&!reset||source.birthtimeMs>=discoverySince))parsed=null;
+            }
             if(parsed?.kind==='session_title') {
               const platform=approvedFile?.scope?undefined:await platformTitle(config,meta);
               if(platform)parsed.data={title:platform.title,titleType:'custom'};
@@ -791,8 +798,7 @@ export async function captureHook(harness:Harness,event:any) {
 
 export type CaptureHookNotice={id:string,at:string,sequence?:number,harness:Harness,event:any};
 
-/** Shared Cursor conversion and occurrence deduplication. The daemon calls this
- * only with the exact session and transcript supplied by a native hook. */
+/** Merge the same session's hook, JSONL and committed native store events. */
 export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHookNotice,transcriptOnly=false) {
   ensureDirectories();
   const session=cursorSession(notice.event);
@@ -847,21 +853,41 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
     if(captureExcluded(readCaptureConfig()??config,meta))return;
     const since=notice.event.discoverySince;
     if(!Number.isFinite(since))throw new CliError('CAPTURE_CURSOR_BOUNDARY_UNKNOWN','Missing forward recording boundary for Cursor chat database');
-    const same=state.storeSince===since;
-    const store=cursorStoreRecords(root,session.sessionId,file,since,same?state.storeCursor:undefined);
-    if(!store)return;
-    const from=same&&state.storeScannedAt?state.storeScannedAt:new Date(Math.max(since,store.createdAt)).toISOString();
-    if(allowedTime(policy,scanStart,from))for(const [index,tool] of store.records.entries()){
-      const event=messages({...tool,id:hash(JSON.stringify(['cursor-store',session.sessionId,tool.kind,tool.nativeId])),
-        sequence:notice.sequence!+index,timestamp:notice.at,sourceTime:scanStart,sourceTimeFrom:from,parentId:null,turnId:null,agentId:null},'store');
-      if(event)events.push(event);
+    for(;;){
+      const current=readCaptureConfig();
+      if(!current||current.disabled||current.authPending||!current.harnesses?.includes('cursor')||current.discoverySince?.cursor!==config.discoverySince?.cursor||current.api!==config.api||current.installationId!==config.installationId||current.owner.userId!==config.owner.userId||current.owner.tenantId!==config.owner.tenantId||captureExcluded(current,meta))return;
+      const same=state.storeSince===since;
+      const store=cursorStoreRecords(root,session.sessionId,file,since,same?state.storeCursor:undefined);
+      if(!store)return;
+      // Persist the source interval and stable occurrence order before enqueue,
+      // so a crash between enqueue and checkpoint reproduces the same events.
+      if(!same||state.storePending?.head!==store.cursor.head){
+        state.storeSince=since;
+        if(!same){delete state.storeCursor;delete state.storeScannedAt;}
+        state.storePending={head:store.cursor.head,at:notice.at,sequence:notice.sequence,observed:new Date().toISOString(),
+          from:state.storeScannedAt??new Date(Math.max(since,store.createdAt)).toISOString()};
+        atomicJson(stateFile,state);
+      }
+      const pending=state.storePending;
+      if(allowedTime(policy,pending.observed,pending.from))for(const [index,record] of store.records.entries()){
+        const event=messages({...record,id:hash(JSON.stringify(['cursor-store',session.sessionId,record.kind,record.nativeId])),
+          sequence:pending.sequence+index,timestamp:pending.at,sourceTime:pending.observed,sourceTimeFrom:pending.from,parentId:null,turnId:null,agentId:null},'store');
+        if(event)events.push(event);
+      }
+      pending.sequence+=store.records.length;
+      state.storeCursor=store.cursor;
+      if(!store.cursor.more){state.storeScannedAt=pending.observed;delete state.storePending;}
+      commit();
+      if(!store.cursor.more)return;
+      await yieldToOwner();
     }
-    state.storeSince=since;state.storeCursor=store.cursor;state.storeScannedAt=scanStart;
-    commit();return;
   }
   // Text transcript metadata is not the native JSONL fallback. Keep the
   // authoritative content hooks working without opening referenced text.
   if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
+    if(transcriptOnly&&Number.isFinite(notice.event.discoverySince)&&state.ino===undefined&&statSync(file).birthtimeMs<notice.event.discoverySince){
+      Object.assign(state,cursorTranscriptBoundary(harnessRoot(config,'cursor'),session.sessionId,file),{forwardBoundary:true});
+    }
     const transcriptState={offset:state.offset,ino:state.ino,checkpoint:state.checkpoint,identity:state.identity};
     for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino,transcriptState.checkpoint,{forwardBoundary:state.forwardBoundary===true,skipPartial:state.skipPartial===true,identity:transcriptState.identity})) {
       if(record.forwardRebased){

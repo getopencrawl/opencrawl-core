@@ -84,9 +84,12 @@ export async function runCaptureDaemon({signal,flushMs=10_000,reconcileMs=30_000
       const config=current();
       if(!config || config.disabled || !sameBinding(registration,config) || !config.harnesses?.includes(registration.harness) || stopped)return;
       const existing=active.get(key(registration));
-      if(existing){existing.dirty=true;wakeCapture();return;}
+      if(existing && (existing.registration.discoverySince===undefined||existing.registration.discoverySince===registration.discoverySince)){
+        existing.dirty=true;wakeCapture();return;
+      }
       if(!registration.cwd&&(config.exclusions?.projects.length||registration.harness==='antigravity'||registration.harness==='codex'))registration.cwd=transcriptWorkspace(registration,config);
       if(captureExcluded(config,registration))return;
+      if(existing)existing.signatures.clear();
       persist(registration);enroll(registration);wakeCapture();
     },()=>stopped);
     // One damaged local record must not prevent healthy sessions from capturing.
@@ -246,8 +249,11 @@ export async function runCaptureDaemon({signal,flushMs=10_000,reconcileMs=30_000
               const signature=[st.dev,st.ino,st.size,st.mtimeMs,wal?.ino,wal?.size,wal?.mtimeMs].join(':');
               if(item.signatures.get(path)!==signature){
                 const harness=item.registration.harness;
-                if(harness==='cursor')await captureCursorNotice(latest,{id:'tail:'+id,at:new Date(item.registration.at).toISOString(),sequence:item.registration.at*1000,harness,event:{...item.registration.hook,cwd:item.registration.cwd,discoverySince:item.registration.discoverySince,conversation_id:item.registration.sessionId,transcript_path:path}},true);
-                else if(readsTranscript(harness))await captureTranscript(latest,harness,path,{...item.registration.hook,session_id:item.registration.sessionId,cwd:item.registration.cwd},false,async()=>{queueDirty=true;wakeUpload();},undefined,{sessionScoped:true,sessionPath:item.registration.path});
+                if(harness==='cursor'){
+                  const at=item.registration.discoverySince===undefined?item.registration.at:Math.floor(Math.max(st.mtimeMs,wal?.mtimeMs??0));
+                  await captureCursorNotice(latest,{id:'tail:'+id,at:new Date(at).toISOString(),sequence:at*1000,harness,event:{...item.registration.hook,cwd:item.registration.cwd,discoverySince:item.registration.discoverySince,conversation_id:item.registration.sessionId,transcript_path:path}},true);
+                }
+                else if(readsTranscript(harness))await captureTranscript(latest,harness,path,{...item.registration.hook,session_id:item.registration.sessionId,cwd:item.registration.cwd},false,async()=>{queueDirty=true;wakeUpload();},undefined,{sessionScoped:true,sessionPath:item.registration.path,discoverySince:item.registration.discoverySince,parentSessionId:item.registration.parentSessionId});
                 queueDirty=true;wakeUpload();item.lastActivity=Date.now();
                 item.signatures.set(path,signature);counters.captures++;changed=true;
               }

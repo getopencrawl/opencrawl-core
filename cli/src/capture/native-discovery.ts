@@ -43,6 +43,8 @@ export function sessionAtPath(harness: NativeHarness, base: string, file: string
     id = /^rollout-.*-([a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})\.jsonl$/i.exec(name)?.[1];
   } else if (harness === 'claude-code' && parts.length === 2 && name.endsWith('.jsonl')) {
     id = name.slice(0, -6);
+  } else if (harness === 'claude-code' && parts.length >= 4 && parts[2] === 'subagents' && /^agent-[\w.:-]{1,200}\.jsonl$/.test(name)) {
+    id = parts[1];
   } else if (harness === 'cursor' && basename(base)==='chats' && parts.length===3 && ['store.db','store.db-wal','meta.json'].includes(name)) {
     id = parts[1];
   } else if (harness === 'cursor' && parts.length === 4 && parts[1] === 'agent-transcripts' && name === parts[2]+'.jsonl') {
@@ -54,11 +56,21 @@ export function sessionAtPath(harness: NativeHarness, base: string, file: string
 }
 
 function* candidates(harness: NativeHarness, base: string): Generator<string> {
+  function* subagents(dir:string):Generator<string>{
+    for(const entry of entries(dir)){
+      const file=join(dir,entry.name);
+      if(entry.isDirectory())yield* subagents(file);
+      else if(entry.isFile()&&/^agent-[\w.:-]{1,200}\.jsonl$/.test(entry.name))yield file;
+    }
+  }
   for (const first of entries(base)) {
     if (!first.isDirectory()) continue;
     const dir = join(base, first.name);
     if (harness === 'claude-code') {
-      for (const file of entries(dir)) if (file.isFile() && file.name.endsWith('.jsonl')) yield join(dir,file.name);
+      for (const file of entries(dir)) {
+        if(file.isFile() && file.name.endsWith('.jsonl'))yield join(dir,file.name);
+        if(file.isDirectory() && validId.test(file.name))yield* subagents(join(dir,file.name,'subagents'));
+      }
     } else if (harness === 'cursor' && basename(base)==='chats') {
       for (const chat of entries(dir)) if (chat.isDirectory() && validId.test(chat.name)) {
         yield join(dir,chat.name,'store.db');
@@ -87,7 +99,8 @@ function* candidates(harness: NativeHarness, base: string): Generator<string> {
 export function discoveredSession(config: CaptureConfig, harness: NativeHarness, base: string, file: string, since: number): DaemonRegistration | undefined {
   const sessionId = sessionAtPath(harness, base, file);
   const store=harness==='cursor'&&basename(base)==='chats';
-  const source=store?join(dirname(file),'store.db'):file;
+  const source=store?join(dirname(file),'store.db'):harness==='claude-code'&&sessionId?
+    join(base,relative(base,file).split(sep)[0]!,sessionId+'.jsonl'):file;
   if (!sessionId || !daemonPathAllowed(config,harness,sessionId,source)) return;
   try {
     const st = lstatSync(file);

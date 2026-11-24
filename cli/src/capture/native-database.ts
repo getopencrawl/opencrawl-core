@@ -1,4 +1,4 @@
-import {Database} from 'bun:sqlite';
+import {Database,constants} from 'bun:sqlite';
 import {lstatSync,realpathSync} from 'node:fs';
 import {relative,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -14,16 +14,18 @@ export function regular(root:string,path:string){
 export function readNativeDatabase<T>(root:string,path:string,read:(db:Database)=>T):T {
   const before=regular(root,path);
   for(const suffix of ['-shm','-wal','-journal'])if(lstatSync(path+suffix,{throwIfNoEntry:false}))regular(root,path+suffix);
-  const hasWal=()=>Boolean(lstatSync(path+'-wal',{throwIfNoEntry:false})?.size);
-  const immutable=!hasWal();
+  const hasJournal=()=>['-wal','-journal'].some(s=>Boolean(lstatSync(path+s,{throwIfNoEntry:false})?.size));
+  const immutable=!hasJournal();
   // A closed WAL-mode database has no sidecars. Verify this read-only
   // snapshot stayed unchanged before committing its capture checkpoint.
-  const db=new Database(immutable?pathToFileURL(path).href+'?immutable=1':path,{readonly:true});
+  const db=immutable
+    ? new Database(pathToFileURL(path).href+'?immutable=1',constants.SQLITE_OPEN_READONLY|constants.SQLITE_OPEN_URI)
+    : new Database(path,{readonly:true});
   try {
     const result=db.transaction(()=>read(db))();
     if(immutable){
       const after=regular(root,path);
-      if(hasWal()||before.ino!==after.ino||before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw invalid();
+      if(hasJournal()||before.ino!==after.ino||before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw invalid();
     }
     return result;
   } finally {db.close();}

@@ -32,7 +32,8 @@ for(const editor of [false,true])test('committed Cursor '+(editor?'editor':'CLI'
     const tool=(id:string,result:string)=>({role:'tool',content:[{type:'tool-result',toolCallId:id,toolName:'Read',result}]});
     const old=message(tool('old','before consent'));commit([old]);
     const since=created+1000;
-    const first=cursorStoreRecords(root,session,path,since)!;expect(first.records).toEqual([]);
+    expect(cursorStoreRecords(root,session,path,created-1,undefined,true)).toBeNull();
+    const first=cursorStoreRecords(root,session,path,since,undefined,true)!;expect(first.records).toEqual([]);
     message(tool('abandoned','uncommitted secret'));
     const refs=[old,message({role:'user',content:'model scaffold'}),
       message({role:'user',content:[{type:'text',text:'editor context'},{type:'text',text:'<timestamp>now</timestamp>\n<user_query>\nRead the file\n</user_query>'}]}),
@@ -46,6 +47,15 @@ for(const editor of [false,true])test('committed Cursor '+(editor?'editor':'CLI'
     expect(cursorStoreRecords(root,session,path,since,second.cursor)).toBeNull();
     commit([...refs,'0'.repeat(64)]);
     expect(()=>cursorStoreRecords(root,session,path,since,second.cursor)).toThrow();
+    const many=Array.from({length:205},(_,i)=>message(tool('paged-'+i,'value '+i)));
+    commit([...refs,...many]);
+    const page=cursorStoreRecords(root,session,path,since,second.cursor)!;
+    expect(page.cursor.more).toBe(true);
+    const next=cursorStoreRecords(root,session,path,since,JSON.parse(JSON.stringify(page.cursor)))!;
+    const last=cursorStoreRecords(root,session,path,since,next.cursor)!;
+    expect(last.cursor.more).toBe(false);
+    expect([...page.records,...next.records,...last.records].map(r=>r.nativeId)).toEqual(many.map((_,i)=>'paged-'+i));
+    expect(cursorStoreRecords(root,session,path,since,last.cursor)).toBeNull();
     db.close();
     if(editor){
       const index=new Database(join(root,'conversation-search.db'),{create:true});index.exec('CREATE TABLE conversations (id TEXT,updated_at INTEGER,is_archived INTEGER,source TEXT,scope TEXT)');

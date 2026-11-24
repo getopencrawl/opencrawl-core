@@ -140,6 +140,20 @@ isolatedTest('the daemon discovers four selected native chats without hooks and 
   expect(f.batches.every((b:any)=>b.sessionId===id)).toBe(true);
 }));
 
+isolatedTest('hook-free Claude child activity recovers an idle parent and skips pre-selection content',async()=>fixture(async f=>{
+  const line=(id:string,date:Date,child?:string)=>JSON.stringify({...JSON.parse(f.record(id,child)),timestamp:date.toISOString()})+'\n';
+  const old=new Date(0);
+  writeFileSync(f.path,line('before-selection',old));utimesSync(f.path,old,old);
+  await f.start();await f.stop();
+  const child=join(f.path.slice(0,-6),'subagents','agent-child.jsonl');
+  mkdirSync(dirname(child),{recursive:true});
+  writeFileSync(child,line('offline-child',new Date(),'child'));
+  await f.start();await until(()=>f.batches.some((b:any)=>b.sessionId==='session:child'));await f.stop();
+  expect(JSON.stringify(f.batches)).toContain('offline-child');
+  expect(JSON.stringify(f.batches)).not.toContain('before-selection');
+  expect(JSON.parse(readFileSync(join(daemonDir(),'status.json'),'utf8')).noticeReads).toBe(0);
+}));
+
 function nativeConfig(f:any,harness:'cursor'|'antigravity'|'codex'|'grok-bot'|'devin'){
   const config=readCaptureConfig()!;
   config.harnesses=[harness];config.roots[harness]=join(f.dir,harness);
@@ -1038,8 +1052,11 @@ isolatedTest('migrated Cursor daemon uploads late legacy hook notices while excl
 }));
 
 isolatedTest('Claude user prompt repairs a missed initial session notice without scanning history',async()=>fixture(async f=>{
+  const line=(id:string)=>JSON.stringify({...JSON.parse(f.record(id)),timestamp:new Date().toISOString()})+'\n';
+  writeFileSync(f.path,line('one'));
+  const inactive=new Date(Date.now()-60_000);utimesSync(f.path,inactive,inactive);
   await f.start();
-  appendFileSync(f.path,f.record('recovered-after-missed-start'));
+  appendFileSync(f.path,line('recovered-after-missed-start'));
   f.event('UserPromptSubmit');
   await until(()=>JSON.stringify(f.batches).includes('recovered-after-missed-start'));
   expect(JSON.stringify(f.batches)).toContain('synthetic one');

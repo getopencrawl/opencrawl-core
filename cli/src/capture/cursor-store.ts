@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {lstatSync,readFileSync} from 'node:fs';
+import {lstatSync,readFileSync,readdirSync} from 'node:fs';
 import {basename,dirname,isAbsolute,join,relative,resolve,sep} from 'node:path';
 import {readNativeDatabase,regular} from './native-database.ts';
 import {CliError} from '../oauth.ts';
@@ -12,6 +12,17 @@ export function cursorStorePath(root:string,id:string,path:string){
   return uuid.test(id)&&parts.length===4&&parts[0]==='chats'&&/^[a-f\d]{32}$/.test(parts[1]!)&&parts[2]===id&&parts[3]==='store.db';
 }
 
+export function* cursorCliStores(root:string){
+  const chats=join(root,'chats');
+  if(!lstatSync(chats,{throwIfNoEntry:false})?.isDirectory())return;
+  for(const bucket of readdirSync(chats,{withFileTypes:true})){
+    if(!bucket.isDirectory()||!/^[a-f\d]{32}$/.test(bucket.name))continue;
+    const folder=join(chats,bucket.name);
+    for(const chat of readdirSync(folder,{withFileTypes:true})){
+      if(chat.isDirectory()&&uuid.test(chat.name))yield {id:chat.name,path:join(folder,chat.name,'store.db')};
+    }
+  }
+}
 
 export function cursorStoreWorkspace(root:string,id:string,path:string){
   if(!cursorStorePath(root,id,path))throw invalid();
@@ -55,7 +66,7 @@ function messageRefs(bytes:Uint8Array){
 }
 
 type SourceRecord = {kind:'tool_call'|'tool_result'|'message',nativeId:string,data:Record<string,unknown>};
-export type StoreCursor = {head:string,seen:string[]};
+export type StoreCursor = {head:string,seen:string[],more?:boolean};
 
 
 export function defaultCursorEditorRoot(home:string,platform=process.platform){
@@ -93,7 +104,7 @@ function recordsForMessage(msg:any,ref:string):SourceRecord[]{
   return records;
 }
 
-export function cursorStoreRecords(root:string,id:string,path:string,since:number,previous?:StoreCursor){
+export function cursorStoreRecords(root:string,id:string,path:string,since:number,previous?:StoreCursor,boundaryOnly=false){
   const editor=path===join(root,'state.vscdb');
   if(!uuid.test(id)||!editor&&!cursorStorePath(root,id,path))throw invalid();
   return readNativeDatabase(root,path,db=>{
@@ -106,9 +117,8 @@ export function cursorStoreRecords(root:string,id:string,path:string,since:numbe
     };
     let head:string,createdAt:number,rootBytes:Uint8Array;
     if(editor){
-      const row=db.query('SELECT value FROM cursorDiskKV WHERE key=? AND length(value)<=?').get('composerData:'+id,16*1024*1024) as {value:string}|null;
-      if(!row)return null;
-      const meta=JSON.parse(row.value);
+      const meta=db.query("SELECT json_extract(value,'$.composerId') AS composerId,json_extract(value,'$.createdAt') AS createdAt,json_extract(value,'$.conversationState') AS conversationState FROM cursorDiskKV WHERE key=? AND length(value)<=?").get('composerData:'+id,16*1024*1024) as {composerId:string,createdAt:number,conversationState:string}|null;
+      if(!meta)return null;
       if(meta.composerId!==id||typeof meta.conversationState!=='string'||!meta.conversationState.startsWith('~'))throw invalid();
       rootBytes=Buffer.from(meta.conversationState.slice(1),'base64');
       head=createHash('sha256').update(rootBytes).digest('hex');createdAt=meta.createdAt;
@@ -118,19 +128,28 @@ export function cursorStoreRecords(root:string,id:string,path:string,since:numbe
       const meta=JSON.parse(Buffer.from(row.value,'hex').toString('utf8'));
       head=meta.latestRootBlobId;createdAt=meta.createdAt;
       if(meta.agentId!==id||typeof head!=='string'||!digest.test(head))throw invalid();
-      if(previous?.head===head)return null;
+      if(previous?.head===head&&!previous.more)return null;
       rootBytes=get(head,8*1024*1024);
     }
     if(!Number.isSafeInteger(createdAt)||createdAt<=0)throw invalid();
-    if(previous?.head===head)return null;
+    if(boundaryOnly&&createdAt>=since)return null;
+    if(previous?.head===head&&!previous.more)return null;
     const refs=messageRefs(rootBytes),seen=new Set(previous?.seen);
     const records:SourceRecord[]=[];
     const baseline=!previous&&createdAt<since;
+    let bytes=0,count=0,more=false;
     for(const ref of refs){
       if(seen.has(ref))continue;
+      if(!baseline&&(records.length>=100||count>=256||bytes>=1024*1024)){more=true;break;}
+      if(!baseline){
+        const data=get(ref);
+        // Keep a large individual source record in its own page.
+        if(records.length&&bytes+data.length>1024*1024){more=true;break;}
+        records.push(...recordsForMessage(JSON.parse(Buffer.from(data).toString('utf8')),ref));
+        bytes+=data.length;count++;
+      }
       seen.add(ref);
-      if(!baseline)records.push(...recordsForMessage(JSON.parse(Buffer.from(get(ref)).toString('utf8')),ref));
     }
-    return {cursor:{head,seen:[...seen]},records,createdAt};
+    return {cursor:{head,seen:[...seen],more},records,createdAt};
   });
 }
