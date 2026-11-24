@@ -182,7 +182,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
    * Docker connector definitions are installed by the operator; product requests only resolve them.
    */
   async function dockerDefinition(id: string, {name}: ConnectorDefinition) {
-    const definition = (await airbyte.sourceDefinitions(id)).find(d => d.name === name);
+    const matches = (await airbyte.sourceDefinitions(id)).filter(d => d.name === name);
+    if (matches.length > 1) throw new Error('Multiple Airbyte Docker definitions match the configured connector');
+    const definition = matches[0];
     if (!definition) throw new Error(`Connector ${name} is not registered in the configured Airbyte workspace`);
     return definition.id;
   }

@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import {createProvisioning, provisioningLabel} from '../dist/src/integrations/provisioning.mjs';
 import {createAirbyte} from '../dist/src/integrations/airbyte.mjs';
 
+test('a malformed definition listing cannot authorize a shared definition create', async () => {
+  let response={};
+  const api=createAirbyte({url:'https://airbyte.test',clientId:'id',clientSecret:'fixture',fetch:async input =>
+    Response.json(new URL(input).pathname.endsWith('/applications/token')?{access_token:'token'}:response)});
+  for (response of [{}, {data:[],next:'/more'}, {data:[{id:'existing'}]}]) {
+    await assert.rejects(api.declarativeSources('workspace'), /Incomplete Airbyte definition listing/);
+  }
+  response={data:[]};assert.deepEqual(await api.declarativeSources('workspace'),[]);
+});
+
 test('Airbyte verifies the disabled connection and terminal job before its landing data can be removed', async () => {
   let state='running',listedConnection='owned',listedType='sync',paused=false,cancelled=0;
   const job=()=>({connectionId:listedConnection,jobId:123,jobType:listedType,status:state});
