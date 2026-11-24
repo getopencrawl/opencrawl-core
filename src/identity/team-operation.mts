@@ -3,7 +3,6 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {ConditionalStore, Principal, StoreVersion} from '../sessions/types.mjs';
 import type {IdentityDirectory} from './types.mjs';
 import {errorInfo} from '../errors.mjs';
-import {activeMemberships} from './principal.mjs';
 import {authorizeTeamChange, applyTeamChange, verifyTeamChange, teamChange, rejectChange, type ChangeOutcome, type TeamChange} from './team-change.mjs';
 import {roleWriteGuard,releaseRoleWrite,ownsRoleWrite} from './role-write.mjs';
 
@@ -108,8 +107,14 @@ export function teamChangeActivities({database,directory,store,prefix,credential
           }
           if (authorized && !authorized.needsWrite) await done({ok:true},true);
           if (authorized?.needsWrite) {
-            if (change.role==='remove' && !Object.keys(credentials).length) throw Error('Removal credential stores missing');
-            await db.query(`UPDATE ${table} SET phase='dispatching',membership=$4 WHERE ${where}`,[...key,authorized.membershipId]);
+            let versions:Versions|null=null;
+            if (change.role==='remove') {
+              if (!Object.keys(credentials).length) throw Error('Removal credential stores missing');
+              versions={};
+              for (const [name,group] of Object.entries(credentials)) versions[name]=await group.removalVersion(principal);
+            }
+            await db.query(`UPDATE ${table} SET phase='dispatching',membership=$4,versions=$5 WHERE ${where}`,[...key,authorized.membershipId,versions]);
+            row.versions=versions;
             // From this point a timeout, process death, or lost response requires
             // provider evidence. An empty directory lookup cannot re-arm the write.
             try {await applyTeamChange(directory,change,authorized.membershipId);}
@@ -121,15 +126,10 @@ export function teamChangeActivities({database,directory,store,prefix,credential
         if (row.phase==='applied') {
           if (!row.membership) throw Error('Team operation is missing its membership');
           if (change.role==='remove') {
-            let versions=row.versions;
-            if (!versions) {
-              // Snapshot after confirmed removal. Bind each retry to that snapshot
-              // so a delayed attempt cannot revoke credentials from a later rejoin.
-              if ((await activeMemberships(directory,change.userId,change.organizationId)).length) return held;
-              versions={};
-              for (const [name,group] of Object.entries(credentials)) versions[name]=await group.removalVersion(principal);
-              await db.query(`UPDATE ${table} SET versions=$4 WHERE ${where}`,[...key,JSON.stringify(versions)]);
-            }
+            // Always invalidate the generation that existed at dispatch, including
+            // when WorkOS already shows a replacement membership. A repeated CAS
+            // cannot rotate a newer generation issued after successful revocation.
+            const versions=row.versions;
             if (!versions || !Object.keys(versions).length || Object.keys(credentials).sort().join(',')!==Object.keys(versions).sort().join(','))
               return held;
             for (const [name,version] of Object.entries(versions)) await credentials[name]!.revokeVersion(principal,version);

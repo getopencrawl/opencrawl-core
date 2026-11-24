@@ -34,7 +34,7 @@ export function createCaptureCredentials({store,prefix='capture-v1',now=Date.now
       if((record.generation??'')!==await generation(record.principal))return null;
       return {...record.principal,captureAccess:'write'};
     },
-    /** A removal binds its revocation to the generation it observed after provider acknowledgement.
+    /** A removal binds its revocation to the generation it observed before provider dispatch.
      * A replay cannot overwrite a new generation created by a later removal or invitation. */
     async removalVersion(principal:Principal):Promise<StoreVersion|null> {
       sessionScope(principal);

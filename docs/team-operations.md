@@ -2,7 +2,7 @@
 
 The API authenticates the request, persists one operation in the application database, and starts its Temporal workflow before committing the intake transaction. The first activity takes the same operation lock and reads that admission. If the transaction rolled back, the activity has no authorized command. The HTTP caller receives the verified result or a pending-verification error. The workflow survives an HTTP disconnect.
 
-Each operation resolves the current actor and target under the organization's existing role-write guard. It records the provider membership ID and dispatch intent before sending the mutation. After provider acknowledgement, a removal captures and conditionally rotates each credential generation, verifies the workspace roster and releases the guard. Known-safe storage and verification operations retry across worker replacement. In self-host the workflow runs on the `team-member-v1` queue.
+Each operation resolves the current actor and target under the organization's existing role-write guard. It records the provider membership ID, credential generations for a removal, and dispatch intent before sending the mutation. After provider acknowledgement, a removal conditionally rotates those generations even if the user has rejoined. It verifies the workspace roster before releasing the guard. Known-safe storage and verification operations retry across worker replacement. In self-host the workflow runs on the `team-member-v1` queue.
 
 ## Operator review
 

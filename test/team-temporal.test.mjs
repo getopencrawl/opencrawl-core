@@ -57,6 +57,22 @@ test('team changes bind the queued reference to committed intake, guard ownershi
   assert.equal((await worker.advanceTeamChange(next)).outcome.ok,false);
 });
 
+test('a rejoin before readback cannot reactivate credentials issued to the removed membership',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t),ref=await f.ref(),worker=teamChangeActivities(f.options);
+  const owner={tenantId:change.organizationId,userId:change.userId},old=await f.credential.issue(owner);
+  const apply=f.directory.userManagement.deleteOrganizationMembership,previous=f.members.get(owner.userId);
+  f.directory.userManagement.deleteOrganizationMembership=async id=>{
+    await apply(id);
+    f.members.set(owner.userId,{...previous,id:'om_rejoined'});
+  };
+  assert.equal((await worker.advanceTeamChange(ref)).review,true);
+  assert.equal(await f.credential.authenticate(old.token),null);
+  const after=await f.credential.issue(owner);
+  assert.equal((await worker.advanceTeamChange(ref)).review,true);
+  assert.ok(await f.credential.authenticate(after.token));
+  assert.equal(f.writes(),1);
+});
+
 test('unconfirmed provider writes keep the original guard through retries and operator rechecks',{skip:!postgresUrl},async t=>{
   const f=await fixture(t),ref=await f.ref(),worker=teamChangeActivities(f.options);
   const apply=f.directory.userManagement.deleteOrganizationMembership;
