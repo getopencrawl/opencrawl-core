@@ -44,15 +44,19 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
     }
     async function capture(tx:ApplicationTransaction,workspace:string,chat:string,history:ReplicasHistory,mode:'history'|'live',title?:string,occurrences:Record<string,number>={},catalog:Record<string,unknown>={}){
       const identity=replicasSession(scope.tenantId,scope.organizationId,workspace,chat);
+      const events=replicasRecords(chat,history,occurrences);
+      if(events.length){
+        const evidence=replicasSenderEvidence({...catalog,workspace_id:workspace},history);
+        // History and live frames have the same provider records and immutable IDs.
+        // A replay may write another batch, but the transcript and search key each event once.
+        try{await writeReplicasEvents(ingest,{...identity,title,attachments:[],captureMode:mode},events,evidence.replicasSenders);}
+        catch(error){if(!(error instanceof ReplicasPageError&&error.reason==='deleted'))throw error;}
+      }
+      // The binding and cursor become visible together at commit. Take the
+      // thread row lock only after storage and durable index dispatch finish:
+      // a long history page must not block a live write for the same chat.
       const thread=replicasThread(history);
       if(thread)await saveReplicasThread(tx,namespace,scope.tenantId,identity.owner.userId,identity.sessionId,thread);
-      const events=replicasRecords(chat,history,occurrences);
-      if(!events.length)return;
-      const evidence=replicasSenderEvidence({...catalog,workspace_id:workspace},history);
-      // History and live frames have the same provider records and immutable IDs.
-      // A replay may write another batch, but the transcript and search key each event once.
-      try{await writeReplicasEvents(ingest,{...identity,title,attachments:[],captureMode:mode},events,evidence.replicasSenders);}
-      catch(error){if(!(error instanceof ReplicasPageError&&error.reason==='deleted'))throw error;}
     }
     async function collectWorkspace(active:Connection,api:Api,workspace:string,signal:AbortSignal){
       const stateKey=[...binding,workspace];

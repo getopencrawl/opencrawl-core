@@ -125,3 +125,88 @@ test('slow durable storage batches the next network chunks without delaying an i
   assert.deepEqual(writes.flat(),Array.from({length:12},(_,i)=>'e:'+(i+1)));
   assert.ok(writes.length<=3,'the burst must share durable writes');
 });
+
+test('retained history storage cannot hold a new live message behind its thread mapping',async t=>{
+  const database=await applicationDatabaseFixture(t);
+  const historyEntered=Promise.withResolvers(),releaseHistory=Promise.withResolvers(),liveEntered=Promise.withResolvers();
+  const connected=Promise.withResolvers(),historyFinished=Promise.withResolvers();
+  const request=async(input,options)=>{
+    const url=new URL(input);
+    if(url.pathname.endsWith('/whoami'))return Response.json({caller:'organization_api_key',organization:{id:org,name:'Internal'}});
+    if(url.pathname.endsWith('/conversations'))return Response.json({conversations:[chat],next_cursor:null,total:1});
+    if(url.pathname==='/v1/replica')return Response.json({page:1,total_pages:1,replicas:[{id:workspace,status:'active'}]});
+    if(url.pathname.endsWith('/history'))return Response.json({coding_agent:'claude',thread_id:claudeThread,events:[missed],before_cursor:null});
+    assert.equal(url.pathname,'/v1/replica/'+workspace+'/events');
+    const stream=new ReadableStream({start(controller){
+      connected.resolve((id,type,payload)=>controller.enqueue(new TextEncoder().encode(packet(id,type,payload))));
+      options.signal.addEventListener('abort',()=>controller.close(),{once:true});
+    }});
+    return new Response(stream,{headers:{'content-type':'text/event-stream'}});
+  };
+  const service=createReplicasImport({database,key:randomBytes(32),request,schedule:async()=>{},ingest:async(p,b)=>{
+    assert.equal(p.tenantId,owner.tenantId);
+    if(b.captureMode==='history'){
+      assert.equal(b.events[0].id,replicasEvents(chat,{events:[missed]})[1].id);
+      historyEntered.resolve();await releaseHistory.promise;historyFinished.resolve();
+    }else{
+      assert.equal(b.events[0].id,replicasEvents(chat,{events:[live]})[1].id);
+      liveEntered.resolve();
+    }
+  }});
+  await service.action(owner,{action:'connect',apiKey:'fixture-org-key'});
+  const stop=new AbortController(),running=service.runLiveCapture({tenantId:owner.tenantId,organizationId:org},stop.signal);
+  try{
+    const send=await connected.promise;
+    send('engine:1','engine.stream.opened',{resumed:false});
+    await historyEntered.promise;
+    send('engine:2','chat.turn.delta',{chatId,event:live});
+    await Promise.race([liveEntered.promise,delay(1200).then(()=>{throw Error('live capture blocked behind retained history storage')})]);
+    await until(async()=>(await database.pool.query('SELECT cursor FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0]?.cursor==='engine:2');
+    releaseHistory.resolve();await historyFinished.promise;
+    await until(async()=>(await database.pool.query('SELECT gap_since FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0]?.gap_since===null);
+  }finally{releaseHistory.resolve();stop.abort();await running;}
+});
+
+test('a native message flushes preceding ancillary frames without waiting for a separate durable write',async()=>{
+  const {replicasLiveApi}=await import('../dist/src/integrations/replicas-live-api.mjs');
+  for(const type of ['claude-system','codex-item-partial']){
+    const first=Promise.withResolvers(),release=Promise.withResolvers();
+    let controller;
+    const body=new ReadableStream({start(c){controller=c;}});
+    const stop=new AbortController();
+    const api=replicasLiveApi('fixture',org,stop.signal,async()=>new Response(body,{headers:{'content-type':'text/event-stream'}}));
+    const writes=[];
+    const running=api.stream(workspace,null,stop.signal,async frames=>{
+      const ids=frames.map(f=>f.cursor);writes.push(ids);first.resolve(ids);await release.promise;
+    });
+    const send=(id,eventType,payload)=>controller.enqueue(new TextEncoder().encode(packet(id,eventType,payload)));
+    try{
+      send('e:1','chat.turn.delta',{chatId,event:{type}});
+      await delay(40);
+      send('e:2','chat.updated',{chat:{id:chatId}});
+      const message=type==='claude-system'?{type:'claude-user',payload:{message:{role:'user',content:'first prompt'}}}
+        :{type:'codex-item',payload:{item:{type:'userMessage',content:[{type:'text',text:'first prompt'}]}}};
+      send('e:3','chat.turn.delta',{chatId,event:message});
+      assert.deepEqual(await Promise.race([first.promise,delay(400,[],{ref:false})]),['e:1','e:2','e:3']);
+    }finally{release.resolve();controller.close();await running;}
+    assert.equal(writes.length,1);
+  }
+});
+
+test('ancillary-only reads flush at the deadline, at the buffer limit and at EOF',async()=>{
+  const {replicasLiveApi}=await import('../dist/src/integrations/replicas-live-api.mjs');
+  for(const end of ['deadline','limit','EOF']){
+    let controller;
+    const source=new ReadableStream({start(c){controller=c;}});
+    const receive=Promise.withResolvers(),writes=[];
+    const api=replicasLiveApi('fixture',org,new AbortController().signal,async()=>new Response(source,{headers:{'content-type':'text/event-stream'}}));
+    const run=api.stream(workspace,null,new AbortController().signal,async frames=>{writes.push(frames.map(f=>f.cursor));receive.resolve();});
+    const count=end==='limit'?64:1;
+    for(let i=0;i<count;i++)controller.enqueue(new TextEncoder().encode(packet('e:'+i,'chat.turn.delta',{chatId,event:{type:'claude-system'}})));
+    if(end==='EOF')controller.close();
+    try{
+      await Promise.race([receive.promise,delay(end==='deadline'?1800:350,undefined,{ref:false}).then(()=>{throw Error('ancillary frames did not flush at '+end)})]);
+      assert.deepEqual(writes,[Array.from({length:count},(_,i)=>'e:'+i)]);
+    }finally{if(end!=='EOF')controller.close();await run;}
+  }
+});
