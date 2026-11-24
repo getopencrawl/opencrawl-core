@@ -2,7 +2,6 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {SessionKey} from '../sessions/session-reference.mjs';
 import {record} from '../sessions/replicas-record.mjs';
 import type {Principal} from '../sessions/types.mjs';
-import type {CurrentSession} from '../search/types.mjs';
 import {replicasCaptureOwner} from './replicas-events.mjs';
 import type {ReplicasHistory} from './replicas-api.mjs';
 
@@ -60,11 +59,12 @@ export async function saveReplicasThread(client:Client,namespace:string,tenant:s
     [namespace,tenant,owner,session,evidence==='conflict'?null:evidence.harness,evidence==='conflict'?null:evidence.id]);
 }
 
-export type CurrentCaptureLookup=(principal:Principal,current:CurrentSession)=>Promise<SessionKey|undefined>;
+type NativeSession=Pick<SessionKey,'harness'|'sessionId'>;
+export type CurrentCaptureLookup=(principal:Principal,current:NativeSession)=>Promise<SessionKey|undefined>;
 
 /** Native IDs only link to a provider chat inside the authenticated workspace.
  * Forks may share native history. An ambiguous link cannot identify the caller. */
-export async function currentReplicasCapture(client:Client,namespace:string,principal:Principal,current:CurrentSession):Promise<SessionKey|undefined>{
+export async function currentReplicasCapture(client:Client,namespace:string,principal:Principal,current:NativeSession):Promise<SessionKey|undefined>{
   const owner=principal.owner;
   if(owner?.provider!=='replicas'||!['claude-code','codex'].includes(current.harness)||!uuid(current.sessionId))return;
   const userId=replicasCaptureOwner(owner.organizationId,owner.workspaceId);
