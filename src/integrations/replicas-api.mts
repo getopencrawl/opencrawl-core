@@ -10,7 +10,7 @@ const conversationsSchema=z.object({conversations:z.array(conversationSchema).ma
 const historySchema=z.looseObject({events:z.array(z.unknown()).max(1000),before_cursor:cursor.optional(),has_more:z.boolean().optional()})
   .refine(page=>page.waking===true||page.before_cursor!==undefined||page.has_more===false);
 export type ReplicasHistory=z.infer<typeof historySchema>;
-export type ReplicasOperation='identity'|'catalog'|'history'|'workspace_chats';
+export type ReplicasOperation='identity'|'catalog'|'history'|'workspace_chats'|'live';
 export interface ReplicasResponseInfo {httpStatus:number;requestId?:string;bytesRead?:number}
 export class ReplicasPageError extends Error {
   constructor(readonly reason:'page_size'|'invalid_page'|'cursor'|'deleted'|'waking'|'empty_with_messages'|'empty_unverified',message:string,readonly observedBytes?:number,readonly limitBytes?:number){super(message);}
@@ -82,7 +82,7 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
     conversations:(next?:string|null,workspaceId?:string,observe?:(info:ReplicasResponseInfo)=>void,limit=100)=>get('catalog','organization/conversations?'+new URLSearchParams({limit:String(limit),...(next?{cursor:next}:{}),...(workspaceId?{workspace_id:workspaceId}:{})}),conversationsSchema,undefined,observe),
     workspaceChats:(workspaceId:string)=>get('workspace_chats','replica/'+workspaceId+'/chats',
       z.object({chats:z.array(z.object({id:z.string(),created_at:z.string().optional(),updated_at:z.string().optional()})),waking:z.boolean().optional()})),
-    async history(conversation:ReplicasConversation,before?:string|null,limit=100,observe?:(info:ReplicasResponseInfo)=>void){
+    async history(conversation:Pick<ReplicasConversation,'workspace_id'|'chat_id'>,before?:string|null,limit=100,observe?:(info:ReplicasResponseInfo)=>void){
       const page=await get('history','replica/'+conversation.workspace_id+'/history?'+new URLSearchParams({chat_id:conversation.chat_id,limit:String(limit),...(before?{before_cursor:before}:{})}),historySchema,limit===1?singleHistoryPageBytes:undefined,observe);
       if(page.waking===true)throw new ReplicasPageError('waking','Replicas is preparing the workspace history.');
       return page;

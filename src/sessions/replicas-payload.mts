@@ -28,7 +28,7 @@ export function packReplicasPayload(event:SessionEvent,canonicalData:string){
 /** The caller has authenticated the batch and its exact immutable source. Read
  * only content-addressed attachments under that same session's storage prefix. */
 export async function expandReplicasPayload(store:ObjectStore,prefix:string,principal:Principal,source:string,batch:SessionBatch):Promise<SessionBatch>{
-  if(batch.harness!=='replicas'||batch.captureMode!=='history'||batch.events.length!==1||
+  if(batch.harness!=='replicas'||(batch.captureMode!=='history'&&batch.captureMode!=='live')||batch.events.length!==1||
     !/^workload_replicas_[a-f0-9]{64}$/.test(batch.owner.userId))return batch;
   const event=batch.events[0]!,descriptor=event.data?.replicasPayloadV1 as Payload|undefined;
   if(!descriptor)return batch;

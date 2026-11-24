@@ -87,9 +87,12 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
     })().catch(async()=>{await unlink(readiness).catch(()=>{});console.error(JSON.stringify({event:'selfhost.indexing.discovery_failed'}));}).finally(()=>{inFlight=undefined;});
   };
   await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
-  const stop=()=>{stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
+  const liveStop=new AbortController();
+  const live=env.OPENCRAWL_REPLICAS_LIVE_ORGANIZATION_ID
+    ?replicasImport.runLiveCapture({tenantId:settings.organizationId,organizationId:env.OPENCRAWL_REPLICAS_LIVE_ORGANIZATION_ID},liveStop.signal):undefined;
+  const stop=()=>{liveStop.abort();stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
   const runs=workers.map(x=>x.worker.run());tick();
-  try{await Promise.all(runs);}finally{stop();await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await Promise.all([database.close(),eventIdentities.close()]);}
+  try{await Promise.all(runs);}finally{stop();await live;await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await Promise.all([database.close(),eventIdentities.close()]);}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

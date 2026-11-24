@@ -1101,3 +1101,12 @@ test('a persistent catalog count mismatch shares the daily wake only with comple
   assert.equal(await nextWorkspaceExportReview(db,scope,true,new Date(now+2*day).toISOString()),Date.parse(due));
   await update([chat.chat_id,randomUUID()]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(due));
 });
+
+test('a completed legacy import with no credential exposes reconnect while retaining its counts',async t=>{
+  const f=await fixture(t);await f.service.action(principal,{action:'connect',apiKey:'fixture-key'});
+  await f.database.pool.query("UPDATE opencrawl_replicas_imports SET state=state||'{\"phase\":\"complete\",\"imported\":7}'::jsonb,credential=NULL WHERE namespace=$1 AND tenant=$2",[f.database.namespace,principal.tenantId]);
+  const source=await f.service.source(principal);
+  assert.equal(source.history.requiresReconnect,true);assert.equal(source.synced,7);
+  await f.service.action(principal,{action:'connect',apiKey:'replacement-key'});
+  assert.equal((await f.service.status(principal)).requiresReconnect,undefined);
+});

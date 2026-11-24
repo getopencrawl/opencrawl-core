@@ -74,7 +74,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   function replicasActions(source:SourceCard){
     const history=source.history;
     const setup = canSetUpReplicas && <LinkButton to={replicasCapturePath}>Set up capture</LinkButton>;
-    if (setup && ['disconnected','error'].includes(source.state)) return <div className="actions">
+    if (setup && (history?.requiresReconnect || ['disconnected','error'].includes(source.state))) return <div className="actions">
       <Button variant="primary" disabled={pending !== null} aria-label="Connect Replicas" onClick={() => setReplicasSource(source)}>Connect</Button>{setup}
     </div>;
     if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup || undefined;

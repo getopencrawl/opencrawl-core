@@ -101,3 +101,20 @@ fixture data after verification.
 References: [organization export](https://docs.replicas.dev/api-reference/replica/list-organization-conversations),
 [history pagination](https://docs.replicas.dev/api-reference/replica/read-history),
 [API access](https://docs.replicas.dev/features/api#access).
+
+## Live events
+
+The worker can subscribe to active workspaces within one explicitly configured
+Replicas organization. Self-host operators can set
+`OPENCRAWL_REPLICAS_LIVE_ORGANIZATION_ID` on the worker after connecting that
+organization's history import. The worker checks both the local tenant binding
+and the key's Replicas organization before discovering any workspaces. Stopping
+the connection withdraws its authority to capture new events.
+
+Live agent events use the same session and immutable event identities as
+retained history. The worker saves its replay cursor after ingest. If the engine
+cannot resume, it reads the affected workspace's retained conversations. The
+regular history workflow still discovers sleeping workspaces. Live capture runs
+on the server and requires no Replicas warm hook, start hook, or local recorder.
+Agent-side context suggestions and board notifications use their harness hooks
+and workspace identity independently of server-side capture.

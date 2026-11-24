@@ -1,16 +1,17 @@
+import {createReplicasLiveCapture} from './replicas-live.mjs';
 import {selectCatalogRows} from './replicas-catalog.mjs';
 import {prepareReplicasThreads,saveReplicasThread,visibleCapturePairs,type CaptureLookup} from './replicas-threads.mjs';
 import {backfillReplicasEvidence} from './replicas-archive-evidence.mjs';
 import type {ObjectStore} from '../sessions/types.mjs';
 import {randomUUID} from 'node:crypto';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
-import type {Principal,SessionBatch,SessionEvent} from '../sessions/types.mjs';
+import type {Principal} from '../sessions/types.mjs';
 import type {SourceCard} from '../application/types.mjs';
 import {sealedEnvelope} from './credential-vault.mjs';
 import {replicasApi,replicasError,ReplicasProviderError,ReplicasPageError,type ReplicasConversation,type ReplicasHistory,type ReplicasResponseInfo} from './replicas-api.mjs';
-import {packReplicasPayload} from '../sessions/replicas-payload.mjs';
-import {replicasSenderEvidence,chunkSenderEvidence} from './replicas-senders.mjs';
-import {canonical,replicasDigest,replicasEvents,replicasTurns} from './replicas-events.mjs';
+import {writeReplicasEvents,type ReplicasIngest} from './replicas-batch.mjs';
+import {replicasSenderEvidence} from './replicas-senders.mjs';
+import {replicasDigest,replicasEvents,replicasSession,replicasTurns} from './replicas-events.mjs';
 
 import {prepareSnapshots,saveSnapshot,snapshotProgress,snapshotsForPage,sourceRevision,type WorkspaceVersion} from './replicas-snapshots.mjs';
 import {nextWorkspaceExportReview,reviewWorkspaceExport} from './replicas-export-review.mjs';
@@ -21,7 +22,7 @@ import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} fr
 export interface ReplicasImportStatus {
   id:string;organization:{id:string;name:string};phase:'preview'|'importing'|'complete'|'disconnected'|'failed';
   total:number;processed:number;imported:number;events:number;turns:number;pages:number;updatedAt:string;
-  error?:string;waitingForSource?:boolean;blocked?:number;blockedChats?:number;retryAt?:string;
+  requiresReconnect?:boolean;error?:string;waitingForSource?:boolean;blocked?:number;blockedChats?:number;retryAt?:string;
 }
 export type ReplicasImportInput={action:'connect';apiKey:string}|{action:'stop';id:string};
 export interface ReplicasJob {tenantId:string;id:string}
@@ -40,7 +41,7 @@ export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 /** One explicit step reads one complete API page. Checkpoint only after the
  * original response and every projected record reach durable ingest/indexing.
  * Missing access and unknown pagination fail closed; no conversation is skipped. */
-export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:(principal:Principal,batch:SessionBatch,gate?:undefined,blobs?:ReadonlyMap<string,Uint8Array>)=>Promise<unknown>;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
+export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
@@ -74,7 +75,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
   }
   async function status(principal:Principal,includeBlockedChats=true){
     await ready();
-    const row=(await database.pool.query(`SELECT jsonb_strip_nulls(to_jsonb(summary)) AS state,
+    const row=(await database.pool.query(`SELECT jsonb_strip_nulls(to_jsonb(summary)) AS state, (i.credential IS NULL AND summary.phase='complete') AS reconnect,
       CASE WHEN $3 AND summary.blocked>0 THEN
         (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int
            FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
@@ -83,7 +84,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         total bigint,processed bigint,imported bigint,events bigint,turns bigint,pages bigint,"updatedAt" text,
         error text,blocked bigint,"retryAt" text,"waitingForSource" boolean)
       WHERE i.namespace=$1 AND i.tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
-    return row?{...visible(row.state as State),blockedChats:row.blocked_chats??undefined}:null;
+    return row?{...visible(row.state as State),...(row.reconnect?{requiresReconnect:true}:{}),blockedChats:row.blocked_chats??undefined}:null;
   }
   async function savePage(client:Pick<ApplicationDatabase['pool'],'query'>,principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
     const next=history.before_cursor??null;
@@ -92,28 +93,12 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
     const occurrences={...state.occurrences};
     const evidence=replicasSenderEvidence(chat,history);
     const events=replicasEvents(chat,history,occurrences,state.before);
-    const owner={tenantId:principal.tenantId,userId:'workload_replicas_'+replicasDigest('history-v2:'+state.organization.id+':'+chat.workspace_id)};
-    const base={schemaVersion:1,installationId:'replicas-history-v2:'+state.organization.id,sessionId:'replicas-chat:'+chat.chat_id,harness:'replicas',origin:'cloud',captureMode:'history',owner,title:'[Replicas history] '+(chat.title??chat.workspace_name),attachments:[]};
-    // A full response archive and its searchable records can together
-    // exceed one ingest batch. Split without truncating any record.
-    const baseBytes=Buffer.byteLength(JSON.stringify(base))+32,limit=15*1024*1024;
-    let batch:SessionEvent[]=[],bytes=baseBytes;
-    const put=async(events:SessionEvent[],evidenceEvents:SessionEvent[],attachments:SessionBatch['attachments']=[],blobs?:ReadonlyMap<string,Uint8Array>)=>{
-      const result=await ingest(owner,{...base,...chunkSenderEvidence(evidenceEvents,evidence.replicasSenders),attachments,events},undefined,blobs);
-      if(result&&typeof result==='object'&&'discarded' in result)throw new ReplicasPageError('deleted','The session was deleted in OpenCrawl.');
-    };
-    const flush=async()=>{if(batch.length)await put(batch,batch);batch=[];bytes=baseBytes;};
-    for(const event of events){
-      const size=Buffer.byteLength(JSON.stringify(event))+1;
-      if(bytes+size>limit||batch.length===1000)await flush();
-      if(baseBytes+size>limit){
-        const packed=packReplicasPayload(event,canonical(event.data));
-        await put([packed.event],[event],packed.attachments,packed.blobs);
-        console.info(JSON.stringify({event:'replicas.import.large_record',tenantId:principal.tenantId,importId:state.id,
-          workspaceId:chat.workspace_id,chatId:chat.chat_id,bytes:size,parts:packed.attachments.length}));
-      }else{batch.push(event);bytes+=size;}
-    }
-    await flush();
+    const {owner,...identity}=replicasSession(principal.tenantId,state.organization.id,chat.workspace_id,chat.chat_id);
+    const base={...identity,captureMode:'history',owner,title:'[Replicas history] '+(chat.title??chat.workspace_name),attachments:[]};
+    await writeReplicasEvents(ingest,base,events,evidence.replicasSenders,(bytes,parts)=>{
+      console.info(JSON.stringify({event:'replicas.import.large_record',tenantId:principal.tenantId,importId:state.id,
+        workspaceId:chat.workspace_id,chatId:chat.chat_id,bytes,parts}));
+    });
     const turns=replicasTurns(history).length;
     if(!state.before||state.progress)state.progress=snapshotProgress(state.progress??undefined,chat,history,turns);
     if(!state.refresh){state.events+=history.events.length;state.turns+=turns;state.pages++;}
@@ -503,6 +488,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
   }
   const capturePairs:CaptureLookup=async(tenant,visible)=>{await ready();return visibleCapturePairs(database.pool,namespace,tenant,visible);};
   return {status,source,capturePairs,
+    runLiveCapture:createReplicasLiveCapture({database,ready,key,ingest,request}),
     async action(principal:Principal,input:ReplicasImportInput){
       let result;
       try{result=await operate(principal,input);}
