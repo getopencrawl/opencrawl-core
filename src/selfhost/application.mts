@@ -210,6 +210,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
   };
   const assets=new Map<string,[string,string]>([
     ['/favicon.svg',['web/assets/opencrawl-mark.svg','image/svg+xml']],
+    ...['imprint-paper.png','setup-first-host.png'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,'image/png']]),
     ['/assets/integrations/devin.png',['web/assets/connectors/devin.png','image/png']],
     ...['tokens.css'].map((f):[string,[string,string]]=>['/'+f,['web/'+f,'text/css']]),
     ...['geist-sans.woff2','geist-mono.woff2','opencrawl-mark.svg'].map((f):[string,[string,string]]=>['/assets/'+f,['web/assets/'+f,f.endsWith('.svg')?'image/svg+xml':'font/woff2']]),

@@ -88,7 +88,14 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   const canSetUpReplicas = data?.workspace.role === 'admin' && data.canInstallReplicas === true && Boolean(api.replicasSetup);
   const extensionRoutes=extensions?.routes?.({data, activated}) ?? [];
   const routes: ConsoleRoute[] = [
-    ...(machineSetup ? [{path:'/setup',label:'Setup',icon:'terminal' as const,element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error}/> : null,pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>}] : []),
+    ...(machineSetup ? [{
+      path:'/setup', label:'Setup', icon:'terminal' as const,
+      badge:data?.setup?.installations.length === 0
+        ? <span className="oc-nav-alert" role="img" aria-label="Needs attention. No hosts connected." title="Connect your first host">!</span>
+        : undefined,
+      element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error}/> : null,
+      pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>,
+    }] : []),
     {path:'/',label:'Usage',icon:'usage',element:<UsagePage showActivity={data?.searchActivity?data.cacheScope:undefined} adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},
     ...extensionRoutes.filter(route=>route.group==='workspace'),
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
