@@ -4,6 +4,7 @@ import {errorMetadata} from '../types.mjs';
 import {Worker, NativeConnection, bundleWorkflowCode} from '@temporalio/worker';
 import {Context, heartbeat} from '@temporalio/activity';
 import {ApplicationFailure} from '@temporalio/common';
+export {connectorMaintenance, type ConnectorMaintenance, type ConnectorJob, type RegistryPosition} from './maintenance.mjs';
 import {fileURLToPath} from 'node:url';
 import {writeFile} from 'node:fs/promises';
 import {createConnectorPipeline} from '../pipeline.mjs';
@@ -62,4 +63,16 @@ export async function createConnectorWorker({address, namespace, taskQueue, bund
       maxConcurrentActivityTaskExecutions, maxConcurrentWorkflowTaskExecutions: 4, shutdownGraceTime: '30 seconds'});
     return {worker, connection};
   } catch (error) { await connection.close(); throw error; }
+}
+
+/** A separate task queue keeps older indexing workers from consuming cleanup
+ * tasks during rolling updates and rollback. Share the native connection. */
+export function createConnectorMaintenanceWorker(options: {
+  connection: NativeConnection; namespace: string; taskQueue: string; bundlePath: string;
+  activities: import('./maintenance.mjs').ConnectorMaintenance;
+}) {
+  return Worker.create({connection: options.connection, namespace: options.namespace, taskQueue: options.taskQueue,
+    workflowBundle: {codePath: options.bundlePath}, activities: options.activities,
+    maxCachedWorkflows: 0, maxConcurrentActivityTaskExecutions: 2, maxConcurrentWorkflowTaskExecutions: 2,
+    shutdownGraceTime: '30 seconds'});
 }

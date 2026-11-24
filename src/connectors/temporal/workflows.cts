@@ -18,4 +18,5 @@ async function indexConnectorV1(input: ConnectorActivityInput) {
   return result;
 };
 
-export = {indexConnectorV1};
+const maintenance = require('./maintenance-workflows.cjs') as typeof import('./maintenance-workflows.cjs');
+export = {indexConnectorV1, ...maintenance};
