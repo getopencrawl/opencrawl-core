@@ -188,3 +188,32 @@ test('monitor expiry, rearming and replay preserve the native session idle clock
  markNativeBoardActivity(api,{session_id:session,hook_event_name:'PostToolUse',tool_name:'Bash',tool_input:{command:'git status'}});
  expect(resumed.lastActivity()).toBeGreaterThan(base.getTime());
 });
+
+test('a listener whose page is never acknowledged says that newer messages are held, with backoff, and stops once it is acknowledged', async () => {
+  let now = 0, acknowledged = false;
+  const out: any[] = [], receipt = 'e'.repeat(64), cursor = 'f'.repeat(64);
+  await watchBoard({session: 'held', now: () => now, notice: 'full', timeoutMs: 4 * 60 * 60_000,
+    acknowledge: async () => {throw Error('A notice is acknowledged by its reader');},
+    emit: value => out.push(value), warn: () => {},
+    request: async last => acknowledged ? {batch: null} : last === receipt ? {batch: null, unacknowledged: true}
+      : {batch: {receipt, cursor, more: true, messages: [{id: 7, text: 'hello'}]}},
+    delay: async ms => {now += ms; if (now >= 150 * 60_000) acknowledged = true;}});
+  expect(out[0]).toEqual({type: 'board.notice', ids: [7], messages: [{id: 7, text: 'hello'}], more: true, cursor});
+  const reminders = out.slice(1);
+  expect(reminders.every(r => r.type === 'board.unacknowledged' && r.cursor === cursor && r.ids[0] === 7 && /acknowledge/.test(r.message))).toBe(true);
+  // 5 minutes, then 10, 20, 40 and 60 apart: 5, 15, 35, 75 and 135 minutes after the notice; none after the acknowledgment at 150.
+  // Polling adds up to a poll interval to each.
+  const minutes = reminders.map(r => r.waitingMs / 60_000);
+  expect(minutes.length).toBe(5);
+  [5, 15, 35, 75, 135].forEach((due, i) => {expect(minutes[i]).toBeGreaterThanOrEqual(due); expect(minutes[i]).toBeLessThan(due + 2);});
+});
+
+test('an acknowledged page brings no reminder', async () => {
+  let now = 0, polls = 0;
+  const out: any[] = [];
+  await watchBoard({session: 'prompt', now: () => now, notice: 'full', timeoutMs: 60 * 60_000,
+    acknowledge: async () => {}, emit: value => out.push(value), warn: () => {},
+    request: async () => polls++ ? {batch: null} : {batch: {receipt: 'a'.repeat(64), cursor: 'b'.repeat(64), more: false, messages: [{id: 1, text: 'x'}]}},
+    delay: async ms => {now += ms;}});
+  expect(out.map(v => v.type)).toEqual(['board.notice']);
+});

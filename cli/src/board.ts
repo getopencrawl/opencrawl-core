@@ -141,6 +141,8 @@ export function writeBoardOutput(data: unknown, json: boolean, output: Writable 
   });
 }
 
+const unacknowledgedAfterMs = 5 * 60_000, unacknowledgedMaxMs = 60 * 60_000;
+
 export async function watchBoard({request, acknowledge, session, emit, warn, once = false, notice, compact = false, checkpoint = () => {}, lastEmitted = null, timeoutMs = 0, now = Date.now, delay = sleep, signal, idle, check = () => {}}: {
   request: (lastEmitted: string | null) => Promise<any>; acknowledge: (receipt: string) => Promise<unknown>; session: string; emit: (data: unknown) => unknown; warn: (message: string) => void;
   idle?: {lastActivity():number; onNotification(receipt:string):void; leave():Promise<unknown>};
@@ -150,6 +152,9 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
   const deadline = timeoutMs ? now() + timeoutMs : Infinity;
   const active=()=>{check();signal?.throwIfAborted();};
   let emitted = lastEmitted, failures = 0;
+  // A full notice is acknowledged by its reader, not here. Until then the server holds every newer
+  // message behind that page, so a reader that never acknowledges would hear nothing more. Say so.
+  let held: {ids: number[]; cursor: string | null; since: number; remindAt: number; every: number} | null = null;
   while (now() < deadline) {
     let wait = 10_000;
     try {
@@ -167,12 +172,21 @@ export async function watchBoard({request, acknowledge, session, emit, warn, onc
             cursor: batch.cursor ?? null,
           };
           await emit({type: 'board.notice', ids, ...content});
+          held = {ids, cursor: batch.cursor ?? null, since: now(), remindAt: now() + unacknowledgedAfterMs, every: unacknowledgedAfterMs};
         }
         else for(const message of compactDelivery(batch.messages)){active();await emit(message);}
         active();
         if (!notice) await checkpoint(batch.receipt);
         emitted = batch.receipt;
         idle?.onNotification(batch.receipt);
+      }
+      if (notice && !batch && held) {
+        if (result.unacknowledged !== true) held = null;
+        else if (now() >= held.remindAt) {
+          await emit({type: 'board.unacknowledged', ids: held.ids, cursor: held.cursor, waitingMs: now() - held.since,
+            message: 'This page is still unacknowledged, so newer board messages are being held behind it. After handling it, acknowledge it: opencrawl board inbox --cursor <cursor>.'});
+          held.every = Math.min(held.every * 2, unacknowledgedMaxMs); held.remindAt = now() + held.every;
+        }
       }
       // Output completion is a transport receipt, not a claim that a model read
       // or acted on the message. Never make model reasoning gate the next batch.
@@ -255,7 +269,7 @@ async function pollInboxNotice(readPage: (idsOnly: boolean) => Promise<any>, ids
       throw new CliError('BOARD_PROTOCOL_ERROR', 'Invalid inbox notification.', 2);
     if (page.left || !page.ids.length) return {left: page.left, batch: null};
     const receipt = receiptFor(page.ids);
-    if (receipt === lastEmitted) return {batch: null};
+    if (receipt === lastEmitted) return {batch: null, unacknowledged: true};
     if (idsOnly) return {batch: {receipt, messages: page.ids.map((id: number) => ({id}))}};
   }
   const page = await readPage(false);
