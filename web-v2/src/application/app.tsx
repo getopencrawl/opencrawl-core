@@ -91,7 +91,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     ...(machineSetup ? [{
       path:'/setup', label:'Setup', icon:'terminal' as const,
       badge:data?.setup?.installations.length === 0
-        ? <span className="oc-nav-alert" role="img" aria-label="Needs attention. No hosts connected." title="Connect your first host">!</span>
+        ? <span className="oc-nav-alert" role="img" aria-label="Needs attention. No computers connected." title="Connect your first computer">!</span>
         : undefined,
       element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error}/> : null,
       pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>,

@@ -15,9 +15,9 @@ for(const viewport of [{width:1280,height:800},{width:390,height:844}])test(`inc
   await expect(command).toHaveText(installer);
   await page.evaluate(() => document.fonts.ready);
   expect(await command.evaluate(field => field.scrollHeight <= field.clientHeight + 1 && field.scrollWidth <= field.clientWidth + 1)).toBe(true);
-  await expect(page.getByRole('heading', {name:'Connect your first host'})).toBeVisible();
-  await expect(page.getByText('Waiting for your first host', {exact:false})).toBeVisible();
-  await expect(page.getByRole('heading',{name:'Your hosts'})).toBeVisible();
+  await expect(page.getByRole('heading', {name:'Connect your first computer'})).toBeVisible();
+  await expect(page.getByText('Waiting for your first computer', {exact:false})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Your computers'})).toBeVisible();
   const tabs = page.getByRole('tablist', {name:'Operating system'});
   await expect(tabs.getByRole('tab')).toHaveCount(2);
   await expect(tabs.getByRole('tab', {name:'macOS / Linux'})).toHaveAttribute('aria-selected','true');
@@ -45,16 +45,13 @@ test('searchable capture alone stays pending until native Claude MCP is verified
   const tile = page.getByRole('listitem').filter({has:page.getByRole('heading', {name:'Test Mac'})});
   await expect(tile).toContainText('Awaiting sign-in');
   await expect(tile).toContainText('Captured and searchable');
-  await expect(tile.locator('.oc-computer-contact time')).toBeVisible();
 
   await expect(tile).toContainText('Claude Code');
   data.setup!.installations[0]!.clients[0]!.mcp.state='authenticated';
   await expect(tile.getByText('Connected',{exact:true})).toBeVisible({timeout:6000});
-  await expect(tile.locator('.oc-computer-contact time')).toBeVisible();
   data.setup!.installations[0]!.clients = [];
   data.setup!.installations[0]!.updatedAt = new Date().toISOString();
   await expect(tile).toContainText('No connected agents',{timeout:6000});
-  await expect(tile.locator('.oc-computer-contact time')).toBeVisible();
 
 });
 
@@ -93,13 +90,21 @@ test('computer tiles show connected agent names and allow connecting another age
   }
   await page.setViewportSize({width:1280,height:800});
   const command = page.getByRole('button',{name:copyLabel});
+  const addHost = page.getByText('Connect another computer',{exact:true});
+  await expect(command).toBeHidden();
+  expect((await computers.boundingBox())!.y).toBeLessThan((await addHost.boundingBox())!.y);
+  await addHost.focus();
+  await addHost.press('Enter');
   await expect(command.locator('code')).toHaveText(installer);
-  await expect(command).toBeInViewport();
-  expect((await command.boundingBox())!.y).toBeLessThan((await computers.boundingBox())!.y);
+  await expect(command).toBeVisible();
+  await page.getByRole('tab',{name:'Windows'}).click();
+  await expect(command.locator('code')).toContainText('install.ps1');
+  await addHost.click();
+  await expect(command).toBeHidden();
   await expect(computers).toBeVisible();
 });
 
-test('computer contact ages in place and refreshes only the reporting tile', async ({page}) => {
+test('computer headers show only the computer name while agent contact ages independently', async ({page}) => {
   const start = new Date('2026-11-19T12:00:00Z');
   await page.clock.install({time:start});
   const data = structuredClone(bootstrap);
@@ -107,23 +112,25 @@ test('computer contact ages in place and refreshes only the reporting tile', asy
     client:'codex', installed:true, forward:true, history:'skip', historyProgress:{state:'not_started',completed:0},
     hookTrust:'trusted', mcp:{state:'authenticated'}, proof:{state:'verified'}, humanTasks:[],
   };
-  const computer = (id:string, updatedAt:string) => ({installationId:id, machine:{id,label:id}, updatedAt, clients:[connected]});
+  const computer = (id:string, updatedAt:string) => ({installationId:id, machine:{id,label:id}, updatedAt, clients:[{...connected, lastSeenAt:updatedAt}]});
   const recent = computer('Laptop', '2026-11-19T11:46:00Z');
   data.setup!.installations = [recent, computer('Desktop', '2026-11-17T12:00:00Z')];
   await page.route('**/api/console/bootstrap', route => route.fulfill({json:data}));
   await page.goto('/setup?full-app');
   const tile = (name:string) => page.getByRole('listitem').filter({has:page.getByRole('heading', {name})});
-  const contact = tile('Laptop').locator('.oc-computer-contact');
-  await expect(contact).toHaveText('Seen 14 minutes ago');
+  await expect(tile('Laptop').locator('header')).toHaveText('Laptop');
+  await expect(tile('Desktop').locator('header')).toHaveText('Desktop');
+  const contact = tile('Laptop').locator('.oc-host-last-contact');
+  await expect(contact).toHaveText('Last contact 14 minutes ago');
   await expect(contact).toHaveAttribute('data-recent', 'true');
   await page.clock.fastForward(60_000);
-  await expect(contact).toHaveText('Seen 15 minutes ago');
+  await expect(contact).toHaveText('Last contact 15 minutes ago');
   await expect(contact).toHaveAttribute('data-recent', 'false');
-  recent.updatedAt = '2026-11-19T12:01:00Z';
+  recent.clients[0]!.lastSeenAt = '2026-11-19T12:01:00Z';
   await page.clock.runFor(3_100);
-  await expect(contact).toHaveText('Seen just now');
-  await expect(contact.locator('time')).toHaveAttribute('datetime', recent.updatedAt);
-  await expect(contact.locator('time')).toHaveAttribute('title', /^Last setup report or live capture received /);
+  await expect(contact).toHaveText('Last contact just now');
+  await expect(contact.locator('time')).toHaveAttribute('datetime', recent.clients[0]!.lastSeenAt);
+  await expect(contact.locator('time')).toHaveAttribute('title', /^Last contact from Codex at /);
   await expect(contact).toHaveAttribute('data-recent', 'true');
   await expect(tile('Desktop').locator('time')).toHaveText('2 days ago');
 });
@@ -181,7 +188,7 @@ test('Setup and Integrations keep their sidebar positions before bootstrap and t
     fail = false;
     await page.getByRole('button', {name:'Try again'}).click();
     await expect(page.getByRole('button', {name:copyLabel}).locator('code')).toHaveText(installer);
-    await expect(first).toHaveAccessibleName('Setup Needs attention. No hosts connected.');
+    await expect(first).toHaveAccessibleName('Setup Needs attention. No computers connected.');
     expect((await first.boundingBox())?.y).toBe(top?.y);
     expect(await integrations.boundingBox()).toEqual(position);
   } finally {release();}
@@ -238,7 +245,11 @@ test('the welcome becomes a host report and verifies capture separately for each
   await page.route('**/api/console/bootstrap',route=>route.fulfill({json:data}));
   await page.goto('/setup?full-app');
   await expect(page.getByRole('heading',{name:'Welcome to OpenCrawl'})).toBeVisible();
-  const setupBadge=page.getByRole('navigation',{name:'Workspace navigation'}).getByRole('img',{name:'Needs attention. No hosts connected.'});
+  const illustration = page.locator('.oc-host-welcome img');
+  const steps = page.getByRole('list',{name:'Setup steps'}).getByRole('listitem');
+  await expect(illustration).toBeVisible();
+  await expect(steps).toHaveCount(3);
+  const setupBadge=page.getByRole('navigation',{name:'Workspace navigation'}).getByRole('img',{name:'Needs attention. No computers connected.'});
   await expect(setupBadge).toBeVisible();
   const codex:NonNullable<Bootstrap['setup']>['installations'][number]['clients'][number]={
     client:'codex',installed:true,forward:true,history:'skip',historyProgress:{state:'not_started',completed:0},
@@ -246,7 +257,12 @@ test('the welcome becomes a host report and verifies capture separately for each
   };
   data.setup!.installations.push({installationId:'office',machine:{id:'office',label:'Office Mac'},updatedAt:new Date().toISOString(),
     clients:[codex,{...codex,client:'cursor',forward:false,proof:{state:'not_selected'},captureObservedAt:undefined}]});
-  await expect(page.getByRole('heading',{name:'Your host has checked in'})).toBeVisible({timeout:6500});
+  const host = page.getByRole('heading',{name:'Office Mac'});
+  const addHost = page.getByText('Connect another computer',{exact:true});
+  await expect(host).toBeInViewport({timeout:6500});
+  await expect(illustration).toHaveCount(0);
+  await expect(addHost).toBeVisible();
+  await expect(steps).toHaveCount(0);
   await expect(setupBadge).toHaveCount(0);
   const codexRow=page.getByRole('row').filter({hasText:'Codex'});
   const cursorRow=page.getByRole('row').filter({hasText:'Cursor'});
@@ -255,6 +271,10 @@ test('the welcome becomes a host report and verifies capture separately for each
   await expect(page.getByRole('link',{name:'View sessions'})).toHaveCount(0);
   codex.proof={state:'verified'};
   await expect(codexRow).toContainText('Captured and searchable',{timeout:6500});
+  await expect(host).toBeInViewport();
+  await expect(steps).toHaveCount(0);
+  await addHost.click();
+  await expect(steps).toHaveCount(3);
   await expect(cursorRow).toContainText('Recording off');
-  await expect(page.getByRole('link',{name:'View sessions'})).toHaveAttribute('href','/sessions');
+  await expect(page.getByRole('link',{name:'View sessions'})).toHaveCount(0);
 });

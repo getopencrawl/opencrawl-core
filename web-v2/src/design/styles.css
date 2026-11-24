@@ -336,7 +336,6 @@ img { max-width: 100%; }
 .oc-install-instructions > .oc-tabs { margin-bottom: var(--space-3); }
 .oc-install-instructions .command-token { display: inline-block; max-width: 100%; overflow-wrap: anywhere; vertical-align: top; }
 
-.oc-computer-contact { margin-top: var(--space-1); color: var(--quiet); font-size: var(--text-xs); }
 .oc-presence { display: flex; align-items: center; gap: var(--space-2); }
 .oc-presence::before { content: ''; width: 6px; height: 6px; flex: none; border-radius: 50%; }
 .oc-presence[data-recent=false]::before { background: var(--quiet); }
@@ -995,7 +994,7 @@ img { max-width: 100%; }
   background-position: center;
   background-size: min(88%, 580px) min(60%, 336px), 100% 100%, 100% 100%;
 }
-.oc-imprint-art::before, .oc-host-welcome[data-first=true]::before {
+.oc-imprint-art::before, .oc-host-welcome::before, .oc-host-add summary::before {
   content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   background: url('/assets/imprint-paper.png') repeat 0 0 / 256px 256px;
 }
@@ -1076,13 +1075,17 @@ img { max-width: 100%; }
 .oc-host-setup { display: grid; gap: var(--space-8); }
 .oc-host-start { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
 .oc-host-welcome { position: relative; isolation: isolate; display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); padding: var(--space-8); border-bottom: 1px solid var(--line); background: var(--surface-subtle); }
-.oc-host-welcome[data-first=true]::before { z-index: -1; opacity: .46; }
+.oc-host-welcome::before, .oc-host-add summary::before { z-index: -1; opacity: .46; }
 .oc-host-welcome h2 { font-size: clamp(1.8rem, 3.4cqi, 2.6rem); font-weight: 550; line-height: 1.14; letter-spacing: -.035em; }
-.oc-host-welcome[data-first=false] { padding-block: var(--space-5); }
-.oc-host-welcome[data-first=false] h2 { font-size: 1.5rem; }
-.oc-host-welcome[data-first=false] p { max-width: 78ch; }
 .oc-host-welcome p { margin: var(--space-3) 0 0; max-width: 54ch; color: var(--muted); font-size: 1rem; line-height: 1.55; }
 .oc-host-welcome img { flex: none; width: min(28cqi, 272px); height: auto; margin-inline: var(--space-3); image-rendering: pixelated; }
+.oc-host-add summary { position: relative; isolation: isolate; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-5); background: var(--surface-subtle); font-size: var(--text-body); font-weight: 550; cursor: pointer; list-style: none; }
+.oc-host-add summary::-webkit-details-marker { display: none; }
+.oc-host-add summary img { image-rendering: pixelated; }
+.oc-host-add summary .oc-icon { margin-inline-start: auto; color: var(--muted); }
+.oc-host-add summary:focus-visible { outline-offset: -3px; }
+.oc-host-add[open] summary { border-bottom: 1px solid var(--line); }
+.oc-host-add[open] summary .oc-icon { transform: rotate(180deg); }
 .oc-host-install { --install-inset: var(--space-8); padding: var(--space-6) 0 var(--install-inset); border: 0; }
 .oc-host-install > .oc-section-heading { margin: 0 var(--install-inset) var(--space-4); }
 .oc-host-install > .oc-install-instructions { margin-inline: var(--install-inset); }
@@ -1095,16 +1098,15 @@ img { max-width: 100%; }
 .oc-host-guide li::marker { color: var(--accent); font-size: var(--text-body); font-weight: 550; }
 .oc-host-guide h3 { margin: 0; font-size: var(--text-body); font-weight: 550; }
 .oc-host-guide p { margin: var(--space-1) 0 0; text-wrap: pretty; color: var(--muted); font-size: var(--text-sm); line-height: 1.55; }
-.oc-host-wait, .oc-host-title, .oc-host-title > div, .oc-host-status { display: flex; align-items: center; gap: var(--space-3); }
+.oc-host-wait, .oc-host-title, .oc-host-status { display: flex; align-items: center; gap: var(--space-3); }
 .oc-host-wait { padding: var(--space-5) var(--space-6); border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); color: var(--muted); }
 .oc-host-wait strong { color: var(--text); font-size: var(--text-body); font-weight: 500; }
 .oc-host-wait p { margin: var(--space-1) 0 0; font-size: var(--text-sm); }
 .oc-host-roster { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
 .oc-host-report { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); overflow: hidden; }
-.oc-host-title { justify-content: space-between; flex-wrap: wrap; padding: var(--space-4) var(--space-5); }
+.oc-host-title { padding: var(--space-4) var(--space-5); }
 .oc-host-title h3 { margin: 0; font-size: var(--text-body); overflow-wrap: anywhere; }
 .oc-host-title .oc-icon { flex: none; color: var(--muted); }
-.oc-host-title .oc-computer-contact { margin: 0; }
 .oc-host-agents { border: 0; border-radius: 0; }
 .oc-host-agents table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; text-align: left; font-size: var(--text-sm); }
 .oc-host-agents th, .oc-host-agents td { padding: var(--space-3) var(--space-5); border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
