@@ -37,6 +37,9 @@ function nativeMcpReceipt(evidence?:Evidence) {
 function lastAgentContact(client:StoredClient) {
   return latestReceipt(client.lastSeenAt, client.captureObservedAt, client.evidence?.capture?.observedAt, nativeMcpReceipt(client.evidence));
 }
+function captureSelected(client: StoredClient) {
+  return client.forward && client.client !== 'chatgpt' && client.client !== 'claude-desktop';
+}
 const unchanged = Symbol('unchanged');
 function conversationText(event:SessionEvent):string {
   const content=event.data?.content;
@@ -235,7 +238,7 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
       await update(principal,data=>{
         const installation = data.installations.find(i => i.installationId === batch.installationId);
         const client = installation?.clients.find(c => c.client === batch.harness);
-        if (!installation || !client?.forward) return unchanged;
+        if (!installation || !client || !captureSelected(client)) return unchanged;
         // The receiver's clock measures contact even when the CLI flushes a queued live upload.
         // Coalesce by agent so one busy client never suppresses a sibling's first receipt.
         const refreshContact = !client.lastSeenAt || received.getTime() - instant(client.lastSeenAt) >= 60_000;
@@ -286,7 +289,7 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
         const newGeneration=selection.revision!==undefined&&(markerRevision(proof?.marker)!==selection.revision||
           now().getTime()-instant(proof?.issuedAt)>24*60*60_000);
         if(newGeneration||!client.evidence||client.evidence.proof.state!=='verified'&&instant(client.evidence.proof.expiresAt)<now().getTime()) {
-          const id=token(),capturing=client.forward&&isSessionHarness(client.client),revision=selection.revision??markerRevision(proof?.marker);
+          const id=token(),capturing=captureSelected(client),revision=selection.revision??markerRevision(proof?.marker);
           client.evidence={proof:{state:capturing?'waiting_capture':'not_selected',id,...(capturing||revision?{marker:'opencrawlverify'+id+(revision?'r'+revision:'')}:{}),issuedAt:now().toISOString(),expiresAt:new Date(now().getTime()+60*60_000).toISOString()}};
         }
       });
@@ -322,7 +325,7 @@ export function createSetupStatus({state,search,now=()=>new Date()}: {
         const {client}=selected(data,selection),e=client.evidence;
         if(!e||e.proof.id!==selection.proofId||e.proof.state!=='verified'&&instant(e.proof.expiresAt)<now().getTime())fail(409,'Proof is missing or expired. Run verify-installation for this client.');
         e.mcpCall??={receipt:'opencrawlmcp'+token(),issuedAt:now().toISOString()};
-        return {receipt:e.mcpCall.receipt,capturing:client.forward&&isSessionHarness(client.client)};
+        return {receipt:e.mcpCall.receipt,capturing:captureSelected(client)};
       });
       return {proofId:selection.proofId,receipt:result.receipt,status:result.capturing?'awaiting_native_capture':'authenticated_transport_observed',instruction:result.capturing?'Let this client’s native capture record this tool result, then run verify-installation again. This call alone does not verify capture or search.':'The authenticated MCP call was observed. Forward capture was not selected; no native capture proof is claimed or required for search-only use.'};
     },

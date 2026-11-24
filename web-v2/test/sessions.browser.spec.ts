@@ -3,7 +3,7 @@ import type {SessionSummary,TranscriptEvent} from '../src/pages/library-types.js
 
 const base: SessionSummary = {userId: 'alice', harness: 'codex', sessionId: 'single', title: 'Single machine', private: false, mine: true, origin: 'desktop', host: 'laptop.local', hosts: ['laptop.local'], hostsTruncated: false, firstActivityAt: null, lastActivityAt: '2026-11-11T10:00:00Z', events: 2};
 const sessions: SessionSummary[] = [{...base, capturedTokens: 12432},
-  {...base, sessionId: 'multiple', title: 'Continued on another machine', hosts: ['laptop.local', 'runner-42'], capturedTokens: 1200000},
+  {...base, sessionId: 'multiple', harness: 'external-recorder', title: 'Continued on another machine', hosts: ['laptop.local', 'runner-42'], capturedTokens: 1200000},
   {...base, sessionId: 'missing', title: 'Older capture', host: null, hosts: [], capturedTokens: null},
   {...base, sessionId: 'legacy', title: 'Older adapter', host: 'legacy.local', hosts: undefined},
   {...base, sessionId: 'long', title: 'Long hostname', host: 'build-'.repeat(40) + '.local', hosts: ['build-'.repeat(40) + '.local']},

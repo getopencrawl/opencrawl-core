@@ -93,7 +93,7 @@ for(const backend of ['sqlite','opensearch']){
     assert.equal((await sessions.search(principal,{query:'evidence',order:'newest',limit:1})).hits[0].id,'legacy-role','internal library search keeps its prior behavior');
     const noContext=await search.search(principal,{query:'evidence',source:'sessions'});assert.equal(noContext.searchContext.currentSessionStatus,'unavailable');assert.equal(noContext.searchContext.currentSessionExcluded,false);
     await assert.rejects(search.search({...principal,captureAccess:'write'},input),{status:403});
-    for(const context of [{...currentSession,userId:'bob'},{...currentSession,tenantId:'other'},{harness:'unknown',sessionId:'current'},{...currentSession,sessionId:'.invalid'}])await assert.rejects(search.search(principal,{...input,currentSession:context}),{status:400});
+    for(const context of [{...currentSession,userId:'bob'},{...currentSession,tenantId:'other'},{harness:'invalid/name',sessionId:'current'},{...currentSession,sessionId:'.invalid'}])await assert.rejects(search.search(principal,{...input,currentSession:context}),{status:400});
   });
 
   test(backend+': semantic metadata migration is bounded, resumable, idempotent and preserves content/privacy', {skip:backend==='opensearch'&&!process.env.OPENCRAWL_TEST_OPENSEARCH_URL},async t=>{
