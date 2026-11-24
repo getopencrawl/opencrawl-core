@@ -8,10 +8,15 @@ import {replicasThread,saveReplicasThread} from './replicas-threads.mjs';
 import {replicasSenderEvidence} from './replicas-senders.mjs';
 import {replicasLiveApi} from './replicas-live-api.mjs';
 import {ReplicasPageError,ReplicasProviderError} from './replicas-api.mjs';
-import type {ReplicasHistory} from './replicas-api.mjs';
+import type {ReplicasHistory,ReplicasConversation} from './replicas-api.mjs';
 import {sealedEnvelope} from './credential-vault.mjs';
 
 export interface ReplicasLiveScope {tenantId:string;organizationId:string}
+export interface ReplicasRepairJob extends ReplicasLiveScope {kind:'live-repair';id:string}
+interface GapPosition {
+  generation:string; catalog:string|null; catalogCursors:string[]; chats:ReplicasConversation[];
+  before:string|null; historyCursors:string[]; occurrences:Record<string,number>;
+}
 type Connection={id:string;credential:Buffer};
 type Api=ReturnType<typeof replicasLiveApi>;
 const uuid=z.string().uuid();
@@ -25,10 +30,13 @@ function diagnostic(scope:ReplicasLiveScope,operation:string,error:unknown){
     ...(error instanceof ReplicasProviderError?{httpStatus:error.status}:{})}));
 }
 
-export function createReplicasLiveCapture({database,ready,key,ingest,request=fetch}:{
-  database:ApplicationDatabase;ready:()=>Promise<void>;key:Uint8Array;ingest:ReplicasIngest;request?:typeof fetch;
+export function createReplicasLiveCapture({database,ready,key,ingest,schedule,request=fetch}:{
+  database:ApplicationDatabase;ready:()=>Promise<void>;key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasRepairJob)=>Promise<unknown>;request?:typeof fetch;
 }){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
+  // Only worker-configured scopes may resolve a repair job to a provider credential.
+  const repairs=new Map<string,(job:ReplicasRepairJob,signal:AbortSignal)=>Promise<number|null>>();
+  const scopeKey=(scope:ReplicasLiveScope)=>JSON.stringify([scope.tenantId,scope.organizationId]);
   async function run(scope:ReplicasLiveScope,stop:AbortSignal){
     if(!scope.tenantId?.trim()||!uuid.safeParse(scope.organizationId).success)throw new Error('Explicit Replicas live capture scope required');
     const binding=[namespace,scope.tenantId,scope.organizationId];
@@ -70,6 +78,7 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
             const last=frames.findLast(f=>f.type!=='engine.stream.opened');
             if(!last&&!gap)return;
             if(!gap&&frames.every(f=>!f.type.startsWith('chat.'))&&Date.now()-lastHeartbeat<10000)return;
+            let needsRepair=gap;
             await hold(active,async tx=>{
               const chats=new Map<string,{events:unknown[];senders:unknown[]}>();
               const refresh=new Set<string>(),opened=new Set<string>();
@@ -101,6 +110,7 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
                 else refresh.add(chat);
               }
               for(const [chat,batch] of chats)await capture(tx,workspace,chat,batch,'live');
+              needsRepair ||= refresh.size>0;
               for(const id of refresh)await tx.query(`INSERT INTO ${tails}(namespace,tenant,organization,workspace,chat)
                 VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace,tenant,organization,workspace,chat)
                 DO UPDATE SET generation=${tails}.generation+1, due=LEAST(${tails}.due,now())`,[...stateKey,id]);
@@ -111,6 +121,9 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
                 gap_generation=${liveState}.gap_generation+EXCLUDED.gap_generation,gap_since=COALESCE(${liveState}.gap_since,CASE WHEN $7 THEN COALESCE(${liveState}.observed_at,now()-interval '5 minutes') END)`,
                 [...stateKey,last?.cursor??null,last?.ts??null,gap]);
             });
+            // The committed row survives a missed wake. A slow Temporal frontend must
+            // not stall delivery of the next socket frame.
+            if(needsRepair)notifyRepair(active);
             attempt=0;lastHeartbeat=Date.now();
           });
         }catch(error){
@@ -122,62 +135,102 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
       }
     }
 
-    async function repairOne(active:Connection,api:Api,signal:AbortSignal){
-      const tail=(await database.pool.query<{workspace:string;chat:string;generation:string}>(`SELECT workspace,chat,generation FROM ${tails}
+    let waking:Promise<void>|undefined,pendingWake:Connection|undefined;
+    function dispatchRepair(){
+      if(!pendingWake||waking||stop.aborted)return;
+      waking=(async()=>{
+        while(pendingWake&&!stop.aborted){
+          const active=pendingWake;
+          pendingWake=undefined;
+          try{await schedule({...scope,kind:'live-repair',id:active.id});}
+          catch(error){
+            pendingWake??=active;
+            diagnostic(scope,'repair_dispatch',error);
+            return;
+          }
+        }
+      })().finally(()=>{waking=undefined;});
+    }
+    function notifyRepair(active:Connection){pendingWake=active;dispatchRepair();}
+
+    // One Activity advances at most one tail and one catalog/history page. All
+    // provider data, continuation tokens and occurrence counts stay in Postgres.
+    async function repair(job:ReplicasRepairJob,signal:AbortSignal):Promise<number|null>{
+      stop.throwIfAborted();
+      signal=AbortSignal.any([stop,signal]);
+      const active=(await database.pool.query<Connection>(connectionSql+" AND state->>'id'=$4",[...binding,job.id])).rows[0];
+      if(!active)return null;
+      const tail=(await database.pool.query<{workspace:string;chat:string;generation:string;tail_id:string}>(`SELECT workspace,chat,generation,tail_id FROM ${tails}
         WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND due<=now() ORDER BY due LIMIT 1`,binding)).rows[0];
+      const gap=(await database.pool.query<{workspace:string;gap_since:Date;gap_generation:string;gap_step:string;gap_position:GapPosition|null}>(`SELECT workspace,gap_since,gap_generation,gap_step,gap_position FROM ${liveState}
+        WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND gap_since IS NOT NULL AND retry_at<=now() ORDER BY retry_at,workspace LIMIT 1`,binding)).rows[0];
+      if(!tail&&!gap){
+        const pending=await database.pool.query<{delay:number|null}>(`SELECT ceil(extract(epoch FROM (min(at)-now()))*1000)::float8 AS delay FROM (
+          SELECT min(due) AS at FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 UNION ALL
+          SELECT min(retry_at) FROM ${liveState} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND gap_since IS NOT NULL) pending`,binding);
+        return Math.max(0,Math.min(60_000,pending.rows[0]?.delay??60_000));
+      }
+      const api=replicasLiveApi(envelope.open(identityPath,active.credential).toString(),scope.organizationId,signal,request);
+      const who=await api.identity();
+      if(who.caller!=='organization_api_key'||who.organization.id!==scope.organizationId)throw new Error('Replicas repair organization identity mismatch');
       if(tail){
-        const tailKey=[...binding,tail.workspace,tail.chat,tail.generation];
+        const tailKey=[...binding,tail.workspace,tail.chat,tail.generation,tail.tail_id];
         try{
           const history=await api.history({workspace_id:tail.workspace,chat_id:tail.chat});
           await hold(active,async tx=>{
             await capture(tx,tail.workspace,tail.chat,history,'history');
-            await tx.query(`DELETE FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6`,tailKey);
+            await tx.query(`DELETE FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6 AND tail_id=$7`,tailKey);
           });
         }catch(error){
-          if(signal.aborted)return;
+          signal.throwIfAborted();
           diagnostic(scope,'turn_history',error);
-          await database.pool.query(`UPDATE ${tails} SET due=now()+$7*interval '1 millisecond' WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6`,[...tailKey,Math.max(30000,retry(error,1))]);
+          await hold(active,async tx=>{await tx.query(`UPDATE ${tails} SET due=now()+$8*interval '1 millisecond' WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6 AND tail_id=$7`,[...tailKey,Math.max(30000,retry(error,1))]);});
         }
       }
-      const pending=await database.pool.query<{workspace:string;gap_since:Date;gap_generation:string}>(`SELECT workspace,gap_since,gap_generation FROM ${liveState}
-        WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND gap_since IS NOT NULL AND retry_at<=now() ORDER BY retry_at LIMIT 1`,binding);
-      const gap=pending.rows[0];if(!gap)return;
-      const {workspace,gap_since:since}=gap,stateKey=[...binding,workspace];
+      if(!gap)return 0;
+      const {workspace,gap_since:since,gap_generation:generation}=gap;
+      const stateKey=[...binding,workspace,generation,gap.gap_step];
+      const fence='namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND gap_generation=$5 AND gap_step=$6 AND gap_since IS NOT NULL';
+      const position:GapPosition=gap.gap_position?.generation===generation ? gap.gap_position :
+        {generation,catalog:null,catalogCursors:[],chats:[],before:null,historyCursors:[],occurrences:{}};
+      const checkpoint=async(tx:ApplicationTransaction)=>{
+        const done=!position.catalog&&!position.chats.length;
+        await tx.query(`UPDATE ${liveState} SET gap_since=CASE WHEN $7 THEN NULL ELSE gap_since END,gap_position=$8::jsonb,gap_step=gap_step+1,retry_at=now() WHERE ${fence}`,
+          [...stateKey,done,done?null:JSON.stringify(position)]);
+      };
       try{
-        let next:string|null=null;
-        const seen=new Set<string>();
-        do{
-          const page=await api.conversations(next,workspace);
-          for(const chat of page.conversations){
-            if(signal.aborted)return;
-            if(chat.workspace_id!==workspace)throw new Error('Replicas workspace export scope mismatch');
-            if(Date.parse(chat.updated_at)<since.getTime())continue;
-            let before:string|null=null;
-            const cursors=new Set<string>(),occurrences:Record<string,number>={};
-            do{
-              const history=await api.history(chat,before);
-              await hold(active,async tx=>{
-                await capture(tx,workspace,chat.chat_id,history,'history','[Replicas history] '+(chat.title??chat.workspace_name),occurrences,chat);
-              });
-              before=history.before_cursor??null;
-              if(history.has_more&&!before||before&&cursors.has(before))throw new Error('Invalid Replicas history continuation');
-              if(before)cursors.add(before);
-              if(signal.aborted)return;
-              // Pages run newest first. Stop once all dated records precede the gap.
-              // Native Codex transcript turns can have independent pagination.
-              const times=history.events.map(e=>Date.parse(String(record(e)?.timestamp)));
-              if(!history.codex_asp_transcript&&times.length&&times.every(t=>Number.isFinite(t)&&t<since.getTime()))break;
-            }while(before);
-          }
-          next=page.next_cursor;if(next&&seen.has(next))throw new Error('Repeated Replicas catalog cursor');
-          if(next)seen.add(next);
-        }while(next&&!signal.aborted);
-        if(!signal.aborted)await database.pool.query(`UPDATE ${liveState} SET gap_since=NULL WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND gap_generation=$5`,[...stateKey,gap.gap_generation]);
+        const chat=position.chats[0];
+        if(chat){
+          if(chat.workspace_id!==workspace)throw new Error('Replicas workspace export scope mismatch');
+          const history=await api.history(chat,position.before);
+          const next=history.before_cursor??null;
+          if(history.has_more&&!next||next&&position.historyCursors.includes(next))throw new Error('Invalid Replicas history continuation');
+          await hold(active,async tx=>{
+            await capture(tx,workspace,chat.chat_id,history,'history','[Replicas history] '+(chat.title??chat.workspace_name),position.occurrences,chat);
+            const times=history.events.map(e=>Date.parse(String(record(e)?.timestamp)));
+            if(next&&(history.codex_asp_transcript||!times.length||!times.every(t=>Number.isFinite(t)&&t<since.getTime()))){
+              position.before=next;position.historyCursors.push(next);
+            }else{
+              position.chats.shift();position.before=null;position.historyCursors=[];position.occurrences={};
+            }
+            await checkpoint(tx);
+          });
+        }else{
+          const page=await api.conversations(position.catalog,workspace);
+          if(page.conversations.some(chat=>chat.workspace_id!==workspace))throw new Error('Replicas workspace export scope mismatch');
+          const next=page.next_cursor;
+          if(next&&position.catalogCursors.includes(next))throw new Error('Repeated Replicas catalog cursor');
+          if(next)position.catalogCursors.push(next);
+          position.catalog=next;
+          position.chats=page.conversations.filter(chat=>!(Date.parse(chat.updated_at)<since.getTime()));
+          await hold(active,checkpoint);
+        }
       }catch(error){
-        if(signal.aborted)return;
+        signal.throwIfAborted();
         diagnostic(scope,'gap_history',error);
-        await database.pool.query(`UPDATE ${liveState} SET retry_at=now()+$5*interval '1 millisecond' WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4`,[...stateKey,Math.max(30000,retry(error,1))]);
+        await hold(active,async tx=>{await tx.query(`UPDATE ${liveState} SET retry_at=now()+$7*interval '1 millisecond' WHERE ${fence}`,[...stateKey,Math.max(30000,retry(error,1))]);});
       }
+      return 0;
     }
 
     async function follow(active:Connection,leader:AbortSignal){
@@ -186,11 +239,14 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
       const who=await api.identity();
       if(who.caller!=='organization_api_key'||who.organization.id!==scope.organizationId)throw new Error('Replicas live organization identity mismatch');
       const streams=new Map<string,{stop:AbortController;run:Promise<void>}>();
-      let repair:Promise<void>|undefined;
+      // Starting the durable consumer before streaming also recovers a crash
+      // between the first committed intent and its first wake.
+      notifyRepair(active);
       try{
         while(!signal.aborted){
           const current=await database.pool.query<Connection>(connectionSql,binding);
           if(current.rows[0]?.id!==active.id||!current.rows[0]?.credential.equals(active.credential))return;
+          dispatchRepair();
           const workspaces=await api.activeWorkspaces();
           for(const [id,s] of streams)if(!workspaces.has(id))s.stop.abort();
           for(const id of workspaces)if(!streams.has(id)){
@@ -198,12 +254,13 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
             const run=collectWorkspace(active,api,id,AbortSignal.any([signal,stop.signal])).finally(()=>streams.delete(id));
             streams.set(id,{stop,run});
           }
-          repair??=repairOne(active,api,signal).catch(e=>diagnostic(scope,'gap_discovery',e)).finally(()=>{repair=undefined;});
           await pause(1500,signal);
         }
-      }finally{controller.abort();await Promise.allSettled([...streams.values()].map(s=>s.run));await repair;}
+      }finally{controller.abort();await Promise.allSettled([...streams.values()].map(s=>s.run));}
     }
     let initialized=false,attempt=0;
+    const registered=scopeKey(scope);
+    repairs.set(registered,repair);
     while(!stop.aborted){
       try{
         await ready();
@@ -225,6 +282,9 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
                 await client.query(`CREATE TABLE IF NOT EXISTS ${tails}(namespace text NOT NULL,tenant text NOT NULL,organization text NOT NULL,
                   workspace text NOT NULL,chat text NOT NULL,generation bigint NOT NULL DEFAULT 1,due timestamptz NOT NULL DEFAULT now(),
                   PRIMARY KEY(namespace,tenant,organization,workspace,chat))`);
+                await client.query(`ALTER TABLE ${liveState} ADD COLUMN IF NOT EXISTS gap_position jsonb, ADD COLUMN IF NOT EXISTS gap_step bigint NOT NULL DEFAULT 0`);
+                // A completed and recreated tail starts a fresh generation sequence.
+                await client.query(`ALTER TABLE ${tails} ADD COLUMN IF NOT EXISTS tail_id uuid NOT NULL DEFAULT gen_random_uuid()`);
                 initialized=true;
               }
               await follow(active,AbortSignal.any([stop,lost.signal]));attempt=0;
@@ -234,6 +294,9 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
         await pause(1000,stop);
       }catch(error){if(!stop.aborted){diagnostic(scope,'discovery',error);await pause(retry(error,attempt++),stop);}}
     }
+    await waking;
   }
-  return run;
+  return {runLiveCapture:run,async repairLiveCapture(job:ReplicasRepairJob,signal:AbortSignal){
+    return await repairs.get(scopeKey(job))?.(job,signal)??null;
+  }};
 }

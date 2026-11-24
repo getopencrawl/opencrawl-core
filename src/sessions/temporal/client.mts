@@ -1,3 +1,4 @@
+import type {ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
 import type {ReplicasJob} from '../../integrations/replicas-import.mjs';
 import type {DevinRecordingJob} from '../../integrations/devin-recording.mjs';
 import type {Client, ConnectionOptions} from '@temporalio/client';
@@ -118,8 +119,15 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
         workflowIdReusePolicy:WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
       }));
     },
-    async scheduleReplicasImport(job:ReplicasJob){
+    async scheduleReplicasImport(job:ReplicasJob|ReplicasRepairJob){
       const current=await connect();
+      if('kind' in job){
+        const workflowId='replicas-live-repair-'+digest(JSON.stringify([config.sourceId,job.tenantId,job.organizationId,job.id]));
+        await current.connection.withDeadline(Date.now()+10000,()=>current.client.workflow.signalWithStart('repairReplicasLiveV1',{
+          workflowId,taskQueue:config.taskQueue,args:[job],signal:'replicasRepairPending',signalArgs:[],
+          workflowIdReusePolicy:WorkflowIdReusePolicy.ALLOW_DUPLICATE}));
+        return;
+      }
       await current.connection.withDeadline(Date.now()+10000,()=>current.client.workflow.start('importReplicasHistoryV1',{
         workflowId:'replicas-history-'+job.id,taskQueue:config.taskQueue,args:[job],workflowIdConflictPolicy:'USE_EXISTING',
         workflowIdReusePolicy:WorkflowIdReusePolicy.REJECT_DUPLICATE}));

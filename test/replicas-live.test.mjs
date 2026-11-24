@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {TestWorkflowEnvironment} from '@temporalio/testing';
+import {Worker} from '@temporalio/worker';
+import {sessionIndexingScheduler} from '../dist/src/sessions/temporal/client.mjs';
+import {replicasActivities} from '../dist/src/sessions/temporal/replicas.mjs';
 import {createReplicasImport} from '../dist/src/integrations/replicas-import.mjs';
 import {replicasEvents,replicasSession} from '../dist/src/integrations/replicas-events.mjs';
 
@@ -16,6 +20,19 @@ const packet=(id,type,payload)=>`id: ${id}\r\ndata: ${JSON.stringify({id,type,pa
 async function until(predicate){
   const timeout=Date.now()+12000;
   while(!await predicate()){if(Date.now()>timeout)throw Error('timed out waiting for capture');await delay(30);}
+}
+
+async function liveService(t,options){
+  const env=await TestWorkflowEnvironment.createLocal(),taskQueue='replicas-live-'+randomUUID();
+  const scheduler=sessionIndexingScheduler({address:env.address,namespace:env.namespace??'default',taskQueue,sourceId:'fixture',generation:'v1'});
+  const service=createReplicasImport({...options,schedule:async job=>{
+    if(job.kind==='live-repair')await scheduler.scheduleReplicasImport(job);
+  }});
+  const worker=await Worker.create({connection:env.nativeConnection,namespace:env.namespace??'default',taskQueue,
+    workflowsPath:new URL('../dist/src/sessions/temporal/workflows.cjs',import.meta.url).pathname,activities:replicasActivities(service)});
+  const run=worker.run();
+  t.after(async()=>{worker.shutdown();await run;await scheduler.close();await env.teardown();});
+  return service;
 }
 test('Replicas streams share the history identity, resume after storage, repair gaps, and require the exact authorized scope',async t=>{
   const database=await applicationDatabaseFixture(t),records=[],requests=[],streams=[];
@@ -46,13 +63,14 @@ test('Replicas streams share the history identity, resume after storage, repair 
     }});
     return new Response(response,{headers:{'content-type':'text/event-stream'}});
   };
-  const service=createReplicasImport({database,key:randomBytes(32),schedule:async()=>{},request,
+  const service=await liveService(t,{database,key:randomBytes(32),request,
     ingest:async(p,b)=>{
       if(failFirst&&b.captureMode==='live'){failFirst=false;throw Error('transient store failure');}
       assert.equal(p.tenantId,owner.tenantId);records.push(b);
     }});
   await service.action(owner,{action:'connect',apiKey:'fixture-org-key'});
   const baseline=requests.length;
+  assert.equal(await service.repairLiveCapture({kind:'live-repair',tenantId:'unbound',organizationId:org,id:randomUUID()},new AbortController().signal),null);
   for(const scope of [{tenantId:'other',organizationId:org},{tenantId:owner.tenantId,organizationId:otherOrg}]){
     const stop=new AbortController();const done=service.runLiveCapture(scope,stop.signal);
     await delay(100);stop.abort();await done;
@@ -143,7 +161,7 @@ test('retained history storage cannot hold a new live message behind its thread 
     }});
     return new Response(stream,{headers:{'content-type':'text/event-stream'}});
   };
-  const service=createReplicasImport({database,key:randomBytes(32),request,schedule:async()=>{},ingest:async(p,b)=>{
+  const service=await liveService(t,{database,key:randomBytes(32),request,ingest:async(p,b)=>{
     assert.equal(p.tenantId,owner.tenantId);
     if(b.captureMode==='history'){
       assert.equal(b.events[0].id,replicasEvents(chat,{events:[missed]})[1].id);
@@ -209,4 +227,77 @@ test('ancillary-only reads flush at the deadline, at the buffer limit and at EOF
       assert.deepEqual(writes,[Array.from({length:count},(_,i)=>'e:'+i)]);
     }finally{if(end!=='EOF')controller.close();await run;}
   }
+});
+
+test('repair resumes a committed page and fences newer gap and tail intents',async t=>{
+  const database=await applicationDatabaseFixture(t),key=randomBytes(32),scope={tenantId:owner.tenantId,organizationId:org};
+  const binding=[database.namespace,owner.tenantId,org,workspace];
+  let release,entered,failWake=false;
+  const requested=[],written=[];
+  const request=async(input,options)=>{
+    const url=new URL(input);
+    if(url.pathname.endsWith('/whoami'))return Response.json({caller:'organization_api_key',organization:{id:org,name:'Fixture'}});
+    if(url.pathname==='/v1/replica')return Response.json({page:1,total_pages:1,replicas:[]});
+    if(url.pathname.endsWith('/conversations'))return Response.json({conversations:[chat],total:1,next_cursor:null});
+    assert.equal(new Headers(options.headers).get('replicas-org-id'),org);
+    assert.equal(url.pathname,'/v1/replica/'+workspace+'/history');
+    const before=url.searchParams.get('before_cursor');requested.push(before);
+    if(entered){entered.resolve();await release.promise;}
+    return Response.json({events:[missed],before_cursor:before?null:'next',has_more:!before});
+  };
+  const submitted=[];
+  const open=()=>createReplicasImport({database,key,request,schedule:async job=>{
+    if(job.kind==='live-repair'){
+      submitted.push(job);
+      if(failWake){failWake=false;throw Error('transient submit failure');}
+    }
+  },ingest:async(_p,b)=>{written.push(...b.events.map(e=>e.id));}});
+  const connect=async service=>{
+    submitted.length=0;
+    const stop=new AbortController(),running=service.runLiveCapture(scope,stop.signal);
+    await until(()=>submitted.length>0);
+    return async()=>{stop.abort();await running;};
+  };
+  let service=open();
+  const {id}=await service.action(owner,{action:'connect',apiKey:'test-private-key'});
+  failWake=true;
+  let close=await connect(service);
+  const job={...scope,id,kind:'live-repair'},signal=new AbortController().signal;
+  try{
+    assert.equal(await service.repairLiveCapture({...job,id:randomUUID()},signal),null);
+    assert.equal(await service.repairLiveCapture({...job,tenantId:'other'},signal),null);
+    await until(()=>submitted.length>=2);
+    await database.pool.query(`INSERT INTO opencrawl_replicas_live_workspaces(namespace,tenant,organization,workspace,gap_since,gap_generation)
+      VALUES($1,$2,$3,$4,now()-interval '1 hour',1)`,binding);
+    await service.repairLiveCapture(job,signal); // select a catalog page
+    await service.repairLiveCapture(job,signal); // commit the first history page
+    await close();service=open();close=await connect(service);
+    await service.repairLiveCapture(job,signal);
+    assert.deepEqual(requested,[null,'next']);
+    assert.equal(new Set(written).size,2,'occurrences across the checkpoint retain distinct event IDs');
+    const position=async()=>(await database.pool.query('SELECT gap_since,gap_generation FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0];
+    assert.equal((await position()).gap_since,null);
+
+    await database.pool.query("UPDATE opencrawl_replicas_live_workspaces SET gap_since=now()-interval '1 hour',gap_generation=2 WHERE namespace=$1",[database.namespace]);
+    await service.repairLiveCapture(job,signal);
+    entered=Promise.withResolvers();release=Promise.withResolvers();
+    const oldPage=service.repairLiveCapture(job,signal);
+    await entered.promise;
+    await database.pool.query('UPDATE opencrawl_replicas_live_workspaces SET gap_generation=3 WHERE namespace=$1',[database.namespace]);
+    release.resolve();await oldPage;entered=undefined;
+    assert.ok((await position()).gap_since,'a new gap survives an old page completing');
+    await database.pool.query('UPDATE opencrawl_replicas_live_workspaces SET gap_since=NULL WHERE namespace=$1',[database.namespace]);
+
+    const insertTail=()=>database.pool.query('INSERT INTO opencrawl_replicas_live_tails(namespace,tenant,organization,workspace,chat) VALUES($1,$2,$3,$4,$5)',[...binding,chatId]);
+    await insertTail();
+    entered=Promise.withResolvers();release=Promise.withResolvers();
+    const priorTail=service.repairLiveCapture(job,signal);
+    await entered.promise;
+    await database.pool.query('DELETE FROM opencrawl_replicas_live_tails WHERE namespace=$1',[database.namespace]);
+    await insertTail(); // new row, same numeric generation and chat
+    release.resolve();await priorTail;entered=undefined;
+    assert.equal((await database.pool.query('SELECT 1 FROM opencrawl_replicas_live_tails WHERE namespace=$1',[database.namespace])).rowCount,1);
+    await service.action(owner,{action:'stop',id});
+    assert.equal(await service.repairLiveCapture(job,signal),null);
+  }finally{release?.resolve();await close();}
 });

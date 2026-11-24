@@ -1,10 +1,11 @@
+import type {ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
 import type {ReplicasJob} from '../../integrations/replicas-import.mjs';
 import type {DevinRecording, DevinRecordingJob} from '../../integrations/devin-recording.mjs';
 import type {replicasActivities} from './replicas.mjs';
 import type {SessionDeletionInput, SessionDeletionRecoveryInput, sessionDeletionActivities} from './deletion.mjs';
 import type {SessionTaskInput} from './worker.mjs';
 import type {SourcePage} from '../../connectors/workflow.mjs';
-const {proxyActivities, continueAsNew, patched, sleep, ApplicationFailure, startChild, ParentClosePolicy, WorkflowIdReusePolicy} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
+const {condition,defineSignal,setHandler,workflowInfo,proxyActivities, continueAsNew, patched, sleep, ApplicationFailure, startChild, ParentClosePolicy, WorkflowIdReusePolicy} = require('@temporalio/workflow') as typeof import('@temporalio/workflow');
 const {WorkflowExecutionAlreadyStartedError} = require('@temporalio/common') as typeof import('@temporalio/common');
 const {runConnectorSegment} = require('../../connectors/workflow.mjs') as typeof import('../../connectors/workflow.mjs');
 const activities = proxyActivities<{listSessionPage(input: SessionTaskInput): Promise<SourcePage>; indexSessionObject(input: SessionTaskInput & {key: string}): Promise<{records: number}>}>({startToCloseTimeout:'5 minutes', heartbeatTimeout:'45 seconds',
@@ -99,4 +100,19 @@ async function recordDevinSessionsV1(job: DevinRecordingJob): Promise<void> {
   }
   await continueAsNew<typeof recordDevinSessionsV1>(job);
 }
-export = {recordDevinSessionsV1, importReplicasHistoryV1, indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};
+const liveRepairs=proxyActivities<Pick<ReturnType<typeof replicasActivities>,'repairReplicasLivePage'>>({
+  startToCloseTimeout:'3 minutes',retry:{initialInterval:'2 seconds',maximumInterval:'1 minute'},
+});
+async function repairReplicasLiveV1(job:ReplicasRepairJob):Promise<void>{
+  let pending=true;
+  setHandler(defineSignal('replicasRepairPending'),()=>{pending=true;});
+  for(let step=0;step<200;step++){
+    pending=false;
+    const delay=await liveRepairs.repairReplicasLivePage(job);
+    if(delay===null)return;
+    if(delay>0)await condition(()=>pending,delay);
+    if(workflowInfo().continueAsNewSuggested)break;
+  }
+  await continueAsNew<typeof repairReplicasLiveV1>(job);
+}
+export = {repairReplicasLiveV1, recordDevinSessionsV1, importReplicasHistoryV1, indexSessionsV1, indexSessionObjectV2, reconcileSessionsV2, deleteSessionV1, recoverSessionDeletionsV1};

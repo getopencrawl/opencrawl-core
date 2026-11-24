@@ -1,8 +1,9 @@
 import {ApplicationFailure} from '@temporalio/common';
-import {activityInfo} from '@temporalio/activity';
+import {activityInfo,Context} from '@temporalio/activity';
+import type {ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
 import type {ReplicasImport,ReplicasJob} from '../../integrations/replicas-import.mjs';
 
-export function replicasActivities(imports:Pick<ReplicasImport,'runStep'>){
+export function replicasActivities(imports:Pick<ReplicasImport,'runStep'|'repairLiveCapture'>){
   async function runReplicasImportStep(job:ReplicasJob){
     try{return await imports.runStep(job);}
     catch(error){
@@ -15,6 +16,10 @@ export function replicasActivities(imports:Pick<ReplicasImport,'runStep'>){
   }
   return {
     runReplicasImportStep,
+    async repairReplicasLivePage(job:ReplicasRepairJob){
+      try{return await imports.repairLiveCapture(job,Context.current().cancellationSignal);}
+      catch{throw ApplicationFailure.retryable('Replicas live repair checkpoint unavailable','ReplicasRepairUnavailable');}
+    },
     // Activities scheduled by pre-upgrade workflow tasks keep their boolean contract.
     async importReplicasPage(job:ReplicasJob){return (await runReplicasImportStep(job)).done;},
     // The previous failure handler erased the key. A replay of that command
