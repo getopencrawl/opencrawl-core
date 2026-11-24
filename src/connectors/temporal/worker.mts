@@ -7,6 +7,7 @@ import {ApplicationFailure} from '@temporalio/common';
 import {fileURLToPath} from 'node:url';
 import {writeFile} from 'node:fs/promises';
 import {createConnectorPipeline} from '../pipeline.mjs';
+export {buildCountWorkflows,createCountWorker} from './count-worker.mjs';
 import {SourcePaginationError, assertSourcePaginationInput, assertSourcePaginationPage} from '../workflow.mjs';
 
 export async function buildConnectorWorkflows(path: string) {
@@ -62,3 +63,4 @@ export async function createConnectorWorker({address, namespace, taskQueue, bund
     return {worker, connection};
   } catch (error) { await connection.close(); throw error; }
 }
+export {connectorCountBudget} from '../count-activities.mjs';

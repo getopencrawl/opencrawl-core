@@ -19,7 +19,7 @@ import { readFile } from 'node:fs/promises';
  * or an async function returning that (see awsCredentials).
  */
 type S3Config = {endpoint?: string; region?: string; bucket: string; prefix?: string; credentials: AwsCredentials | CredentialProvider; fetch?: typeof globalThis.fetch};
-type S3Request = {query?: Record<string, string | null | undefined>; body?: Uint8Array; headers?: Record<string,string>; deleteObjects?: ReadonlyArray<{key:string;version?:string}>; quiet?:boolean};
+type S3Request = {query?: Record<string, string | null | undefined>; body?: Uint8Array; headers?: Record<string,string>; deleteObjects?: ReadonlyArray<{key:string;version?:string}>; quiet?:boolean; signal?: AbortSignal};
 
 /** A signed, path-scoped transport shared by the object store and the multipart landing endpoint. */
 export function createS3Request({endpoint, region = 'us-east-1', bucket, prefix, credentials, fetch: fetchImpl = globalThis.fetch}: S3Config) {
@@ -36,7 +36,7 @@ export function createS3Request({endpoint, region = 'us-east-1', bucket, prefix,
     ? `${endpoint.replace(/\/+$/, '')}/${bucket}`
     : bucket.includes('.') ? `https://s3.${region}.amazonaws.com/${bucket}` : `https://${bucket}.s3.${region}.amazonaws.com`;
 
-  return async (method:string, key?:string, {query = {}, body, headers = {}, deleteObjects, quiet}: S3Request = {}) => {
+  return async (method:string, key?:string, {query = {}, body, headers = {}, deleteObjects, quiet, signal}: S3Request = {}) => {
     const listing = !key && method === 'GET' && ('list-type' in query || 'versions' in query || 'prefix' in query);
     const bulk = !key && method === 'POST' && 'delete' in query;
     if (directory && !key && !listing && !bulk) throw new Error('Bucket-wide operation on prefixed S3 storage');
@@ -64,7 +64,7 @@ export function createS3Request({endpoint, region = 'us-east-1', bucket, prefix,
     } catch(caught){const error=serviceError(caught);throw Object.assign(serviceError(error), method === 'PUT' ? {writeOutcome: 'not-applied'} : {});}
     // A signed request is bound to this origin. In particular, fetch retains the
     // security-token header on cross-origin redirects even when it strips Authorization.
-    const res = await fetchImpl(url, {method, headers: signed, body: body as BodyInit | undefined, redirect: 'error'});
+    const res = await fetchImpl(url, {method, headers: signed, body: body as BodyInit | undefined, redirect: 'error', signal});
     const multipartMetadata = key && method === 'POST' && ('uploads' in query || 'uploadId' in query);
     if (directory && res.ok && res.body && (listing || bulk || multipartMetadata))
       return relativeS3Metadata(res,directory,listing && query['encoding-type'] === 'url');
@@ -135,20 +135,22 @@ export function createObjectStore(config:S3Config) {
     // Conditional documents: a failed comparison must never overwrite a peer's write.
     async readVersion(key: string, {maxBytes = 16 * 1024 * 1024}: ReadOptions = {}) {
       const res = await request('GET', key);
-      if (res.status === 404) return {version: null, data: null};
+      if (res.status === 404) {await res.body?.cancel(); return {version: null, data: null};}
       const version = res.headers.get('etag');
       if (!version) {await res.body?.cancel(); throw new Error('Object store omitted ETag');}
+      const tooLarge = () => Object.assign(new Error('Object exceeds read limit'), {code:'ObjectReadLimitExceeded'});
+      if (Number(res.headers.get('content-length')) > maxBytes) {await res.body?.cancel(); throw tooLarge();}
       const parts = []; let size = 0;
       for await (const part of res.body!) {
         size += part.length;
-        if (size > maxBytes) {throw new Error('Object exceeds read limit');}
+        if (size > maxBytes) throw tooLarge();
         parts.push(part);
       }
       return {version, data: Buffer.concat(parts)};
     },
-    async compareAndSet(key: string, version: StoreVersion | null, data: Uint8Array) {
+    async compareAndSet(key: string, version: StoreVersion | null, data: Uint8Array, {signal, contentType = 'application/json'}: {signal?: AbortSignal; contentType?: string} = {}) {
       try {
-        await request('PUT', key, {body: data, headers: {'content-type': 'application/json',
+        await request('PUT', key, {body: data, signal, headers: {'content-type': contentType,
           ...(version === null ? {'if-none-match': '*'} : {'if-match': String(version)})}});
         return true;
       } catch(caught){const error=serviceError(caught);if ([409, 412].includes(error.status ?? 0)) return false; throw error;}

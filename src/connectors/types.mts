@@ -31,7 +31,7 @@ export interface ConnectorStore {
 }
 export interface ConditionalStore extends ConnectorStore {
   readVersion(key: string, options?: ReadOptions): Promise<{data: Buffer | null; version: string | number | null}>;
-  compareAndSet(key: string, version: string | number | null, bytes: Uint8Array): Promise<boolean>;
+  compareAndSet(key: string, version: string | number | null, bytes: Uint8Array, options?: {signal?: AbortSignal; contentType?: string}): Promise<boolean>;
 }
 export interface SuppressionIdentity { kind: string; sourceId: string; }
 export interface IndexedLinearResource { sourceId: string; available: boolean; resourceVersion: string; }

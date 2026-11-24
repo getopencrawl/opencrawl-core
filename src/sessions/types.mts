@@ -28,7 +28,7 @@ export interface ListOptions {delimiter?: string; continuationToken?: string | n
 export interface StorePage {keys: string[]; prefixes?: string[]; nextToken: string | null}
 export interface ConditionalStore {
   readVersion(key: string, options?: ReadOptions): Promise<{version: StoreVersion | null; data: Buffer | null}>;
-  compareAndSet(key: string, version: StoreVersion | null, data: Uint8Array): Promise<boolean>;
+  compareAndSet(key: string, version: StoreVersion | null, data: Uint8Array, options?: {signal?: AbortSignal; contentType?: string}): Promise<boolean>;
 }
 export interface ObjectStore extends ConditionalStore {
   bucket?: string;

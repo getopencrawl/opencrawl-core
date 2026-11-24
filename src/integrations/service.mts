@@ -3,6 +3,7 @@ import {errorInfo, required} from '../errors.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {Environment} from './types.mjs';
 import type {Log, ConnectorOAuth, LandingDestination} from './ports.mjs';
+import {connectorCountScope, type IntegrationCountAdmission} from './count-admission.mjs';
 import type {Airbyte} from './airbyte.mjs';
 import type {IntegrationRegistry as Registry} from './ports.mjs';
 import type {IntegrationStorage as TeamBuckets} from './ports.mjs';
@@ -14,10 +15,15 @@ export interface IntegrationOptions {
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>;
+  recordCounts?: IntegrationCountAdmission;
 }
 interface Secrets {apiKey?: string}
 interface StatusSnapshot {jobs: AirbyteJob[]; live: Record<string, number> | null}
-interface StatusEntry {attemptedAt: number; updatedAt?: number; value?: StatusSnapshot; pending?: Promise<void>; failed: boolean}
+interface StatusEntry {
+  attemptedAt: number; updatedAt?: number; value?: StatusSnapshot; pending?: Promise<void>; failed: boolean;
+  counts?: Record<string, number> | null; countUpdate?: Promise<void>; countWake?: Promise<unknown>;
+  countObservation?: {signature: string; nextCheck: number};
+}
 type PendingSignInState = 'pending' | 'expired' | 'unavailable';
 // Product lifecycle: runtimes supply credential and infrastructure adapters.
 import {randomBytes, timingSafeEqual} from 'node:crypto';
@@ -35,6 +41,7 @@ const ORG = /^org_[A-Za-z0-9]+$/;
 // Airbyte returns manifests with keys reordered; compare content, not serialization.
 const canonical = (value: unknown) => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
 const newest = (records: IntegrationRecord[]) => records.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
+const runningJob = (job?: AirbyteJob) => !!job && ['pending', 'running', 'incomplete'].includes(job.status);
 
 export const integrationId = () => 'int_' + randomBytes(13).toString('hex');
 
@@ -69,16 +76,19 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   };
 }
 
-export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
+export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, recordCounts}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, StatusEntry>();
-  const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
+  const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId, record.provider, record.s3Bucket || legacyBucket, record.s3Prefix]);
   const provisioning = new Map<string, Promise<IntegrationRecord>>();
   const requireWritable = () => {
     if (maintenance) throw Object.assign(new Error('Integration maintenance is in progress. Please retry shortly.'), {status: 503, expose: true});
   };
   const durable = createProvisioning({environment, registry, airbyte, now});
-  const distinct = typeof buckets?.list === 'function' ? createRecordCounts({buckets, legacyBucket, log, now}) : null;
+  const countAdmission = (record: IntegrationRecord) => recordCounts?.accepts?.(record) === false ? undefined : recordCounts;
+  const distinct = (!recordCounts || recordCounts.accepts) && typeof buckets?.list === 'function' ? createRecordCounts({buckets, legacyBucket, log, now}) : null;
+  const countScope = (record: IntegrationRecord) => connectorCountScope(environment, record.tenantId, record.userId, record.integrationId,
+    {bucket: record.s3Bucket || legacyBucket, rawPrefix: required(record.s3Prefix, 'raw source prefix'), provider: record.provider});
 
   const oauthUser = ({tenantId, userId}: Pick<Principal, 'tenantId' | 'userId'>) => `${environment}:${tenantId}:${userId}`;
   const proxyFor = (record: IntegrationRecord): Proxy => request => oauth.proxy({...request, connectedAccountId: required(record.connectedAccountId, 'connected account'), userId: oauthUser(record)});
@@ -140,6 +150,28 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     return newest(records.filter(r => r.status !== 'connecting')) || newest(records);
   }
 
+  function observeCounts(admission: IntegrationCountAdmission, record: IntegrationRecord, entry: StatusEntry, key: string, succeeded: Set<number>, active: boolean, observedAt: number) {
+    if (!record.s3Prefix || entry.countUpdate) return;
+    const ids = [...succeeded].filter(id => Number.isSafeInteger(id) && id >= 0).slice(0, 100).sort((a,b) => a-b);
+    const signature = JSON.stringify([active, ids]);
+    if (entry.countObservation?.signature === signature && observedAt < entry.countObservation.nextCheck) return;
+    const observation = entry.countObservation = {signature, nextCheck: observedAt + 15_000};
+    // Commit demand before waking the worker. The recurring discovery recovers a missed wake.
+    // The Airbyte status poll can complete while the database or Temporal is unavailable.
+    entry.countUpdate = admission.request(countScope(record), ids, observedAt, active)
+      .then(({counts, dispatch}) => {
+        if (statusCache.get(key) !== entry) return;
+        entry.counts = counts;
+        if (counts) observation.nextCheck = observedAt + 60_000;
+        if (dispatch && !entry.countWake) {
+          entry.countWake = admission.schedule({tenantId: record.tenantId, userId: record.userId, connectionId: record.integrationId})
+            .catch(error => log('integration.counts.schedule_failed', {integrationId: record.integrationId, message: errorInfo(error).message}))
+            .finally(() => {entry.countWake = undefined;});
+        }
+      }).catch(error => log('integration.counts.refresh_failed', {integrationId: record.integrationId, message: errorInfo(error).message}))
+      .finally(() => {entry.countUpdate = undefined;});
+  }
+
   function statusFor(record: IntegrationRecord) {
     const key = statusKey(record);
     let entry = statusCache.get(key);
@@ -147,7 +179,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (!entry) {
       // Never evict in-flight work and start a duplicate refresh under load.
       if (statusCache.size >= 256) {
-        const idle = [...statusCache].find(([, value]) => !value.pending);
+        const idle = [...statusCache].find(([, value]) => !value.pending && !value.countUpdate && !value.countWake);
         if (!idle) return {attemptedAt: now(), failed: true} satisfies StatusEntry;
         statusCache.delete(idle[0]);
       }
@@ -156,7 +188,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     }
     const connectionId = required(record.airbyte?.connectionId, 'connection');
     const refreshing = entry;
-    refreshing.attemptedAt = now();
+    const observedAt = refreshing.attemptedAt = now();
     // Status is display data, never an access decision. The registry is still read
     // for every request; a slow or failed provider cannot block that response.
     refreshing.pending = Promise.all([airbyte.jobs(connectionId, 100), airbyte.streamCounts(connectionId).catch(() => null)])
@@ -165,9 +197,12 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         refreshing.value = {jobs, live};
         refreshing.updatedAt = now();
         refreshing.failed = false;
-        // Warm durable counts off the response path too. Their own refresh is
-        // single-flight and publishes saved measurements before any raw scan.
-        if (distinct) await distinct.get(record, providerFor(record.provider), new Set(jobs.filter(job => job.status === 'succeeded').map(job => Number(job.jobId))), {wait:0});
+        const succeeded = new Set(jobs.filter(job => job.status === 'succeeded').map(job => Number(job.jobId)));
+        const admission = countAdmission(record);
+        if (admission) observeCounts(admission, record, refreshing, key, succeeded, runningJob(jobs[0]), observedAt);
+        else if (distinct) {
+          await distinct.get(record, providerFor(record.provider), succeeded, {wait:0});
+        }
       }).catch(error => {
         refreshing.failed = true;
         log('integration.status.refresh_failed', {provider: record.provider, integrationId: record.integrationId, message: errorInfo(error).message});
@@ -289,6 +324,8 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (destinationId) await airbyte.deleteDestination(destinationId).catch(gone);
     if (connectionId) statusCache.delete(statusKey(record));
     let deletedObjects = 0;
+    const admission = countAdmission(record);
+    if (admission && record.s3Prefix && !await admission.erase(countScope(record))) throw new Error('Source binding changed during count cleanup');
     if (record.s3Prefix) deletedObjects = await buckets.deletePrefix(record.s3Bucket || legacyBucket, `${record.s3Prefix}/`);
     if (record.connectedAccountId) await oauth.remove(required(record.connectedAccountId, 'connected account')).catch(gone);
     // A GitHub installation can serve other applications or deployments. Only a
@@ -337,6 +374,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (record.status === 'error' && record.error === 'setup') return {...shown, state: 'error', message: 'We couldn’t finish setting up this connection.'};
     if (record.status === 'error' && record.error === 'recovery') return {...shown, state: 'error', message: 'Connection setup is waiting for an earlier request to finish. Retry later; contact support if it persists.'};
     if (record.status === 'error' && record.error === 'reconnect') return {...shown, state: 'error', reconnect: true, message: `We couldn’t finish setting up ${provider.name}. Disconnect it, then connect again with your API key.`};
+    if (recordCounts && (record.tenantId !== principal.tenantId || record.environment !== environment)) throw new Error('Source binding is outside the admitted scope');
     const status = statusFor(record);
     const statusUpdatedAt = status.updatedAt === undefined ? null : new Date(status.updatedAt).toISOString();
     // Do not invent a running import or zero count before the first measurement.
@@ -348,16 +386,18 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // Jobs are newest first. An older incomplete attempt cannot describe the current run.
     const latest = jobs[0];
     if (!latest) return {...measured, state: 'connected'};
-    const running = ['pending', 'running', 'incomplete'].includes(latest.status);
+    const running = runningJob(latest);
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
-    const unique = distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 0}) : null;
-    const counts = !unique ? (distinct && succeededSyncs.size ? null : live) : !succeededSyncs.size && live
+    const admission = countAdmission(record);
+    const unique = admission ? status.counts : distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 0}) : null;
+    const awaitingCount = (admission || distinct) && succeededSyncs.size > 0 && !unique;
+    const counts = !unique ? (awaitingCount ? null : live) : !succeededSyncs.size && live
       ? Object.fromEntries([...new Set([...Object.keys(live), ...Object.keys(unique)])].map(s => [s, Math.max(live[s] || 0, unique[s] || 0)]))
       : unique;
     // The headline counts only the provider's main streams (messages, not channel or user lists).
-    const synced = counts ? provider.progressStream.reduce((sum, stream) => sum + (counts[stream] || 0), 0) : distinct && succeededSyncs.size ? undefined : jobs.reduce((sum, j) => sum + (j.rowsSynced || 0), 0);
+    const synced = counts ? provider.progressStream.reduce((sum, stream) => sum + (counts[stream] || 0), 0) : awaitingCount ? undefined : jobs.reduce((sum, j) => sum + (j.rowsSynced || 0), 0);
     // Once every message is in, only trailing work (restoring long messages) is still running.
     const bulkDone = !succeededSyncs.size && !!record.total && synced !== undefined && synced >= record.total;
     const rows = (counts ? provider.progress || [] : []).map(({stream, label, trailing}) => ({label, count: counts?.[stream] || 0, trailing: !!trailing, done: !running || (bulkDone && !trailing)}));

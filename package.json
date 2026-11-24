@@ -82,6 +82,8 @@
     "./application/onboarding": "./dist/src/application/onboarding.mjs",
     "./application/agent-activity": "./dist/src/application/agent-activity.mjs",
     "./state/search-activity": "./dist/src/state/search-activity.mjs",
+    "./state/connector-counts": "./dist/src/state/connector-counts.mjs",
+    "./connectors/count-snapshot": "./dist/src/connectors/count-snapshot.mjs",
     "./application/usage": "./dist/src/application/usage.mjs",
     "./application/search-activity": "./dist/src/application/search-activity.mjs",
     "./application/usage-inventory": "./dist/src/application/usage-inventory.mjs",

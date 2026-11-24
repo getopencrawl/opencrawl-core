@@ -5,8 +5,14 @@ import {createHash} from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
 import {invalidRecord} from './scope.mjs';
 
-/** Bounded streaming decoder shared by all provider adapters. */
-export async function readRecords<T = Record<string, unknown>>(store: ConnectorStore, key: string, consume: (envelope: AirbyteEnvelope<T>) => unknown | Promise<unknown>, {heartbeat = (_progress: Record<string, number>) => {}, maxExpanded = 1024 * 1024 * 1024} = {}) {
+type DecodeOptions = {heartbeat?: (progress: Record<string, number>) => void; maxExpanded?: number};
+type Decoded = Promise<{sha256:string; records:number}>;
+export function readRecords<T = Record<string, unknown>>(store: ConnectorStore, key: string, consume: (envelope: AirbyteEnvelope<T>) => unknown, options?: DecodeOptions & {mode?:'index'}): Decoded;
+export function readRecords<T = Record<string, unknown>>(store: ConnectorStore, key: string, consume: (envelope: Pick<AirbyteEnvelope<T>, '_airbyte_data'>) => unknown, options: DecodeOptions & {mode:'count'}): Decoded;
+/** Both consumers validate and bound the same raw bytes. Indexed documents additionally
+ * require extraction timestamps and lossless changes; counts use the landed primary key. */
+export async function readRecords<T = Record<string, unknown>>(store: ConnectorStore, key: string, consume: (envelope: AirbyteEnvelope<T>) => unknown,
+  {heartbeat = (_progress: Record<string, number>) => {}, maxExpanded = 1024 * 1024 * 1024, mode = 'index'}: DecodeOptions & {mode?:'index'|'count'} = {}) {
   const hash = createHash('sha256');
   async function* source() {
     const input = store.read ? store.read(key, {maxBytes: 256 * 1024 * 1024}) : [await store.get(key, {maxBytes: 256 * 1024 * 1024})];
@@ -36,9 +42,11 @@ export async function readRecords<T = Record<string, unknown>>(store: ConnectorS
     if (Buffer.byteLength(value) > 16 * 1024 * 1024) invalidRecord('Airbyte line exceeds supported size');
     let envelope: AirbyteEnvelope<T>;
     try {envelope = JSON.parse(value) as AirbyteEnvelope<T>;} catch {invalidRecord('Invalid Airbyte JSON');}
-    if (!envelope?._airbyte_data || typeof envelope._airbyte_data !== 'object' || Array.isArray(envelope._airbyte_data) ||
-      !Number.isSafeInteger(envelope._airbyte_extracted_at) || envelope._airbyte_extracted_at < 0) invalidRecord('Invalid Airbyte envelope');
-    if (envelope._airbyte_meta?.changes?.length) invalidRecord('Airbyte record contains lossy source changes');
+    if (!envelope?._airbyte_data || typeof envelope._airbyte_data !== 'object' || Array.isArray(envelope._airbyte_data)) invalidRecord('Invalid Airbyte envelope');
+    if (mode !== 'count') {
+      if (!Number.isSafeInteger(envelope._airbyte_extracted_at) || envelope._airbyte_extracted_at < 0) invalidRecord('Invalid Airbyte envelope');
+      if (envelope._airbyte_meta?.changes?.length) invalidRecord('Airbyte record contains lossy source changes');
+    }
     await consume(envelope); records++;
     if (records % 100 === 0) heartbeat({records});
   }

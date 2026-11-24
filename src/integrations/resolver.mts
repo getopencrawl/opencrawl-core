@@ -22,17 +22,25 @@ export interface ConnectorResolverOptions {
 }
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 export interface CountSummary extends ConnectionCount {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}
-export function createConnectorResolver({environment, generation, registry, storage, search: searchFor, linearAccess}: ConnectorResolverOptions) {
+/** Resolve just the active registry row and its canonical source binding. */
+export function createActiveConnectorBinding({environment, generation, registry}: Pick<ConnectorResolverOptions,'environment'|'generation'> & {registry:Pick<IntegrationRegistry,'get'>}) {
   if (!['staging', 'production', 'selfhost'].includes(environment) || !/^v[1-9][0-9]*$/.test(generation)) throw new Error('Invalid connector configuration');
   function reference(value: ConnectorReferenceInput): asserts value is HostedConnectorReference {
     if (!value || !/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(typeof value.tenantId === 'string' ? value.tenantId : '') || !/^user_[A-Za-z0-9]+$/.test(typeof value.userId === 'string' ? value.userId : '') || !/^int_[a-f0-9]{26}$/.test(typeof value.connectionId === 'string' ? value.connectionId : '') || (value.generation && value.generation !== generation)) denied();
   }
-  async function resolveConnection(input: ConnectorReferenceInput, includeSourceAccess: boolean) {
+  return async (input: ConnectorReferenceInput) => {
     reference(input);
     const record = await registry.get(input.tenantId, input.userId, input.connectionId);
     if (!record || record.tenantId !== input.tenantId || record.userId !== input.userId || record.integrationId !== input.connectionId || record.environment !== environment || record.status !== 'active' || !eligible(record)) denied();
     const binding = validateBinding({tenantId: record.tenantId, connectionId: record.integrationId, workspaceId: record.workspace as string,
       provider: record.provider, access: record.provider === 'slack' ? 'team-public' : 'workspace-global', rawPrefix: record.s3Prefix + '/'});
+    return {record,binding};
+  };
+}
+export function createConnectorResolver({environment, generation, registry, storage, search: searchFor, linearAccess}: ConnectorResolverOptions) {
+  const activeBinding=createActiveConnectorBinding({environment,generation,registry});
+  async function resolveConnection(input: ConnectorReferenceInput, includeSourceAccess: boolean) {
+    const {record,binding}=await activeBinding(input);
     const store = await storage(record);
     const search = searchFor(binding.tenantId);
     const linear = includeSourceAccess && record.provider === 'linear' ? linearAccess?.(record) : undefined;
