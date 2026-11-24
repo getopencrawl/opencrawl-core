@@ -26,6 +26,7 @@ export interface IntegrationRecord {
   oauthExpiresAt?:string;
   cleanupResourceVersion?: string;
   cleanupBlockedReason?: 'external-writer-proof-required' | null;
+  searchPurge?: {generation: string; disconnectedAt: string};
   disconnectedAt?: string; dataDeletedAt?: string | null; deletedObjects?: number;
   settings?: {folderId?: string | number; linearCustomersEnabled?: boolean};
 }
