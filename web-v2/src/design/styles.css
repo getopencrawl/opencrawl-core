@@ -275,12 +275,18 @@ img { max-width: 100%; }
   .oc-page-header { flex-wrap: wrap; }
 }
 @media (max-width: 800px) {
-  .oc-mobile-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); background: var(--surface); }
+  .oc-mobile-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) var(--space-4); border-bottom: 1px solid var(--line); background: var(--surface); }
   .oc-mobile-header .oc-brand { font-size: var(--text-brand-compact); }
   .oc-app { display: block; }
   .oc-app:has(.oc-content .oc-page) { display: flex; flex-direction: column; }
   .oc-app:has(.oc-content .oc-page) > .oc-mobile-header { flex: none; }
   .oc-main:has(.oc-content .oc-page) { flex: 1; }
+  /* Scroll the entire page below the menu. The message board owns its message scroller. */
+  .oc-main:has(.oc-content .oc-page:not(.oc-conversation-page)) { overflow: auto; }
+  .oc-content > .oc-page:not(.oc-conversation-page) { grid-template: auto 1fr / minmax(0, 1fr); }
+  .oc-content > .oc-page:not(.oc-conversation-page) > .oc-page-scroll { overflow: visible; }
+  .oc-content .oc-page:not(.oc-conversation-page) > .oc-page-header { position: static; max-height: none; overflow: visible; }
+  .oc-content .oc-page > .oc-page-header { padding-block: var(--space-2); }
   body:has(.oc-menu-open) { overflow: hidden; }
   .oc-sidebar { --console-sidebar-width: min(300px, calc(100vw - var(--space-12))); width: var(--console-sidebar-width); padding-top: max(var(--space-4), env(safe-area-inset-top)); }
   .oc-nav-brand { min-height: var(--space-10); }

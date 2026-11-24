@@ -169,20 +169,26 @@ export function createIntegrationCommands({database, environment, encryptionKey,
       if (!['authorization_denied', 'invalid_command', 'reconnect_required'].includes(reason)) throw new Error('Invalid command failure classification');
       return database.transaction(client => finish(client, reference, 'failed', reason));
     },
-    async listPending({cursor, limit = 100}) {
+    async listPending({cursor, limit = 100, operations}) {
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error('Invalid command page size');
+      if (operations && (!Array.isArray(operations) || !operations.length || operations.some(op => !['provision','disconnect','sync','consent'].includes(op)))) {
+        throw new Error('Invalid command operation filter');
+      }
+      const selected = operations ? [...new Set(operations)].sort() : null;
+      const scope = selected ? cursorScope + '/' + selected.join(',') : cursorScope;
       let after = '0';
       if (cursor) {
         let decoded: unknown;
         try {decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString());} catch {deny();}
-        if (!Array.isArray(decoded) || decoded.length !== 2 || decoded[0] !== cursorScope || !/^[0-9]{1,20}$/.test(decoded[1])) deny();
+        if (!Array.isArray(decoded) || decoded.length !== 2 || decoded[0] !== scope || !/^[0-9]{1,20}$/.test(decoded[1])) deny();
         after = (decoded as [string, string])[1];
       }
       const result = await database.pool.query(`SELECT sequence,tenant_id,user_id,integration_id,command_id
-        FROM opencrawl_integration_commands WHERE namespace=$1 AND environment=$2 AND status='pending' AND sequence>$3::bigint ORDER BY sequence LIMIT $4`, [database.namespace, environment, after, limit + 1]);
+        FROM opencrawl_integration_commands WHERE namespace=$1 AND environment=$2 AND status='pending' AND sequence>$3::bigint
+        AND ($5::text[] IS NULL OR operation=ANY($5)) ORDER BY sequence LIMIT $4`, [database.namespace, environment, after, limit + 1, selected]);
       const rows = result.rows.slice(0, limit);
       return {commands: rows.map(row => ({environment, tenantId: row.tenant_id, userId: row.user_id, integrationId: row.integration_id, commandId: row.command_id})),
-        cursor: result.rows.length > limit ? Buffer.from(JSON.stringify([cursorScope, String(rows.at(-1)!.sequence)])).toString('base64url') : null};
+        cursor: result.rows.length > limit ? Buffer.from(JSON.stringify([scope, String(rows.at(-1)!.sequence)])).toString('base64url') : null};
     },
   };
 }

@@ -8,7 +8,8 @@ test.beforeEach(async({page,request})=>{
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:sources}}));
 });
 for (const viewport of [{width: 1920, height: 900}, {width: 1440, height: 900}, {width: 390, height: 844}, {width: 667, height: 375}]) {
-  test(`workspace header stays in place while scrolling at ${viewport.width}px`, async ({page}) => {
+  const mobile = viewport.width <= 800;
+  test(`workspace header ${mobile ? 'scrolls with the page' : 'stays in place'} at ${viewport.width}px`, async ({page}) => {
     await page.setViewportSize(viewport);
     await page.goto('/integrations-fixture');
     const title = page.getByRole('heading', {level: 1, name: 'Integrations'});
@@ -18,7 +19,11 @@ for (const viewport of [{width: 1920, height: 900}, {width: 1440, height: 900}, 
     const titleTop = () => title.evaluate(element => element.getBoundingClientRect().top);
     const initialTop = await titleTop();
     expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
-    const pane = page.locator('.oc-page-scroll');
+    const pane = mobile ? page.getByRole('main') : page.locator('.oc-page-scroll');
+    const expectScrolledHeader = async () => {
+      if (mobile) await expect(page.locator('main .oc-page-header')).not.toBeInViewport();
+      else expect(await titleTop()).toBe(initialTop);
+    };
     const box = await page.getByRole('main').boundingBox();
     if (!box) throw new Error('Expected a visible workspace');
     // Both outer margins of the workspace accept wheel input.
@@ -26,7 +31,7 @@ for (const viewport of [{width: 1920, height: 900}, {width: 1440, height: 900}, 
     await page.mouse.wheel(0, 500);
     await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBeGreaterThan(300);
     await expect(cards.first()).not.toBeInViewport();
-    expect(await titleTop()).toBe(initialTop);
+    await expectScrolledHeader();
 
     await page.mouse.move(box.x + box.width - 4, box.y + box.height / 2);
     await page.mouse.wheel(0, -500);
@@ -36,11 +41,13 @@ for (const viewport of [{width: 1920, height: 900}, {width: 1440, height: 900}, 
     const lastAction = cards.last().getByRole('button', {name: 'Manage'});
     await lastAction.focus();
     await expect(lastAction).toBeInViewport();
-    await expect(title).toBeInViewport({ratio: 1});
-    expect(await titleTop()).toBe(initialTop);
-    if (viewport.width <= 800) {
+    await expectScrolledHeader();
+    if (mobile) {
       const menu = page.getByRole('button', {name: 'Open workspace navigation'});
       await expect(menu).toBeInViewport();
+      const menuBounds = await menu.boundingBox();
+      expect(menuBounds?.height).toBeGreaterThanOrEqual(44);
+      expect(box.y).toBeLessThanOrEqual(56);
       await menu.click();
       await expect(page.getByRole('navigation', {name: 'Workspace navigation'})).toBeVisible();
       await page.keyboard.press('Escape');
@@ -50,7 +57,7 @@ for (const viewport of [{width: 1920, height: 900}, {width: 1440, height: 900}, 
   });
 }
 for (const width of [1920, 1440, 390]) {
-  test(`route decorations scroll with the body under the workspace header at ${width}px`, async ({page}) => {
+  test(`decorated pages follow the workspace header layout at ${width}px`, async ({page}) => {
     await page.setViewportSize({width, height: 844});
     await page.goto('/integrations-fixture');
     const title = page.getByRole('heading', {level: 1, name: 'Integrations'});
@@ -80,8 +87,11 @@ for (const width of [1920, 1440, 390]) {
     await terms.focus();
     await expect(terms).toBeInViewport();
     await expect(page.getByRole('article').first()).not.toBeInViewport();
-    expect(await titleTop()).toBe(baseline);
-    await expect(title).toBeInViewport({ratio: 1});
+    if (width <= 800) await expect(page.locator('main .oc-page-header')).not.toBeInViewport();
+    else {
+      expect(await titleTop()).toBe(baseline);
+      await expect(title).toBeInViewport({ratio: 1});
+    }
   });
 }
 for(const width of [1440,600,390,320]) test(`available tiles precede connected cards and support search at ${width}px`,async({page})=>{
@@ -200,6 +210,28 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('article',{name:'Expired'})).toHaveCount(0);
   await expect(page.getByRole('button',{name:/Restart sign-in|Retry|Disconnect/})).toHaveCount(0);
+});
+
+test('accepted removal stays pending until the source can be connected again', async ({page}) => {
+  await page.clock.install();
+  let item: SourceCard = {...source(1), name: 'Slack', provider: 'slack'};
+  await page.route('**/api/console/sources', route => route.fulfill({json: {items: [item]}}));
+  await page.goto('/integrations-fixture');
+  const card = page.getByRole('article', {name: 'Slack', exact: true});
+  const dialog = page.getByRole('dialog');
+  await card.getByRole('button', {name: 'Manage Slack'}).click();
+  await dialog.getByRole('button', {name: 'Disconnect Slack'}).click();
+  item = {...item, state: 'disconnecting', rows: undefined, synced: undefined};
+  await dialog.getByRole('button', {name: 'Disconnect and delete'}).click();
+  await expect(page.getByText('Removal requested for Slack.')).toBeVisible();
+  await expect(card).toContainText('Removal of this connection and its imported data is pending.');
+  await card.getByRole('button', {name: 'Details Slack'}).click();
+  await expect(dialog.getByRole('button', {name: /Retry|Disconnect|Sync|Connect/i})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  item = {...item, state: 'disconnected'};
+  await page.clock.runFor(30_001);
+  await expect(card.getByRole('button', {name: 'Connect Slack'})).toBeVisible();
+  await expect(page.getByText('Slack disconnected and its imported data deleted.')).toBeVisible();
 });
 
 test('cards keep account context in Manage and directly open OAuth or required setup',async({page,context})=>{

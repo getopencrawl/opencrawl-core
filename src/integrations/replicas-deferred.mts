@@ -16,9 +16,7 @@ type Client=Pick<ApplicationDatabase['pool'],'query'>;
 const samePage=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$3 AND chat->>'chat_id'=$4
   AND (checkpoint->>'before') IS NOT DISTINCT FROM $5 AND COALESCE((checkpoint->>'pageLimit')::int,100)=$6
   AND issue->>'operation'='history' AND NOT (issue ? 'continuation')`;
-// An unreadable first page and an independent, ready roster both confirmed
-// the absence. Its next probe can share the daily wake, even for legacy
-// checkpoints with no attempt counter. A real continuation stays urgent.
+// Keep the exact catalog record for recovery if its chat reappears.
 export const confirmedAbsence=`issue ? 'workspaceAbsentAt' AND NOT (issue ? 'continuation') AND checkpoint->>'before' IS NULL`;
 const sameMissingPage=`${samePage} AND issue->>'httpStatus'='404'`;
 
@@ -29,42 +27,52 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
   const scope=[namespace,tenant];
   const page=(chat:ReplicasConversation,position:HistoryCheckpoint)=>[...scope,chat.workspace_id,chat.chat_id,position.before,position.pageLimit??100];
   return {
-    async onlyAbsent(){
-      const result=await client.query<{only_absent:boolean}>(`SELECT NOT EXISTS(SELECT 1 FROM opencrawl_replicas_deferred
-        WHERE namespace=$1 AND tenant=$2 AND (NOT(issue ? 'workspaceAbsentAt') OR issue ? 'continuation' OR checkpoint->>'before' IS NOT NULL)) AS only_absent`,scope);
-      return result.rows[0].only_absent;
+    async reconcileRosters(importId:string,now:number){
+      // Older rows and aliases can have a negative history read and a ready roster
+      // in separate transactions. Reuse only a current, same-generation roster.
+      await client.query(`UPDATE opencrawl_replicas_deferred d
+        SET issue=jsonb_set(d.issue,'{workspaceAbsentAt}',to_jsonb(i.checked_at))
+        FROM opencrawl_replicas_workspace_inventories i
+        WHERE d.namespace=$1 AND d.tenant=$2 AND d.issue->>'importId'=$3
+          AND i.namespace=d.namespace AND i.tenant=d.tenant AND i.import_id=$3 AND i.workspace=d.chat->>'workspace_id'
+          AND i.result='ready' AND i.checked_at BETWEEN $4::timestamptz-interval '24 hours' AND $4
+          AND i.chat_ids IS NOT NULL AND NOT (d.chat->>'chat_id'=ANY(i.chat_ids))
+          AND NOT(d.issue ? 'workspaceAbsentAt' OR d.issue ? 'continuation') AND d.checkpoint->>'before' IS NULL
+          AND d.issue->>'operation'='history' AND (d.issue->>'httpStatus'='404' OR d.issue->>'reason' IN ('empty_unverified','empty_with_messages'))`,
+        [...scope,importId,new Date(now)]);
     },
-    async oldest(preferContinuation:boolean,now:number,nextCatalog?:number){
+    async oldest(preferContinuation:boolean,now:number){
       if(preferContinuation){
         const due=await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
           WHERE namespace=$1 AND tenant=$2 AND issue ? 'continuation' AND checkpoint->>'before' IS NOT NULL AND retry_at<=$3
           ORDER BY retry_at,id LIMIT 1`,[...scope,new Date(now).toISOString()]);
         if(due.rows[0])return {row:due.rows[0],wake:due.rows[0].retry_at.getTime()};
       }
-      const first=(await client.query<DeferredRecord&{settled:boolean}>(`SELECT id,retry_at,chat,checkpoint,issue,(${confirmedAbsence}) AS settled
-        FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2 ORDER BY retry_at,id LIMIT 1`,scope)).rows[0];
-      if(!first)return;
-      const wake=first.retry_at.getTime();
-      if(!first.settled||nextCatalog===undefined||wake<=nextCatalog-86_400_000||wake>=nextCatalog)return {row:first,wake};
-      const active=(await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
-        WHERE namespace=$1 AND tenant=$2 AND retry_at<$3 AND NOT (${confirmedAbsence}) ORDER BY retry_at,id LIMIT 1`,[...scope,new Date(nextCatalog)])).rows[0];
-      return active?{row:active,wake:active.retry_at.getTime()}:{row:first,wake:nextCatalog};
+      const {rows:[row]}=await client.query<DeferredRecord>(`SELECT id,retry_at,chat,checkpoint,issue FROM opencrawl_replicas_deferred
+        WHERE namespace=$1 AND tenant=$2 AND NOT (${confirmedAbsence}) ORDER BY retry_at,id LIMIT 1`,scope);
+      return row?{row,wake:row.retry_at.getTime()}:undefined;
     },
     async remove(row:DeferredRecord){
       await client.query('DELETE FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2 AND retry_at=$3 AND id=$4',[...scope,row.retry_at,row.id]);
     },
     async save(chat:ReplicasConversation,position:HistoryCheckpoint,issue:DeferredIssue,retryAt:string){
+      const checkRoster=!issue.workspaceAbsentAt&&!issue.continuation&&!position.before&&issue.operation==='history'&&
+        (issue.httpStatus===404||issue.reason==='empty_unverified'||issue.reason==='empty_with_messages');
       await client.query(`INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue)
-        VALUES($1,$2,$3,$4,$5,$6)`,[...scope,retryAt,chat,checkpoint(position),issue]);
+        SELECT $1,$2,$3,$4,$5,$6::jsonb || COALESCE((SELECT jsonb_build_object('workspaceAbsentAt',checked_at)
+          FROM opencrawl_replicas_workspace_inventories WHERE $7 AND namespace=$1 AND tenant=$2 AND import_id=$8
+          AND workspace=$9 AND result='ready' AND chat_ids IS NOT NULL AND NOT ($10=ANY(chat_ids))
+          AND checked_at BETWEEN $11::timestamptz-interval '24 hours' AND $11),'{}'::jsonb)`,
+        [...scope,retryAt,chat,checkpoint(position),issue,checkRoster,issue.importId??null,chat.workspace_id,chat.chat_id,issue.at]);
     },
     async backoff(chat:ReplicasConversation,position:HistoryCheckpoint,importId:string){
       return (await client.query<{issue:ImportIssue;retry_at:Date}>(`SELECT issue,retry_at FROM opencrawl_replicas_deferred WHERE ${sameMissingPage}
-        AND issue->>'importId'=$7 ORDER BY retry_at DESC LIMIT 1`,[...page(chat,position),importId])).rows[0];
+        AND issue->>'importId'=$7 AND NOT (${confirmedAbsence}) ORDER BY retry_at DESC LIMIT 1`,[...page(chat,position),importId])).rows[0];
     },
     async shareFailure(chat:ReplicasConversation,position:HistoryCheckpoint,issue:ImportIssue,retryAt:string){
       const result=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=$7,issue=$8,
         checkpoint=jsonb_set(checkpoint,'{chatAttempts}',to_jsonb($9::int))
-        WHERE ${sameMissingPage}`,[...page(chat,position),retryAt,issue,issue.attempt]);
+        WHERE ${sameMissingPage} AND NOT (${confirmedAbsence})`,[...page(chat,position),retryAt,issue,issue.attempt]);
       return result.rowCount??0;
     },
     async shareEmptyPage(chat:ReplicasConversation,position:HistoryCheckpoint,issue:ImportIssue,retryAt:string){
@@ -78,7 +86,9 @@ export function deferredHistory(client:Client,namespace:string,tenant:string){
       return result.rowCount??0;
     },
     async releaseBackoff(chat:ReplicasConversation,position:HistoryCheckpoint,now:string,hasContent:boolean){
-      await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=LEAST(retry_at,$7),issue=(issue-'workspaceAbsentAt')||jsonb_build_object('retryAt',LEAST(retry_at,$7)) WHERE ${samePage} AND retry_at>$7 AND (issue->>'httpStatus'='404' OR ($8::boolean AND issue->>'reason' IN ('empty_with_messages','empty_unverified')))`,
+      const due="GREATEST((issue->>'providerRetryAt')::timestamptz,LEAST(retry_at,$7))";
+      await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=${due},issue=(issue-'workspaceAbsentAt')||jsonb_build_object('retryAt',${due})
+        WHERE ${samePage} AND (retry_at>$7 OR issue ? 'workspaceAbsentAt') AND (issue->>'httpStatus'='404' OR ($8::boolean AND issue->>'reason' IN ('empty_with_messages','empty_unverified')))`,
         [...page(chat,position),now,hasContent]);
     },
   };

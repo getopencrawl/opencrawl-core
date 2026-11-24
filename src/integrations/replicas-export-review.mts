@@ -20,15 +20,17 @@ const retryAt="COALESCE((export_check->>'retryAt')::timestamptz,'epoch'::timesta
 // A repeatedly inconsistent total is an inventory concern once the native
 // roster is fully saved. Missing roster entries and transport failures stay
 // on their own deadlines. The previous daily boundary keeps due work eligible.
-const dueAt=`CASE WHEN ${retryAt}>$5::timestamptz-interval '24 hours' AND ${retryAt}<$5
-  AND i.result='ready' AND i.chat_ids IS NOT NULL AND i.export_check->>'phase'='inconsistent_catalog'
+const coveredMismatch=`i.result='ready' AND i.chat_ids IS NOT NULL AND i.export_check->>'phase'='inconsistent_catalog'
   AND i.export_check->'lastFailure'->>'reason'='terminal_count' AND (i.export_check->>'attempt')::int>=3
   AND NOT EXISTS(SELECT 1 FROM unnest(i.chat_ids) AS roster(chat_id) WHERE NOT EXISTS(
     SELECT 1 FROM opencrawl_replicas_snapshots s WHERE (s.namespace,s.tenant,s.import_id,s.workspace,s.chat_id)
-    =(i.namespace,i.tenant,i.import_id,i.workspace,roster.chat_id))) THEN $5 ELSE ${retryAt} END`;
-export async function nextWorkspaceExportReview(client:Client,scope:Scope,sweep:boolean,nextCatalogAt?:string){
+    =(i.namespace,i.tenant,i.import_id,i.workspace,roster.chat_id)))`;
+const dueAt=`CASE WHEN ${retryAt}>$5::timestamptz-interval '24 hours' AND ${retryAt}<$5
+  AND ${coveredMismatch} THEN $5 ELSE ${retryAt} END`;
+export async function nextWorkspaceExportReview(client:Client,scope:Scope,sweep:boolean,nextCatalogAt?:string,onlyUnresolved=false){
   const {rows:[row]}=await client.query<{next:Date|null}>(`SELECT MIN(${dueAt}) AS next FROM opencrawl_replicas_workspace_inventories i
-    WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}`,[...scope,sweep,nextCatalogAt??null]);
+    WHERE namespace=$1 AND tenant=$2 AND import_id=$3 AND ${eligible}
+      AND (NOT $6::boolean OR (${coveredMismatch}) IS NOT TRUE)`,[...scope,sweep,nextCatalogAt??null,onlyUnresolved]);
   return row.next?.getTime();
 }
 

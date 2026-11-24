@@ -93,5 +93,48 @@ export function createProvisioning({environment, registry, airbyte, now = () => 
     return remember(record, intent, result?.[resource]);
   }
 
-  return {ensure, reconcile};
+  type MigratedDestinationMatches = (record: IntegrationRecord, destination: AirbyteResource) => boolean;
+  async function inspectResources(record: IntegrationRecord, workspaceId: string, operation: 'provision' | 'disconnect',
+    migratedDestinationMatches?: MigratedDestinationMatches) {
+    const owned: Array<{resource: ResourceName; id: string}> = [];
+    let connection: AirbyteResource | null = null;
+    for (const resource of ['connectionId', 'sourceId', 'destinationId'] as const) {
+      const id = record.airbyte?.[resource];
+      if (!id) continue;
+      let actual: AirbyteResource;
+      try { actual = await airbyte.resource(TYPES[resource], id); }
+      catch (error) {
+        if (errorInfo(error).status !== 404) throw error;
+        if (operation === 'disconnect') continue;
+        throw pending();
+      }
+      if (!actual || actual[resource] !== id || actual.workspaceId !== workspaceId) throw pending();
+      // A hosted destination migration replaced the canonical resource name.
+      // The runtime verifies its finalized naming and storage configuration.
+      const migrated = resource === 'destinationId' && record.airbyteLandingMode === 'scoped-v1' &&
+        !record.airbyteMigration && migratedDestinationMatches?.(record, actual);
+      if (actual.name !== provisioningLabel(record) && !migrated) throw pending();
+      if (resource === 'connectionId') {
+        if (!actual.sourceId || !actual.destinationId || actual.sourceId !== record.airbyte?.sourceId ||
+            actual.destinationId !== record.airbyte?.destinationId) throw pending();
+        connection = actual;
+      }
+      owned.push({resource, id});
+    }
+    return {owned, connection};
+  }
+
+  async function removal(record: IntegrationRecord, workspaceId: string, migratedDestinationMatches?: MigratedDestinationMatches) {
+    const {owned, connection} = await inspectResources(record, workspaceId, 'disconnect', migratedDestinationMatches);
+    const gone = (error: unknown) => { if (errorInfo(error).status !== 404) throw error; };
+    const deletes = {connectionId: airbyte.deleteConnection, sourceId: airbyte.deleteSource, destinationId: airbyte.deleteDestination};
+    return {
+      async drain() {if(record.airbyte?.connectionId)await airbyte.drainConnection(record.airbyte.connectionId,connection);},
+      async remove() {
+        if(connection && connection.status!=='inactive')await airbyte.drainConnection(connection.connectionId!,connection);
+        for(const {resource,id} of owned) await deletes[resource](id).catch(gone);
+      },
+    };
+  }
+  return {ensure, reconcile, inspectResources, removal};
 }

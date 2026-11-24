@@ -12,7 +12,7 @@ export interface SourceCard {
   primaryMetric?: string;
   units?: [string, string];
   account?: string | null;
-  state: 'disconnected' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
+  state: 'disconnected' | 'disconnecting' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
   setup?: SourceSetup;
   scope?: 'team' | 'user';
   auth: 'oauth' | 'api-key';
