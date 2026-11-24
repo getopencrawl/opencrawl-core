@@ -480,7 +480,8 @@ test('a real Temporal worker completes a paginated import after the request ends
   const env=await TestWorkflowEnvironment.createLocal(),taskQueue='replicas-'+randomUUID();
   const scheduler=sessionIndexingScheduler({address:env.address,namespace:env.namespace??'default',taskQueue,sourceId:'history',generation:'v1'});
   t.after(async()=>{await scheduler.close();await env.teardown();});
-  const f=await fixture(t,{schedule:scheduler.scheduleReplicasImport,failHandoff:true});
+  const started=Date.now();let clock=started;
+  const f=await fixture(t,{schedule:scheduler.scheduleReplicasImport,failHandoff:true,now:()=>clock});
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'test-private-key'});
   assert.equal(f.handed.length,0);
   const worker=await Worker.create({connection:env.nativeConnection,namespace:env.namespace??'default',taskQueue,
@@ -488,7 +489,14 @@ test('a real Temporal worker completes a paginated import after the request ends
   const handle=env.client.workflow.getHandle('replicas-history-'+id);
   await worker.runUntil(async()=>{
     for(let i=0;i<200;i++){
-      if((await f.service.status(principal)).phase==='complete'&&(await handle.fetchHistory()).events.some(e=>e.timerStartedEventAttributes?.startToFireTimeout?.seconds?.toNumber()>=86395))return;
+      const timers=(await handle.fetchHistory()).events.flatMap(event=>{
+        const duration=event.timerStartedEventAttributes?.startToFireTimeout;
+        return duration?[duration.seconds.toNumber()*1000+duration.nanos/1e6]:[];
+      });
+      // Only the observed handoff retry advances the importer's source clock.
+      // Worker startup and CI scheduling do not consume the daily interval.
+      if(timers.includes(2000))clock=started+2000;
+      if(clock>started&&timers.includes(86_400_000-2000))return;
       await new Promise(resolve=>setTimeout(resolve,100));
     }
     assert.fail('workflow did not reach its durable daily timer');

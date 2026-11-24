@@ -23,10 +23,16 @@ export function replicasEvents(conversation:ReplicasConversation,history:Replica
 }
 
 export function replicasRecords(chatId:string,history:ReplicasHistory,occurrences:Record<string,number>={}):SessionEvent[]{
-  const events:SessionEvent[]=[];
+  return projectReplicasEntries(replicasPageEntries(chatId,history),occurrences);
+}
+
+export function replicasPageEntries(chatId:string,history:ReplicasHistory){
   const records=[...history.events.map(value=>({collection:'events',value})),...replicasTurns(history).map(value=>({collection:'codex_asp_transcript.turns',value}))];
-  for(const {collection,value} of records){
-    const hash=replicasDigest(canonical({chat:chatId,collection,value}));
+  return records.map(({collection,value})=>({collection,value,hash:replicasDigest(canonical({chat:chatId,collection,value}))}));
+}
+export function projectReplicasEntries(entries:ReturnType<typeof replicasPageEntries>,occurrences:Record<string,number>){
+  const events:SessionEvent[]=[];
+  for(const {collection,value,hash} of entries){
     const occurrence=occurrences[hash]??0;occurrences[hash]=occurrence+1;
     const source=record(value),payload=record(source?.payload),item=record(payload?.item);
     const nativeId=[payload?.uuid,item?.id,source?.id].find(value=>typeof value==='string');
