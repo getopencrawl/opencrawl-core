@@ -1,8 +1,10 @@
+import {ReplicasProviderError} from '../../integrations/replicas-api.mjs';
 import {ApplicationFailure} from '@temporalio/common';
-import {activityInfo} from '@temporalio/activity';
+import {activityInfo,Context} from '@temporalio/activity';
+import {ReplicasRepairScopeUnavailable,type ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
 import type {ReplicasImport,ReplicasJob} from '../../integrations/replicas-import.mjs';
 
-export function replicasActivities(imports:Pick<ReplicasImport,'runStep'>){
+export function replicasActivities(imports:Pick<ReplicasImport,'runStep'|'repairLiveCapture'>){
   async function runReplicasImportStep(job:ReplicasJob){
     try{return await imports.runStep(job);}
     catch(error){
@@ -15,6 +17,18 @@ export function replicasActivities(imports:Pick<ReplicasImport,'runStep'>){
   }
   return {
     runReplicasImportStep,
+    async repairReplicasLivePage(job:ReplicasRepairJob){
+      try{return await imports.repairLiveCapture(job,Context.current().cancellationSignal);}
+      catch(error){
+        if(error instanceof ReplicasRepairScopeUnavailable){
+          throw ApplicationFailure.create({message:'No local collector for this Replicas scope',type:'ReplicasRepairScopeUnavailable',nextRetryDelay:'1 minute'});
+        }
+        if(error instanceof ReplicasProviderError&&error.status===429){
+          throw ApplicationFailure.create({message:'Replicas live repair rate limited',type:'ReplicasRateLimited',nextRetryDelay:Math.max(30000,error.retryAfterMs??0)});
+        }
+        throw ApplicationFailure.retryable('Replicas live repair checkpoint unavailable','ReplicasRepairUnavailable');
+      }
+    },
     // Activities scheduled by pre-upgrade workflow tasks keep their boolean contract.
     async importReplicasPage(job:ReplicasJob){return (await runReplicasImportStep(job)).done;},
     // The previous failure handler erased the key. A replay of that command
