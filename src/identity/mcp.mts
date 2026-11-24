@@ -4,7 +4,7 @@ import type {IdentityDirectory} from './types.mjs';
 import type {IdentitySettings} from './types.mjs';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import type {JWTVerifyGetKey} from 'jose';
-import {userPrincipal, singleOrganizationPrincipal} from './principal.mjs';
+import {principalMemberships, membershipPrincipal} from './principal.mjs';
 import {createRemoteJWKSet, jwtVerify} from 'jose';
 
 export function mcpMetadata(settings: Pick<IdentitySettings, 'url' | 'authOrigin'>) {
@@ -14,7 +14,7 @@ export function mcpMetadata(settings: Pick<IdentitySettings, 'url' | 'authOrigin
 }
 
 export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin' | 'organizationId'>, directory: IdentityDirectory, keyResolver?: JWTVerifyGetKey) {
-  const fixedPrincipal = settings.organizationId ? singleOrganizationPrincipal(directory, settings.organizationId) : null;
+  if (settings.organizationId && !/^org_[A-Za-z0-9]+$/.test(settings.organizationId)) throw new Error('Configure one organization');
   const keys = keyResolver || createRemoteJWKSet(new URL(settings.authOrigin + '/oauth2/jwks'), {timeoutDuration: 5000});
   return async (req: IncomingMessage, res: ServerResponse) => {
     const reject = (status: number, error?: string) => {
@@ -36,14 +36,14 @@ export function mcpIdentity(settings: Pick<IdentitySettings, 'url' | 'authOrigin
     if (typeof payload.sub !== 'string' || !/^user_[A-Za-z0-9]+$/.test(payload.sub)) return reject(401, 'invalid_token');
     if (typeof payload.scope !== 'string' || !payload.scope.split(' ').includes('openid')) return reject(403, 'insufficient_scope');
     try {
-      const [user, principal] = await Promise.all([
-        directory.userManagement.getUser(payload.sub),
-        fixedPrincipal ? fixedPrincipal({id:payload.sub}, payload.org_id) : userPrincipal(directory, {id:payload.sub}, payload.org_id),
-      ]);
+      if (settings.organizationId && payload.org_id != null && payload.org_id !== settings.organizationId) return reject(403,'insufficient_scope');
+      const memberships = await principalMemberships(directory,payload.sub,settings.organizationId || payload.org_id);
+      const principal = membershipPrincipal({id:payload.sub},memberships);
+      if (!principal) return reject(403, 'insufficient_scope');
+      const user = memberships?.[0]?.user ?? await directory.userManagement.getUser(payload.sub);
       if (user.id !== payload.sub || !verifiedUser(user)) {
         res.writeHead(403, {'Content-Type': 'application/json'});res.end(JSON.stringify({error: 'verified_account_required'}));return null;
       }
-      if (!principal) return reject(403, 'insufficient_scope');
       return principal;
     } catch (error) {
       return reject(errorInfo(error).status === 404 ? 401 : 503, errorInfo(error).status === 404 ? 'invalid_token' : 'authorization_unavailable');
