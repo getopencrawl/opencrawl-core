@@ -5,8 +5,8 @@ import {workosDirectory} from './workos.mjs';
 import type {IdentitySettings} from './types.mjs';
 type CliResult = {status: 200; user: {id: string; email: string}; principal?: Principal; workspaceName?:string} | {status: 401 | 403 | 503; code?: string; workspaces?: Array<{id: string; name: string | null}>};
 import {principalMemberships, membershipPrincipal} from './principal.mjs';
-import {currentVerifiedUser, currentUserSession, type SessionCheck} from './auth.mjs';
-import {createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey} from 'jose';
+import {currentVerifiedUser, currentUserSession} from './auth.mjs';
+import {createRemoteJWKSet, jwtVerify} from 'jose';
 
 // The public CLI speaks generic OAuth; this shared adapter implements WorkOS.
 export function cliConfiguration(settings: Pick<IdentitySettings, 'clientId'>) {
@@ -17,11 +17,11 @@ export function cliConfiguration(settings: Pick<IdentitySettings, 'clientId'>) {
   }, index: {available: false}};
 }
 
-export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organizationId'>, workos: Workos, options?:{checkSession?:SessionCheck;keys?:JWTVerifyGetKey}) {
+export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organizationId'>, workos: Workos) {
   const directory=workosDirectory(workos);
   const fixedOrganization = settings.organizationId;
   if (fixedOrganization && !/^org_[A-Za-z0-9]+$/.test(fixedOrganization)) throw new Error('Configure one organization');
-  let keys:JWTVerifyGetKey | undefined=options?.keys;
+  let keys: ReturnType<typeof createRemoteJWKSet> | undefined;
   return identify;
   function identify(authorization: string | undefined, options: {capture: true}): Promise<Exclude<CliResult, {status: 200}> | {status: 200; user: {id: string; email: string}; principal: Principal; workspaceName?:string}>;
   function identify(authorization: string | undefined, options?: {capture?: boolean}): Promise<CliResult>;
@@ -53,7 +53,7 @@ export function cliIdentity(settings: Pick<IdentitySettings, 'clientId' | 'organ
       ? principalMemberships(directory,payload.sub,fixedOrganization || payload.org_id) : Promise.resolve(null);
     const subject = payload.sub;
     const [session, admission] = await Promise.all([
-      options?.checkSession ? options.checkSession(subject,payload.sid) : currentUserSession(directory,subject,payload.sid),
+      currentUserSession(directory,subject,payload.sid),
       membershipsRead.then(async memberships=>({memberships,current:await currentVerifiedUser(directory,subject,memberships?.[0]?.user)}),()=>null),
     ]);
     if (!admission) return {status:503};

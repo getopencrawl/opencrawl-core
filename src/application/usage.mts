@@ -68,8 +68,13 @@ export async function usageReport({principal, directory, integrations, search, c
     const userRead = team ? soft('members', async () => {
       const memberships = await directory.userManagement.listOrganizationMemberships({organizationId: principal.tenantId, statuses: ['active'], limit: 100});
       const rows = memberships.autoPagination ? await memberships.autoPagination() : memberships.data;
-      const ids = [...new Set(rows.filter(m => m.organizationId === principal.tenantId && m.status === 'active').map(m => m.userId))];
-      return Promise.all(ids.map(id => directory.userManagement.getUser(id)));
+      const members = new Map<string, HostedUser | undefined>();
+      for (const row of rows) {
+        if (row.organizationId !== principal.tenantId || row.status !== 'active') continue;
+        const profile = row.user?.id === row.userId ? row.user : undefined;
+        members.set(row.userId, profile ?? members.get(row.userId));
+      }
+      return Promise.all([...members].map(([id, profile]) => profile ?? directory.userManagement.getUser(id)));
     }) : soft('members', async () => [await directory.userManagement.getUser(principal.userId)]);
     const setupRead = userRead.then(users => {
       const members = users ?? [];
