@@ -202,7 +202,7 @@ img { max-width: 100%; }
 .oc-section > .oc-section { margin-top: var(--space-4); }
 
 /* Controls. Native element wrappers are the only feature entrypoints. */
-.oc-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text); font-size: var(--text-ui); font-weight: 500; line-height: var(--leading-ui); text-decoration: none; white-space: nowrap; transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast); }
+.oc-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-1) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text); font-size: var(--text-ui); font-weight: 500; line-height: var(--leading-ui); text-decoration: none; white-space: nowrap; transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast); }
 .oc-button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .oc-button.primary:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--on-primary); box-shadow: var(--logo-layers-wide); }
 .oc-button.primary:active:not(:disabled):not([aria-disabled="true"]) { box-shadow: none; }
@@ -216,19 +216,19 @@ img { max-width: 100%; }
 .oc-button.danger-quiet:is(:hover, :focus-visible):not(:disabled):not([aria-disabled="true"]) { color: var(--danger-strong); }
 .oc-button:is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; background: var(--surface-subtle); color: var(--quiet); border-color: var(--line); box-shadow: none; }
 .oc-button.danger-quiet:is(:disabled, [aria-disabled="true"]) { background: transparent; border-color: transparent; }
-.oc-icon-button { width: var(--control-height); padding: var(--space-2); }
+.oc-icon-button { width: var(--control-height); padding: var(--space-1); }
 .oc-field { display: grid; gap: var(--space-2); min-width: 0; }
 .oc-field > label { font-size: var(--text-sm); font-weight: 500; color: var(--text); }
 .oc-field-hint, .oc-field-error { font-size: var(--text-sm); color: var(--muted); }
 .oc-field-error { color: var(--danger); }
-.oc-input, .oc-select, .oc-textarea { width: 100%; min-width: 0; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
+.oc-input, .oc-select, .oc-textarea { width: 100%; min-width: 0; min-height: var(--control-height); padding: var(--space-1) var(--space-3); border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
 .oc-input[aria-invalid="true"], .oc-select[aria-invalid="true"], .oc-textarea[aria-invalid="true"] { border-color: var(--danger); }
 .oc-input:disabled, .oc-select:disabled, .oc-textarea:disabled { background-color: var(--surface-subtle); color: var(--quiet); cursor: not-allowed; }
 .oc-select { appearance: none; padding-right: calc(var(--space-3) * 2 + 12px); background-image: linear-gradient(45deg, transparent calc(50% - 0.75px), var(--muted) calc(50% - 0.75px), var(--muted) calc(50% + 0.75px), transparent calc(50% + 0.75px)), linear-gradient(-45deg, transparent calc(50% - 0.75px), var(--muted) calc(50% - 0.75px), var(--muted) calc(50% + 0.75px), transparent calc(50% + 0.75px)); background-repeat: no-repeat; background-position: right calc(var(--space-3) + 5px) center, right var(--space-3) center; background-size: 6px 6px; }
 .oc-input[type="checkbox"], .oc-input[type="radio"] { width: auto; min-height: auto; accent-color: var(--primary); }
 .oc-choice-label { display: flex; align-items: center; align-self: flex-start; gap: var(--space-3); min-height: var(--space-6); font-weight: 500; cursor: pointer; }
 .oc-choice-label > .oc-input[type="checkbox"] { flex: none; width: var(--space-4); height: var(--space-4); margin: 0; }
-.oc-textarea { resize: vertical; line-height: var(--leading-prose); }
+.oc-textarea { padding-block: var(--space-2); resize: vertical; line-height: var(--leading-prose); }
 .oc-copy-field { display: flex; align-items: end; gap: var(--space-2); }
 .oc-copy-field > .oc-field { flex: 1; }
 .oc-tabs { display: flex; gap: var(--space-1); overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: var(--space-6); }

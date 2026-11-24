@@ -100,9 +100,10 @@ typography:
     fontWeight: 500
     lineHeight: 1.5
 rounded:
-  badge: "4px"
-  control: "6px"
-  panel: "12px"
+  badge: "3px"
+  control: "4px"
+  message: "7px"
+  panel: "8px"
 spacing:
   '1': "4px"
   '2': "8px"
@@ -120,7 +121,7 @@ components:
     textColor: "{colors.brand-ink}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
-    padding: "8px 16px"
+    padding: "4px 16px"
   button-primary-hover:
     backgroundColor: "{colors.brand-face-hover}"
     textColor: "{colors.brand-ink}"
@@ -129,29 +130,29 @@ components:
     textColor: "{colors.text}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
-    padding: "8px 16px"
+    padding: "4px 16px"
   button-quiet:
     textColor: "{colors.muted}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
-    padding: "8px 16px"
+    padding: "4px 16px"
   button-plain:
     textColor: "{colors.text}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
-    padding: "8px 16px"
+    padding: "4px 16px"
   button-danger:
     backgroundColor: "{colors.danger-wash}"
     textColor: "{colors.danger}"
     typography: "{typography.control}"
     rounded: "{rounded.control}"
-    padding: "8px 16px"
+    padding: "4px 16px"
   input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
     typography: "{typography.ui}"
     rounded: "{rounded.control}"
-    padding: "8px 12px"
+    padding: "4px 12px"
   badge:
     backgroundColor: "{colors.surface-raised}"
     textColor: "{colors.muted}"
@@ -220,4 +221,5 @@ and the test for representative data, state transitions and viewport coverage.
 Use primary for the main action, quiet for low-emphasis actions and danger for
 destructive confirmation. Keep the sized control intact when placing it in a
 card or footer. The primary button's coral and cobalt edges appear on hover.
-Preserve visible keyboard focus and the shared compact-screen touch targets.
+Single-line fields and buttons use a 32px desktop minimum with 14px type.
+Keep visible keyboard focus and 44px targets on compact screens and coarse pointers.
