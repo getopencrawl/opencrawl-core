@@ -9,6 +9,8 @@ import type {IntegrationCommand, IntegrationCommandOperation, IntegrationCommand
 
 const optionalText=z.string().optional(),nullableText=z.string().nullable().optional();
 const importSchema=z.object({
+ initialSyncIntent:z.object({commandId:z.string().min(1),previousJobId:z.string().regex(/^[0-9]{1,20}$/).nullable()}).optional(),
+ disconnectProgress:z.object({commandId:z.string().min(1),resourceVersion:z.string().nullable(),next:z.enum(['resources','data','grants','finish']),deletedObjects:z.number().int().nonnegative().optional()}).optional(),
  tenantId:z.string(),userId:z.string(),integrationId:z.string(),provider:z.string(),environment:z.enum(['selfhost','staging','production']),scope:z.enum(['team','user']),status:z.enum(['connecting','provisioning','active','disconnecting','disconnected','error','abandoned']),createdAt:z.string().min(1),startDate:z.string().min(1),
  updatedAt:optionalText,ownerEmail:nullableText,account:nullableText,workspace:nullableText,s3Bucket:optionalText,s3Prefix:optionalText,total:z.number().finite().nullable().optional(),airbyte:z.object({destinationId:optionalText,sourceId:optionalText,connectionId:optionalText}).passthrough().optional(),airbyteWorkspaceId:optionalText,airbyteLandingMode:optionalText,
  airbyteMigration:z.object({format:z.number(),nonce:z.string(),oldDestinationId:z.string(),definitionId:z.string(),name:z.string(),newDestinationId:z.string().nullable()}).passthrough().nullable().optional(),connectedAccountId:optionalText,authConfigId:optionalText,installationId:optionalText,nonce:optionalText,githubRepositoryIds:z.array(z.number()).optional(),

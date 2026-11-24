@@ -34,15 +34,16 @@ async function fixture(t){
     sources:async()=>[...stored.values()].filter(r=>r.sourceId==='source'&&!r.connectionId),
     connections:async()=>[...stored.values()].filter(r=>r.connectionId),
     resource:async(_type,id)=>{if(!stored.has(id))throw absent();return stored.get(id);},
+    drainConnection:async(id,r)=>{assert.equal(id,'connection');if(r)r.status='inactive';},
     deleteConnection:async id=>remove(id),deleteSource:async id=>remove(id),deleteDestination:async id=>remove(id),
   };
   function store(field,id,input){
     effects.push('create '+id);
-    stored.set(id,{[field]:id,name:input.name,workspaceId:'airbyte',...(field==='connectionId'?{sourceId:input.sourceId,destinationId:input.destinationId}:{})});
+    stored.set(id,{[field]:id,name:input.name,workspaceId:'airbyte',...(field==='connectionId'?{sourceId:input.sourceId,destinationId:input.destinationId,status:input.status}:{})});
     return {[field]:id};
   }
   function remove(id){effects.push('delete '+id);if(!stored.delete(id))throw absent();}
-  const options={environment,appUrl:'https://fixture.example',registry,providers:{notes:provider},airbyte,workspaceId:async()=>'airbyte',
+  const options={environment,appUrl:'https://fixture.example',registry,providers:{notes:provider},airbyte,workspaceId:async mode=>{assert.equal(mode,'existing');return 'airbyte';},
     legacyBucket:'legacy',buckets:{get:async tenant=>tenant,async deletePrefix(bucket,prefix){
       assert.equal(bucket,principal.tenantId);assert.match(prefix,/^raw\/v1\/source=notes\/workspace=org_team\/connection=int_[a-f0-9]{26}\/$/);
       effects.push('delete data');return 7;
@@ -60,6 +61,8 @@ async function fixture(t){
 
 live('accepted Airbyte commands advance through worker replacement and lost provider responses',async t=>{
   const f=await fixture(t),ref=await f.connect();
+  const transitions=[];
+  f.options.onConnectorTransition=async r=>{assert.equal((await f.read(ref)).status,r.status);transitions.push(r.status);};
   assert.deepEqual(f.effects,[]);
   assert.deepEqual((await f.commands.listPending({})).commands,[ref]);
   assert.equal((await f.read(ref)).status,'provisioning');
@@ -96,11 +99,17 @@ live('accepted Airbyte commands advance through worker replacement and lost prov
   assert.deepEqual(f.effects.slice(4),['delete connection','delete source','delete destination','delete data']);
   assert.equal((await f.read(ref)).deletedObjects,7);
   assert.equal((await f.read(ref)).status,'disconnected');
+  assert.deepEqual(transitions,['active','disconnected']);
 });
 
 live('superseded provisioning and an unverified cleanup target cannot mutate foreign resources',async t=>{
   const f=await fixture(t),ref=await f.connect();
   await f.step(ref);
+  const original=await f.read(ref);
+  await f.registry.update(original,{airbyteWorkspaceId:'foreign'});
+  await assert.rejects(f.step(ref),/workspace binding changed/);
+  assert.deepEqual(f.effects,['create destination']);
+  await f.registry.update(original,{airbyteWorkspaceId:'airbyte'});
   await f.product().disconnect(principal,'notes');
   const removal=f.refs.at(-1);
   assert.equal(await f.step(ref),'done');assert.equal((await f.commands.read(ref)).status,'superseded');
@@ -126,7 +135,26 @@ live('revocation terminates an unstarted provision and drops its secret',async t
   assert.deepEqual(f.effects,[]);
 });
 
-live('cleanup preserves existing external holds and retires only the positively bound abandoned grant',async t=>{
+live('a finalized migrated destination requires the exact connection, migration name, bucket and prefix before any deletion',async t=>{
+  const f=await fixture(t),ref=await f.connect();
+  await f.finish(ref);
+  const record=await f.read(ref);
+  await f.registry.update(record,{airbyteLandingMode:'scoped-v1',airbyteMigration:null});
+  await f.product().disconnect(principal,'notes');
+  const removal=f.refs.at(-1),dest=f.stored.get('destination'),name='opencrawl-scoped-'+record.integrationId+'-'+'c'.repeat(24);
+  const configuration={s3_bucket_name:record.s3Bucket,s3_bucket_path:record.s3Prefix};
+  f.options.lifecycle.migratedDestinationMatches=(binding,r)=>r.name===name&&r.configuration?.s3_bucket_name===binding.s3Bucket&&r.configuration?.s3_bucket_path===binding.s3Prefix;
+  for(const overrides of [{name:name+'1',configuration},{name,configuration:{...configuration,s3_bucket_name:'other'}},{name,configuration:{...configuration,s3_bucket_path:'other'}}]){
+    f.stored.set('destination',{...dest,...overrides});
+    await assert.rejects(f.step(removal),{code:'ProvisioningRecoveryPending'});
+    assert.equal(f.effects.includes('delete connection'),false);
+  }
+  f.stored.set('destination',{...dest,name,configuration});
+  await f.finish(removal);
+  assert.equal((await f.read(ref)).status,'disconnected');
+});
+
+live('cleanup preserves existing external holds and retires only the positively bound grant',async t=>{
   const f=await fixture(t),ref=await f.connect();
   await f.step(ref);
   await f.product().disconnect(principal,'notes');
@@ -134,28 +162,21 @@ live('cleanup preserves existing external holds and retires only the positively 
   await f.registry.update(record,{cleanupBlockedReason:'external-writer-proof-required'});
   await assert.rejects(f.step(removal),/awaiting external reconciliation/);
   assert.deepEqual(f.effects,['create destination']);
-  await f.registry.update(record,{cleanupBlockedReason:null});
+  const grantId='account-pending';
+  await f.registry.update(record,{cleanupBlockedReason:null,connectedAccountId:grantId,oauthIntent:{resource:'link',attemptId:'old-attempt',requestedAt:record.createdAt}});
+  await assert.rejects(f.step(removal),/awaiting external reconciliation/);
+  await f.registry.update(record,{oauthIntent:null});
   f.options.workspaceId=async mode=>{assert.equal(mode,'existing');return 'airbyte';};
-  await f.finish(removal);
-
-  const id='int_'+'f'.repeat(26),grantId='account-abandoned';
-  const consent={...principal,integrationId:id,environment:'production',scope:'team',provider:'notes',createdAt:new Date().toISOString(),startDate:'2026-01-01',
-    status:'connecting',connectedAccountId:grantId};
-  await f.registry.create(consent);
-  const abandoned=await f.registry.abandonWithLifecycle(consent,principal.userId);
   delete f.provider.auth;f.provider.toolkit='notes';
   let retired=0,owner='production:org_other:user_admin';
   f.options.oauth.account=async()=>({id:grantId,toolkit:{slug:'notes'},user_id:owner});
   f.options.oauth.remove=async id=>{assert.equal(id,grantId);retired++;};
-  await f.registry.update(consent,{oauthIntent:{resource:'link',attemptId:'old-attempt',requestedAt:consent.createdAt}});
-  await assert.rejects(f.step(abandoned),/awaiting external reconciliation/);
-  await f.registry.update(consent,{oauthIntent:null});
-  await assert.rejects(f.step(abandoned),/grant binding changed/);
+  await assert.rejects(f.finish(removal),/grant binding changed/);
   assert.equal(retired,0);
   owner='production:org_team:user_admin';
-  await f.finish(abandoned);await f.finish(abandoned);
+  await f.finish(removal);await f.finish(removal);
   assert.equal(retired,1);
-  assert.equal((await f.read(abandoned)).status,'abandoned');
+  assert.equal((await f.read(removal)).status,'disconnected');
 });
 
 live('OAuth consent admits only a positively bound grant and the worker recovers its account metadata',async t=>{

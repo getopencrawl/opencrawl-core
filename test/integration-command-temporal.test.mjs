@@ -10,24 +10,24 @@ import {
   integrationCommandActivities, startIntegrationCommand,
 } from '../dist/src/integrations/temporal/runtime.mjs';
 
-const reference = {environment: 'selfhost', tenantId: 'org_one', userId: 'user_one',
+const reference = {environment: 'production', tenantId: 'org_one', userId: 'user_one',
   integrationId: 'int_' + 'a'.repeat(26), commandId: 'd9b0eb76-a9bd-4b01-a74d-792db3739b09'};
-const sourceId = 'airbyte-fixture', taskQueue = 'airbyte-lifecycle';
+const namespace = 'opencrawl-production', sourceId = 'hosted-integrations-production', taskQueue = 'airbyte-lifecycle-v1';
 
 test('integration command IDs bind every scope field and only references enter the outbox result and start payload', async () => {
   const starts = [], client = {workflow: {start: async (name, options) => starts.push(options)}};
   const unprojected = {...reference, apiKey: 'do-not-serialize'};
   const id = await startIntegrationCommand(client, taskQueue, unprojected);
   assert.deepEqual(starts[0].args, [reference]);
-  const distinct = await Promise.all(Object.entries({environment: 'production', tenantId: 'org_two', userId: 'user_two',
+  const distinct = await Promise.all(Object.entries({environment: 'staging', tenantId: 'org_two', userId: 'user_two',
     integrationId: 'int_' + 'b'.repeat(26), commandId: 'another-command'}).map(([key, value]) =>
     startIntegrationCommand(client, taskQueue, {...reference, [key]: value})));
   assert.equal(new Set([id, ...distinct]).size, 6);
   let reads = 0;
-  const activities = integrationCommandActivities({environment: 'selfhost', sourceId,
+  const activities = integrationCommandActivities({environment: 'production', sourceId,
     execute: () => assert.fail('invalid environment reached a mutation'),
     listPending: async ({limit}) => {reads++; assert.equal(limit, 50); return {commands: [unprojected], cursor: null};}});
-  await assert.rejects(activities.executeIntegrationCommand({...reference, environment: 'production'}), /environment denied/);
+  await assert.rejects(activities.executeIntegrationCommand({...reference, environment: 'staging'}), /environment denied/);
   await assert.rejects(activities.listPendingIntegrationCommands({sourceId: 'foreign'}), /Invalid integration recovery source/);
   assert.equal(reads, 0);
   assert.deepEqual(await activities.listPendingIntegrationCommands({sourceId}), {commands: [{workflowId: id, reference}], cursor: null});
@@ -41,7 +41,8 @@ test('Temporal resumes a connector phase on a replacement worker and recovers un
   const directory = await mkdtemp(join(tmpdir(), 'integration-lifecycle-'));
   t.after(() => rm(directory, {recursive: true, force: true}));
   const executablePath = process.env.TEMPORAL_CLI_PATH;
-  const env = await TestWorkflowEnvironment.createLocal(executablePath ? {server: {executable: {type: 'existing-path', path: executablePath}}} : {});
+  const env = await TestWorkflowEnvironment.createLocal({server: {namespace,
+    ...(executablePath ? {executable: {type: 'existing-path', path: executablePath}} : {})}});
   t.after(() => env.teardown());
   const bundlePath = join(directory, 'workflows.cjs');
   await buildIntegrationWorkflows(bundlePath);
@@ -50,7 +51,7 @@ test('Temporal resumes a connector phase on a replacement worker and recovers un
   const lost = {...reference, tenantId: 'org_two'};
   let lostRuns = 0;
   const legacyPages = [], legacyNext = {tenantId: reference.tenantId, integrationId: reference.integrationId};
-  const options = {address: env.address, namespace: 'default', taskQueue, bundlePath, sourceId, environment: 'selfhost',
+  const options = {address: env.address, namespace, taskQueue, bundlePath, sourceId, environment: 'production',
     execute: async (ref, signal) => {
       signal.throwIfAborted();
       if (ref.tenantId === lost.tenantId) {lostRuns++; lostComplete.resolve(); return 'done';}

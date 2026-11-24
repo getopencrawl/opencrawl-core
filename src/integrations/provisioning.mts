@@ -93,19 +93,34 @@ export function createProvisioning({environment, registry, airbyte, now = () => 
     return remember(record, intent, result?.[resource]);
   }
 
-  async function remove(record:IntegrationRecord,workspaceId:string){
+  async function removal(record:IntegrationRecord,workspaceId:string,migratedDestinationMatches?:(record:IntegrationRecord,destination:AirbyteResource)=>boolean){
     const gone=(error:unknown)=>{if(errorInfo(error).status!==404)throw error;};
     const deletes={connectionId:airbyte.deleteConnection,sourceId:airbyte.deleteSource,destinationId:airbyte.deleteDestination};
+    const owned:Array<{resource:ResourceName;id:string}>=[];
+    let connection:AirbyteResource|null=null;
     for(const resource of ['connectionId','sourceId','destinationId'] as const){
       const id=record.airbyte?.[resource];
       if(!id)continue;
-      const actual=await airbyte.resource(TYPES[resource],id).catch(error=>{gone(error);return null;});
-      if(!actual)continue;
-      const migrated=resource==='destinationId'&&record.airbyteMigration?.newDestinationId===id&&actual.name===record.airbyteMigration?.name;
+      let actual:AirbyteResource;
+      try {actual=await airbyte.resource(TYPES[resource],id);}
+      catch(error){gone(error);continue;}
+      if(!actual)throw pending();
+      // A hosted destination migration replaced the canonical resource name.
+      // The runtime verifies its finalized naming and storage configuration.
+      const migrated=resource==='destinationId' && record.airbyteLandingMode==='scoped-v1' &&
+        !record.airbyteMigration && migratedDestinationMatches?.(record,actual);
       if(actual[resource]!==id||actual.workspaceId!==workspaceId||actual.name!==provisioningLabel(record)&&!migrated||
         resource==='connectionId'&&(actual.sourceId!==record.airbyte?.sourceId||actual.destinationId!==record.airbyte?.destinationId))throw pending();
-      await deletes[resource](id).catch(gone);
+      if (resource==='connectionId') connection=actual;
+      owned.push({resource,id});
     }
+    return {
+      async drain() {if(record.airbyte?.connectionId)await airbyte.drainConnection(record.airbyte.connectionId,connection);},
+      async remove() {
+        if(connection && connection.status!=='inactive')throw pending();
+        for(const {resource,id} of owned) await deletes[resource](id).catch(gone);
+      },
+    };
   }
-  return {ensure, reconcile, remove};
+  return {ensure, reconcile, removal};
 }

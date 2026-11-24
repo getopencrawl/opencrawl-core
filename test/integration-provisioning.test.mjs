@@ -3,6 +3,39 @@ import assert from 'node:assert/strict';
 import {createProvisioning, provisioningLabel} from '../dist/src/integrations/provisioning.mjs';
 import {createAirbyte} from '../dist/src/integrations/airbyte.mjs';
 
+test('Airbyte verifies the disabled connection and terminal job before its landing data can be removed', async () => {
+  let state='running',listedConnection='owned',listedType='sync',paused=false,cancelled=0;
+  const job=()=>({connectionId:listedConnection,jobId:123,jobType:listedType,status:state});
+  const api=createAirbyte({url:'https://airbyte.test',clientId:'id',clientSecret:'fixture',fetch:async (input,options)=>{
+    const url=new URL(input),path=url.pathname.slice('/api/public/v1'.length);
+    if(path==='/applications/token')return Response.json({access_token:'token'});
+    if(path==='/connections/owned' && options.method==='PATCH'){
+      assert.deepEqual(JSON.parse(options.body),{status:'inactive'});paused=true;return Response.json({});
+    }
+    if(path==='/connections/owned')return Response.json({connectionId:'owned',status:paused?'inactive':'active'});
+    if(path==='/jobs'){
+      assert.equal(url.searchParams.get('connectionId'),'owned');
+      assert.equal(url.searchParams.get('limit'),'1');assert.equal(url.searchParams.get('orderBy'),'createdAt|DESC');
+      return Response.json({data:[job()]});
+    }
+    assert.equal(path,'/jobs/123');
+    if(options.method==='DELETE')cancelled++;
+    return Response.json(job());
+  }});
+  assert.equal(await api.latestSyncJobId('owned'),'123');
+  listedType='reset';await assert.rejects(api.latestSyncJobId('owned'),/job type changed/);
+  listedConnection='foreign';await assert.rejects(api.drainConnection('owned',{status:'inactive'}),/binding changed/);
+  assert.equal(cancelled,0);
+  listedConnection='owned';
+  await assert.rejects(api.drainConnection('owned',null),{code:'AirbyteDrainPending'});
+  assert.equal(cancelled,0);
+  await assert.rejects(api.drainConnection('owned',{status:'active'}),{code:'AirbyteDrainPending'});
+  assert.equal(paused,true);assert.equal(cancelled,1);
+  state='cancelled';
+  await api.drainConnection('owned',{status:'inactive'});
+  assert.equal(cancelled,1);
+});
+
 const initial = {environment: 'staging', tenantId: 'org_A', userId: 'user_A', integrationId: 'int_' + 'a'.repeat(26), provider: 'slack', status: 'provisioning', provisionProtocol: 1};
 function fixture() {
   let record = structuredClone(initial);

@@ -19,11 +19,13 @@ export interface AirbyteLifecycle {
   start(reference: IntegrationCommandReference): Promise<unknown>;
   authorize(command: IntegrationCommand, record: IntegrationRecord): Promise<boolean>;
   validateCleanupTarget(record:IntegrationRecord):Promise<string|null>;
+  migratedDestinationMatches?(record:IntegrationRecord, destination:AirbyteResource):boolean;
 }
 export interface IntegrationOptions {
   environment: Environment; appUrl: string; buckets: TeamBuckets; legacyBucket: string; workspaceId: (mode?: 'existing') => Promise<string>; destination: LandingDestination;
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
+  onConnectorTransition?: (record: IntegrationRecord) => Promise<void>;
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>; lifecycle?: AirbyteLifecycle;
 }
 interface Secrets {apiKey?: string}
@@ -80,7 +82,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   };
 }
 
-export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, lifecycle}: IntegrationOptions) {
+export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, onConnectorTransition, lifecycle}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, StatusEntry>();
   const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
@@ -98,6 +100,21 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   }
   const durable = createProvisioning({environment, registry, airbyte, now});
   const distinct = typeof buckets?.list === 'function' ? createRecordCounts({buckets, legacyBucket, log, now}) : null;
+
+  async function publishTransition(record: IntegrationRecord) {
+    try { await onConnectorTransition?.(record); }
+    catch { log('integration.maintenance.dispatch_failed', {integrationId: record.integrationId, status: record.status}); }
+  }
+
+  async function boundWorkspace(record: IntegrationRecord) {
+    const recorded = record.airbyteWorkspaceId;
+    const intent = record.provisionIntent?.workspaceId;
+    const workspace = await workspaceIdOf('existing');
+    if (!workspace || recorded && recorded !== workspace || intent && intent !== workspace) {
+      throw new Error('Airbyte workspace binding changed');
+    }
+    return workspace;
+  }
 
   const oauthUser = ({tenantId, userId}: Pick<Principal, 'tenantId' | 'userId'>) => `${environment}:${tenantId}:${userId}`;
   const proxyFor = (record: IntegrationRecord): Proxy => request => oauth.proxy({...request, connectedAccountId: required(record.connectedAccountId, 'connected account'), userId: oauthUser(record)});
@@ -263,8 +280,12 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       {whenStatus: [record.status], whenFields: {provisionVersion: record.provisionVersion, lifecycleCommandId:reference?.commandId}});
     const label = provisioningLabel(record);
     let ids = {...record.airbyte};
-    const save = async (fields: Partial<IntegrationRecord>) => record = await registry.update(record, fields,
-      {whenStatus: ['provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: run, lifecycleCommandId:reference?.commandId}});
+    const save = async (fields: Partial<IntegrationRecord>) => {
+      record = await registry.update(record, fields,
+        {whenStatus: ['provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: run, lifecycleCommandId:reference?.commandId}});
+      if (fields.status === 'active') await publishTransition(record);
+      return record;
+    };
     let workspaceId: string;
     async function resource(name: ResourceName, create: () => Promise<AirbyteResource>) {
       signal?.throwIfAborted();
@@ -276,13 +297,14 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       }
     }
     try {
+      const validatedWorkspace = reference ? await boundWorkspace(record) : undefined;
       if (record.provisionIntent) {
         record = await durable.reconcile(record);
         if(reference){if(record.airbyte?.sourceId)await lifecycle!.commands.clearSecret(reference);return record;}
       }
       ids = {...record.airbyte};
       if (record.s3Prefix !== landingPrefix(provider, record)) throw new Error('Invalid provisioning landing scope');
-      workspaceId = record.airbyteWorkspaceId || await workspaceIdOf();
+      workspaceId = validatedWorkspace || record.airbyteWorkspaceId || await workspaceIdOf();
       if (!ids.destinationId) {
         const destinationFields = await destination.prepare(record);
         if (Object.keys(destinationFields).length) record = await save(destinationFields);
@@ -344,10 +366,12 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const id = record.connectedAccountId;
     if (id) {
       if (verifyBinding) {
-        const grant = await oauth.account(id).catch(error => {gone(error); return null;});
-        if (grant && (grant.id !== id || grant.user_id !== oauthUser(record) ||
-          grant.toolkit?.slug?.toLowerCase() !== providerFor(record.provider).toolkit)) throw new Error('Cleanup grant binding changed');
-        if (grant) await oauth.remove(id).catch(gone);
+        const grant = await oauth.account(id).catch(error => {gone(error); return 'gone' as const;});
+        if (grant !== 'gone') {
+          if (grant?.id !== id || grant.user_id !== oauthUser(record) ||
+            grant.toolkit?.slug?.toLowerCase() !== providerFor(record.provider).toolkit) throw new Error('Cleanup grant binding changed');
+          await oauth.remove(id).catch(gone);
+        }
       } else await oauth.remove(id).catch(gone);
     }
     // Only runtimes that own the whole GitHub installation supply a revoker.
@@ -375,7 +399,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         if(!historical&&target!==landingPrefix(providerFor(record.provider),record))throw new Error('Invalid cleanup landing scope');
       }
     }
+    let workspaceId: string | undefined;
     if (record.provisionIntent) {
+      if(reference) workspaceId = await boundWorkspace(record);
       try {record = await durable.reconcile(record);}
       catch(error){
         if(reference&&errorInfo(error).code==='ProvisioningRecoveryPending')await registry.update(record,{error:'recovery'},
@@ -389,18 +415,20 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const resourceVersion=record.resourceVersion??null;
     const progress=reference && record.disconnectProgress?.commandId===reference.commandId && record.disconnectProgress.resourceVersion===resourceVersion ? record.disconnectProgress : undefined;
     const whenFields={resourceVersion:record.resourceVersion,lifecycleCommandId:reference?.commandId,disconnectProgress:record.disconnectProgress};
-    async function advance(next:'data'|'grants'|'finish',deletedObjects?:number){
+    async function advance(next:'resources'|'data'|'grants'|'finish',deletedObjects?:number){
       await registry.update(record,{error:null,disconnectProgress:{commandId:reference!.commandId,resourceVersion,next,deletedObjects}},{whenStatus:['disconnecting'],whenFields});
     }
     distinct?.forget(record.integrationId);
     // Stop Airbyte before deleting its landing data. Native source workers
     // fail their next scope check; an already-started storage write still needs
     // the separate worker quiescence/reconciliation policy.
-    if (!progress) {
+    if (!progress || progress.next==='resources') {
       if(reference && (connectionId||sourceId||destinationId)){
-        const workspaceId=await workspaceIdOf('existing');
-        if(record.airbyteWorkspaceId&&record.airbyteWorkspaceId!==workspaceId)throw new Error('Cleanup workspace changed');
-        try {await durable.remove(record,workspaceId);}
+        try {
+          const owned=await durable.removal(record,workspaceId??await boundWorkspace(record),lifecycle!.migratedDestinationMatches);
+          if(!progress && connectionId){await owned.drain();return advance('resources');}
+          await owned.remove();
+        }
         catch(error){
           if(errorInfo(error).code==='ProvisioningRecoveryPending')await registry.update(record,{error:'recovery'},{whenStatus:['disconnecting'],whenFields});
           throw error;
@@ -424,9 +452,11 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       await revokeGrants(record, !!reference);
       if(reference)return advance('finish',deletedObjects);
     }
+    if(reference && progress?.next!=='finish')throw new Error('Invalid disconnect checkpoint');
     try {
-      await registry.update(record, {status: 'disconnected', disconnectedAt: new Date(now()).toISOString(), dataDeletedAt: new Date(now()).toISOString(), deletedObjects},
+      const disconnected = await registry.update(record, {status: 'disconnected', disconnectedAt: new Date(now()).toISOString(), dataDeletedAt: new Date(now()).toISOString(), deletedObjects},
         {whenStatus: ['disconnecting'], whenFields});
+      await publishTransition(disconnected);
     } catch (error) {
       if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
       const current = await registry.get(record.tenantId, record.userId, record.integrationId);
@@ -525,7 +555,6 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if(lifecycle){
       const reference=await lifecycle.requests.createWithLifecycle(record,'provision',{apiKey:key},principal.userId);
       await dispatch(reference);
-      measureTotal(record,provider,api);
       return {connected:true};
     }
     await registry.create(record);
@@ -654,11 +683,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       if(command.operation==='disconnect'){
         // Earlier command writers could persist an unresolved external writer
         // or consent POST. Only positive reconciliation may release either hold.
-        if(record.cleanupBlockedReason || record.oauthIntent)throw new Error('Cleanup is awaiting external reconciliation');
-        if(record.status==='abandoned'){
-          if(record.provisionIntent || record.s3Prefix || Object.values(record.airbyte??{}).some(Boolean))throw new Error('Abandoned consent contains provisioned resources');
-          await revokeGrants(record,true);
-        }else if(record.status!=='disconnected'){
+        if(record.cleanupBlockedReason || record.oauthIntent || record.airbyteMigration ||
+          record.airbyteLandingMode === 'scoped-preparing-v1')throw new Error('Cleanup is awaiting external reconciliation');
+        if(record.status!=='disconnected'){
           if(record.status!=='disconnecting')throw new Error('Invalid disconnect command state');
           await disconnectRecord(record,reference,signal);
           return 'more';
@@ -673,14 +700,22 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
               if(provider.auth==='github-app'||provider.auth==='api-key')throw Object.assign(new Error('Connection must be authorized again'),{code:'ProvisioningKeyRequired'});
               const {label,workspace,settings}=await provider.account(proxyFor(record),record);
               const fields={account:label||null,workspace:workspace||null,...(settings?{settings}:{})};
-              const claimed=await registry.update(record,{...fields,s3Prefix:landingPrefix(provider,{...record,...fields})},{whenStatus:['provisioning','error'],whenFields:{lifecycleCommandId:reference.commandId,provisionVersion:record.provisionVersion}});
-              measureTotal(claimed,provider,proxyFor(claimed));
+              await registry.update(record,{...fields,s3Prefix:landingPrefix(provider,{...record,...fields})},{whenStatus:['provisioning','error'],whenFields:{lifecycleCommandId:reference.commandId,provisionVersion:record.provisionVersion}});
               return 'more';
             }
             // After a successful source POST with a lost response, reconcile the
             // intent before requiring the key. A reconciled source owns its key.
             const needKey=provider.auth==='api-key'&&!record.airbyte?.sourceId&&!record.provisionIntent;
             const secrets=needKey?await lifecycle.commands.readSecret(reference):{};
+            if(record.total===undefined && !record.provisionIntent && provider.auth!=='github-app'){
+              const proxy=provider.auth==='api-key' ? (secrets.apiKey ? direct(secrets.apiKey) : null) : proxyFor(record);
+              if(proxy){
+                const estimate=await provider.total(proxy,{startDate:record.startDate,now:now(),record}).catch(()=>null);
+                const total=typeof estimate==='number' && Number.isSafeInteger(estimate) && estimate>=0 ? estimate : null;
+                await registry.update(record,{total},
+                  {whenStatus:['provisioning','error'],whenFields:{lifecycleCommandId:reference.commandId,provisionVersion:record.provisionVersion}});
+              }
+            }
             await provisionRecord(record,secrets,reference,signal);
             return 'more';
           }catch(error){
@@ -851,4 +886,4 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   };
 }
 
-export type Integrations = ReturnType<typeof createIntegrations>;
+export type Integrations = Omit<ReturnType<typeof createIntegrations>, 'executeCommand'>;

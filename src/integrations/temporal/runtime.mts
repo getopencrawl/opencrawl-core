@@ -10,7 +10,7 @@ import type {IntegrationCommandReference, IntegrationCommands, IntegrationRecove
 
 interface IntegrationRuntime {
   sourceId: string;
-  environment: IntegrationCommandReference['environment'];
+  environment: 'production' | 'staging';
   /** Load and authorize the authoritative command. Advance one persisted phase.
    * Return 'done' only after the registry reflects a terminal command. */
   execute(reference: IntegrationCommandReference, signal: AbortSignal): Promise<'more' | 'done'>;
@@ -21,7 +21,7 @@ export interface LegacyCursor {tenantId: string; integrationId: string}
 const validLegacyCursor = (cursor: LegacyCursor) => cursor && /^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(cursor.tenantId) && /^int_[a-f0-9]{26}$/.test(cursor.integrationId);
 
 function referenceOf(input: IntegrationCommandReference): IntegrationCommandReference {
-  if (!input || !['selfhost', 'production', 'staging'].includes(input.environment)
+  if (!input || !['production', 'staging'].includes(input.environment)
     || !/^(org_[A-Za-z0-9]+|personal:user_[A-Za-z0-9]+)$/.test(input.tenantId)
     || !/^user_[A-Za-z0-9]+$/.test(input.userId) || !/^int_[a-f0-9]{26}$/.test(input.integrationId)
     || typeof input.commandId !== 'string' || !/^[A-Za-z0-9_:-]{1,200}$/.test(input.commandId)) {

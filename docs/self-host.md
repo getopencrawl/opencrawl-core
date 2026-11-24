@@ -36,8 +36,7 @@ database if it finds a leftover `identity.sqlite`. See the
 
 The application database is included in Compose and cold backups. Auth, registry,
 board and capture event identities use PostgreSQL. Other product state retains the
-production object-store contracts. Temporal runs session and connector indexing
-and executes Airbyte connection setup and disconnect commands.
+production object-store contracts. Temporal runs session and connector indexing.
 
 ## Configure your installation
 
@@ -287,23 +286,7 @@ Named volumes preserve S3 objects, OpenSearch indexes, the PostgreSQL applicatio
 database (including Better Auth and the integration registry), and Temporal's
 separate PostgreSQL databases. The registry refuses to reopen under a different
 organization. Workers rediscover active connections and captured objects after
-restarting. The connector worker resumes pending setup and disconnect commands
-from PostgreSQL and Temporal. Each admission starts its workflow immediately.
-The worker checks for missed starts at boot and every ten minutes thereafter.
-Each pass reads all pending rows, so its one-minute catchup window suffices
-after a Temporal outage. When Airbyte may have accepted a create, the
-worker looks for the exact resource before advancing the command. Keep the
-same database, Temporal namespace and `OPENCRAWL_AUTH_SECRET` across restarts.
-
-A supported empty installation can start its API and worker together. If you
-operate an existing deployment and are evaluating a cutover from request-owned
-connector setup, take a recovery point first. Stop connector mutations, drain
-and stop **all** old API and worker processes, and settle running external
-Airbyte jobs before starting the new worker against that state. The worker
-automatically adopts interrupted records. Check their status before reopening
-connector mutations. For rollback with pending commands, keep mutations closed
-while you reconcile Airbyte's actual resources, the PostgreSQL command state
-and Temporal history at the recovery point.
+restarting; pending Airbyte creation intents are reconciled before any retry.
 
 Disconnect first stops/removes Airbyte resources, revokes the source grant, and
 deletes its landed objects. Search denies the disconnected binding immediately.
