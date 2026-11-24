@@ -13,6 +13,7 @@ export interface IntegrationOptions {
   environment: Environment; appUrl: string; buckets: TeamBuckets; legacyBucket: string; workspaceId: () => Promise<string>; destination: LandingDestination;
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
+  onConnectorTransition?: (record: IntegrationRecord) => Promise<void>;
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>;
 }
 interface Secrets {apiKey?: string}
@@ -69,7 +70,7 @@ export function directApi(apiKey: string, fetchImpl = globalThis.fetch): Proxy {
   };
 }
 
-export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation}: IntegrationOptions) {
+export function createIntegrations({environment, appUrl, buckets, legacyBucket, workspaceId: workspaceIdOf, destination, backfillDays = 90, schedule = '0 0 * * * ?', oauth, airbyte, registry, providers, github = null, direct = directApi, now = () => Date.now(), log = () => {}, maintenance = false, revokeInstallation, onConnectorTransition}: IntegrationOptions) {
   const pendingAccountCache = new Map<string, {at: number; result: Promise<PendingSignInState>}>();
   const statusCache = new Map<string, StatusEntry>();
   const statusKey = (record: IntegrationRecord) => JSON.stringify([environment, record.tenantId, record.userId, record.integrationId, record.airbyte?.connectionId]);
@@ -79,6 +80,11 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   };
   const durable = createProvisioning({environment, registry, airbyte, now});
   const distinct = typeof buckets?.list === 'function' ? createRecordCounts({buckets, legacyBucket, log, now}) : null;
+
+  async function publishTransition(record: IntegrationRecord) {
+    try { await onConnectorTransition?.(record); }
+    catch { log('integration.maintenance.dispatch_failed', {integrationId: record.integrationId, status: record.status}); }
+  }
 
   const oauthUser = ({tenantId, userId}: Pick<Principal, 'tenantId' | 'userId'>) => `${environment}:${tenantId}:${userId}`;
   const proxyFor = (record: IntegrationRecord): Proxy => request => oauth.proxy({...request, connectedAccountId: required(record.connectedAccountId, 'connected account'), userId: oauthUser(record)});
@@ -220,8 +226,12 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       {whenStatus: [record.status], whenFields: {provisionVersion: record.provisionVersion}});
     const label = provisioningLabel(record);
     let ids = {...record.airbyte};
-    const save = async (fields: Partial<IntegrationRecord>) => record = await registry.update(record, fields,
-      {whenStatus: ['provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: run}});
+    const save = async (fields: Partial<IntegrationRecord>) => {
+      record = await registry.update(record, fields,
+        {whenStatus: ['provisioning'], whenFields: {provisionVersion: record.provisionVersion, provisionRun: run}});
+      if (fields.status === 'active') await publishTransition(record);
+      return record;
+    };
     let workspaceId: string;
     async function resource(name: ResourceName, create: () => Promise<AirbyteResource>) {
       record = await durable.ensure(record, name, workspaceId, create);
@@ -295,8 +305,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // runtime that owns the entire managed grant may revoke it on disconnect.
     if (record.installationId && revokeInstallation) await revokeInstallation(record.installationId).catch(gone);
     try {
-      await registry.update(record, {status: 'disconnected', disconnectedAt: new Date(now()).toISOString(), dataDeletedAt: new Date(now()).toISOString(), deletedObjects},
+      const disconnected = await registry.update(record, {status: 'disconnected', disconnectedAt: new Date(now()).toISOString(), dataDeletedAt: new Date(now()).toISOString(), deletedObjects},
         {whenStatus: ['disconnecting'], whenFields: {resourceVersion: record.resourceVersion}});
+      await publishTransition(disconnected);
     } catch (error) {
       if (errorInfo(error).code !== 'ConditionalCheckFailedException') throw error;
       const current = await registry.get(record.tenantId, record.userId, record.integrationId);

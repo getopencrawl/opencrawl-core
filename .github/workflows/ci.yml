@@ -50,7 +50,7 @@ jobs:
       - name: Verify the standalone GitHub connector
         run: python3 -m unittest discover -s connectors/github/tests
       - name: Verify real Temporal scheduling, retries and replay
-        run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/session-deletion-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs test/team-temporal.test.mjs
+        run: OPENCRAWL_TEST_TEMPORAL=1 node --test test/session-temporal.test.mjs test/session-deletion-temporal.test.mjs test/slack-source-temporal.test.mjs test/connector-pagination-temporal.test.mjs test/connector-maintenance-temporal.test.mjs test/team-temporal.test.mjs
   web:
     needs: validation
     if: needs.validation.outputs.reuse != 'true'
