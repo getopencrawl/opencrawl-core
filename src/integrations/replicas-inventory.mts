@@ -45,17 +45,8 @@ export async function observeReplicasWorkspace(client:Client,scope:{namespace:st
     const scoped=`namespace=$1 AND tenant=$2 AND chat->>'workspace_id'=$4 AND issue->>'importId'=$3 AND checkpoint->>'before' IS NULL
       AND NOT (issue ? 'continuation') AND issue->>'operation'='history'
       AND (issue->>'httpStatus'='404' OR issue->>'reason' IN ('empty_with_messages','empty_unverified'))`;
-    // A consistently absent chat is watched through the daily roster. Give
-    // its history endpoint a weekly backstop even if the roster stays stale.
-    // Count from the actual failed read so later checks cannot push it out.
-    const failedAt="COALESCE(GREATEST((issue->>'at')::timestamptz,(issue->>'sharedAt')::timestamptz),$6::timestamptz)";
-    const nextProbe=`GREATEST((issue->>'providerRetryAt')::timestamptz,
-      CASE WHEN GREATEST((issue->>'attempt')::int,(checkpoint->>'chatAttempts')::int)>=3 AND issue ? 'workspaceAbsentAt' THEN ${failedAt}+interval '7 days'
-           ELSE LEAST(GREATEST(retry_at,$7::timestamptz),${failedAt}+interval '24 hours') END)`;
-    const absent=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=${nextProbe},
-      issue=issue||jsonb_build_object('workspaceAbsentAt',COALESCE(issue->>'workspaceAbsentAt',$6::text),'retryAt',${nextProbe})
-      WHERE ${scoped} AND NOT ((chat->>'chat_id')=ANY($5::text[]))
-      AND (NOT(issue ? 'workspaceAbsentAt') OR retry_at IS DISTINCT FROM ${nextProbe})`,[...args,ids,at,new Date(next).toISOString()]);
+    const absent=await client.query(`UPDATE opencrawl_replicas_deferred SET issue=issue||jsonb_build_object('workspaceAbsentAt',$6::text)
+      WHERE ${scoped} AND NOT (issue ? 'workspaceAbsentAt') AND NOT ((chat->>'chat_id')=ANY($5::text[]))`,[...args,ids,at]);
     moved=absent.rowCount??0;
     const present=await client.query(`UPDATE opencrawl_replicas_deferred SET retry_at=GREATEST((issue->>'providerRetryAt')::timestamptz,LEAST(retry_at,$6::timestamptz)),
       issue=(issue-'workspaceAbsentAt')||jsonb_build_object('retryAt',GREATEST((issue->>'providerRetryAt')::timestamptz,LEAST(retry_at,$6::timestamptz)))

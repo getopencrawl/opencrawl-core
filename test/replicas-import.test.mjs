@@ -578,8 +578,8 @@ test('one retained inventory postpones absent chats across a workspace and relea
   assert.equal(inventoryReads,1);assert.equal(historyReads.length,4);assert.ok(sleep.delayMs>=86_400_000-60_000&&sleep.delayMs<=86_400_000);
   const card=await f.service.source(principal);
   const {sourceStatus}=await import('../dist/src/application/source-model.mjs');
-  assert.equal(card.history.waitingForSource,true);assert.equal(sourceStatus(card).label,'Connected');
-  assert.equal(card.synced,1);assert.equal(card.history.phase,'importing');
+  assert.equal(card.history.unavailable,2);assert.equal(card.history.blocked,0);assert.equal(sourceStatus(card).label,'Connected');
+  assert.equal(card.synced,1);assert.equal(card.history.phase,'complete');
   // The next direct probe is chosen by the durable queue. Arrange for the
   // absent chat to lead so only the inventory can release its returning peer.
   const scope=[f.database.namespace,principal.tenantId];
@@ -589,7 +589,7 @@ test('one retained inventory postpones absent chats across a workspace and relea
   let next=await advance(f.service,id);
   if(next.processed<2)next=await advance(f.service,id); // A newly changed inventory may verify its export first.
   assert.equal(historyReads.at(-1),second.chat_id);
-  assert.equal(next.imported,2);assert.equal(next.processed,2);assert.equal(next.blocked,1);assert.notEqual(next.waitingForSource,true);
+  assert.equal(next.imported,2);assert.equal(next.processed,2);assert.equal(next.blocked,0);assert.equal(next.unavailable,1);assert.notEqual(next.waitingForSource,true);
   assert.ok(f.handed.length>=2);
 });
 
@@ -661,7 +661,7 @@ test('a workspace-only chat must reappear in its exact retained organization exp
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   await advance(f.service,id);await advance(f.service,id);clock+=60_000;
   for(let i=0;i<12;i++)await advance(f.reopen(),id);
-  const status=await f.service.status(principal);assert.equal(status.imported,2);assert.equal(status.processed,2);assert.equal(status.total,3);assert.equal(status.blocked,1);
+  const status=await f.service.status(principal);assert.equal(status.imported,2);assert.equal(status.processed,2);assert.equal(status.total,3);assert.equal(status.blocked,0);assert.equal(status.unavailable,1);
   assert.ok(scopedPages.includes('next-page'));assert.equal(reads.filter(id=>id===retained.chat_id).length,1);assert.ok(!reads.includes(listedOnly.chat_id));
   const {rows:[row]}=await f.database.pool.query('SELECT export_check FROM opencrawl_replicas_workspace_inventories WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
   assert.equal(row.export_check.phase,'complete');assert.equal(row.export_check.added,1);assert.deepEqual(row.export_check.outside,[listedOnly.chat_id]);
@@ -689,10 +689,10 @@ test('catalog disagreement also verifies the original workspaces whose first his
   await advance(f.service,id);await advance(f.service,id);clock+=60_000;
   for(let i=0;i<16;i++)await advance(f.reopen(),id);
   assert.equal(fetched.filter(id=>id===hidden.chat_id).length,1);
-  const result=await f.service.status(principal);assert.equal(result.imported,2);assert.equal(result.total,3);assert.equal(result.blocked,1);
+  const result=await f.service.status(principal);assert.equal(result.imported,2);assert.equal(result.total,3);assert.equal(result.blocked,0);assert.equal(result.unavailable,1);
 });
 
-test('workspace absence cannot keep postponing a direct history check or override provider Retry-After',async t=>{
+test('a returning source never overrides provider Retry-After',async t=>{
   const now=Date.now(),at=new Date(now-25*60*60_000).toISOString();
   const f=await fixture(t);
   const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
@@ -705,6 +705,7 @@ test('workspace absence cannot keep postponing a direct history check or overrid
   }
   const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
   await f.database.transaction(client=>observeReplicasWorkspace(client,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now,async()=>({chats:[]})));
+  await f.database.transaction(client=>observeReplicasWorkspace(client,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now+86_400_000,async()=>({chats:[chat,peer].map(c=>({id:c.chat_id}))})));
   const {rows}=await f.database.pool.query("SELECT chat->>'chat_id' id,retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2",scope);
   assert.ok(rows.find(r=>r.id===chat.chat_id).retry_at.getTime()<=now);
   assert.equal(rows.find(r=>r.id===peer.chat_id).retry_at.toISOString(),later);
@@ -828,7 +829,7 @@ test('a growing native chat is refreshed from the exact retained row and only it
   for(let i=0;i<10;i++)await advance(f.reopen(),id);
   const status=await f.service.status(principal);
   assert.equal(status.imported,1);assert.equal(status.events,2);assert.equal(status.pages,2);
-  assert.equal(status.total,3);assert.equal(status.processed,2);assert.equal(status.blocked,1);
+  assert.equal(status.total,3);assert.equal(status.processed,2);assert.equal(status.blocked,0);assert.equal(status.unavailable,1);
   const {rows:[snap]}=await f.database.pool.query('SELECT source_version,counts FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2',[f.database.namespace,principal.tenantId]);
   assert.equal(snap.source_version.toISOString(),new Date(newTime).toISOString());assert.deepEqual(snap.counts,{events:2,turns:0,pages:2});
   clock+=86_400_000;for(let i=0;i<8;i++)await advance(f.reopen(),id);
@@ -1057,29 +1058,17 @@ test('daily rosters park repeatedly absent chats without rewriting the same retr
     [...scope,at,chat,{before:null},{at,importId:id,operation:'history',httpStatus:404,attempt:3,workspaceAbsentAt:at}]);
   const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
   const observe=(n,chats)=>f.database.transaction(c=>observeReplicasWorkspace(c,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now+n*day,async()=>({chats})));
-  assert.equal((await observe(0,[])).moved,1);
+  assert.equal((await observe(0,[])).moved,0);
   for(let i=1;i<5;i++)assert.equal((await observe(i,[])).moved,0);
   const retry=async()=>(await f.database.pool.query('SELECT retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',scope)).rows[0].retry_at.getTime();
-  assert.equal(await retry(),now+7*day);
+  assert.equal(await retry(),now);
   const provider=new Date(now+6*day).toISOString();
   await f.database.pool.query("UPDATE opencrawl_replicas_deferred SET issue=issue||jsonb_build_object('providerRetryAt',$3::text) WHERE namespace=$1 AND tenant=$2",[...scope,provider]);
   assert.equal((await observe(5,[{id:chat.chat_id}])).released,1);
   assert.equal(await retry(),Date.parse(provider));
 });
 
-test('a shared empty-page observation keeps its actual time and attempt count in the weekly backstop',async t=>{
-  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
-  const now=Date.now(),day=86_400_000,shared=new Date(now-day).toISOString(),old=new Date(now-4*day).toISOString();
-  const scope=[f.database.namespace,principal.tenantId];
-  await f.database.pool.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
-    [...scope,old,chat,{before:null,chatAttempts:4},{at:old,attempt:1,sharedAt:shared,workspaceAbsentAt:old,importId:id,operation:'history',reason:'empty_with_messages'}]);
-  const {observeReplicasWorkspace}=await import('../dist/src/integrations/replicas-inventory.mjs');
-  await f.database.transaction(db=>observeReplicasWorkspace(db,{namespace:scope[0],tenant:scope[1],importId:id,workspace:chat.workspace_id},now,async()=>({chats:[]})));
-  const row=(await f.database.pool.query('SELECT retry_at FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',scope)).rows[0];
-  assert.equal(row.retry_at.getTime(),Date.parse(shared)+7*day);
-});
-
-test('confirmed absent chats share the daily wake even with legacy counters while active work keeps its deadline',async t=>{
+test('confirmed source absence never schedules a direct retry while active work keeps its deadline',async t=>{
   const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'});
   const {deferredHistory}=await import('../dist/src/integrations/replicas-deferred.mjs');
   const db=f.database.pool,scope=[f.database.namespace,principal.tenantId],queue=deferredHistory(db,...scope);
@@ -1087,14 +1076,13 @@ test('confirmed absent chats share the daily wake even with legacy counters whil
   const absent={at,attempt:0,workspaceAbsentAt:at,importId:id,operation:'history',httpStatus:404,reason:'provider_http',decision:'defer'};
   const add=(when,row,issue)=>queue.save(row,{before:null,historyCursors:[],occurrences:{}},issue,new Date(when).toISOString());
   await add(now+1000,chat,absent);
-  assert.equal((await queue.oldest(false,now+2000,next)).wake,next);
+  assert.equal(await queue.oldest(false,now+2000),undefined);
   const active={...chat,chat_id:randomUUID()};
   await add(now+3000,active,{...absent,workspaceAbsentAt:undefined});
-  const result=await queue.oldest(false,now+2000,next);
+  const result=await queue.oldest(false,now+2000);
   assert.equal(result.row.chat.chat_id,active.chat_id);assert.equal(result.wake,now+3000);
   await queue.remove(result.row);
-  assert.equal((await queue.oldest(false,next,next+day)).row.chat.chat_id,chat.chat_id);
-  assert.ok((await queue.oldest(false,next,next+day)).wake<=next);
+  assert.equal(await queue.oldest(false,next+7*day),undefined);
 });
 
 test('a persistent catalog count mismatch shares the daily wake only with complete roster coverage',async t=>{
@@ -1105,9 +1093,11 @@ test('a persistent catalog count mismatch shares the daily wake only with comple
   const due=new Date(now+1000).toISOString(),issue={phase:'inconsistent_catalog',attempt:3,retryAt:due,lastFailure:{reason:'terminal_count'}};
   const update=ids=>db.query("UPDATE opencrawl_replicas_workspace_inventories SET result='ready',chat_ids=$4,export_check=$5 WHERE namespace=$1 AND tenant=$2 AND import_id=$3",[...scope,ids,issue]);
   await update([chat.chat_id]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(next));
+  assert.equal(await nextWorkspaceExportReview(db,scope,true,next,true),undefined);
   assert.equal((await reviewWorkspaceExport(db,scope,[],{},now+2000,true,next)).requested,false);
   assert.equal(await nextWorkspaceExportReview(db,scope,true,new Date(now+2*day).toISOString()),Date.parse(due));
   await update([chat.chat_id,randomUUID()]);assert.equal(await nextWorkspaceExportReview(db,scope,true,next),Date.parse(due));
+  assert.equal(await nextWorkspaceExportReview(db,scope,true,next,true),Date.parse(due));
 });
 
 test('a completed legacy import with no credential exposes reconnect while retaining its counts',async t=>{
@@ -1117,4 +1107,53 @@ test('a completed legacy import with no credential exposes reconnect while retai
   assert.equal(source.history.requiresReconnect,true);assert.equal(source.synced,7);
   await f.service.action(principal,{action:'connect',apiKey:'replacement-key'});
   assert.equal((await f.service.status(principal)).requiresReconnect,undefined);
+});
+
+test('a sleeping legacy import settles existing source-absent aliases, then a daily roster reopens them',async t=>{
+  let clock=Date.now(),restored=false;
+  const f=await fixture(t,{now:()=>clock,answer:url=>{
+    if(url.pathname.endsWith('/chats'))return Response.json({chats:restored?[{id:chat.chat_id}]:[]});
+    if(url.pathname.endsWith('/history'))return restored?Response.json({events:[event('restored')],before_cursor:null}):new Response(null,{status:404});
+  }});
+  const {id}=await f.service.action(principal,{action:'connect',apiKey:'key'}),scope=[f.database.namespace,principal.tenantId];
+  const later=new Date(clock+86_400_000).toISOString(),at=new Date(clock).toISOString();
+  const db=f.database.pool;
+  await db.query("UPDATE opencrawl_replicas_workspace_inventories SET checked_at=$4,chat_ids='{}',result='ready',export_check=$5 WHERE namespace=$1 AND tenant=$2 AND import_id=$3",
+    [...scope,id,at,{phase:'complete',outside:[]}]);
+  await db.query("UPDATE opencrawl_replicas_imports SET state=(state-'sourceAvailabilityChecked')||$3::jsonb WHERE namespace=$1 AND tenant=$2",
+    [...scope,{queue:[],blocked:2,total:2,retryAt:later,nextCatalogAt:later}]);
+  const insert=(c,issue)=>db.query('INSERT INTO opencrawl_replicas_deferred(namespace,tenant,retry_at,chat,checkpoint,issue) VALUES($1,$2,$3,$4,$5,$6)',
+    [...scope,later,c,{before:null,historyCursors:[],occurrences:{}},{importId:id,at,operation:'history',reason:'empty_with_messages',...issue}]);
+  await insert(chat,{});await insert({...chat,title:'another exported label'},{workspaceAbsentAt:at});
+  const reads=f.calls.length;
+  const step=await f.reopen().runStep(job(id));
+  assert.equal(step.delayMs,86_400_000);assert.equal(step.done,false);assert.equal(f.calls.length,reads);
+  const status=await f.service.status(principal);
+  assert.equal(status.phase,'complete');assert.equal(status.blocked,0);assert.equal(status.unavailable,2);
+  assert.equal(status.processed,0);assert.equal(status.imported,0);
+  assert.deepEqual((await f.service.source(principal)).rows.map(r=>r.count),[0,2]);
+  restored=true;clock+=86_400_001;
+  for(let i=0;i<12;i++)await f.reopen().runStep(job(id));
+  const recovered=await f.service.status(principal);
+  assert.equal(recovered.phase,'complete');assert.equal(recovered.processed,2);assert.equal(recovered.imported,1);
+  assert.equal(recovered.unavailable??0,0);
+});
+
+test('a stale or foreign roster, transient failure, or partial transcript remains actionable',async t=>{
+  const f=await fixture(t),{id}=await f.service.action(principal,{action:'connect',apiKey:'key'}),db=f.database.pool;
+  const {deferredHistory}=await import('../dist/src/integrations/replicas-deferred.mjs');
+  const scope=[f.database.namespace,principal.tenantId],queue=deferredHistory(db,...scope),now=Date.now(),at=new Date(now).toISOString();
+  const cp={before:null,occurrences:{},historyCursors:[]},issue={importId:id,at,operation:'history',reason:'empty_unverified'};
+  const set=(tenant,generation,checked,result)=>db.query("INSERT INTO opencrawl_replicas_workspace_inventories(namespace,tenant,import_id,workspace,checked_at,result,chat_ids) VALUES($1,$2,$3,$4,$5,$6,'{}') ON CONFLICT(namespace,tenant,import_id,workspace) DO UPDATE SET checked_at=$5,result=$6,chat_ids='{}'",[scope[0],tenant,generation,chat.workspace_id,new Date(checked),result]);
+  const count=async()=>(await db.query("SELECT count(*)::int n FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2 AND issue ? 'workspaceAbsentAt'",scope)).rows[0].n;
+  await set('another-tenant',id,now,'ready');await set(scope[1],randomUUID(),now,'ready');await set(scope[1],id,now-2*86_400_000,'ready');
+  await queue.save(chat,cp,issue,at);await queue.reconcileRosters(id,now);assert.equal(await count(),0);
+  await set(scope[1],id,now,'waking');await queue.reconcileRosters(id,now);assert.equal(await count(),0);
+  await set(scope[1],id,now,'ready');
+  await queue.save(chat,{...cp,before:'second-page'},issue,at);
+  await queue.save(chat,cp,{...issue,operation:'workspace_chats',httpStatus:403,reason:'provider_http'},at);
+  await queue.save(chat,cp,{...issue,httpStatus:503,reason:'provider_http'},at);
+  await queue.save(chat,cp,{...issue,continuation:true},at);
+  await queue.save(chat,cp,issue,at);assert.equal(await count(),1);
+  await queue.reconcileRosters(id,now);assert.equal(await count(),2);
 });
