@@ -1,4 +1,4 @@
-import type {Principal, ObjectStore} from './types.mjs';
+import type {Principal, ObjectStore, StoreVersion} from './types.mjs';
 import {parseJson} from './types.mjs';
 interface CredentialRecord {schemaVersion: number; id: string; principal: Principal; expiresAt: string; revoked: boolean; revokedAt?: string; generation?: string}
 import {randomBytes} from 'node:crypto';
@@ -33,6 +33,19 @@ export function createCaptureCredentials({store,prefix='capture-v1',now=Date.now
       sessionScope(record.principal);
       if((record.generation??'')!==await generation(record.principal))return null;
       return {...record.principal,captureAccess:'write'};
+    },
+    /** A removal binds its revocation to the generation it observed after provider acknowledgement.
+     * A replay cannot overwrite a new generation created by a later removal or invitation. */
+    async removalVersion(principal:Principal):Promise<StoreVersion|null> {
+      sessionScope(principal);
+      if(principal.captureAccess==='write')deny(403,'Capture credentials cannot manage credentials');
+      return (await store.readVersion(generationKey(principal),{maxBytes:1024})).version;
+    },
+    async revokeVersion(principal:Principal,version:StoreVersion|null) {
+      sessionScope(principal);
+      if(principal.captureAccess==='write')deny(403,'Capture credentials cannot manage credentials');
+      // A failed comparison means another revocation already rotated this generation.
+      await store.compareAndSet(generationKey(principal),version,Buffer.from(JSON.stringify({generation:randomBytes(32).toString('hex')})));
     },
     /** Invalidates every existing delegation for one owner, including after reinvitation. */
     async revokeAll(principal:Principal){
