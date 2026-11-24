@@ -2,6 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {boardStateFixture} from './fixtures/board-state.mjs';
 import {fixture,owner,batch} from './session-deletion-fixture.mjs';
+import {createSessionDeletionRequests} from '../dist/src/sessions/deletion-requests.mjs';
+import {MockActivityEnvironment} from '@temporalio/testing';
+import {sessionDeletionActivities} from '../dist/src/sessions/temporal/deletion.mjs';
 import {createSessionLibrary} from '../dist/src/sessions/library.mjs';
 
 test('incognito fences every publication path and erases only the authenticated capture',async t=>{
@@ -49,4 +52,36 @@ test('a tombstone can precede the first capture and survives replay after erasur
   assert.equal((await library.delete(owner,key)).deleted,true);
   assert.equal((await f.ingest.putBatch(owner,batch())).discarded,'session_deleted');
   assert.equal((await f.ingest.putBatch(owner,batch({harness:'claude-code'}))).discarded,undefined);
+});
+
+test('the deletion worker recovers a committed incognito request without the original client',async t=>{
+  const storage=await boardStateFixture(t), f=fixture(), requests=createSessionDeletionRequests(f.options);
+  const unavailable=async()=>{throw new Error('deletion store unavailable');};
+  const board=storage.make({requestCaptureErasure:unavailable});
+  const session={harness:'codex',sessionId:'native-session'};
+  const peer={...owner,userId:'other-owner'}, foreign={...owner,tenantId:'another-organization'};
+  const intents=[[owner,session],[owner,{...session,harness:'claude-code'}],[peer,session],[foreign,session]];
+  for(const [principal,currentSession] of intents)
+    await assert.rejects(board.participate(principal,'incognito',{currentSession}),/deletion store unavailable/);
+  await assert.rejects(board.participate(owner,'incognito',{currentSession:session}),/deletion store unavailable/);
+  assert.equal((await requests.list()).keys.length,0);
+
+  // The same transaction protects publication while delivery to the erasure worker is outstanding.
+  await assert.rejects(board.participate(owner,'bootstrap',{session:session.sessionId,harness:session.harness}),{status:403});
+  const scope={tenantId:owner.tenantId,userId:owner.userId};
+  await assert.rejects(storage.repository.recoverErasures(unavailable,scope),/deletion store unavailable/);
+  const binding={...f.options,...scope,recoverIncognitoErasures:storage.repository.recoverErasures};
+  const activities=sessionDeletionActivities(async()=>binding);
+  const env=new MockActivityEnvironment();
+  const recover=()=>env.run(activities.recoverIncognitoErasures,{sourceId:'local'});
+  await recover();await recover();
+  assert.equal((await requests.list()).keys.length,2);
+  for(const [principal,currentSession] of intents){
+    const request=await requests.readFor(principal,currentSession);
+    if(principal===owner)assert.equal(request.harness,currentSession.harness);
+    else assert.equal(request,null);
+  }
+  const remaining=[];
+  await storage.repository.recoverErasures(async intent=>{remaining.push(intent);});
+  assert.deepEqual(remaining.map(i=>[i.tenantId,i.userId]).sort(),[[peer.tenantId,peer.userId],[foreign.tenantId,foreign.userId]].sort());
 });

@@ -41,6 +41,9 @@ const deletion = proxyActivities<ReturnType<typeof sessionDeletionActivities>>({
   startToCloseTimeout: '2 hours', heartbeatTimeout: '45 seconds',
   retry: {initialInterval: '5 seconds', maximumInterval: '5 minutes'},
 });
+const incognito = proxyActivities<Pick<ReturnType<typeof sessionDeletionActivities>,'recoverIncognitoErasures'>>({
+  startToCloseTimeout:'2 minutes', heartbeatTimeout:'45 seconds', retry:{maximumAttempts:2},
+});
 async function deleteSessionV1(input: SessionDeletionInput) {
   await deletion.prepareSessionDeletion(input);
   await deletion.purgeSessionDeletionArchives(input);
@@ -60,6 +63,9 @@ async function recoverSessionDeletionsV1(input: SessionDeletionRecoveryInput) {
     } catch (error) {if (!(error instanceof WorkflowExecutionAlreadyStartedError)) throw error;}
   }
   if (page.cursor) return continueAsNew<typeof recoverSessionDeletionsV1>({...input, cursor: page.cursor});
+  // Regular deletion children have already started. Newly handed-off intents
+  // are picked up by the next scheduled sweep even if this activity times out.
+  if (patched('recover-incognito-erasure-outbox-v1')) await incognito.recoverIncognitoErasures({sourceId:input.sourceId});
   return {completed: true};
 }
 const replicas=proxyActivities<ReturnType<typeof replicasActivities>>({startToCloseTimeout:'5 minutes',
