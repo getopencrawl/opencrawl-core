@@ -66,7 +66,7 @@ async function hoverDay(page: Page, title: string, index: number) {
   return region.locator('.report-bar-tip');
 }
 
-for (const width of [1440, 390]) test(`tabs and the date range sit on one bar and every tab fits at ${width}px`, async ({page}, info) => {
+for (const width of [1440, 390, 320]) test(`tabs and the date range sit on one bar and every tab fits at ${width}px`, async ({page}, info) => {
   await page.setViewportSize({width, height: 900});
   await serve(page);
   await page.goto('/usage?split&activity');
@@ -78,6 +78,8 @@ for (const width of [1440, 390]) test(`tabs and the date range sit on one bar an
     if (['Overview', 'Searches', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart')).toHaveCount(name === 'Overview' ? 2 : 1);
     if (['Overview', 'Searches', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart .report-bar-axis').first()).toHaveText('0');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
+    const frameWidth = await page.locator('main .oc-page').evaluate(el => el.clientWidth);
+    expect(await page.locator('main .oc-page-body').evaluate(el => el.clientWidth)).toBe(frameWidth);
     await page.screenshot({path: info.outputPath(`${name.replace(/ /g, '-').toLowerCase()}-${width}.png`)});
   }
 });
