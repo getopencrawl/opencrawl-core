@@ -1,5 +1,5 @@
 import {test,expect,setDefaultTimeout,mock} from 'bun:test';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,appendFileSync,existsSync,readdirSync,rmSync,realpathSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,appendFileSync,existsSync,readdirSync,rmSync,realpathSync,symlinkSync,utimesSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir,homedir} from 'node:os';
 import {createServer} from 'node:http';
@@ -56,6 +56,9 @@ async function fixture(run:(f:any)=>Promise<void>){
     const path=join(dir,'claude','projects','fixture','session.jsonl');mkdirSync(dirname(path),{recursive:true});
     const record=(id:string,child?:string)=>JSON.stringify({type:'user',uuid:id,sessionId:'session',...(child?{agentId:child}:{}),message:{role:'user',content:'synthetic '+id}})+'\n';
     writeFileSync(path,record('one'));
+    // Most handoff tests explicitly resume an otherwise inactive native chat.
+    // Separate discovery cases below create their files after enrollment.
+    const inactive=new Date(Date.now()-60_000);utimesSync(path,inactive,inactive);
     const start=async(options={})=>{controller=new AbortController();let ready=false;worker=runCaptureDaemon({signal:controller.signal,flushMs:20,reconcileMs:100,settleMs:40,retryMs:60,onReady:()=>{ready=true;},...options});await until(()=>ready);};
     const stop=async()=>{controller?.abort();await worker;};
     const event=(name='SessionStart',pid=process.pid)=>recordDaemonHook({session_id:'session',transcript_path:path,hook_event_name:name,cwd:dir},pid);
@@ -104,6 +107,37 @@ isolatedTest('paused uploader checks only for queued work and wakes at a timed d
   await until(()=>f.batches.length===2,2500);
   expect(checks).toBe(3);
   expect(f.raws.join('')).not.toContain('"private"');
+}));
+
+isolatedTest('the daemon discovers four selected native chats without hooks and resumes after downtime',async()=>fixture(async f=>{
+  const harnesses=['codex','claude-code','antigravity','cursor'] as const;
+  await installCapture(f.api,{home:f.dir,command:[],harnesses:[...harnesses],selectionMode:'replace',hookOwnership:'plugin',daemon:true,daemonService:false});
+  const c=readCaptureConfig()!,id=randomUUID();
+  const paths={
+    codex:join(c.roots.codex,'sessions','2026','11','24','rollout-2026-11-24T12-00-00-'+id+'.jsonl'),
+    'claude-code':join(c.roots['claude-code'],'projects','project',id+'.jsonl'),
+    antigravity:join(c.roots.antigravity!,'antigravity-cli','brain',id,'.system_generated','logs','transcript_full.jsonl'),
+    cursor:join(c.roots.cursor!,'projects','project','agent-transcripts',id,id+'.jsonl')
+  };
+  const writeTurn=(n:number)=>{
+    for(const h of harnesses){
+      const path=paths[h],text='hook-free turn '+n;
+      mkdirSync(dirname(path),{recursive:true});
+      const records=h==='codex'?[...(n===1?[{type:'session_meta',payload:{id,cwd:f.dir,source:'cli'}}]:[]),{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}]:
+        h==='claude-code'?[{uuid:'turn-'+n,sessionId:id,cwd:f.dir,type:'user',message:{role:'user',content:text}}]:
+        h==='antigravity'?[{step_index:n,type:'USER_INPUT',source:'USER_EXPLICIT',status:'DONE',content:text}]:
+        [{role:'user',message:{content:[{type:'text',text}]}}];
+      for(const record of records)appendFileSync(path,JSON.stringify(record)+'\n');
+    }
+  };
+  const observed=(n:number)=>harnesses.every(h=>f.batches.some((b:any)=>b.harness===h&&b.sessionId===id&&JSON.stringify(b.events).includes('hook-free turn '+n)));
+  await f.start();writeTurn(1);await until(()=>observed(1));await f.stop();
+  writeTurn(2);await f.start();await until(()=>observed(2));await f.stop();
+  const count=f.batches.length;await f.start();await sleep(150);await f.stop();
+  expect(f.batches.length).toBe(count);
+  const stats=JSON.parse(readFileSync(join(daemonDir(),'status.json'),'utf8'));
+  expect(stats.noticeReads).toBe(0);
+  expect(f.batches.every((b:any)=>b.sessionId===id)).toBe(true);
 }));
 
 function nativeConfig(f:any,harness:'cursor'|'antigravity'|'codex'|'grok-bot'|'devin'){
@@ -314,6 +348,7 @@ isolatedTest('worker captures only registered session and its subagents, includi
   mkdirSync(join(captureDir(),'sources'),{recursive:true});
   for(let n=0;n<2345;n++)writeFileSync(join(captureDir(),'sources',n+'.json'),'not even valid JSON');
   writeFileSync(join(dirname(f.path),'unregistered.jsonl'),'not valid JSON either');
+  utimesSync(join(dirname(f.path),'unregistered.jsonl'),new Date(0),new Date(0));
   f.event();await f.start();await until(()=>f.batches.some((b:any)=>b.events.some((e:any)=>e.nativeId==='one')));
   const child=join(f.path.slice(0,-6),'subagents','agent-child.jsonl');mkdirSync(dirname(child),{recursive:true});writeFileSync(child,f.record('child-one','child'));
   appendFileSync(f.path,f.record('two'));
@@ -842,6 +877,7 @@ isolatedTest('daemon operator flush and sync upload only queued batches and leav
   mkdirSync(join(captureDir(),'sources'),{recursive:true});const catalog=join(captureDir(),'sources','poison.json');writeFileSync(catalog,'invalid legacy catalog must not be read');
   mkdirSync(join(captureDir(),'notices'),{recursive:true});const legacy=join(captureDir(),'notices','poison.json');writeFileSync(legacy,'invalid legacy notice must not be read');
   const unrelated=join(dirname(f.path),'unregistered.jsonl');writeFileSync(unrelated,'invalid historical native transcript must not be parsed\n');
+  utimesSync(unrelated,new Date(0),new Date(0));
   // Main operator paths stay in the real queue uploader; the unopened poisoned
   // registries make legacy drain/reconciliation fail if accidentally invoked.
   const result=await flushCaptureWork();expect(result).toMatchObject({uploaded:1,mode:'daemon-queue-only',pendingHooks:2,daemonIngress:{capture:1,startup:1}});

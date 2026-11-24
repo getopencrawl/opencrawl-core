@@ -25,6 +25,7 @@ import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {localCodexHookReview,codexHookReviewMessage,type CodexHookReview} from './codex-hooks.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
 import {codexNativeSession} from './codex-session.ts';
+import {cursorStoreRecords,cursorStoreWorkspace,defaultCursorEditorRoot} from './cursor-store.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 import {replicasAttribution,replicasEventAttribution,replicasTitle,type ReplicasTitle} from './replicas.ts';
 import {enqueueLiveBatch,pendingLiveSince,isPendingLive,recoverLiveSeals,sealLiveBatches} from './live-batches.ts';
@@ -39,8 +40,16 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='native-v5';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string},claudeDesktopSessionsRoot?:string,command:string[]};
-export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
+export type CaptureConfig = {cursorEditorRoot?:string,discoverySince?:Partial<Record<Harness,number>>,disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export function readCaptureConfig():CaptureConfig|null {
+  const config:CaptureConfig|null=read(join(captureDir(),'config.json'));
+  // Older native installs did not store the editor path. Infer only a
+  // standard Cursor profile; a custom root must never open another user's DB.
+  if(config&&!config.cursorEditorRoot&&config.roots?.cursor&&basename(config.roots.cursor)==='.cursor'){
+    config.cursorEditorRoot=defaultCursorEditorRoot(dirname(config.roots.cursor));
+  }
+  return config;
+}
 /** claudeCapture is accepted only for the first opt-in daemon pilot. */
 export const captureDaemonEnabled=(config:CaptureConfig|null=readCaptureConfig())=>config?.captureWorker==='daemon-v1'||config?.claudeCapture==='daemon-v1';
 /** Every selected harness below has a native event inbox adapter. */
@@ -796,7 +805,13 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
   if(session.origin!=='unknown')state.origin=session.origin;
   const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
   if(captureExcluded(readCaptureConfig()??config,meta))return;
-  const messages=(event:any,source:'hooks'|'transcript')=>{
+  const messages=(event:any,source:'hooks'|'transcript'|'store')=>{
+    if((event.kind==='tool_call'||event.kind==='tool_result')&&event.nativeId){
+      const key=hash(JSON.stringify([event.kind,event.nativeId]));
+      state.tools??={};
+      if(state.tools[key])return null;
+      state.tools[key]=true;
+    }
     let signature;
     if(event.kind==='message') {
       event.data=cursorMessage(event.data);signature=[event.data.role,event.data.content];
@@ -810,6 +825,7 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
       signature=['assistant',[{type:'text',text}]];
     } else return event;
     const key=hash(JSON.stringify(signature));
+    state[source]??={};
     const count=(state[source][key]??0)+1;state[source][key]=count;
     if(count<=(state.emitted[key]??0))return null;
     state.emitted[key]=count;
@@ -823,6 +839,26 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
   };
   const file=notice.event.transcript_path;
   const scanStart=new Date().toISOString(),policy=confirmedPermission(read(recordingPath(config)) as RecordingPermission|undefined);
+  if(transcriptOnly && typeof file==='string' && ['store.db','state.vscdb'].includes(basename(file))){
+    const editor=basename(file)==='state.vscdb',root=editor?config.cursorEditorRoot:harnessRoot(config,'cursor');
+    if(!root)throw new CliError('CAPTURE_CURSOR_STORE_INVALID','No Cursor editor storage is configured');
+    if(!editor)meta.cwd=cursorStoreWorkspace(root,session.sessionId,file);
+    meta.origin=editor?'desktop':'cli';meta.originEvidence=editor?'Cursor editor native chat database':'Cursor CLI native chat database';
+    if(captureExcluded(readCaptureConfig()??config,meta))return;
+    const since=notice.event.discoverySince;
+    if(!Number.isFinite(since))throw new CliError('CAPTURE_CURSOR_BOUNDARY_UNKNOWN','Missing forward recording boundary for Cursor chat database');
+    const same=state.storeSince===since;
+    const store=cursorStoreRecords(root,session.sessionId,file,since,same?state.storeCursor:undefined);
+    if(!store)return;
+    const from=same&&state.storeScannedAt?state.storeScannedAt:new Date(Math.max(since,store.createdAt)).toISOString();
+    if(allowedTime(policy,scanStart,from))for(const [index,tool] of store.records.entries()){
+      const event=messages({...tool,id:hash(JSON.stringify(['cursor-store',session.sessionId,tool.kind,tool.nativeId])),
+        sequence:notice.sequence!+index,timestamp:notice.at,sourceTime:scanStart,sourceTimeFrom:from,parentId:null,turnId:null,agentId:null},'store');
+      if(event)events.push(event);
+    }
+    state.storeSince=since;state.storeCursor=store.cursor;state.storeScannedAt=scanStart;
+    commit();return;
+  }
   // Text transcript metadata is not the native JSONL fallback. Keep the
   // authoritative content hooks working without opening referenced text.
   if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
@@ -1480,7 +1516,7 @@ export function captureAttentionNotice(now=Date.now()):string|null {
 export function captureStatus(nativeReview?:CodexHookReview) {
   const config=readCaptureConfig(),daemonIngress=daemonIngressStatus(),pendingLegacyHooks=existsSync(join(captureDir(),'notices'))?noticeNames().length:0;
   const codexReview=nativeReview??(config?localCodexHookReview(config.roots.codex):{state:'not_applicable' as const,total:0,pending:0,disabled:0});
-  const review=codexHookReviewMessage(codexReview);
+  const review=captureDaemonEnabled(config)?null:codexHookReviewMessage(codexReview);
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     worker:captureDaemonEnabled(config)?{supervision:read(join(captureDir(),'daemon/service.json')),lastObserved:read(join(captureDir(),'daemon/status.json')),uploadRetry:read(join(captureDir(),'daemon/retry.json')),startupRetry:read(join(captureDir(),'daemon/startup-retry.json'))}:null,
     exclusions:config?.exclusions??{projects:[],sessions:[]},

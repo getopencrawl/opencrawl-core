@@ -112,7 +112,7 @@ async function inspectClient(state:SetupState,config:CaptureConfig,local:Local,c
     binding.owner?.tenantId!==state.scope.tenantId||binding.owner?.userId!==state.scope.userId||binding.captureMode!==local.captureMode)
     return fail('blocked','plugin_binding_changed','Review this plugin’s installation and saved capture mode in setup.');
   app.installedVersion=source.version;
-  if(recording&&client==='codex'){
+  if(recording&&client==='codex'&&local.captureMode!=='daemon'){
     const {review}=await setupHookStatus(api);
     if(review.pending)return fail('needs_human','review_hooks','In Codex, open /hooks (desktop Settings → Hooks), review the pending OpenCrawl hooks, then start a new session.');
     if(review.state!=='observed'||!review.total||review.disabled)return fail('blocked','hook_state_unconfirmed',review.disabled?'Codex reports disabled OpenCrawl hooks. Keep intentional exclusions or review the selected recording mode in setup.':'Codex could not report the active OpenCrawl hooks. Check the native hook inventory and rerun doctor.');

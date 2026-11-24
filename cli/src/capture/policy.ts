@@ -27,7 +27,8 @@ export function inHistoryProject(cwd:unknown, project:string|null) {
   const dir=projectPath(cwd);
   return dir===project||dir.startsWith(project.endsWith(sep)?project:project+sep);
 }
-export function captureExcluded(config:{exclusions?:CaptureExclusions}&Partial<PrivacyOwner>, meta:{harness?:string,sessionId?:string,cwd?:string}) {
+export function captureExcluded(config:{exclusions?:CaptureExclusions}&Partial<PrivacyOwner>, meta:{harness?:string,sessionId?:string,parentSessionId?:string|null,cwd?:string}) {
+  if(meta.parentSessionId&&meta.parentSessionId!==meta.sessionId&&captureExcluded(config,{harness:meta.harness,sessionId:meta.parentSessionId,cwd:meta.cwd}))return true;
   if(config.api&&config.owner&&meta.harness&&meta.sessionId&&sessionPrivate({api:config.api,owner:config.owner},{harness:meta.harness,sessionId:meta.sessionId}))return true;
   const exclusions=config.exclusions;
   if(!exclusions)return false;

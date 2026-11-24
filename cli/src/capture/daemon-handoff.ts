@@ -10,9 +10,10 @@ import {grokBotSession,grokBotUnsupported,GROK_BOT_MAX_HOOK_BYTES} from './grok-
 import {type Harness} from './parse.ts';
 import {devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
 import {codexNativeSession} from './codex-session.ts';
+import {cursorStorePath} from './cursor-store.ts';
 
 type Binding={api:string,installationId:string,owner:{tenantId:string,userId:string}};
-export type DaemonRegistration=Binding&{harness:Harness,sessionId:string,path:string,cwd?:string,pid?:number,endedAt?:number,at:number,hook?:Record<string,unknown>};
+export type DaemonRegistration=Binding&{harness:Harness,sessionId:string,path:string,cwd?:string,parentSessionId?:string,pid?:number,endedAt?:number,at:number,discoverySince?:number,hook?:Record<string,unknown>};
 export type DaemonNotice=Binding&{kind:'capture',id:string,at:number,record:CaptureHookNotice,pid?:number};
 export const sameDaemonBinding=(record:Binding,config:CaptureConfig)=>!config.authPending&&record.api===config.api&&record.installationId===config.installationId&&record.owner?.tenantId===config.owner.tenantId&&record.owner?.userId===config.owner.userId;
 
@@ -20,9 +21,10 @@ export const sameDaemonBinding=(record:Binding,config:CaptureConfig)=>!config.au
  * The existing parser independently checks the real path before opening it. */
 export function daemonPathAllowed(config:CaptureConfig,harness:Harness,sessionId:string,file:string) {
   const root=resolve(harnessRoot(config,harness)),path=resolve(file),parts=relative(root,path).split(sep);
+  if(harness==='cursor'&&config.cursorEditorRoot&&path===join(config.cursorEditorRoot,'state.vscdb'))return /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(sessionId);
   if(harness==='claude-code')return parts[0]==='projects'&&parts.length===3&&basename(path)===sessionId+'.jsonl';
   if(harness==='codex')return ['sessions','archived_sessions'].includes(parts[0]??'')&&path.endsWith('.jsonl')&&basename(path).endsWith('-'+sessionId+'.jsonl');
-  if(harness==='cursor')return parts.length===5&&parts[0]==='projects'&&parts[2]==='agent-transcripts'&&parts[3]===sessionId&&parts[4]===sessionId+'.jsonl';
+  if(harness==='cursor')return cursorStorePath(root,sessionId,path)||parts.length===5&&parts[0]==='projects'&&parts[2]==='agent-transcripts'&&parts[3]===sessionId&&parts[4]===sessionId+'.jsonl';
   if(harness==='antigravity')return antigravityBrainDirs(root).some(({dir})=>{
     const segments=relative(dir,path).split(sep);return segments.length===4&&segments[0]===sessionId&&segments[1]==='.system_generated'&&segments[2]==='logs'&&['transcript.jsonl','transcript_full.jsonl'].includes(segments[3]!);
   });

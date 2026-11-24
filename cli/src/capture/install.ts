@@ -19,6 +19,7 @@ import {installCaptureDaemon,uninstallCaptureDaemon} from './daemon-service.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 import {establishForwardBoundaries,hasUnverifiedForwardBoundaries} from '../setup/watermarks.ts';
 import {establishCursorForwardBoundaries} from '../setup/cursor-watermarks.ts';
+import {defaultCursorEditorRoot} from './cursor-store.ts';
 const marker='OpenCrawl session capture';
 function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};}
 /** Rewrite another program's JSON config the way people keep it: their
@@ -211,6 +212,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
       'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor'),
       antigravity:!harnesses.includes('antigravity')&&previous?.roots.antigravity||process.env.ANTIGRAVITY_HOME||join(home,'.gemini'),
       ...(harnesses.includes('devin')||previous?.roots.devin?{devin:previous?.roots.devin||join(home,'.devin')}:{})},
+    cursorEditorRoot:previous?.cursorEditorRoot??defaultCursorEditorRoot(home),
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
   const removed=selectionMode==='replace'?(previous?.harnesses??[]).filter(h=>!enrolled.includes(h)):[];
@@ -239,6 +241,10 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   // The worker does not take the configuration lock. Its old consent remains
   // authoritative until every newly selected source has a durable boundary.
   const needsBoundary=(h:Harness)=>!previous||previous.disabled||changed||previous.authPending||!(previous.harnesses??[]).includes(h)||previous.roots[h]!==config.roots[h];
+  // A forward selection opens a new discovery interval. Retain the cutoff
+  // across ordinary setup repairs, never across accounts or reenrollment.
+  const selectedAt=Date.now();
+  config.discoverySince=Object.fromEntries(enrolled.map(h=>[h,needsBoundary(h)?selectedAt:previous?.discoverySince?.[h]??selectedAt]));
   if(enrolled.includes('cursor')&&needsBoundary('cursor'))await establishCursorForwardBoundaries(config,previous);
   if(selectionMode==='replace'){
     establishForwardBoundaries(config,enrolled.filter(h=>readsTranscript(h)&&needsBoundary(h)) as TranscriptHarness[]);

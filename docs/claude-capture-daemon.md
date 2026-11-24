@@ -1,8 +1,6 @@
-# Claude capture daemon proof
+# Local session capture daemon
 
-The initial native acceptance proof targets Claude Code. Shared adapters and
-OS supervision are being integrated into the CLI-first installer; their native
-acceptance is a separate release gate. The opt-in Claude proof is installed with:
+The daemon discovers saved Codex, Claude Code, Antigravity and Cursor sessions for clients selected for forward recording. For example, to enable it for Claude Code, run
 
 ```sh
 opencrawl collect install --harness claude-code --daemon --yes --backfill skip
@@ -21,7 +19,7 @@ Other integrations' hooks are preserved.
 
 One worker watches the registered transcript and that session's subagent
 directory. Filesystem changes trigger incremental reads. A 30-second recovery
-check visits only its pending inbox and enrolled sessions to recover missed
+check visits its pending inbox and active sessions to recover missed
 notifications and detect parent process exit when Claude cancels an asynchronous
 end hook. The inbox check remains scheduled with no active transcript watches,
 so event-only sessions cannot strand a durable handoff after a lost notification. Finished
@@ -68,25 +66,11 @@ Session startup tasks use an independent lane in the same process, so bootstrap
 requests cannot hold recording or uploads. Pausing capture preserves its queue;
 explicit uninstall stops both capture and background startup.
 
-Cursor and Grok Bot need native content events because their transcripts do not
-contain all tool inputs, results, thoughts and compactions. Cursor also tails
-only the JSONL path supplied by its hook, using the existing occurrence dedupe.
-Antigravity preserves native tool verification evidence and prefers the session's
-full transcript, including when that file appears after startup. Codex can
-resolve a missing path or child source by the known ID in its native SQLite
-primary-key index. It does not scan transcript directories or the global title
-catalogue. Unsupported native schemas remain an acceptance concern.
+The daemon watches the selected local transcript roots and periodically reconciles files modified since its last successful discovery. It commits registrations before advancing the checkpoint. New recording selections establish fresh consent boundaries. Existing installations start discovery at their first upgraded daemon run and keep existing byte cursors.
 
-Only Claude's two-hook reduction has native proof. Other hook lists remain
-unchanged until client-specific tests demonstrate that fewer hooks retain all
-required data. Some native clients synchronously await the small disk handoff;
-capture parsing, authentication, upload and startup network work stay background.
-Clients without a session-owned process ID retire inactive watches after five
-minutes and resume from the same byte cursor on the next native hook.
+Codex and Claude Code use their native JSONL transcripts. Claude subagent files share the parent session's registration. Antigravity prefers the full transcript when it becomes available. Cursor CLI and the editor also retain tool arguments and results in committed conversation blobs. The editor index is queried for recent local session IDs. Only the corresponding conversation and message blobs are read. Cursor's JSONL and native callbacks can supplement the database. Unknown project membership keeps a chat excluded when a project exclusion is configured.
 
-The combined candidate must also establish pre-consent Cursor byte boundaries
-and enforce exact-session canonical paths and transcript header identities.
-These integration requirements cannot be inferred from lexical path validation.
+Grok Bot still supplies content through native callbacks. Hooks can also deliver lifecycle events for the other clients. Inactive watches retire after five minutes and resume when new native activity appears.
 
 ## Verification
 
