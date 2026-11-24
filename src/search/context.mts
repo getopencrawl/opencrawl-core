@@ -1,13 +1,13 @@
 import {z} from 'zod';
 import type {SessionKey} from '../sessions/session-reference.mjs';
-import {SESSION_HARNESSES} from '../sessions/types.mjs';
+import {SESSION_HARNESS_PATTERN} from '../sessions/types.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {SearchInput} from './types.mjs';
 import {realmField} from './realm-format.mjs';
 import {TOOL_OUTPUT_KINDS} from '../sessions/tool-output.mjs';
 
 export const currentSessionSchema=z.strictObject({
-  harness:z.enum(SESSION_HARNESSES),
+  harness:z.string().regex(SESSION_HARNESS_PATTERN),
   sessionId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
 }).describe('Current native chat identity, supplied by the client. Exclusion is limited to your authenticated account and this harness/session pair.');
 

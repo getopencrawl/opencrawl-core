@@ -7,9 +7,10 @@ import type {SessionHarness, SessionHosts, LibraryAdapter, LibraryScope, Session
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
 import {failureMessage, failureStatus, useLibraryMutation, useResource} from './use-resource.js';
 import {consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
+import {isSessionHarness} from '../../../src/sessions/types.mjs';
 
 const PAGE = 50, MAX = 500;
-export const sessionHarness = (value: string | null): SessionHarness | null => value === 'claude-code' || value === 'codex' || value === 'cursor' || value === 'grok-bot' || value === 'antigravity' || value === 'replicas' || value === 'devin' ? value : null;
+export const sessionHarness = (value: string | null): SessionHarness | null => isSessionHarness(value) ? value : null;
 export function sessionPath({userId, harness, sessionId}: SessionRef) {
   return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
 }

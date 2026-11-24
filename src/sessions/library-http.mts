@@ -1,7 +1,7 @@
 /** Release capability used by shells to verify the public deletion contract. */
 export const sessionDeletionExecution = 'temporal' as const;
 import type {Principal, Authenticate, HttpHandler} from './types.mjs';
-import {parseJson, serviceError, SESSION_HARNESSES} from './types.mjs';
+import {parseJson, serviceError, SESSION_HARNESS_PATTERN} from './types.mjs';
 import {z} from 'zod';
 import {validParticipant} from './participants.mjs';
 import {sessionScope} from './event-identity.mjs';
@@ -11,7 +11,7 @@ import {fail} from '../errors.mjs';
 import type {RecordingPolicy} from './recording.mjs';
 
 import type {PrivacyPreferences} from './privacy.mjs';
-const harness = z.enum(SESSION_HARNESSES);
+const harness = z.string().regex(SESSION_HARNESS_PATTERN);
 // Memory files exist only for harnesses that keep them on disk.
 const memoryHarness = z.enum(['claude-code', 'codex']);
 const id = z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/);

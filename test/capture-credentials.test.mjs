@@ -29,8 +29,22 @@ test('self-hosted delegation uploads under its fixed owner but cannot read, sear
  const request=(path,auth=token,method='GET',body)=>fetch(base+'/api/sessions/'+path,{method,headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
  const issued=(await (await request('credentials',token,'POST')).json()).data;
  const identity=await (await request('identity',issued.token)).json();assert.equal(identity.data.principal.userId,'owner');
- const batch={schemaVersion:1,owner,installationId:'cloud',sessionId:'session',harness:'claude-code',origin:'cloud',events:[{id:'event',kind:'message',data:{role:'user',content:'cloud fixture'}}],attachments:[]};
- assert.equal((await request('batches',issued.token,'POST',batch)).status,200);
+ const harness='third-party_'+Date.now().toString(36);
+ const {harnessPattern,harnesses}=identity.data.capabilities;
+ assert.match(harness,new RegExp(harnessPattern));
+ assert.ok(!harnesses.includes(harness));
+ assert.ok(['cursor','antigravity','devin'].every(name=>harnesses.includes(name)));
+ const batch={schemaVersion:1,owner,installationId:'cloud',sessionId:'session',harness,origin:'cloud',events:[{id:'event',kind:'message',data:{role:'user',content:'cloud fixture'}}],attachments:[]};
+ for(const invalid of ['','../other','a/b','x'.repeat(65),'trailing\n','attachments','controls','memories','onboarding','preferences']){
+   assert.doesNotMatch(invalid,new RegExp(harnessPattern));
+   assert.equal((await request('batches',issued.token,'POST',{...batch,harness:invalid})).status,400);
+ }
+ const send=()=>request('batches',issued.token,'POST',batch);
+ const first=await send();assert.equal(first.status,200);
+ const receipt=(await first.json()).data;
+ assert.deepEqual((await (await send()).json()).data,receipt);
+ const query=new URLSearchParams({harness,installationId:batch.installationId,sessionId:batch.sessionId,batchId:receipt.batchId});
+ assert.equal((await (await request('batches?'+query)).json()).data.harness,harness);
  assert.equal((await request('batches',issued.token,'POST',{...batch,owner:{...owner,tenantId:'forged'}})).status,403);
  for(const [path,method] of [['search','GET'],['batches','GET'],['credentials','POST'],['credentials/'+issued.id,'DELETE']])assert.equal((await request(path,issued.token,method)).status,403);
  assert.equal((await fetch(base+'/api/onboarding',{headers:{authorization:'Bearer '+issued.token}})).status,403);

@@ -160,12 +160,12 @@ test('SQLite persists across factories, isolates colliding tenants and rejects u
   await assert.rejects(createRealm({endpoint: pathToFileURL(unrelated).href.replace('file:', 'sqlite:'), tenantId: principal.tenantId}).ensureIndex(), /Not an OpenCrawl/);
 });
 
-test('SQLite keeps the actual MCP search/fetch interface, controls and connector revocation', async t => {
+test('An unregistered capture client reaches transcripts and MCP search with scoped reads and revocation', async t => {
   const {endpoint, principal} = await fixture(t), peer = {...principal, userId: 'bob'};
   const store = memorySessionStore(), prefix = 'capture-v1', sessions = createSessionSearch({endpoint, store, prefix});
   const ingest = createSessionIngest({store, prefix});
   for (const owner of [peer, {...peer, tenantId: 'outside'}]) await ingest.putBatch(owner, {
-    schemaVersion: 1, owner, harness: 'codex', origin: 'cli', installationId: 'fixture', sessionId: 'demo', attachments: [],
+    schemaVersion: 1, owner, harness: 'external-recorder', origin: 'cli', installationId: 'fixture', sessionId: 'demo', attachments: [],
     events: [{id: 'event', kind: 'message', timestamp: '2026-11-01T00:00:00Z', data: {role: 'user', content: 'violet lighthouse session evidence'}}],
   });
   const pipeline = createSessionPipeline({store, prefix, search: sessions, resolvePrincipal: async ({batch}) => batch.owner});
@@ -174,7 +174,7 @@ test('SQLite keeps the actual MCP search/fetch interface, controls and connector
   const listed = await library.list(principal, {query: 'violet lighthouse'});
   assert.equal(listed.sessions.length, 1);
   assert.equal(listed.sessions[0].userId, 'bob');
-  assert.equal((await library.read(principal, {userId: 'bob', harness: 'codex', sessionId: 'demo'})).events.length, 1);
+  assert.equal((await library.read(principal, {userId: 'bob', harness: 'external-recorder', sessionId: 'demo'})).events.length, 1);
   const recent = await createRecentSessions({endpoint, store, prefix}).list(principal);
   assert.equal(recent.length, 1);
   const binding = {tenantId: principal.tenantId, connectionId: 'github', workspaceId: 'w', provider: 'github', access: 'workspace-global', rawPrefix: 'raw/v1/source=github/workspace=w/connection=github/'};
@@ -196,13 +196,15 @@ test('SQLite keeps the actual MCP search/fetch interface, controls and connector
   assert.equal(all.partial, false); assert.equal(all.results.length, 2);
   assert.deepEqual(new Set(all.results.map(r => r.source)), new Set(['sessions', 'connectors']));
   for (const hit of all.results) {const fetched = await client.callTool({name: 'fetch', arguments: {id: hit.id}}); assert.equal(fetched.isError, undefined); assert.match(fetched.structuredContent.text, /violet lighthouse/);}
+  const native = {harness: 'external-recorder', sessionId: 'demo'};
+  assert.equal((await search({query: 'violet', source: 'sessions', currentSession: native})).results[0].provenance.harness, native.harness);
   const filtered = await search({query: 'violet', source: 'sessions', filters: {roles: ['user'], authors: ['bob']}, select: ['provenance']});
   assert.equal(filtered.results.length, 1); assert.equal(filtered.results[0].text, undefined);
   const first = await search({query: 'violet', limit: 1}); assert.ok(first.next);
   bindings = [];
   const next = await search({query: 'violet', limit: 1, cursor: first.next}); assert.ok(next.results.every(r => r.source !== 'connectors'));
   assert.equal((await client.callTool({name: 'fetch', arguments: {id: all.results.find(r => r.source === 'connectors').id}})).isError, true);
-  await createControls({store, prefix}).update(peer, 'sessions', 'codex', 'demo', () => ({visibility: 'private', deletedAt: null}));
+  await createControls({store, prefix}).update(peer, 'sessions', 'external-recorder', 'demo', () => ({visibility: 'private', deletedAt: null}));
   assert.equal((await search({query: 'violet', source: 'sessions'})).results.length, 0);
   assert.equal((await client.callTool({name: 'fetch', arguments: {id: all.results.find(r => r.source === 'sessions').id}})).isError, true);
 });
