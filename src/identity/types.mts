@@ -12,7 +12,7 @@ export interface HostedUser {
 }
 export type Membership = DirectoryMembership;
 /** Membership fields that authorization reads. */
-export interface DirectoryMembership {id: string; userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>; directoryManaged?: boolean}
+export interface DirectoryMembership {id: string; userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>; directoryManaged?: boolean; user?: HostedUser; organizationName?: string}
 export interface DirectorySession {id: string; userId: string; status: string; endedAt: string | Date | null; expiresAt: string | Date}
 type Listing<T> = {data: T[]; autoPagination?: () => Promise<T[]>};
 /**

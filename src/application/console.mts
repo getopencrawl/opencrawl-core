@@ -14,7 +14,7 @@ import type {Log} from '../integrations/ports.mjs';
 
 export type Principal = {tenantId: string; userId: string};
 export type User = {id: string; email: string; firstName?: string | null; lastName?: string | null; avatarUrl?: string | null};
-export type Membership = {userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>; directoryManaged?:boolean};
+export type Membership = {userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>; directoryManaged?:boolean; user?:User; organizationName?:string};
 export type Organization = {id: string; name: string; metadata?: Record<string, string>};
 type Progress = {completed?: {observedAt?: string} | null; shared?: {observedAt?: string} | null};
 export interface ConsoleContext {principal: Principal; user: User; member: Membership; revalidate: () => Promise<boolean>; admitted?: boolean; cacheScope?: string}
@@ -100,6 +100,9 @@ export interface ConsoleExtensions {
 export function createConsoleApi(services: ConsoleServices, extensions: ConsoleExtensions = {}) {
   return async (req: IncomingMessage, path: string, context: ConsoleContext): Promise<{status: number; body: unknown}> => {
     const {principal,user,member,revalidate} = context;
+    const workspace = () => member.organizationId===principal.tenantId && member.userId===principal.userId &&
+      member.status==='active' && typeof member.organizationName==='string'
+      ? {id:principal.tenantId,name:member.organizationName} : services.organization(principal.tenantId);
     try {
       const url = new URL(req.url || path, services.url);
       if (url.search) throw consoleFailure(400,'This endpoint does not accept scope or query parameters.');
@@ -113,7 +116,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
         const setup = await services.replicas.issue(principal,member);
         body = {prompt:replicasEnrollmentPrompt(services.url,setup.code),expiresAt:setup.expiresAt};
       } else if (path === '/api/console/bootstrap') {
-        const [organization, progress, extension] = await Promise.all([services.organization(principal.tenantId), services.progress(principal), extensions.bootstrap?.(context)]);
+        const [organization, progress, extension] = await Promise.all([workspace(), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = hasCompletedOnboarding(progress);
         body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if(path==='/api/console/usage/calls'||path==='/api/console/usage/search-history'){
@@ -159,8 +162,13 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       } else if (path === '/api/console/sources') {
         body = {items:await services.sources(principal)};
       } else if (path === '/api/console/team') {
-        const [organization,members,extension,invitations] = await Promise.all([services.organization(principal.tenantId),services.members(principal.tenantId),extensions.team?.(context),admin(member) ? services.invitations(user,principal.tenantId,member) : []]);
-        const users = await Promise.all(members.map(async membership => {const person = await services.user(membership.userId); return {id:person.id,name:name(person),email:person.email,role:admin(membership) ? 'admin' as const : 'member' as const,...(membership.directoryManaged?{directoryManaged:true}:{})};}));
+        const [organization,members,extension,invitations] = await Promise.all([workspace(),services.members(principal.tenantId),extensions.team?.(context),admin(member) ? services.invitations(user,principal.tenantId,member) : []]);
+        const users = await Promise.all(members.map(async membership => {
+          if (membership.organizationId!==principal.tenantId || membership.status!=='active') throw consoleFailure(503,'Team directory unavailable.');
+          const person = membership.user ?? await services.user(membership.userId);
+          if (person.id!==membership.userId) throw consoleFailure(503,'Team directory unavailable.');
+          return {id:person.id,name:name(person),email:person.email,role:admin(membership) ? 'admin' as const : 'member' as const,...(membership.directoryManaged?{directoryManaged:true}:{})};
+        }));
         body = {...extension,organization:{id:organization.id,name:organization.name},viewerUserId:user.id,role:admin(member) ? 'admin' : 'member',members:users,invitations} satisfies TeamReport;
       } else if (path === '/api/console/team/invite') {
         if (!admin(member)) throw consoleFailure(403,'Only an organization admin can do that.');

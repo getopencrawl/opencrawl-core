@@ -3,6 +3,7 @@ import type {IdentityDirectory, HostedUser} from './types.mjs';
 export interface LoginFlow {state: string; expiresAt: number; codeVerifier: string; returnTo?: string; invitationToken?: string; organizationId?: string}
 export type VerifiedResult = {status: 200; user: HostedUser} | {status: 401 | 403 | 503};
 export interface BrowserIdentity {authenticated: boolean; sessionId?: string; user?: HostedUser}
+export type SessionCheck = (userId:string,sessionId:string)=>Promise<{status:200 | 401 | 503}>;
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
@@ -40,10 +41,10 @@ export function verifiedUser(user: HostedUser | undefined | null) {
 }
 
 /** Sealed sessions contain a user snapshot; admission uses the current account. */
-export async function currentVerifiedUser(directory: IdentityDirectory, userId: unknown): Promise<VerifiedResult> {
+export async function currentVerifiedUser(directory: IdentityDirectory, userId: unknown, directoryUser?: HostedUser): Promise<VerifiedResult> {
   if (typeof userId !== 'string' || !/^user_[A-Za-z0-9]+$/.test(userId)) return {status: 401};
   try {
-    const user = await directory.userManagement.getUser(userId);
+    const user = directoryUser ?? await directory.userManagement.getUser(userId);
     if (user?.id !== userId) return {status: 401};
     return verifiedUser(user) ? {status: 200, user} : {status: 403};
   } catch (error) {
@@ -80,11 +81,13 @@ export async function currentUserSession(directory: IdentityDirectory, userId: u
 }
 
 /** The SDK verifies the cookie JWT but does not look up current session state. */
-export async function currentBrowserUser(directory: IdentityDirectory, identity: BrowserIdentity | undefined): Promise<VerifiedResult> {
+export async function currentBrowserUser(directory: IdentityDirectory, identity: BrowserIdentity | undefined, memberships?: Promise<{userId:string;user?:HostedUser}[] | null>, checkSession?:SessionCheck): Promise<VerifiedResult> {
   if (identity?.authenticated !== true || typeof identity.sessionId !== 'string' || !identity.sessionId) return {status: 401};
   // Both lookups key on the JWT-verified user id, so they run concurrently.
-  const [current, session] = await Promise.all([currentVerifiedUser(directory, identity.user?.id),
-    currentUserSession(directory, identity.user?.id, identity.sessionId)]);
+  const account = memberships ? memberships.then(rows=>currentVerifiedUser(directory,identity.user?.id,
+    rows?.find(row=>row.userId===identity.user?.id)?.user),()=>({status:503 as const})) : currentVerifiedUser(directory,identity.user?.id);
+  const [current, session] = await Promise.all([account,
+    checkSession && identity.user?.id ? checkSession(identity.user.id, identity.sessionId) : currentUserSession(directory, identity.user?.id, identity.sessionId)]);
   if (current.status !== 200) return current;
-  return session.status === 200 ? current : session;
+  return session.status === 200 ? current : {status:session.status};
 }

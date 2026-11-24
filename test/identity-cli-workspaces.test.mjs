@@ -115,19 +115,31 @@ test('CLI workspace choices require a verified current account and an active own
   assert.deepEqual(f.organizationReads,[],'parallel membership reads never disclose choices for a rejected account/session');
 });
 
-test('CLI live account, session and membership reads overlap without caching the next request',async t=>{
-  const f=await fixture(t);f.state.members=[member('org_a')];
+test('CLI reads the live session and membership with embedded account concurrently on each request',async t=>{
+  const f=await fixture(t);f.state.members=[member('org_a',{user:{id:'user_test',email:'a@example.test',emailVerified:true},organizationName:'Team A'})];
+  f.sdk.userManagement.getUser=async()=>assert.fail('Membership already carries the account');
   let started=0,release,timedOut=false;
   const barrier=new Promise(resolve=>{release=resolve;});
-  for(const key of ['getUser','listSessions','listOrganizationMemberships']){
+  for(const key of ['listSessions','listOrganizationMemberships']){
     const original=f.sdk.userManagement[key];
-    f.sdk.userManagement[key]=async(...args)=>{if(++started===3)release();await barrier;return original(...args);};
+    f.sdk.userManagement[key]=async(...args)=>{if(++started===2)release();await barrier;return original(...args);};
   }
   const timeout=setTimeout(()=>{timedOut=true;release();},1000);t.after(()=>clearTimeout(timeout));
-  assert.equal((await f.identify(f.token(),{capture:true})).status,200);
-  assert.equal(started,3);
+  const result=await f.identify(f.token(),{capture:true});
+  assert.equal(result.status,200);
+  assert.equal(result.workspaceName,'Team A');
+  assert.equal(started,2);
   assert.equal(timedOut,false,'independent checks must all start before any finishes');
   f.state.sessionStatus='revoked';
   assert.equal((await f.identify(f.token(),{capture:true})).status,401);
-  assert.equal(started,6,'no completed authorization is cached across requests');
+  assert.equal(started,4,'no completed authorization is cached across requests');
+});
+
+test('CLI rejects an unverified or mismatched account on a live membership row',async t=>{
+  const f=await fixture(t);
+  f.sdk.userManagement.getUser=async()=>assert.fail('must use the live membership response');
+  for (const [id,emailVerified,status] of [['user_other',true,401],['user_test',false,403]]) {
+    f.state.members=[member('org_a',{user:{id,emailVerified,email:'test@example.test',locallyEnrolled:true}})];
+    assert.equal((await f.identify(f.token(),{capture:true})).status,status);
+  }
 });
