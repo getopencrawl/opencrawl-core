@@ -726,6 +726,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
           return 'more';
         }
         // Reconcile a lost source POST before requiring a key. The recovered source already owns its credential.
+        if (provider.auth === 'api-key' && record.airbyte?.sourceId) await lifecycle.commands.clearSecret(reference);
         const needKey = provider.auth === 'api-key' && !record.airbyte?.sourceId && !record.provisionIntent;
         const secrets = needKey ? await lifecycle.commands.readSecret(reference) : {};
         if (record.total === undefined && !record.provisionIntent && provider.auth !== 'github-app') {

@@ -135,6 +135,22 @@ live('revocation terminates an unstarted provision and drops its secret',async t
   assert.deepEqual(f.effects,[]);
 });
 
+live('worker replacement erases the envelope after the provider source has already been recorded',async t=>{
+  const f=await fixture(t),ref=await f.connect();
+  let fail=true;
+  f.options.lifecycle.commands={...f.commands,async clearSecret(r){
+    if(fail){fail=false;throw new Error('Lost envelope erase');}
+    return f.commands.clearSecret(r);
+  }};
+  await f.step(ref);
+  await assert.rejects(f.step(ref),/Lost envelope erase/);
+  assert.equal((await f.read(ref)).airbyte.sourceId,'source');
+  assert.equal((await f.commands.readSecret(ref)).apiKey,fixtureKey);
+  f.airbyte.createConnection=async()=>{throw new Error('Downstream unavailable');};
+  await assert.rejects(f.step(ref),/Downstream unavailable/);
+  assert.deepEqual(await f.commands.readSecret(ref),{});
+});
+
 live('a finalized migrated destination requires the exact connection, migration name, bucket and prefix before any deletion',async t=>{
   const f=await fixture(t),ref=await f.connect();
   await f.finish(ref);
