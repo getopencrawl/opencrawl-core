@@ -117,7 +117,7 @@ export function createProvisioning({environment, registry, airbyte, now = () => 
     return {
       async drain() {if(record.airbyte?.connectionId)await airbyte.drainConnection(record.airbyte.connectionId,connection);},
       async remove() {
-        if(connection && connection.status!=='inactive')throw pending();
+        if(connection && connection.status!=='inactive')await airbyte.drainConnection(connection.connectionId!,connection);
         for(const {resource,id} of owned) await deletes[resource](id).catch(gone);
       },
     };

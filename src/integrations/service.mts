@@ -664,69 +664,82 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     }
     statusCache.delete(statusKey(record));
     await airbyte.sync(required(record.airbyte?.connectionId, 'connection')).catch(error => { if (errorInfo(error).status !== 409) throw error; });
-    if (record.status === 'error') await registry.update(record, {status: 'active', error: null}, {whenStatus: ['error']});
+    if (record.status === 'error') {
+      const active = await registry.update(record, {status: 'active', error: null}, {whenStatus: ['error']});
+      await publishTransition(active);
+    }
   }
 
   return {
     providers: () => Object.values(providers),
     /** Each Activity advances one persisted phase. Only scoped references enter workflow history. */
-    async executeCommand(reference:IntegrationCommandReference,signal?:AbortSignal):Promise<'more'|'done'>{
+    async executeCommand(reference: IntegrationCommandReference, signal?: AbortSignal): Promise<'more' | 'done'> {
       requireWritable();
-      if(!lifecycle||reference.environment!==environment||!TENANT.test(reference.tenantId)||!USER.test(reference.userId)||!INTEGRATION.test(reference.integrationId)) throw new Error('Invalid integration command scope');
-      const command=await lifecycle.commands.read(reference);
-      if(!command)throw new Error('Unknown integration command');
-      if(command.status!=='pending')return 'done';
-      const record=await registry.get(reference.tenantId,reference.userId,reference.integrationId);
-      if(!record||record.tenantId!==reference.tenantId||record.userId!==reference.userId||record.integrationId!==reference.integrationId||record.environment!==environment||
-        record.lifecycleCommandId!==reference.commandId||record.lifecycleOperation!==command.operation||record.scope!==providerFor(record.provider).scope)throw new Error('Integration command binding changed');
+      if (!lifecycle || reference.environment !== environment || !TENANT.test(reference.tenantId) ||
+          !USER.test(reference.userId) || !INTEGRATION.test(reference.integrationId)) throw new Error('Invalid integration command scope');
+      const command = await lifecycle.commands.read(reference);
+      if (!command) throw new Error('Unknown integration command');
+      if (command.status !== 'pending') return 'done';
+      if (command.operation !== 'provision' && command.operation !== 'disconnect') throw new Error('Unsupported Airbyte command');
+
+      const record = await registry.get(reference.tenantId, reference.userId, reference.integrationId);
+      if (!record || record.tenantId !== reference.tenantId || record.userId !== reference.userId ||
+          record.integrationId !== reference.integrationId || record.environment !== environment ||
+          record.lifecycleCommandId !== reference.commandId || record.lifecycleOperation !== command.operation ||
+          record.scope !== providerFor(record.provider).scope) throw new Error('Integration command binding changed');
       signal?.throwIfAborted();
-      if(command.operation==='disconnect'){
-        // Earlier command writers could persist an unresolved external writer
-        // or consent POST. Only positive reconciliation may release either hold.
-        if(record.cleanupBlockedReason || record.oauthIntent || record.airbyteMigration ||
-          record.airbyteLandingMode === 'scoped-preparing-v1')throw new Error('Cleanup is awaiting external reconciliation');
-        if(record.status!=='disconnected'){
-          if(record.status!=='disconnecting')throw new Error('Invalid disconnect command state');
-          await disconnectRecord(record,reference,signal);
+
+      if (command.operation === 'disconnect' && (record.cleanupBlockedReason || record.oauthIntent ||
+          record.airbyteMigration || record.airbyteLandingMode === 'scoped-preparing-v1')) {
+        throw new Error('Cleanup is awaiting external reconciliation');
+      }
+      const terminal = command.operation === 'disconnect' ? 'disconnected' : 'active';
+      if (record.status === terminal) {
+        await lifecycle.commands.complete(reference);
+        return 'done';
+      }
+      if (command.operation === 'disconnect') {
+        if (record.status !== 'disconnecting') throw new Error('Invalid disconnect command state');
+        await disconnectRecord(record, reference, signal);
+        return 'more';
+      }
+      if (!await lifecycle.authorize(command, record)) {
+        await lifecycle.commands.fail(reference, 'authorization_denied');
+        return 'done';
+      }
+      if (!['provisioning', 'error'].includes(record.status)) throw new Error('Invalid provision command state');
+      const provider = providerFor(record.provider);
+      const fence = {whenStatus: ['provisioning','error'], whenFields: {
+        lifecycleCommandId: reference.commandId, provisionVersion: record.provisionVersion,
+      }};
+      try {
+        if (!record.s3Prefix) {
+          if (provider.auth === 'github-app' || provider.auth === 'api-key') {
+            throw Object.assign(new Error('Connection must be authorized again'), {code: 'ProvisioningKeyRequired'});
+          }
+          const {label, workspace, settings} = await provider.account(proxyFor(record), record);
+          const fields = {account: label || null, workspace: workspace || null, ...(settings ? {settings} : {})};
+          await registry.update(record, {...fields, s3Prefix: landingPrefix(provider, {...record, ...fields})}, fence);
           return 'more';
         }
-      }else if(command.operation==='provision'){
-        if(record.status!=='active'){
-          if(!await lifecycle.authorize(command,record)){await lifecycle.commands.fail(reference,'authorization_denied');return 'done';}
-          if(!['provisioning','error'].includes(record.status))throw new Error('Invalid provision command state');
-          const provider=providerFor(record.provider);
-          try{
-            if(!record.s3Prefix){
-              if(provider.auth==='github-app'||provider.auth==='api-key')throw Object.assign(new Error('Connection must be authorized again'),{code:'ProvisioningKeyRequired'});
-              const {label,workspace,settings}=await provider.account(proxyFor(record),record);
-              const fields={account:label||null,workspace:workspace||null,...(settings?{settings}:{})};
-              await registry.update(record,{...fields,s3Prefix:landingPrefix(provider,{...record,...fields})},{whenStatus:['provisioning','error'],whenFields:{lifecycleCommandId:reference.commandId,provisionVersion:record.provisionVersion}});
-              return 'more';
-            }
-            // After a successful source POST with a lost response, reconcile the
-            // intent before requiring the key. A reconciled source owns its key.
-            const needKey=provider.auth==='api-key'&&!record.airbyte?.sourceId&&!record.provisionIntent;
-            const secrets=needKey?await lifecycle.commands.readSecret(reference):{};
-            if(record.total===undefined && !record.provisionIntent && provider.auth!=='github-app'){
-              const proxy=provider.auth==='api-key' ? (secrets.apiKey ? direct(secrets.apiKey) : null) : proxyFor(record);
-              if(proxy){
-                const estimate=await provider.total(proxy,{startDate:record.startDate,now:now(),record}).catch(()=>null);
-                const total=typeof estimate==='number' && Number.isSafeInteger(estimate) && estimate>=0 ? estimate : null;
-                await registry.update(record,{total},
-                  {whenStatus:['provisioning','error'],whenFields:{lifecycleCommandId:reference.commandId,provisionVersion:record.provisionVersion}});
-              }
-            }
-            await provisionRecord(record,secrets,reference,signal);
-            return 'more';
-          }catch(error){
-            if(errorInfo(error).code!=='ProvisioningKeyRequired')throw error;
-            await lifecycle.commands.fail(reference,'reconnect_required');
-            return 'done';
+        // Reconcile a lost source POST before requiring a key. The recovered source already owns its credential.
+        const needKey = provider.auth === 'api-key' && !record.airbyte?.sourceId && !record.provisionIntent;
+        const secrets = needKey ? await lifecycle.commands.readSecret(reference) : {};
+        if (record.total === undefined && !record.provisionIntent && provider.auth !== 'github-app') {
+          const proxy = provider.auth === 'api-key' ? (secrets.apiKey ? direct(secrets.apiKey) : null) : proxyFor(record);
+          if (proxy) {
+            const estimate = await provider.total(proxy, {startDate: record.startDate, now: now(), record}).catch(() => null);
+            const total = typeof estimate === 'number' && Number.isSafeInteger(estimate) && estimate >= 0 ? estimate : null;
+            await registry.update(record, {total}, fence);
           }
         }
-      }else throw new Error('Unsupported Airbyte command');
-      await lifecycle.commands.complete(reference);
-      return 'done';
+        await provisionRecord(record, secrets, reference, signal);
+        return 'more';
+      } catch (error) {
+        if (errorInfo(error).code !== 'ProvisioningKeyRequired') throw error;
+        await lifecycle.commands.fail(reference, 'reconnect_required');
+        return 'done';
+      }
     },
 
     /** Recover one explicitly scoped record; fleet discovery belongs to the runtime. */
