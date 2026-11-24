@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {gzipSync,gunzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {createObjectStore} from '../dist/src/sessions/s3-store.mjs';
-import {countCheckpointKey,readLegacyCountSnapshot,openCountSnapshot} from '../dist/src/connectors/count-snapshot.mjs';
+import {countCheckpointKey,CountSnapshotBudgetExceeded,readLegacyCountSnapshot,openCountSnapshot} from '../dist/src/connectors/count-snapshot.mjs';
 
 const connectionId='int_'+'a'.repeat(26);
 const rawPrefix='raw/v1/source=slack/workspace=T1/connection='+connectionId+'/';
@@ -103,10 +103,20 @@ test('oversized parts retain the old measurement for a scoped higher-budget retr
   const store=setup(),prior=await readLegacyCountSnapshot(store.options);
   async function ingest(view){await view.withPart('messages',null,key('messages','b'),async add=>{for(let i=0;i<6000;i++)add(String(i).padStart(12,'0'));});}
   const limited=await openCountSnapshot({...store.options,maxSnapshotBytes:65536});
-  await assert.rejects(ingest(limited),/worker budget/);assert.deepEqual(limited.summary(),prior.counts);assert.equal(store.writes,0);
+  await assert.rejects(ingest(limited),CountSnapshotBudgetExceeded);assert.deepEqual(limited.summary(),prior.counts);assert.equal(store.writes,0);
   const retry=await openCountSnapshot({...store.options,maxSnapshotBytes:131072});
   await ingest(retry);await (await retry.prepareSave()).write();
   assert.equal(retry.summary().messages,6001);
+});
+test('oversized versioned reads cancel their signed response and report the same worker budget error',async()=>{
+  for(const declared of [true,false]){
+    let cancelled=false;
+    const store=createObjectStore({bucket:'fixture',region:'us-west-2',credentials:{accessKeyId:'test',secretAccessKey:'test'},
+      fetch:async()=>new Response(new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(65537));},cancel(){cancelled=true;}}),
+        {headers:{etag:'"e"',...(declared?{'content-length':'65537'}:{})}})});
+    await assert.rejects(readLegacyCountSnapshot({store,connectionId,rawPrefix,maxSnapshotBytes:65536}),CountSnapshotBudgetExceeded);
+    assert.equal(cancelled,true);
+  }
 });
 test('conditional puts propagate gzip metadata and the caller deadline into the signed S3 fetch',async()=>{
   const abort=new AbortController();let seen;

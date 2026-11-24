@@ -14,6 +14,8 @@ interface CountOptions {
   environment: Environment;
   providers: ProviderCatalog;
   state: Pick<ReturnType<typeof createConnectorCounts>, 'begin' | 'current' | 'adopt' | 'checkpoint' | 'publish' | 'deferBudget'>;
+  /** Operator-selected retry budget for the authorized binding. A workflow input
+   * never sets it; return undefined for all other connections to retain the default. */
   snapshotBudgetBytes?(scope: CountScope): number | undefined;
   openSnapshot?: typeof openCountSnapshot;
   heartbeat?(progress: Record<string, number>): void;
@@ -26,14 +28,6 @@ const partsPerActivity = 16;
 const pageSize = 1000;
 const validSync = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-/** Configure an operator-approved retry for one exact storage binding. The
- * default applies to every other source, including a rotated binding. */
-export function connectorCountBudget(bindingDigest: string, bytes: number) {
-  if (!/^[a-f0-9]{64}$/.test(bindingDigest) || !Number.isSafeInteger(bytes) || bytes <= 8 * 1024 ** 2 || bytes > 64 * 1024 ** 2) {
-    throw new Error('An exact count binding and a snapshot budget above 8 MiB and at most 64 MiB are required');
-  }
-  return (scope: CountScope) => scope.binding === bindingDigest ? bytes : undefined;
-}
 
 function parsePart(rawPrefix: string, streams: Map<string, Stream>, key: string) {
   const path = key.slice(rawPrefix.length);

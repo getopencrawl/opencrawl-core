@@ -63,4 +63,3 @@ export async function createConnectorWorker({address, namespace, taskQueue, bund
     return {worker, connection};
   } catch (error) { await connection.close(); throw error; }
 }
-export {connectorCountBudget} from '../count-activities.mjs';
