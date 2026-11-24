@@ -126,6 +126,38 @@ live('revocation terminates an unstarted provision and drops its secret',async t
   assert.deepEqual(f.effects,[]);
 });
 
+live('cleanup preserves existing external holds and retires only the positively bound abandoned grant',async t=>{
+  const f=await fixture(t),ref=await f.connect();
+  await f.step(ref);
+  await f.product().disconnect(principal,'notes');
+  const removal=f.refs.at(-1),record=await f.read(removal);
+  await f.registry.update(record,{cleanupBlockedReason:'external-writer-proof-required'});
+  await assert.rejects(f.step(removal),/awaiting external reconciliation/);
+  assert.deepEqual(f.effects,['create destination']);
+  await f.registry.update(record,{cleanupBlockedReason:null});
+  f.options.workspaceId=async mode=>{assert.equal(mode,'existing');return 'airbyte';};
+  await f.finish(removal);
+
+  const id='int_'+'f'.repeat(26),grantId='account-abandoned';
+  const consent={...principal,integrationId:id,environment:'production',scope:'team',provider:'notes',createdAt:new Date().toISOString(),startDate:'2026-01-01',
+    status:'connecting',connectedAccountId:grantId};
+  await f.registry.create(consent);
+  const abandoned=await f.registry.abandonWithLifecycle(consent,principal.userId);
+  delete f.provider.auth;f.provider.toolkit='notes';
+  let retired=0,owner='production:org_other:user_admin';
+  f.options.oauth.account=async()=>({id:grantId,toolkit:{slug:'notes'},user_id:owner});
+  f.options.oauth.remove=async id=>{assert.equal(id,grantId);retired++;};
+  await f.registry.update(consent,{oauthIntent:{resource:'link',attemptId:'old-attempt',requestedAt:consent.createdAt}});
+  await assert.rejects(f.step(abandoned),/awaiting external reconciliation/);
+  await f.registry.update(consent,{oauthIntent:null});
+  await assert.rejects(f.step(abandoned),/grant binding changed/);
+  assert.equal(retired,0);
+  owner='production:org_team:user_admin';
+  await f.finish(abandoned);await f.finish(abandoned);
+  assert.equal(retired,1);
+  assert.equal((await f.read(abandoned)).status,'abandoned');
+});
+
 live('OAuth consent admits only a positively bound grant and the worker recovers its account metadata',async t=>{
   const f=await fixture(t);
   const id='int_'+'a'.repeat(26),grant='account-tested',nonce='one-time-state';

@@ -21,7 +21,7 @@ export interface AirbyteLifecycle {
   validateCleanupTarget(record:IntegrationRecord):Promise<string|null>;
 }
 export interface IntegrationOptions {
-  environment: Environment; appUrl: string; buckets: TeamBuckets; legacyBucket: string; workspaceId: () => Promise<string>; destination: LandingDestination;
+  environment: Environment; appUrl: string; buckets: TeamBuckets; legacyBucket: string; workspaceId: (mode?: 'existing') => Promise<string>; destination: LandingDestination;
   backfillDays?: number; schedule?: string; oauth: ConnectorOAuth; airbyte: Airbyte; registry: Registry;
   providers: ProviderCatalog; github?: GithubApp | null; direct?: typeof directApi; now?: () => number;
   log?: Log; maintenance?: boolean; revokeInstallation?: (installationId: string) => Promise<void>; lifecycle?: AirbyteLifecycle;
@@ -339,6 +339,21 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     }
   }
 
+  async function revokeGrants(record: IntegrationRecord, verifyBinding: boolean) {
+    const gone = (error: unknown) => {if (errorInfo(error).status !== 404) throw error;};
+    const id = record.connectedAccountId;
+    if (id) {
+      if (verifyBinding) {
+        const grant = await oauth.account(id).catch(error => {gone(error); return null;});
+        if (grant && (grant.id !== id || grant.user_id !== oauthUser(record) ||
+          grant.toolkit?.slug?.toLowerCase() !== providerFor(record.provider).toolkit)) throw new Error('Cleanup grant binding changed');
+        if (grant) await oauth.remove(id).catch(gone);
+      } else await oauth.remove(id).catch(gone);
+    }
+    // Only runtimes that own the whole GitHub installation supply a revoker.
+    if (record.installationId && revokeInstallation) await revokeInstallation(record.installationId).catch(gone);
+  }
+
   /** Stops syncing, deletes everything this connection imported, then revokes the grant. */
   async function disconnectRecord(record: IntegrationRecord, reference?:IntegrationCommandReference,signal?:AbortSignal): Promise<void> {
     requireWritable();
@@ -383,7 +398,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // the separate worker quiescence/reconciliation policy.
     if (!progress) {
       if(reference && (connectionId||sourceId||destinationId)){
-        const workspaceId=await workspaceIdOf();
+        const workspaceId=await workspaceIdOf('existing');
         if(record.airbyteWorkspaceId&&record.airbyteWorkspaceId!==workspaceId)throw new Error('Cleanup workspace changed');
         try {await durable.remove(record,workspaceId);}
         catch(error){
@@ -405,18 +420,8 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       }
       if(reference)return advance('grants',deletedObjects);
     }
-    // A GitHub installation can serve other applications or deployments. Only a
-    // runtime that owns the entire managed grant may revoke it on disconnect.
     if (!progress || progress.next==='grants') {
-      if (record.connectedAccountId) {
-        const id=record.connectedAccountId;
-        if(reference){
-          const grant=await oauth.account(id).catch(error=>{gone(error);return null;});
-          if(grant && (grant.id!==id||grant.user_id!==oauthUser(record)||grant.toolkit?.slug?.toLowerCase()!==providerFor(record.provider).toolkit))throw new Error('Cleanup grant binding changed');
-          if(grant)await oauth.remove(id).catch(gone);
-        }else await oauth.remove(id).catch(gone);
-      }
-      if (record.installationId && revokeInstallation) await revokeInstallation(record.installationId).catch(gone);
+      await revokeGrants(record, !!reference);
       if(reference)return advance('finish',deletedObjects);
     }
     try {
@@ -647,7 +652,13 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         record.lifecycleCommandId!==reference.commandId||record.lifecycleOperation!==command.operation||record.scope!==providerFor(record.provider).scope)throw new Error('Integration command binding changed');
       signal?.throwIfAborted();
       if(command.operation==='disconnect'){
-        if(record.status!=='disconnected'){
+        // Earlier command writers could persist an unresolved external writer
+        // or consent POST. Only positive reconciliation may release either hold.
+        if(record.cleanupBlockedReason || record.oauthIntent)throw new Error('Cleanup is awaiting external reconciliation');
+        if(record.status==='abandoned'){
+          if(record.provisionIntent || record.s3Prefix || Object.values(record.airbyte??{}).some(Boolean))throw new Error('Abandoned consent contains provisioned resources');
+          await revokeGrants(record,true);
+        }else if(record.status!=='disconnected'){
           if(record.status!=='disconnecting')throw new Error('Invalid disconnect command state');
           await disconnectRecord(record,reference,signal);
           return 'more';

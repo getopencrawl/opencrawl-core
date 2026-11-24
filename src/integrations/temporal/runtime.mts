@@ -55,13 +55,15 @@ export async function ensureIntegrationRecoverySchedule(client: Client, {sourceI
   const scheduleId = 'integration-command-outbox-v1-' + digest([sourceId]);
   const action = {type: 'startWorkflow' as const, workflowType: 'recoverIntegrationCommandsV1', taskQueue, args: [{sourceId}]};
   try {
-    await client.schedule.create({scheduleId, action, spec: {intervals: [{every: '1 minute'}]},
-      policies: {overlap: ScheduleOverlapPolicy.SKIP, catchupWindow: '1 hour'}, state: {triggerImmediately: true}});
+    await client.schedule.create({scheduleId, action, spec: {intervals: [{every: '10 minutes'}]},
+      policies: {overlap: ScheduleOverlapPolicy.SKIP, catchupWindow: '1 minute'}, state: {triggerImmediately: true}});
   } catch (error) {
     if (!(error instanceof ScheduleAlreadyRunning)) throw error;
-    const existing = await client.schedule.getHandle(scheduleId).describe();
+    const handle = client.schedule.getHandle(scheduleId);
+    const existing = await handle.describe();
     if (existing.action.workflowType !== action.workflowType || existing.action.taskQueue !== taskQueue ||
         !isDeepStrictEqual(existing.action.args, action.args)) throw new Error('Integration recovery schedule scope mismatch');
+    if (!existing.state.paused) await handle.trigger(ScheduleOverlapPolicy.SKIP);
   }
   return scheduleId;
 }

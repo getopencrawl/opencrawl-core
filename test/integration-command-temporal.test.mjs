@@ -78,9 +78,15 @@ test('Temporal resumes a connector phase on a replacement worker and recovers un
       assert.equal(await startIntegrationCommand(env.client, taskQueue, reference), id);
       assert.equal((await handle.describe()).runId, runId);
       const scheduleId = await ensureIntegrationRecoverySchedule(env.client, {taskQueue, sourceId});
-      assert.equal(await ensureIntegrationRecoverySchedule(env.client, {taskQueue, sourceId}), scheduleId);
-      await assert.rejects(ensureIntegrationRecoverySchedule(env.client, {taskQueue: 'other', sourceId}), /scope mismatch/);
+      const schedule = env.client.schedule.getHandle(scheduleId);
+      const description = await schedule.describe();
+      assert.equal(description.spec.intervals[0].every, 600_000);
+      assert.equal(description.policies.catchupWindow, 60_000);
       await lostComplete.promise;
+      await schedule.pause();
+      assert.equal(await ensureIntegrationRecoverySchedule(env.client, {taskQueue, sourceId}), scheduleId);
+      assert.equal((await schedule.describe()).state.paused,true);
+      await assert.rejects(ensureIntegrationRecoverySchedule(env.client, {taskQueue: 'other', sourceId}), /scope mismatch/);
       const lostId = await startIntegrationCommand(env.client, taskQueue, lost);
       await env.client.workflow.getHandle(lostId).result();
       await env.client.schedule.getHandle(scheduleId).delete();

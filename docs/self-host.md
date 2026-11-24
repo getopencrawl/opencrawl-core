@@ -288,7 +288,10 @@ database (including Better Auth and the integration registry), and Temporal's
 separate PostgreSQL databases. The registry refuses to reopen under a different
 organization. Workers rediscover active connections and captured objects after
 restarting. The connector worker resumes pending setup and disconnect commands
-from PostgreSQL and Temporal. When Airbyte may have accepted a create, the
+from PostgreSQL and Temporal. Each admission starts its workflow immediately.
+The worker checks for missed starts at boot and every ten minutes thereafter.
+Each pass reads all pending rows, so its one-minute catchup window suffices
+after a Temporal outage. When Airbyte may have accepted a create, the
 worker looks for the exact resource before advancing the command. Keep the
 same database, Temporal namespace and `OPENCRAWL_AUTH_SECRET` across restarts.
 
