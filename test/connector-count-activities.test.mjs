@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {test} from 'node:test';
 import {gzipSync} from 'node:zlib';
 import {createCountActivities} from '../dist/src/connectors/count-activities.mjs';
-import {openCountSnapshot} from '../dist/src/connectors/count-snapshot.mjs';
+import {CountSnapshotBudgetExceeded, openCountSnapshot} from '../dist/src/connectors/count-snapshot.mjs';
 import {readRecords} from '../dist/src/connectors/records.mjs';
 import {countBinding, createConnectorCounts} from '../dist/src/state/connector-counts.mjs';
 import {recordKey} from '../dist/src/integrations/counts.mjs';
@@ -20,9 +20,10 @@ const key = (stream, sync, part='p') => `${prefix}stream=${stream}/date=2026-11-
 const line = data => JSON.stringify({_airbyte_extracted_at:123,_airbyte_data:data});
 const rows = (...items) => gzipSync(items.map(line).join('\n'));
 
-function setup(catalog = provider, persistedState) {
+function setup(catalog = provider, persistedState, snapshotBudgetBytes) {
   const data = new Map(), versions = new Map(), reads = [], lists = [], writes = [], snapshotOpens = [], saves = [], published = [];
   const settings = {scope:true, revokeAfterRead:false, rebind:false, lostAck:false, cancelled:false, pageSize:1000, foreignKey:false, rejectLock:false};
+  const budgets=[], deferred=[];
   let run = 0, pointer = null, head = null;
   const store = {bucket:'owned',
     async get(key) {return data.get(key) ?? null;},
@@ -35,7 +36,8 @@ function setup(catalog = provider, persistedState) {
     async readVersion(key,{maxBytes} = {}) {
       assert.equal(key,snapshotKey);
       const bytes=data.get(key)??null;
-      if (bytes && maxBytes) assert.ok(bytes.length<=maxBytes,'bounded checkpoint read');
+      budgets.push(maxBytes);
+      if (bytes && maxBytes && bytes.length>maxBytes) throw Object.assign(Error('Object exceeds read limit'),{code:'ObjectReadLimitExceeded'});
       return {data:bytes,version:versions.get(key)??null};
     },
     async compareAndSet(key,version,bytes) {
@@ -53,6 +55,7 @@ function setup(catalog = provider, persistedState) {
   const state = {
     async begin() {return head;},
     async current(_scope, generation) {return head?.generation===generation?structuredClone(head):null;},
+    async deferBudget(scope,generation,revision) {deferred.push({scope,generation,revision});return true;},
     async adopt(_scope, generation, rev, observed) {
       if(settings.rejectLock||head?.generation!==generation||head.revision!==rev)return false;
       head.progress=null;head.statePointer=observed;pointer=observed;head.revision++;return true;
@@ -70,7 +73,7 @@ function setup(catalog = provider, persistedState) {
       pointer=sha;published.push({...counts});head=null;return true;
     },
   };
-  const activities = createCountActivities({environment:'selfhost',providers:{github:catalog}, state:persistedState || state,
+  const activities = createCountActivities({environment:'selfhost',providers:{github:catalog}, state:persistedState || state,snapshotBudgetBytes,
     checkCancelled:()=>{if(settings.cancelled)throw Error('cancelled');},
     resolve:async input=>{
       assert.deepEqual(input,ref);
@@ -96,7 +99,7 @@ function setup(catalog = provider, persistedState) {
     }
     throw Error('test scan failed to terminate');
   };
-  return {activities,data,reads,lists,writes,snapshotOpens,saves,published,settings,pass,finish,get head(){return head;},
+  return {activities,data,reads,lists,writes,snapshotOpens,saves,published,settings,pass,finish,budgets,deferred,get head(){return head;},
     seedLegacy(contents,counts) {
       const bytes=gzipSync(JSON.stringify(contents));data.set(snapshotKey,bytes);versions.set(snapshotKey,1);
       pointer=createHash('sha256').update(bytes).digest('hex');published.push(counts);return pointer;
@@ -197,6 +200,26 @@ test('landed primary keys remain countable through unrelated Airbyte changes or 
     const store={get:async()=>gzipSync(JSON.stringify(record))};
     await assert.rejects(readRecords(store,path,()=>assert.fail('ineligible row indexed')),expected);
   }
+});
+
+test('only trusted per-connection budgets reach the count store, and deterministic exhaustion retains the last card', async()=>{
+  const exact=countBinding('owned',prefix,'github'), approved=16*1024**2, normal=8*1024**2;
+  for(const [match,expect] of [[exact,approved],['a'.repeat(64),normal]]) {
+    const f=setup(provider,undefined,scope=>scope.binding===match?approved:undefined);
+    await f.finish({...await f.pass(),maxSnapshotBytes:64*1024**2});
+    assert.deepEqual(f.budgets,[expect]);assert.deepEqual(f.deferred,[]);
+  }
+  const invalid=setup(provider,undefined,()=>65*1024**2);
+  await assert.rejects(invalid.finish(await invalid.pass()),/configured snapshot budget/);
+  assert.deepEqual(invalid.budgets,[]);assert.deepEqual(invalid.deferred,[],'invalid operator configuration does not defer a source');
+  const f=setup();
+  f.seedLegacy({version:1,read:[],ids:{files:[]},full:{}},{files:0});
+  f.data.set(snapshotKey,Buffer.alloc(normal+1));
+  const input=await f.pass();
+  await assert.rejects(f.activities.advanceConnectorCounts(input),CountSnapshotBudgetExceeded);
+  assert.equal(f.deferred.length,1);
+  assert.deepEqual([f.deferred[0].scope.binding,f.deferred[0].generation,f.deferred[0].revision],[exact,input.countGeneration,input.revision]);
+  assert.deepEqual(f.writes,[]);assert.deepEqual(f.reads,[]);assert.deepEqual(f.published,[{files:0}]);
 });
 
 test('a superseded worker can prepare a measurement but cannot modify the source snapshot',async()=>{
