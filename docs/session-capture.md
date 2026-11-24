@@ -6,6 +6,20 @@ The CLI installs capture for local Claude Code, Codex and [Antigravity](#antigra
 
 Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. Each uploader has a 90-second process deadline and exits on detected parent loss (checked every second), including while waiting for locks or network responses. Durable unacknowledged bytes remain for the next hook. Foreground flush/backfill is unaffected. If the harness itself dies, reaping adopted children remains the host’s responsibility. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
 
+## Sending capture from another client
+
+An authenticated recorder can post a schema-version-1 batch to
+`POST /api/sessions/batches`. Choose a stable `harness` identifier and use it on
+batches, attachments, receipt reads and session links. It can contain 1–64
+lowercase ASCII letters, digits, underscores or hyphens and must begin with a
+letter or digit. The storage directories `attachments`, `controls`, `memories`,
+`onboarding` and `preferences` are reserved.
+
+The authenticated `GET /api/sessions/identity` response advertises the accepted
+format in `data.capabilities.harnessPattern`. Older receivers advertise specific
+names in `data.capabilities.harnesses`. A recorder supplies its native events in
+the capture envelope and uses the owner from the authenticated identity response.
+
 ## Antigravity
 
 Requires **agy 1.5.4 or newer** for the CLI, or a desktop/IDE release that supplies

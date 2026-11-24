@@ -1,11 +1,13 @@
 import {admitActivity} from '../application/agent-activity.mjs';
 import type {Principal, ObjectStore, EventIdentityStore, SessionBatch, Authenticate, HttpHandler} from './types.mjs';
-import {parseJson, isSessionHarness, SESSION_HARNESSES} from './types.mjs';
+import {parseJson, isSessionHarness, SESSION_HARNESS_PATTERN} from './types.mjs';
 import type {MemorySnapshot} from '../memories/types.mjs';
 import type {SearchAdapter} from '../search/types.mjs';
 import type {createCaptureCredentials} from './credentials.mjs';
 import type {IncomingMessage} from 'node:http';
 import {privacyPrompt, type PrivacyPreferences} from './privacy.mjs';
+// Older clients check this list before enabling their bundled capture adapters.
+const legacyHarnessCapabilities = ['claude-code', 'codex', 'cursor', 'grok-bot', 'antigravity', 'devin', 'replicas'];
 export interface SessionIngestOptions {privacy?:PrivacyPreferences; store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
@@ -204,7 +206,7 @@ export function createCaptureHandler({ingest, authenticate, recording, search=un
         const policy=await recording?.read(principal,revision);
         if(policy?.paused && !revision) return send(423,{error:{code:'RECORDING_PAUSED'}});
         if(policy && policy.revision!=='0' && !revision) return send(426,{error:{code:'RECORDING_CLIENT_UPGRADE_REQUIRED'}});
-        return await privateResult(200,{data:{principal,capabilities:{batchEncodings:['gzip'],harnesses:SESSION_HARNESSES},...policy && {recording:policy}}});
+        return await privateResult(200,{data:{principal,capabilities:{batchEncodings:['gzip'],harnesses:legacyHarnessCapabilities,harnessPattern:SESSION_HARNESS_PATTERN.source},...policy && {recording:policy}}});
       }
       if(req.method==='GET'&&url.pathname==='/api/sessions/recording'&&recording&&revision){
         // Older uploaders immediately retry a successful response. While paused,

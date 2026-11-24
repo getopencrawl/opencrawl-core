@@ -9,7 +9,7 @@ import {transcriptEntries} from '../dist/src/sessions/library.mjs';
 import {batchDocuments} from '../dist/src/sessions/indexer.mjs';
 import {capturedEventTokens} from '../dist/src/sessions/token-count.mjs';
 import {sessionMessage} from '../dist/src/sessions/recent.mjs';
-import {SESSION_HARNESSES,isSessionHarness} from '../dist/src/sessions/types.mjs';
+import {isSessionHarness} from '../dist/src/sessions/types.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 import {captureSetupPrompt} from '../dist/src/sessions/cloud-setup.mjs';
 import {standaloneCapture} from '../dist/tools/test-fixtures/capture.mjs';
@@ -41,14 +41,12 @@ const batch={
 };
 
 test('Antigravity is a first-class session harness with fail-closed scope and owner controls',async()=>{
- assert.deepEqual([...SESSION_HARNESSES],['claude-code','codex','cursor','grok-bot','antigravity','devin','replicas']);
  assert.equal(isSessionHarness('antigravity'),true);
- // agy is a CLI convenience alias only; wire and storage contracts require canonical antigravity.
- for(const value of ['agy','ANTIGRAVITY','gemini-cli','',null,undefined,['antigravity']])assert.equal(isSessionHarness(value),false);
+ for(const value of ['invalid/name','ANTIGRAVITY','',null,undefined,['antigravity']])assert.equal(isSessionHarness(value),false);
  const store=memorySessionStore(),ingest=createSessionIngest({store});
  const att=await ingest.putAttachment(principal,attachmentHash,attachmentBytes,{harness:'antigravity',installationId:batch.installationId,sessionId:batch.sessionId});
  assert.equal(att.sha256,attachmentHash);
- await assert.rejects(ingest.putAttachment(principal,attachmentHash,attachmentBytes,{harness:'agy',installationId:batch.installationId,sessionId:batch.sessionId}),/attachments require a session identity/);
+ await assert.rejects(ingest.putAttachment(principal,attachmentHash,attachmentBytes,{harness:'invalid/name',installationId:batch.installationId,sessionId:batch.sessionId}),/attachments require a session identity/);
  const receipt=await ingest.putBatch(principal,batch);
  assert.equal(receipt.stored,true);
  const stored=await ingest.getBatch(principal,{...batch,batchId:receipt.batchId});
@@ -57,16 +55,16 @@ test('Antigravity is a first-class session harness with fail-closed scope and ow
  assert.equal(await ingest.getBatch({...principal,tenantId:'tenant2'},{...batch,batchId:receipt.batchId}),null);
  assert.equal(await ingest.getBatch({...principal,userId:'other-user'},{...batch,batchId:receipt.batchId}),null);
  await assert.rejects(ingest.putBatch({...principal,tenantId:'tenant2'},batch),/Capture owner does not match signed-in account/);
- await assert.rejects(ingest.putBatch(principal,{...batch,harness:'agy'}),/Invalid capture batch/);
- await assert.rejects(ingest.getBatch(principal,{...batch,harness:'agy',batchId:receipt.batchId}),/Invalid receipt/);
+ await assert.rejects(ingest.putBatch(principal,{...batch,harness:'invalid/name'}),/Invalid capture batch/);
+ await assert.rejects(ingest.getBatch(principal,{...batch,harness:'invalid/name',batchId:receipt.batchId}),/Invalid receipt/);
  const key=`capture-v1/tenants/${digest(principal.tenantId)}/users/${digest(principal.userId)}/antigravity/${digest(batch.installationId)}/${digest(batch.sessionId)}/${receipt.batchId}.json.gz`;
  assert.equal(sourceBatchIdentity('capture-v1',key).harness,'antigravity');
- assert.equal(sourceBatchIdentity('capture-v1',key.replace('/antigravity/','/agy/')),null);
+ assert.equal(sourceBatchIdentity('capture-v1',key.replace('/antigravity/','/invalid/name/')),null);
  const controls=createControls({store,prefix:'capture-v1'});
  await controls.update(principal,'sessions','antigravity',batch.sessionId,()=>({visibility:'private',deletedAt:null}));
  assert.equal((await controls.read(principal,'sessions','antigravity',batch.sessionId)).visibility,'private');
  assert.equal((await controls.read({...principal,tenantId:'tenant2'},'sessions','antigravity',batch.sessionId)),null);
- await assert.rejects(controls.read(principal,'sessions','agy',batch.sessionId),/Invalid control identity/);
+ await assert.rejects(controls.read(principal,'sessions','invalid/name',batch.sessionId),/Invalid control identity/);
  // Deleted sessions discard both batches and attachments.
  await controls.update(principal,'sessions','antigravity',batch.sessionId,current=>({visibility:current.visibility,deletedAt:new Date().toISOString()}));
  assert.equal((await ingest.putBatch(principal,{...batch,events:[{...events[0],id:'later'}]})).discarded,'session_deleted');
@@ -98,7 +96,7 @@ test('library API allows Antigravity sessions while keeping native memory APIs r
  assert.equal(libraryOperations['sessions/read'].safeParse({userId:'owner1',harness:'antigravity',sessionId:batch.sessionId}).success,true);
  assert.equal(libraryOperations['sessions/visibility'].safeParse({harness:'antigravity',sessionId:batch.sessionId,visibility:'private'}).success,true);
  assert.equal(libraryOperations['sessions/delete'].safeParse({harness:'antigravity',sessionId:batch.sessionId}).success,true);
- assert.equal(libraryOperations['sessions/read'].safeParse({userId:'owner1',harness:'agy',sessionId:batch.sessionId}).success,false);
+ assert.equal(libraryOperations['sessions/read'].safeParse({userId:'owner1',harness:'invalid/name',sessionId:batch.sessionId}).success,false);
  for(const operation of ['memories/read','memories/visibility','memories/delete'])
   assert.equal(libraryOperations[operation].safeParse({userId:'owner1',harness:'antigravity',path:'GEMINI.md',visibility:'team'}).success,false,operation);
 });

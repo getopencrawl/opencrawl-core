@@ -4,7 +4,7 @@ import {promptText} from './prompt-text.mjs';
 export {promptText} from './prompt-text.mjs';
 import {historyActor} from '../integrations/replicas-senders.mjs';
 import type {Principal, ObjectStore, SessionEvent, JsonValue, EventIdentityStore} from './types.mjs';
-import {isSessionHarness, SESSION_HARNESSES, parseJson} from './types.mjs';
+import {isSessionHarness, parseJson} from './types.mjs';
 import {gunzipSync} from 'node:zlib';
 import type {SessionBatch} from './types.mjs';
 import {sessionWriteBarrier} from './write-barrier.mjs';
@@ -159,9 +159,31 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
     const control = await controls.read({...principal, userId: key.userId}, 'sessions', key.harness, key.sessionId);
     return !control?.deletedAt && (control?.visibility !== 'private' || key.userId === principal.userId);
   }
+  // S3 returns common prefixes with a delimiter. Flat stores return the matching keys.
+  async function* storedHarnesses(root: string) {
+    const seen = new Set<string>(), cursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const page = await store.listPage(root, {delimiter: '/', continuationToken: cursor, maxKeys: 1000});
+      for (const path of [...(page.prefixes ?? []), ...page.keys]) {
+        if (!path.startsWith(root)) throw new Error('Harness inventory outside owner scope');
+        const tail = path.slice(root.length), slash = tail.indexOf('/');
+        if (slash < 0) continue;
+        const harness = tail.slice(0, slash);
+        if (isSessionHarness(harness) && !seen.has(harness)) {
+          seen.add(harness);
+          yield harness;
+        }
+      }
+      cursor = page.nextToken;
+      if (cursor && cursors.has(cursor)) throw new Error('Harness inventory cursor did not advance');
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+  }
   async function pendingDeletions(principal: Principal) {
     const pending: Array<{harness: string; sessionId: string}> = [];
-    for (const harness of SESSION_HARNESSES) for (const control of (await controls.list(principal, 'sessions', harness)).values()) {
+    const root = `${prefix}/${sessionScope(principal)}/controls/sessions/`;
+    for await (const harness of storedHarnesses(root)) for (const control of (await controls.list(principal, 'sessions', harness)).values()) {
       if (control.deletedAt && control.deletion?.state === 'pending') pending.push({harness, sessionId: control.deletion.sessionId});
     }
     return pending;
@@ -297,7 +319,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
   // keys, so no new references can appear while this inventory is being read.
   async function retainedLegacyAttachments(principal: Principal, deleting: SessionKey) {
     const ownerRoot = `${prefix}/${sessionScope(principal)}/`, retained = new Set<string>();
-    for (const harness of SESSION_HARNESSES) {
+    for await (const harness of storedHarnesses(ownerRoot)) {
       const root = ownerRoot + harness + '/';
       let continuationToken: string | null = null;
       do {

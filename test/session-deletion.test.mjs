@@ -87,19 +87,19 @@ test('an upload already in flight cannot outlive successful erasure',async()=>{
 });
 
 test('index writers are fenced, and failed raw/search cleanup stays revoked and retryable after restart',async()=>{
-  const f=fixture(), value=batch();await f.upload(value);
+  const f=fixture(), value=batch({harness:'external-recorder'});await f.upload(value);
   const started=pause(), resume=pause(), put=f.projection.putDocuments;
   f.projection.putDocuments=async items=>{started.resolve();await resume.promise;return put(items);};
-  const late=batch({installationId:'late',events:[{id:'late',kind:'message',data:{content:'late index secret'}}]});
+  const late=batch({...value,installationId:'late',events:[{id:'late',kind:'message',data:{content:'late index secret'}}]});
   const indexing=f.upload(late);await started.promise;
   assert.equal((await f.library().delete(owner,value)).pending,true);
   resume.resolve();await indexing;
   const purge=f.store.purgePrefix;f.store.purgePrefix=async()=>{throw Error('AccessDenied');};
   assert.equal((await f.library().delete(owner,value)).pending,true);
-  const control=await createControls({store:f.store,prefix}).read(owner,'sessions','codex',value.sessionId);
+  const control=await createControls({store:f.store,prefix}).read(owner,'sessions',value.harness,value.sessionId);
   assert.equal(control.deletion.state,'pending');
   assert.equal((await f.search.search(peer)).hits.length,0);
-  assert.deepEqual((await f.library().pendingDeletions(owner)),[{harness:'codex',sessionId:value.sessionId}]);
+  assert.deepEqual((await f.library().pendingDeletions(owner)),[{harness:value.harness,sessionId:value.sessionId}]);
   f.store.purgePrefix=purge;f.setSearchFailure(true);
   assert.equal((await f.library().delete(owner,value)).pending,true);
   f.setSearchFailure(false);
@@ -128,8 +128,8 @@ test('a shared historical attachment survives until the last referencing chat is
   const f=fixture(), bytes=Buffer.from('shared attachment'), sha=digest(bytes);
   const blob=`${prefix}/${sessionScope(owner)}/attachments/${sha}`;
   await f.store.put(blob,bytes);
-  for(const id of ['first','second']){
-    const value=batch({sessionId:id,attachments:[{status:'captured',sha256:sha}]});
+  for(const [id,harness] of [['first','codex'],['second','external-recorder']]){
+    const value=batch({harness,sessionId:id,attachments:[{status:'captured',sha256:sha}]});
     const {key}=await f.upload(value);
     const stored=JSON.parse(gunzipSync(await f.store.get(key)));
     assert.notEqual(stored.attachments[0].objectKey,blob,'current clients always persist a scoped reference');
@@ -138,7 +138,7 @@ test('a shared historical attachment survives until the last referencing chat is
   }
   assert.equal((await f.library().delete(owner,{harness:'codex',sessionId:'first'})).deleted,true);
   assert.deepEqual(await f.store.get(blob),bytes);
-  assert.equal((await f.library().delete(owner,{harness:'codex',sessionId:'second'})).deleted,true);
+  assert.equal((await f.library().delete(owner,{harness:'external-recorder',sessionId:'second'})).deleted,true);
   assert.equal(await f.store.get(blob),null);
 });
 

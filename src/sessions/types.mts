@@ -41,11 +41,11 @@ export interface ObjectStore extends ConditionalStore {
   purgePrefix?(prefix: string, options?: {select?: (key: string) => boolean; selectVersion?: (key: string, read: () => Promise<Buffer>) => Promise<boolean>; beforeDelete?: (key: string, read: () => Promise<Buffer>) => Promise<void>}): Promise<number>;
   listPage(prefix: string, options?: ListOptions): Promise<StorePage>;
 }
-/** Capture clients with their own session namespace. Memory snapshots are
- * narrower: only harnesses that keep native memory files (see memories/). */
-export const SESSION_HARNESSES = ['claude-code', 'codex', 'cursor', 'grok-bot', 'antigravity', 'devin', 'replicas'] as const;
-export type SessionHarness = typeof SESSION_HARNESSES[number];
-export const isSessionHarness = (value: unknown): value is SessionHarness => (SESSION_HARNESSES as readonly unknown[]).includes(value);
+/** A harness is one client-chosen object-key segment. Sibling storage directories are reserved. */
+export const SESSION_HARNESS_PATTERN = /^(?!(?:attachments|controls|memories|onboarding|preferences)$)[a-z0-9][a-z0-9_-]{0,63}$/;
+export type SessionHarness = string;
+export const isSessionHarness = (value: unknown): value is SessionHarness =>
+  typeof value === 'string' && SESSION_HARNESS_PATTERN.test(value);
 export interface Attachment {type?: string; status?: string; sha256?: string; size?: number; mimeType?: string; path?: string; objectKey?: string | null}
 export interface EventData {[key: string]: unknown; role?: string | null; call_id?: string | null; tool_use_id?: string | null}
 export interface SessionEvent {
