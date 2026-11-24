@@ -1,14 +1,10 @@
-import {buildTeamWorkflows,createTeamWorker} from '../identity/temporal/worker.mjs';
-import {prepareTeamOperations} from '../identity/team-operation.mjs';
-import {createLocalIdentity} from '../identity/better-auth.mjs';
-import {createCaptureCredentials} from '../sessions/credentials.mjs';
 import {createReplicasImport} from '../integrations/replicas-import.mjs';
 import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs';
 import {hkdfSync} from 'node:crypto';
 import {createPostgresBoardState} from '../state/board.mjs';
 import {createSessionIngest} from '../sessions/ingest.mjs';
 import {sessionDeletionScheduler,sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
-import {selfhostTeamQueue,selfhostTemporalSettings} from './temporal-settings.mjs';
+import {selfhostTemporalSettings} from './temporal-settings.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
@@ -52,7 +48,6 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
   if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
   await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
-  await buildTeamWorkflows(bundleRoot+'/team.cjs');
   const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
   const indexing=sessionIndexingScheduler({...config,taskQueue:sessionQueue,sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
@@ -64,11 +59,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,replicasImport,devinRecording});
   const {recoverErasures}=createPostgresBoardState(database);
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:async input=>({...await source.resolveDeletion(input),recoverIncognitoErasures:recoverErasures}),maxConcurrentActivityTaskExecutions:1});
-  const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
-  await Promise.all([identity.ready(),prepareTeamOperations(database)]);
-  const team=await createTeamWorker(config,selfhostTeamQueue(database),{database,store,prefix,directory:identity.directory,organizationId:settings.organizationId,
-    credentials:{capture:createCaptureCredentials({store,prefix})}},bundleRoot+'/team.cjs');
-  const workers=connectors?[sessions,deletions,connectors,team]:[sessions,deletions,team];
+  const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
   // An operator sets this only after the receiver and worker rollout is complete.
   // Starting the worker first must not remove recovery for old API producers.
   const captureCutover=env.OPENCRAWL_SESSION_INDEXING_CUTOVER==='1'
@@ -104,6 +95,6 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const stop=()=>{liveStop.abort();stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
   const runs=workers.map(x=>x.worker.run());tick();
-  try{await Promise.all(runs);}finally{stop();await live;await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close()]);}
+  try{await Promise.all(runs);}finally{stop();await live;await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await Promise.all([database.close(),eventIdentities.close()]);}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();

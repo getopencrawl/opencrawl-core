@@ -110,7 +110,6 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
     return runtime;
   };
   return {
-    client:async()=>(await connect()).client,
     async scheduleDevinRecording(job: DevinRecordingJob) {
       const current = await connect();
       const workflowId = 'devin-recording-' + digest(JSON.stringify([config.sourceId, job.tenantId, job.generation]));

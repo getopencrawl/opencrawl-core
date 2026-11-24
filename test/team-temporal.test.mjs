@@ -12,7 +12,8 @@ import {durableTeamWrites} from '../dist/src/identity/temporal/client.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {buildTeamWorkflows,createTeamWorker} from '../dist/src/identity/temporal/worker.mjs';
+import {Worker} from '@temporalio/worker';
+import {buildTeamWorkflows} from '../dist/src/identity/temporal/worker.mjs';
 
 const change={organizationId:'org_team',actorId:'user_admin',userId:'user_member',role:'remove'};
 const admitted={...change,actorMembershipId:'om_user_admin',targetMembershipId:'om_user_member'};
@@ -115,9 +116,10 @@ test('Temporal returns the team outcome after committed intake and resumes a rev
   t.after(()=>rm(directory,{recursive:true,force:true}));
   await buildTeamWorkflows(bundle);
   const start=async()=>{
-    const {worker,connection}=await createTeamWorker({address:environment.address,namespace:'default'},queue,f.options,bundle);
+    const worker=await Worker.create({connection:environment.nativeConnection,namespace:environment.namespace,taskQueue:queue,
+      workflowBundle:{codePath:bundle},activities:teamChangeActivities(f.options)});
     const running=worker.run();
-    return async()=>{worker.shutdown();await running;await connection.close();};
+    return async()=>{worker.shutdown();await running;};
   };
   let stop=await start();
   try {

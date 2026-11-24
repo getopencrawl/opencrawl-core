@@ -70,7 +70,6 @@ import {errorInfo} from '../errors.mjs';
 import type {Log} from '../integrations/ports.mjs';
 type Store=ObjectStore;
 export interface SelfhostApplicationOptions {
-  writeTeamChange?:(change:import('../identity/team-change.mjs').TeamChange)=>Promise<void>;
   usageActivity?:SearchActivity;
   replicasImport?:ReplicasImport;
   devinRecording?:DevinRecording;
@@ -94,7 +93,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({writeTeamChange,settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -124,7 +123,7 @@ export function selfhostApplication({writeTeamChange,settings,store,boardState,s
     const result=await accounts.identifyToken(...args);
     if(result.status===200)admitActivity(result.principal);
     return result;
-  },organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll,writeTeamChange);
+  },organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
   const devin=devinState && devinRuntime({repository:devinState,audience:settings.url,key:devinIdentityKey,tenantId:settings.organizationId,isAdmin:canManageWorkloads,
     startup:setupState&&recording?{setup:setupState,recording,store,prefix}:undefined,
     authenticateAdmin:async req=>{

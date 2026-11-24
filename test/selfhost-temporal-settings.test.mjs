@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {selfhostTeamQueue,selfhostTemporalSettings} from '../dist/src/selfhost/temporal-settings.mjs';
+import {selfhostTemporalSettings} from '../dist/src/selfhost/temporal-settings.mjs';
 const base={TEMPORAL_ADDRESS:'temporal:7233',TEMPORAL_NAMESPACE:'customer-a'};
 test('explicit namespace and plaintext connection remain available for private bundled Temporal',()=>{
   assert.deepEqual(selfhostTemporalSettings(base),{address:'temporal:7233',namespace:'customer-a',connectionOptions:{}});
@@ -28,14 +28,4 @@ test('API and worker options preserve mTLS, custom CA and namespace-scoped API k
     assert.equal(result.connectionOptions.tls.clientCertPair.key.toString(),'private-key');
     assert.equal(result.connectionOptions.tls.serverNameOverride,'temporal.example.com');
   }finally{rmSync(dir,{recursive:true});}
-});
-
-test('self-host team pollers isolate application databases and source bindings in a shared Temporal namespace',()=>{
-  const source={organizationId:'org_company',bucket:'control',prefix:'one'};
-  const queue=(namespace,overrides={})=>selfhostTeamQueue({namespace,sourceIdentity:{...source,...overrides}});
-  const first=queue('a');
-  assert.equal(first,queue('a'));
-  assert.notEqual(first,queue('b'));
-  for(const overrides of [{organizationId:'org_other'},{bucket:'another'},{prefix:'two'}])
-    assert.notEqual(first,queue('a',overrides));
 });
