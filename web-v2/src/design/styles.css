@@ -283,7 +283,7 @@ img { max-width: 100%; }
   .oc-main:has(.oc-content .oc-page) { flex: 1; }
   /* Scroll the entire page below the menu. The message board owns its message scroller. */
   .oc-main:has(.oc-content .oc-page:not(.oc-conversation-page)) { overflow: auto; }
-  .oc-content > .oc-page:not(.oc-conversation-page) { grid-template-rows: auto 1fr; }
+  .oc-content > .oc-page:not(.oc-conversation-page) { grid-template: auto 1fr / minmax(0, 1fr); }
   .oc-content > .oc-page:not(.oc-conversation-page) > .oc-page-scroll { overflow: visible; }
   .oc-content .oc-page:not(.oc-conversation-page) > .oc-page-header { position: static; max-height: none; overflow: visible; }
   .oc-content .oc-page > .oc-page-header { padding-block: var(--space-2); }
