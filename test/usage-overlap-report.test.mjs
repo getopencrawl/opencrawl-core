@@ -87,7 +87,7 @@ test('Usage highlights and details partition the reads for a full report', async
   const user = {id: principal.userId, email: 'person@example.test'};
   const options = {principal, directory: {
     organizations: {getOrganization: read('organization', {name: 'Example'})},
-    userManagement: {listOrganizationMemberships: read('members', {data: [{userId: user.id, organizationId: principal.tenantId, status: 'active'}]}), getUser: read('user', user)},
+    userManagement: {listOrganizationMemberships: read('members', {data: [{userId: user.id, organizationId: principal.tenantId, status: 'active', user}]}), getUser: read('user', user)},
   }, captured: read('capture', {tokens: 42, since: '2026-01-01'}), values: {read: read('value', null)},
     integrations: {list: read('integrations', [])}, connectors: {count: read('connectors', {total: 0, kinds: {}, providers: {}, connections: {}})},
     onboarding: {read: read('onboarding', {})}, search: {usage: read('activity', activity), overlap: read('overlap', {sessions: 1, daily: []})}};
@@ -96,7 +96,7 @@ test('Usage highlights and details partition the reads for a full report', async
   assert.equal(highlights.capture.tokens, 42);
   calls.length = 0;
   const details = await usageReport({...options, part: 'details'});
-  assert.deepEqual(calls.sort(), ['activity', 'connectors', 'integrations', 'members', 'onboarding', 'overlap', 'user']);
+  assert.deepEqual(calls.sort(), ['activity', 'connectors', 'integrations', 'members', 'onboarding', 'overlap']);
   assert.equal(details.members.length, 1);
   assert.equal(details.agents.sessions, 1);
 });

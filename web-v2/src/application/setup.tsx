@@ -20,7 +20,7 @@ const verificationMessage = 'verify opencrawl installation';
 const setupSteps = [
   {title:'Authenticate the CLI', detail:'Run the command above and confirm the sign-in code in your browser.'},
   {title:'Connect your agents', detail:'Select one or more agents in the CLI.'},
-  {title:'Run an example session to verify capture', detail:`Send “${verificationMessage}” to each connected agent. Look for “Captured and searchable” below.`},
+  {title:'Run an example session to verify capture', detail:`Send “${verificationMessage}” to each connected agent. Look for “Captured and searchable” under “Your computers”.`},
 ];
 
 function AgentInstructions({mcpUrl, first}: {mcpUrl: string; first: boolean}) {
