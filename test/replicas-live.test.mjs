@@ -83,3 +83,29 @@ test('Replicas streams share the history identity, resume after storage, repair 
   await delay(120);assert.equal(records.length,count);
   stop.abort();await running;
 });
+
+test('slow durable storage batches the next network chunks without delaying an isolated frame',async()=>{
+  const {replicasLiveApi}=await import('../dist/src/integrations/replicas-live-api.mjs');
+  const encoder=new TextEncoder(),stop=new AbortController();
+  const firstStarted=Promise.withResolvers(),release=Promise.withResolvers(),readAhead=Promise.withResolvers();
+  let packetNo=0;
+  const body=new ReadableStream({pull(controller){
+    packetNo++;
+    if(packetNo>12){controller.close();return;}
+    controller.enqueue(encoder.encode(packet('e:'+packetNo,'chat.turn.delta',{chatId,event:live})));
+    if(packetNo===10)readAhead.resolve();
+  }});
+  const api=replicasLiveApi('fixture',org,stop.signal,async()=>new Response(body,{headers:{'content-type':'text/event-stream'}}));
+  const writes=[];
+  const running=api.stream(workspace,null,stop.signal,async frames=>{
+    writes.push(frames.map(f=>f.cursor));
+    if(writes.length===1){firstStarted.resolve();await release.promise;}
+  });
+  try{
+    await firstStarted.promise;
+    await Promise.race([readAhead.promise,delay(1000).then(()=>{throw Error('stream did not read during storage')})]);
+    assert.deepEqual(writes,[['e:1']]);
+  }finally{release.resolve();await running;}
+  assert.deepEqual(writes.flat(),Array.from({length:12},(_,i)=>'e:'+(i+1)));
+  assert.ok(writes.length<=3,'the burst must share durable writes');
+});

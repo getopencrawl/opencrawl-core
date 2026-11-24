@@ -44,19 +44,46 @@ export function replicasLiveApi(key:string,organizationId:string,signal:AbortSig
       try{
         const response=await get('replica/'+workspaceId+'/events','text/event-stream',AbortSignal.any([stop,idle.signal]),last??undefined);
         if(!response.body||!response.headers.get('content-type')?.includes('text/event-stream'))throw new Error('Invalid Replicas event stream');
+        const reader=response.body.getReader(),decoder=new TextDecoder();
         const frames:LiveFrame[]=[];
+        let queuedBytes=0,writing=false,failed=false,failure:unknown;
+        let saved=Promise.resolve();
         const parser=createParser({maxBufferSize:16*1024*1024,onError(error){if(error.type==='max-buffer-size-exceeded')throw error;},onEvent(message:EventSourceMessage){
           if(!message.id||message.id.length>256||/[\r\n\0]/.test(message.id))throw new Error('Invalid Replicas replay cursor');
           frames.push({...frame.parse(JSON.parse(message.data)),cursor:message.id});
+          queuedBytes+=Buffer.byteLength(message.data);
         }});
-        const reader=response.body.getReader(),decoder=new TextDecoder();
+        // A durable write can outlast many network chunks. Read the next batch
+        // during that write, preserving one ordered writer and bounded read-ahead.
+        function deliver(){
+          if(writing||failed||!frames.length)return;
+          writing=true;
+          saved=(async()=>{
+            try{
+              while(frames.length){
+                const batch=frames.splice(0);
+                queuedBytes=0;
+                await receive(batch);
+              }
+            }catch(error){
+              failed=true;failure=error;
+              void reader.cancel().catch(()=>{});
+            }finally{writing=false;}
+          })();
+        }
         try{
           for(;;){
-            const {value,done}=await reader.read();if(done)break;
+            const {value,done}=await reader.read();
+            if(done||failed)break;
             timer.refresh();parser.feed(decoder.decode(value,{stream:true}));
-            if(frames.length)await receive(frames.splice(0));
+            deliver();
+            if(frames.length>=64||queuedBytes>=1024*1024)await saved;
+            if(failed)break;
           }
-        }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+        }finally{
+          await reader.cancel().catch(()=>{});await saved;reader.releaseLock();
+        }
+        if(failed)throw failure;
       }finally{clearTimeout(timer);idle.abort();}
     },
   };
