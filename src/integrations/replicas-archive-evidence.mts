@@ -5,12 +5,12 @@ import {expandReplicasPayload} from '../sessions/replicas-payload.mjs';
 import {sessionScope} from '../sessions/event-identity.mjs';
 import {record} from '../sessions/replicas-record.mjs';
 import {replicasThread} from './replicas-threads.mjs';
-import {canonical,replicasDigest} from './replicas-events.mjs';
+import {canonical,replicasDigest,replicasCaptureOwner} from './replicas-events.mjs';
 import type {ReplicasHistory} from './replicas-api.mjs';
 
 export type ArchiveScope={tenantId:string;organizationId:string;workspace:string;chatId:string};
 export function importSession(scope:ArchiveScope){
-  const owner={tenantId:scope.tenantId,userId:'workload_replicas_'+replicasDigest('history-v2:'+scope.organizationId+':'+scope.workspace)};
+  const owner={tenantId:scope.tenantId,userId:replicasCaptureOwner(scope.organizationId,scope.workspace)};
   return {owner,installationId:'replicas-history-v2:'+scope.organizationId,sessionId:'replicas-chat:'+scope.chatId};
 }
 

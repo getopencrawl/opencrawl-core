@@ -1,6 +1,9 @@
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {SessionKey} from '../sessions/session-reference.mjs';
 import {record} from '../sessions/replicas-record.mjs';
+import type {Principal} from '../sessions/types.mjs';
+import type {CurrentSession} from '../search/types.mjs';
+import {replicasCaptureOwner} from './replicas-events.mjs';
 import type {ReplicasHistory} from './replicas-api.mjs';
 
 type Client=Pick<ApplicationDatabase['pool'],'query'>;
@@ -55,6 +58,20 @@ export async function saveReplicasThread(client:Client,namespace:string,tenant:s
     DO UPDATE SET harness=NULL,native_id=NULL WHERE t.native_id IS NOT NULL AND
     (t.harness,t.native_id) IS DISTINCT FROM (EXCLUDED.harness,EXCLUDED.native_id)`,
     [namespace,tenant,owner,session,evidence==='conflict'?null:evidence.harness,evidence==='conflict'?null:evidence.id]);
+}
+
+export type CurrentCaptureLookup=(principal:Principal,current:CurrentSession)=>Promise<SessionKey|undefined>;
+
+/** Native IDs only link to a provider chat inside the authenticated workspace.
+ * Forks may share native history. An ambiguous link cannot identify the caller. */
+export async function currentReplicasCapture(client:Client,namespace:string,principal:Principal,current:CurrentSession):Promise<SessionKey|undefined>{
+  const owner=principal.owner;
+  if(owner?.provider!=='replicas'||!['claude-code','codex'].includes(current.harness)||!uuid(current.sessionId))return;
+  const userId=replicasCaptureOwner(owner.organizationId,owner.workspaceId);
+  const {rows}=await client.query<{session_id:string}>(`SELECT session_id FROM opencrawl_replicas_threads
+    WHERE namespace=$1 AND tenant=$2 AND owner_id=$3 AND harness=$4 AND native_id=$5 LIMIT 2`,
+    [namespace,principal.tenantId,userId,current.harness,current.sessionId]);
+  if(rows.length===1)return {userId,harness:'replicas',sessionId:rows[0]!.session_id};
 }
 
 /** One indexed lookup for the already-authorized candidate window. No read

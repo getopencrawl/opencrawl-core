@@ -1,6 +1,6 @@
 import {createReplicasLiveCapture} from './replicas-live.mjs';
 import {selectCatalogRows} from './replicas-catalog.mjs';
-import {prepareReplicasThreads,saveReplicasThread,visibleCapturePairs,type CaptureLookup} from './replicas-threads.mjs';
+import {prepareReplicasThreads,saveReplicasThread,visibleCapturePairs,currentReplicasCapture,type CurrentCaptureLookup,type CaptureLookup} from './replicas-threads.mjs';
 import {backfillReplicasEvidence} from './replicas-archive-evidence.mjs';
 import type {ObjectStore} from '../sessions/types.mjs';
 import {randomUUID} from 'node:crypto';
@@ -487,7 +487,8 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'}]:[],history:history??undefined};
   }
   const capturePairs:CaptureLookup=async(tenant,visible)=>{await ready();return visibleCapturePairs(database.pool,namespace,tenant,visible);};
-  return {status,source,capturePairs,
+  const currentCapture:CurrentCaptureLookup=async(principal,current)=>{await ready();return currentReplicasCapture(database.pool,namespace,principal,current);};
+  return {status,source,capturePairs,currentCapture,
     runLiveCapture:createReplicasLiveCapture({database,ready,key,ingest,request}),
     async action(principal:Principal,input:ReplicasImportInput){
       let result;

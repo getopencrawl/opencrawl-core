@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import type {SessionKey} from '../sessions/session-reference.mjs';
 import {SESSION_HARNESSES} from '../sessions/types.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {SearchInput} from './types.mjs';
@@ -12,10 +13,16 @@ export const currentSessionSchema=z.strictObject({
 
 /** Agent-search preferences add constraints; they never establish authority.
  * Omitted lower-level preferences preserve library/usage/fetch behavior. */
-export function sessionSearchExclusions(principal:Principal,{currentSession,includeCurrentSession,includeToolOutputs}:Pick<SearchInput,'currentSession'|'includeCurrentSession'|'includeToolOutputs'>) {
+export function sessionSearchExclusions(principal:Principal,{currentSession,currentCapture,includeCurrentSession,includeToolOutputs}:Pick<SearchInput,'currentCapture'|'currentSession'|'includeCurrentSession'|'includeToolOutputs'>) {
   if([includeCurrentSession,includeToolOutputs].some(value=>value!==undefined&&typeof value!=='boolean'))throw Object.assign(new Error('Invalid search inclusion option'),{status:400});
   const context=currentSession===undefined?undefined:currentSessionSchema.parse(currentSession),f=(key:string)=>realmField('session',key),exclusions:unknown[]=[];
-  if(context&&includeCurrentSession!==true)exclusions.push({bool:{filter:[{term:{[f('userId')]:principal.userId}},{term:{[f('harness')]:context.harness}},{term:{[f('sessionId')]:context.sessionId}}]}});
+  if(context&&includeCurrentSession!==true){
+    const keys:SessionKey[]=[{userId:principal.userId,...context}];
+    if(currentCapture)keys.push(currentCapture);
+    for(const key of keys){
+      exclusions.push({bool:{filter:[{term:{[f('userId')]:key.userId}},{term:{[f('harness')]:key.harness}},{term:{[f('sessionId')]:key.sessionId}}]}});
+    }
+  }
   if(includeToolOutputs===false)exclusions.push({term:{[f('containsToolOutput')]:true}},
     // Existing canonical output records remain covered before metadata backfill.
     {terms:{[f('kind')]:[...TOOL_OUTPUT_KINDS]}},{terms:{[f('role')]:['tool','function']}});

@@ -41,7 +41,10 @@ export function replicasRecords(chatId:string,history:ReplicasHistory,occurrence
   return events;
 }
 
+export function replicasCaptureOwner(organizationId:string,workspaceId:string){
+  return 'workload_replicas_'+replicasDigest('history-v2:'+organizationId+':'+workspaceId);
+}
 export function replicasSession(tenantId:string,organizationId:string,workspaceId:string,chatId:string){
-  const owner={tenantId,userId:'workload_replicas_'+replicasDigest('history-v2:'+organizationId+':'+workspaceId)};
+  const owner={tenantId,userId:replicasCaptureOwner(organizationId,workspaceId)};
   return {schemaVersion:1,installationId:'replicas-history-v2:'+organizationId,sessionId:'replicas-chat:'+chatId,harness:'replicas',origin:'cloud',owner};
 }

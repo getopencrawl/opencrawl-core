@@ -4,6 +4,7 @@ import type {ApplicationDatabase,ApplicationTransaction} from '../state/postgres
 import {writeReplicasEvents,type ReplicasIngest} from './replicas-batch.mjs';
 import {record} from '../sessions/replicas-record.mjs';
 import {replicasRecords,replicasSession} from './replicas-events.mjs';
+import {replicasThread,saveReplicasThread} from './replicas-threads.mjs';
 import {replicasSenderEvidence} from './replicas-senders.mjs';
 import {replicasLiveApi} from './replicas-live-api.mjs';
 import {ReplicasPageError,ReplicasProviderError} from './replicas-api.mjs';
@@ -41,8 +42,10 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
         await action(tx);
       });
     }
-    async function capture(workspace:string,chat:string,history:ReplicasHistory,mode:'history'|'live',title?:string,occurrences:Record<string,number>={},catalog:Record<string,unknown>={}){
+    async function capture(tx:ApplicationTransaction,workspace:string,chat:string,history:ReplicasHistory,mode:'history'|'live',title?:string,occurrences:Record<string,number>={},catalog:Record<string,unknown>={}){
       const identity=replicasSession(scope.tenantId,scope.organizationId,workspace,chat);
+      const thread=replicasThread(history);
+      if(thread)await saveReplicasThread(tx,namespace,scope.tenantId,identity.owner.userId,identity.sessionId,thread);
       const events=replicasRecords(chat,history,occurrences);
       if(!events.length)return;
       const evidence=replicasSenderEvidence({...catalog,workspace_id:workspace},history);
@@ -65,7 +68,7 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
             if(!gap&&frames.every(f=>!f.type.startsWith('chat.'))&&Date.now()-lastHeartbeat<10000)return;
             await hold(active,async tx=>{
               const chats=new Map<string,{events:unknown[];senders:unknown[]}>();
-              const refresh=new Set<string>();
+              const refresh=new Set<string>(),opened=new Set<string>();
               for(const frame of frames){
                 const id=frame.payload.chatId;
                 if(uuid.safeParse(id).success&&(frame.type==='chat.turn.completed'||frame.type==='chat.turn.started'&&!record(frame.payload.event)))refresh.add(String(id));
@@ -73,12 +76,27 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
                 const {chatId,event,sender}=frame.payload;
                 const chat=uuid.safeParse(chatId);
                 if(!chat.success)throw new Error('Invalid Replicas chat identity');
+                if(frame.type==='chat.turn.started')opened.add(chat.data);
                 if(!record(event))continue;
                 const batch=chats.get(chat.data)??{events:[],senders:[]};
                 batch.events.push(event);if(sender)batch.senders.push(sender);
                 chats.set(chat.data,batch);
               }
-              for(const [chat,batch] of chats)await capture(workspace,chat,batch,'live');
+              // Codex stream records omit the native thread ID. Resolve it on the
+              // first opening, before this turn's content becomes searchable.
+              for(const chat of opened){
+                if(replicasThread(chats.get(chat)??{events:[]}))continue;
+                const identity=replicasSession(scope.tenantId,scope.organizationId,workspace,chat);
+                const known=await tx.query('SELECT 1 FROM opencrawl_replicas_threads WHERE namespace=$1 AND tenant=$2 AND owner_id=$3 AND session_id=$4',
+                  [namespace,scope.tenantId,identity.owner.userId,identity.sessionId]);
+                if(known.rowCount)continue;
+                let thread;
+                try{thread=replicasThread(await api.openingHistory({workspace_id:workspace,chat_id:chat}));}
+                catch(error){diagnostic(scope,'opening_thread',error);}
+                if(thread)await saveReplicasThread(tx,namespace,scope.tenantId,identity.owner.userId,identity.sessionId,thread);
+                else refresh.add(chat);
+              }
+              for(const [chat,batch] of chats)await capture(tx,workspace,chat,batch,'live');
               for(const id of refresh)await tx.query(`INSERT INTO ${tails}(namespace,tenant,organization,workspace,chat)
                 VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace,tenant,organization,workspace,chat)
                 DO UPDATE SET generation=${tails}.generation+1, due=LEAST(${tails}.due,now())`,[...stateKey,id]);
@@ -108,7 +126,7 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
         try{
           const history=await api.history({workspace_id:tail.workspace,chat_id:tail.chat});
           await hold(active,async tx=>{
-            await capture(tail.workspace,tail.chat,history,'history');
+            await capture(tx,tail.workspace,tail.chat,history,'history');
             await tx.query(`DELETE FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6`,tailKey);
           });
         }catch(error){
@@ -134,8 +152,8 @@ export function createReplicasLiveCapture({database,ready,key,ingest,request=fet
             const cursors=new Set<string>(),occurrences:Record<string,number>={};
             do{
               const history=await api.history(chat,before);
-              await hold(active,async()=>{
-                await capture(workspace,chat.chat_id,history,'history','[Replicas history] '+(chat.title??chat.workspace_name),occurrences,chat);
+              await hold(active,async tx=>{
+                await capture(tx,workspace,chat.chat_id,history,'history','[Replicas history] '+(chat.title??chat.workspace_name),occurrences,chat);
               });
               before=history.before_cursor??null;
               if(history.has_more&&!before||before&&cursors.has(before))throw new Error('Invalid Replicas history continuation');

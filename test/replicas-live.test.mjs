@@ -8,9 +8,9 @@ import {replicasEvents,replicasSession} from '../dist/src/integrations/replicas-
 
 const org=randomUUID(),otherOrg=randomUUID(),workspace=randomUUID(),chatId=randomUUID();
 const owner={tenantId:'internal',userId:'admin'};
-const time=new Date().toISOString();
+const time=new Date().toISOString(),claudeThread=randomUUID(),codexThread=randomUUID(),codexChat=randomUUID();
 const chat={workspace_id:workspace,chat_id:chatId,created_at:time,updated_at:time,provider:'claude',title:'Test chat',workspace_name:'Internal',workspace_status:'active'};
-const source=(id,content)=>({timestamp:time,type:'claude-assistant',payload:{uuid:id,message:{role:'assistant',content:[{type:'text',text:content}]}}});
+const source=(id,content)=>({timestamp:time,type:'claude-assistant',payload:{session_id:claudeThread,uuid:id,message:{role:'assistant',content:[{type:'text',text:content}]}}});
 const live=source(randomUUID(),'live output'),missed=source(randomUUID(),'during disconnect');
 const packet=(id,type,payload)=>`id: ${id}\r\ndata: ${JSON.stringify({id,type,payload,ts:time})}\r\n\r\n`;
 async function until(predicate){
@@ -19,7 +19,7 @@ async function until(predicate){
 }
 test('Replicas streams share the history identity, resume after storage, repair gaps, and require the exact authorized scope',async t=>{
   const database=await applicationDatabaseFixture(t),records=[],requests=[],streams=[];
-  let failFirst=true,reportedOrg=org;
+  let failFirst=true,reportedOrg=org,codexOpeningReads=0;
   const encoder=new TextEncoder();
   const request=async(input,opts)=>{
     const u=new URL(input),h=new Headers(opts.headers);
@@ -29,7 +29,14 @@ test('Replicas streams share the history identity, resume after storage, repair 
     if(u.pathname.endsWith('/conversations'))return Response.json({conversations:[chat],next_cursor:null,total:1});
     assert.equal(h.get('replicas-org-id'),org);
     if(u.pathname==='/v1/replica')return Response.json({page:1,total_pages:1,replicas:[{id:workspace,status:'active'}]});
-    if(u.pathname.endsWith('/history'))return Response.json({events:[live,missed],before_cursor:null});
+    if(u.pathname.endsWith('/history')){
+      if(u.searchParams.get('chat_id')===codexChat){
+        assert.equal(u.searchParams.get('limit'),'1');
+        codexOpeningReads++;
+        return Response.json({coding_agent:'codex',thread_id:codexThread,events:[],before_cursor:null});
+      }
+      return Response.json({events:[live,missed],before_cursor:null});
+    }
     assert.equal(u.pathname,'/v1/replica/'+workspace+'/events');
     const response=new ReadableStream({start(ctrl){
       const stop=()=>{try{ctrl.close();}catch{}};
@@ -76,10 +83,19 @@ test('Replicas streams share the history identity, resume after storage, repair 
   assert.equal(repaired.events[0].id,before.events[0].id);
   assert.deepEqual(repaired.owner,before.owner);
   await until(async()=>!(await database.pool.query('SELECT gap_since FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0].gap_since);
+  const agent={tenantId:owner.tenantId,userId:'workspace-agent',owner:{kind:'shared',provider:'replicas',organizationId:org,workspaceId:workspace,environmentId:randomUUID()}};
+  const own=async(harness,sessionId)=>(await service.currentCapture(agent,{harness,sessionId}))?.sessionId;
+  assert.equal(await own('claude-code',claudeThread),'replicas-chat:'+chatId);
+  const codexEvent=(message)=>({type:'event_msg',timestamp:time,payload:{type:'user_message',message}});
+  streams[2].send(packet('new:11','chat.turn.started',{chatId:codexChat,event:codexEvent('first')}));
+  await until(async()=>await own('codex',codexThread)==='replicas-chat:'+codexChat);
+  streams[2].send(packet('new:12','chat.turn.started',{chatId:codexChat,event:codexEvent('second')}));
+  await until(async()=>(await database.pool.query('SELECT cursor FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0].cursor==='new:12');
+  assert.equal(codexOpeningReads,1,'one bounded metadata read per identified chat');
   const current=await service.status(owner);
   await service.action(owner,{action:'stop',id:current.id});
   const count=records.length;
-  streams[2].send(packet('new:11','chat.turn.delta',{chatId,event:source(randomUUID(),'after revoke')}));
+  streams[2].send(packet('new:13','chat.turn.delta',{chatId,event:source(randomUUID(),'after revoke')}));
   await delay(120);assert.equal(records.length,count);
   stop.abort();await running;
 });

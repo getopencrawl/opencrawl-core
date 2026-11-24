@@ -53,8 +53,8 @@ export class ReplicasProviderError extends Error {
 
 /** Fixed-origin, read-only client. Never follow redirects with an organization key. */
 export function replicasApi(apiKey:string,request:typeof fetch=fetch){
-  async function get<T>(operation:ReplicasOperation,path:string,schema:z.ZodType<T>,maxBytes=12*1024*1024,observe?:(info:ReplicasResponseInfo)=>void):Promise<T>{
-    const response=await request('https://api.replicas.dev/v1/'+path,{method:'GET',redirect:'error',signal:AbortSignal.timeout(20000),headers:{Authorization:'Bearer '+apiKey,'X-Replicas-Api-Version':'2026-10-07',Accept:'application/json'}});
+  async function get<T>(operation:ReplicasOperation,path:string,schema:z.ZodType<T>,maxBytes=12*1024*1024,observe?:(info:ReplicasResponseInfo)=>void,timeoutMs=20000):Promise<T>{
+    const response=await request('https://api.replicas.dev/v1/'+path,{method:'GET',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{Authorization:'Bearer '+apiKey,'X-Replicas-Api-Version':'2026-10-07',Accept:'application/json'}});
     const id=response.headers.get('x-request-id')??response.headers.get('request-id')??response.headers.get('cf-ray');
     const requestId=id&&id!==apiKey&&/^(?:[a-fA-F0-9-]{16,64}|req_[A-Za-z0-9]{8,64}|[0-9a-f]{16}-[A-Z]{3})$/.test(id)?id:undefined;
     observe?.({httpStatus:response.status,requestId});
@@ -77,13 +77,21 @@ export function replicasApi(apiKey:string,request:typeof fetch=fetch){
     if(!result.success)throw new ReplicasPageError('invalid_page','Replicas returned an unsupported history format.');
     return result.data;
   }
+  type Chat=Pick<ReplicasConversation,'workspace_id'|'chat_id'>;
+  function historyPage(chat:Chat,limit:number,before?:string|null,maxBytes?:number,observe?:(info:ReplicasResponseInfo)=>void,timeoutMs?:number){
+    const params=new URLSearchParams({chat_id:chat.chat_id,limit:String(limit),...(before?{before_cursor:before}:{})});
+    return get('history','replica/'+chat.workspace_id+'/history?'+params,historySchema,maxBytes,observe,timeoutMs);
+  }
   return {
+    // Missing metadata is retried by the retained-history worker. Keep discovery
+    // small and time-bounded so capture can proceed when that endpoint is slow.
+    openingHistory:(chat:Chat)=>historyPage(chat,1,null,512*1024,undefined,900),
     identity:()=>get('identity','whoami',z.object({organization:z.object({id:uuid,name:z.string()}),caller:z.string()})),
     conversations:(next?:string|null,workspaceId?:string,observe?:(info:ReplicasResponseInfo)=>void,limit=100)=>get('catalog','organization/conversations?'+new URLSearchParams({limit:String(limit),...(next?{cursor:next}:{}),...(workspaceId?{workspace_id:workspaceId}:{})}),conversationsSchema,undefined,observe),
     workspaceChats:(workspaceId:string)=>get('workspace_chats','replica/'+workspaceId+'/chats',
       z.object({chats:z.array(z.object({id:z.string(),created_at:z.string().optional(),updated_at:z.string().optional()})),waking:z.boolean().optional()})),
-    async history(conversation:Pick<ReplicasConversation,'workspace_id'|'chat_id'>,before?:string|null,limit=100,observe?:(info:ReplicasResponseInfo)=>void){
-      const page=await get('history','replica/'+conversation.workspace_id+'/history?'+new URLSearchParams({chat_id:conversation.chat_id,limit:String(limit),...(before?{before_cursor:before}:{})}),historySchema,limit===1?singleHistoryPageBytes:undefined,observe);
+    async history(conversation:Chat,before?:string|null,limit=100,observe?:(info:ReplicasResponseInfo)=>void){
+      const page=await historyPage(conversation,limit,before,limit===1?singleHistoryPageBytes:undefined,observe);
       if(page.waking===true)throw new ReplicasPageError('waking','Replicas is preparing the workspace history.');
       return page;
     },

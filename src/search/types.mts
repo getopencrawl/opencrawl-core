@@ -1,4 +1,5 @@
 import type {Principal, TenantPrincipal, CredentialProvider, JsonValue, SessionHarness} from '../sessions/types.mjs';
+import type {SessionKey} from '../sessions/session-reference.mjs';
 import type {SearchFilters, SearchOrder} from './controls.mjs';
 
 export type Corpus = 'connector' | 'session' | 'board' | 'memory';
@@ -78,7 +79,7 @@ export interface Mapping {
   _meta?: {schema?: number; tenantId?: string};
 }
 export interface CurrentSession {harness: SessionHarness; sessionId: string}
-export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; filters?: SearchFilters; order?: SearchOrder; currentSession?: CurrentSession; includeCurrentSession?: boolean; includeToolOutputs?: boolean}
+export interface SearchInput {query?: string; limit?: number; raw?: boolean; match?: string; sessionId?: string; id?: string; filters?: SearchFilters; order?: SearchOrder; currentSession?: CurrentSession; currentCapture?: SessionKey; includeCurrentSession?: boolean; includeToolOutputs?: boolean}
 export interface Passage extends SearchDocument {id: string; score?: number}
 export interface SearchResult {hits: Passage[]; total?: number; truncated?: boolean}
 export interface SessionContextInput {before: number; after: number; includeToolOutputs: boolean}
