@@ -1,4 +1,4 @@
-import {createReplicasLiveCapture} from './replicas-live.mjs';
+import {createReplicasLiveCapture,type ReplicasRepairJob} from './replicas-live.mjs';
 import {selectCatalogRows} from './replicas-catalog.mjs';
 import {prepareReplicasThreads,saveReplicasThread,visibleCapturePairs,currentReplicasCapture,type CurrentCaptureLookup,type CaptureLookup} from './replicas-threads.mjs';
 import {backfillReplicasEvidence} from './replicas-archive-evidence.mjs';
@@ -41,7 +41,7 @@ export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 /** One explicit step reads one complete API page. Checkpoint only after the
  * original response and every projected record reach durable ingest/indexing.
  * Missing access and unknown pagination fail closed; no conversation is skipped. */
-export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
+export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasJob|ReplicasRepairJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
@@ -489,7 +489,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
   const capturePairs:CaptureLookup=async(tenant,visible)=>{await ready();return visibleCapturePairs(database.pool,namespace,tenant,visible);};
   const currentCapture:CurrentCaptureLookup=async(principal,current)=>{await ready();return currentReplicasCapture(database.pool,namespace,principal,current);};
   return {status,source,capturePairs,currentCapture,
-    runLiveCapture:createReplicasLiveCapture({database,ready,key,ingest,request}),
+    ...createReplicasLiveCapture({database,ready,key,ingest,schedule,request}),
     async action(principal:Principal,input:ReplicasImportInput){
       let result;
       try{result=await operate(principal,input);}

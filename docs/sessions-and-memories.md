@@ -150,6 +150,28 @@ another person's resource is never confirmed.
   appear in Temporal; unresolved owner mappings must be reported, never skipped.
   Rollback must retain a worker that understands these workflow types until all
   accepted deletions complete. Do not roll back to a pre-fence writer.
+
+  **Rolling back the incognito recovery bundle.** Keep a worker that understands
+  `recoverIncognitoErasures` as the sole version polling the deletion queue
+  while replacing an API or indexing process. An older bundle can start a fresh
+  sweep but cannot be relied on to replay a sweep containing the new activity.
+
+  If the deletion worker must also roll back:
+
+  1. Drain producers of new incognito outbox rows. Keep the compatible worker
+     and its schedule running until the committed row count in
+     `opencrawl_board_erasure_outbox` for this installation's namespace is zero,
+     including deferred retries. Keep storage intents and tombstones intact.
+  2. Pause that source's session-deletion schedule. With the compatible worker
+     still running, wait for every open `recoverSessionDeletionsV1` run on
+     this queue and its outstanding activities to close. Check actual workflow
+     status: each outbox activity has a two-minute start-to-close timeout and
+     up to two attempts, and queue delays can extend the wall time. Existing
+     deletion children continue independently.
+  3. After accepted deletions have completed, replace the worker. Unpause the
+     same schedule, trigger one fresh run and verify it completes on the selected
+     queue. If a transfer or drain cannot finish, retain or restore the compatible
+     worker and repair its dependency before replacing that worker.
 - Deleting a **memory** removes the file's passages from search and ignores that
   version in later snapshots. The file on the person's machine is not changed;
   if the agent writes a newer version (later modification time), it is captured
