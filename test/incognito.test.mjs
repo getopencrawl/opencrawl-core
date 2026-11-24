@@ -69,7 +69,6 @@ test('the deletion worker recovers a committed incognito request without the ori
   // The same transaction protects publication while delivery to the erasure worker is outstanding.
   await assert.rejects(board.participate(owner,'bootstrap',{session:session.sessionId,harness:session.harness}),{status:403});
   const scope={tenantId:owner.tenantId,userId:owner.userId};
-  await assert.rejects(storage.repository.recoverErasures(unavailable,scope),/deletion store unavailable/);
   const binding={...f.options,...scope,recoverIncognitoErasures:storage.repository.recoverErasures};
   const activities=sessionDeletionActivities(async()=>binding);
   const env=new MockActivityEnvironment();
@@ -84,4 +83,25 @@ test('the deletion worker recovers a committed incognito request without the ori
   const remaining=[];
   await storage.repository.recoverErasures(async intent=>{remaining.push(intent);});
   assert.deepEqual(remaining.map(i=>[i.tenantId,i.userId]).sort(),[[peer.tenantId,peer.userId],[foreign.tenantId,foreign.userId]].sort());
+});
+
+test('an unavailable page of incognito requests cannot strand another tenant behind it',async t=>{
+  const {make,repository,database}=await boardStateFixture(t);
+  const unavailable=async()=>{throw Error('storage temporarily unavailable');};
+  const board=make({requestCaptureErasure:unavailable});
+  for(let i=0;i<50;i++){
+    await assert.rejects(board.participate(owner,'incognito',{currentSession:{harness:'codex',sessionId:'queued-'+i}}),/storage temporarily unavailable/);
+  }
+  const other={...owner,tenantId:'org_other'};
+  await assert.rejects(board.participate(other,'incognito',{currentSession:{harness:'codex',sessionId:'new'}}),/storage temporarily unavailable/);
+  let failed=0;
+  await assert.rejects(repository.recoverErasures(async intent=>{assert.equal(intent.tenantId,owner.tenantId);failed++;await unavailable();}),/storage temporarily unavailable/);
+  assert.equal(failed,50);
+  const delivered=[];
+  await repository.recoverErasures(async intent=>{delivered.push(intent);});
+  assert.deepEqual(delivered,[{...other,harness:'codex',sessionId:'new'}]);
+  // Make the deferred batch due again without waiting for the wall clock.
+  await database.pool.query('UPDATE opencrawl_board_erasure_outbox SET next_attempt_at=now() WHERE namespace=$1',[database.namespace]);
+  await repository.recoverErasures(async intent=>{delivered.push(intent);});
+  assert.equal(new Set(delivered.map(intent=>intent.sessionId)).size,51);
 });

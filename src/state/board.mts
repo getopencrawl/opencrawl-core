@@ -102,7 +102,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     CREATE TABLE IF NOT EXISTS opencrawl_board_private_sessions(namespace text NOT NULL,tenant_hash text NOT NULL,agent text NOT NULL,PRIMARY KEY(namespace,tenant_hash,agent),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_erasure_outbox(
       namespace text NOT NULL,tenant_hash text NOT NULL,agent text NOT NULL,harness text NOT NULL,
-      tenant_id text NOT NULL,user_id text NOT NULL,session_id text NOT NULL,
+      tenant_id text NOT NULL,user_id text NOT NULL,session_id text NOT NULL,next_attempt_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY(namespace,tenant_hash,agent,harness),
       FOREIGN KEY(namespace,tenant_hash,agent) REFERENCES opencrawl_board_private_sessions ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_messages(namespace text NOT NULL,tenant_hash text NOT NULL,id bigint NOT NULL,stamp bigint NOT NULL,agent text NOT NULL,author text NOT NULL,name text NOT NULL,topic text NOT NULL,request_id text NOT NULL,legacy_agent boolean NOT NULL,record jsonb NOT NULL,PRIMARY KEY(namespace,tenant_hash,id),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
@@ -115,6 +115,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_snapshots(namespace text NOT NULL,token uuid NOT NULL,tenant_hash text NOT NULL,owner text NOT NULL,expires bigint NOT NULL,record jsonb NOT NULL,PRIMARY KEY(namespace,token),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_pages(namespace text NOT NULL,token uuid NOT NULL,offset_value bigint NOT NULL,boundary jsonb NOT NULL,PRIMARY KEY(namespace,token,offset_value),FOREIGN KEY(namespace,token) REFERENCES opencrawl_board_search_snapshots ON DELETE CASCADE);
   `);
+    await ensureSchemaIndex(client,{table:'opencrawl_board_erasure_outbox',name:'opencrawl_board_erasure_due',keys:['namespace','next_attempt_at','tenant_hash','agent','harness']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_topic',keys:['namespace','tenant_hash','topic','id']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_thread',keys:['namespace','tenant_hash',"(((record ->> 'threadId'::text))::bigint)",'id'],jsonKey:{column:'record',key:'threadId'}});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_publication',keys:['namespace','tenant_hash','author','request_id','agent','id']});
@@ -359,16 +360,23 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
   /** Deliver only committed board intents. The object-store handoff is idempotent
    * if another worker or the original HTTP request finishes the same intent. */
   async function recoverErasures(deliver:(intent:IncognitoErasure)=>Promise<void>,binding:{tenantId?:string;userId?:string}={}){
-    const {rows}=await database.pool.query<IncognitoErasure & {tenant_hash:string;agent:string}>(`SELECT tenant_hash,agent,tenant_id AS "tenantId",user_id AS "userId",harness,session_id AS "sessionId"
-      FROM opencrawl_board_erasure_outbox WHERE namespace=$1 AND ($2::text IS NULL OR tenant_hash=$2) AND ($3::text IS NULL OR user_id=$3)
-      ORDER BY tenant_hash,agent,harness LIMIT 50`,[namespace,binding.tenantId?hash(binding.tenantId):null,binding.userId??null]);
+    // Reserve a turn before doing remote I/O. Timeouts and process exits
+    // put failed rows behind waiting work, including work from other tenants.
+    const {rows}=await database.pool.query<IncognitoErasure & {tenant_hash:string;agent:string}>(`WITH due AS (
+      SELECT namespace,tenant_hash,agent,harness FROM opencrawl_board_erasure_outbox
+      WHERE namespace=$1 AND next_attempt_at<=now() AND ($2::text IS NULL OR tenant_hash=$2) AND ($3::text IS NULL OR user_id=$3)
+      ORDER BY next_attempt_at,tenant_hash,agent,harness LIMIT 50 FOR UPDATE SKIP LOCKED
+    ) UPDATE opencrawl_board_erasure_outbox AS o SET next_attempt_at=now()+interval '2 minutes' FROM due
+      WHERE (o.namespace,o.tenant_hash,o.agent,o.harness)=(due.namespace,due.tenant_hash,due.agent,due.harness)
+      RETURNING o.tenant_hash,o.agent,o.tenant_id AS "tenantId",o.user_id AS "userId",o.harness,o.session_id AS "sessionId"`,
+    [namespace,binding.tenantId?hash(binding.tenantId):null,binding.userId??null]);
     let failure:unknown;
     for(const row of rows){
-      const {tenantId,userId,harness,sessionId}=row;
-      if(hash(tenantId)!==row.tenant_hash || boardIdentity(userId,sessionId)!==row.agent || binding.tenantId && tenantId!==binding.tenantId || binding.userId && userId!==binding.userId)
-        throw fail('Board erasure identity mismatch');
-      const intent={tenantId,userId,harness,sessionId};
       try {
+        const {tenantId,userId,harness,sessionId}=row;
+        if(hash(tenantId)!==row.tenant_hash || boardIdentity(userId,sessionId)!==row.agent || binding.tenantId && tenantId!==binding.tenantId || binding.userId && userId!==binding.userId)
+          throw fail('Board erasure identity mismatch');
+        const intent={tenantId,userId,harness,sessionId};
         await deliver(intent);
         await transaction(row.tenant_hash,tx=>tx.acknowledgeErasure(intent));
       } catch(error) {failure=error;}
