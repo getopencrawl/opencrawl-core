@@ -1,4 +1,5 @@
 import type {SessionLibraryOptions} from '../library.mjs';
+import type {createPostgresBoardState} from '../../state/board.mjs';
 import type {ObjectStore} from '../types.mjs';
 import {createSessionLibrary} from '../library.mjs';
 import {createSessionDeletionRequests} from '../deletion-requests.mjs';
@@ -7,7 +8,10 @@ import {ApplicationFailure} from '@temporalio/common';
 
 export interface SessionDeletionInput {sourceId: string; key: string}
 export interface SessionDeletionRecoveryInput {sourceId: string; cursor?: string | null}
-export interface SessionDeletionBinding extends SessionLibraryOptions {tenantId?: string; userId?: string}
+export interface SessionDeletionBinding extends SessionLibraryOptions {
+  tenantId?: string; userId?: string;
+  recoverIncognitoErasures?: ReturnType<typeof createPostgresBoardState>['recoverErasures'];
+}
 export type SessionDeletionResolver = (input: {sourceId: string}) => Promise<SessionDeletionBinding>;
 
 /** Resolve an operator-bound source and then read the authoritative intent.
@@ -64,6 +68,12 @@ export function sessionDeletionActivities(resolve: SessionDeletionResolver) {
     prepareSessionDeletion: (input: SessionDeletionInput) => stage(input, 'prepareDeletion'),
     purgeSessionDeletionArchives: (input: SessionDeletionInput) => stage(input, 'purgeDeletionArchives'),
     finishSessionDeletion: (input: SessionDeletionInput) => stage(input, 'finishDeletion'),
+    recoverIncognitoErasures: (input: {sourceId:string}) => run(input, async binding => {
+      const requests=createSessionDeletionRequests(binding);
+      await binding.recoverIncognitoErasures?.(async ({tenantId,userId,harness,sessionId})=>{
+        await requests.put({tenantId,userId},{harness,sessionId});
+      },{tenantId:binding.tenantId,userId:binding.userId});
+    }),
     listSessionDeletionRequests: (input: SessionDeletionRecoveryInput) => run(input, binding => createSessionDeletionRequests(binding).list(input.cursor)),
   };
 }

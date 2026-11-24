@@ -37,8 +37,15 @@ export interface BoardReader {
   unread(input:{after:number;through:number;topics:string[];mention?:string;userId:string;agent:string;name:string;limit:number}):Promise<BoardMessage[]>;
   publication(input:{userId:string;agent:string;name:string;requestId:string;registered:boolean}):Promise<BoardMessage|null>;
 }
+export interface IncognitoErasure {
+  tenantId:string;
+  userId:string;
+  harness:string;
+  sessionId:string;
+}
 export interface BoardTransaction extends BoardReader {
-  blockPublication(agent:string):Promise<void>;
+  blockPublicationAndQueueErasure(intent:IncognitoErasure):Promise<void>;
+  acknowledgeErasure(intent:IncognitoErasure):Promise<void>;
   prepareRegistration(id:string,name:string|undefined,cutoff:number):Promise<void>;
   refreshAgent(id:string,name:string,seen:number):Promise<void>;
   expireAgents(cutoff:number):Promise<void>;
@@ -93,6 +100,11 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
   async function ready(){await database.ready();await database.transaction(async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl-board-schema-v1',0))");await client.query(`
     CREATE TABLE IF NOT EXISTS opencrawl_board_heads(namespace text NOT NULL,tenant_hash text NOT NULL,head bigint NOT NULL DEFAULT 0 CHECK(head>=0),usage jsonb NOT NULL,participants_present boolean NOT NULL DEFAULT false,PRIMARY KEY(namespace,tenant_hash));
     CREATE TABLE IF NOT EXISTS opencrawl_board_private_sessions(namespace text NOT NULL,tenant_hash text NOT NULL,agent text NOT NULL,PRIMARY KEY(namespace,tenant_hash,agent),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
+    CREATE TABLE IF NOT EXISTS opencrawl_board_erasure_outbox(
+      namespace text NOT NULL,tenant_hash text NOT NULL,agent text NOT NULL,harness text NOT NULL,
+      tenant_id text NOT NULL,user_id text NOT NULL,session_id text NOT NULL,next_attempt_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(namespace,tenant_hash,agent,harness),
+      FOREIGN KEY(namespace,tenant_hash,agent) REFERENCES opencrawl_board_private_sessions ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_messages(namespace text NOT NULL,tenant_hash text NOT NULL,id bigint NOT NULL,stamp bigint NOT NULL,agent text NOT NULL,author text NOT NULL,name text NOT NULL,topic text NOT NULL,request_id text NOT NULL,legacy_agent boolean NOT NULL,record jsonb NOT NULL,PRIMARY KEY(namespace,tenant_hash,id),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_chunks(namespace text NOT NULL,tenant_hash text NOT NULL,message_id bigint NOT NULL,ordinal integer NOT NULL,words tsvector NOT NULL,PRIMARY KEY(namespace,tenant_hash,message_id,ordinal),FOREIGN KEY(namespace,tenant_hash,message_id) REFERENCES opencrawl_board_messages ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_topics(namespace text NOT NULL,tenant_hash text NOT NULL,topic text NOT NULL,first_id bigint NOT NULL,posts bigint NOT NULL,latest jsonb NOT NULL,PRIMARY KEY(namespace,tenant_hash,topic),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
@@ -103,6 +115,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_snapshots(namespace text NOT NULL,token uuid NOT NULL,tenant_hash text NOT NULL,owner text NOT NULL,expires bigint NOT NULL,record jsonb NOT NULL,PRIMARY KEY(namespace,token),FOREIGN KEY(namespace,tenant_hash) REFERENCES opencrawl_board_heads ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS opencrawl_board_search_pages(namespace text NOT NULL,token uuid NOT NULL,offset_value bigint NOT NULL,boundary jsonb NOT NULL,PRIMARY KEY(namespace,token,offset_value),FOREIGN KEY(namespace,token) REFERENCES opencrawl_board_search_snapshots ON DELETE CASCADE);
   `);
+    await ensureSchemaIndex(client,{table:'opencrawl_board_erasure_outbox',name:'opencrawl_board_erasure_due',keys:['namespace','next_attempt_at','tenant_hash','agent','harness']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_topic',keys:['namespace','tenant_hash','topic','id']});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_thread',keys:['namespace','tenant_hash',"(((record ->> 'threadId'::text))::bigint)",'id'],jsonKey:{column:'record',key:'threadId'}});
     await ensureSchemaIndex(client,{table:'opencrawl_board_messages',name:'opencrawl_board_messages_publication',keys:['namespace','tenant_hash','author','request_id','agent','id']});
@@ -166,7 +179,17 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         return Object.fromEntries(rows.rows.map(row=>[Number(row.root),Number(row.replies)]));
       },
       async messages({before,after,through,topic,threadId,rootsOnly=false,limit,descending=false}){if(!Number.isSafeInteger(limit)||limit<1||limit>250)throw fail('Invalid board page');return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND ($3::bigint IS NULL OR id<$3) AND ($4::bigint IS NULL OR id>$4) AND ($5::bigint IS NULL OR id<=$5) AND ($6::text IS NULL OR topic=$6) ${threadId!==undefined?"AND record ? 'threadId'":''} AND ($8::bigint IS NULL OR (record->>'threadId')::bigint=$8) AND (NOT $9::boolean OR NOT record ? 'threadId') ORDER BY id ${descending?'DESC':'ASC'} LIMIT $7`,[before??null,after??null,through??null,topic??null,limit,threadId??null,rootsOnly])).rows.map(row=>row.record);},
-      async blockPublication(agent){await query('INSERT INTO opencrawl_board_private_sessions(namespace,tenant_hash,agent) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[agent]);},
+      async blockPublicationAndQueueErasure(intent){
+        if(hash(intent.tenantId)!==key)throw fail('Board erasure tenant mismatch',403);
+        const agent=boardIdentity(intent.userId,intent.sessionId);
+        await query('INSERT INTO opencrawl_board_private_sessions(namespace,tenant_hash,agent) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[agent]);
+        await query(`INSERT INTO opencrawl_board_erasure_outbox(namespace,tenant_hash,agent,harness,tenant_id,user_id,session_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,[agent,intent.harness,intent.tenantId,intent.userId,intent.sessionId]);
+      },
+      async acknowledgeErasure(intent){
+        if(hash(intent.tenantId)!==key)throw fail('Board erasure tenant mismatch',403);
+        await query('DELETE FROM opencrawl_board_erasure_outbox WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3 AND harness=$4',[boardIdentity(intent.userId,intent.sessionId),intent.harness]);
+      },
       blockedPublications,
       async publicationBlocked(agent){return (await blockedPublications([agent])).length>0;},
       async participant(id){const row=(await query('SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id])).rows[0];return row?{...row.record,pending:await pending(id)}:null;},
@@ -334,7 +357,33 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       return output;
     });
   }
-  return {ready,read,transaction,search,searchAgentMessages,importLegacy,exportLegacy,readIn:exportIn,projectIn};
+  /** Deliver only committed board intents. The object-store handoff is idempotent
+   * if another worker or the original HTTP request finishes the same intent. */
+  async function recoverErasures(deliver:(intent:IncognitoErasure)=>Promise<void>,binding:{tenantId?:string;userId?:string}={}){
+    // Reserve a turn before doing remote I/O. Timeouts and process exits
+    // put failed rows behind waiting work, including work from other tenants.
+    const {rows}=await database.pool.query<IncognitoErasure & {tenant_hash:string;agent:string}>(`WITH due AS (
+      SELECT namespace,tenant_hash,agent,harness FROM opencrawl_board_erasure_outbox
+      WHERE namespace=$1 AND next_attempt_at<=now() AND ($2::text IS NULL OR tenant_hash=$2) AND ($3::text IS NULL OR user_id=$3)
+      ORDER BY next_attempt_at,tenant_hash,agent,harness LIMIT 50 FOR UPDATE SKIP LOCKED
+    ) UPDATE opencrawl_board_erasure_outbox AS o SET next_attempt_at=now()+interval '2 minutes' FROM due
+      WHERE (o.namespace,o.tenant_hash,o.agent,o.harness)=(due.namespace,due.tenant_hash,due.agent,due.harness)
+      RETURNING o.tenant_hash,o.agent,o.tenant_id AS "tenantId",o.user_id AS "userId",o.harness,o.session_id AS "sessionId"`,
+    [namespace,binding.tenantId?hash(binding.tenantId):null,binding.userId??null]);
+    let failure:unknown;
+    for(const row of rows){
+      try {
+        const {tenantId,userId,harness,sessionId}=row;
+        if(hash(tenantId)!==row.tenant_hash || boardIdentity(userId,sessionId)!==row.agent || binding.tenantId && tenantId!==binding.tenantId || binding.userId && userId!==binding.userId)
+          throw fail('Board erasure identity mismatch');
+        const intent={tenantId,userId,harness,sessionId};
+        await deliver(intent);
+        await transaction(row.tenant_hash,tx=>tx.acknowledgeErasure(intent));
+      } catch(error) {failure=error;}
+    }
+    if(failure)throw failure;
+  }
+  return {ready,read,transaction,search,searchAgentMessages,importLegacy,exportLegacy,readIn:exportIn,projectIn,recoverErasures};
 }
 
 /** Validate before any DDL/import. Unknown fields fail instead of disappearing. */

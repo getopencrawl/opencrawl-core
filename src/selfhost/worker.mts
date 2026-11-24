@@ -5,6 +5,7 @@ import {createCaptureCredentials} from '../sessions/credentials.mjs';
 import {createReplicasImport} from '../integrations/replicas-import.mjs';
 import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs';
 import {hkdfSync} from 'node:crypto';
+import {createPostgresBoardState} from '../state/board.mjs';
 import {createSessionIngest} from '../sessions/ingest.mjs';
 import {sessionDeletionScheduler,sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
 import {selfhostTemporalSettings} from './temporal-settings.mjs';
@@ -61,7 +62,8 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
     sessions:{...settings.search,store,prefix,eventIdentities,scheduleIndexing:indexing.schedule,
       scheduleDeletion:sessionDeletionScheduler({...config,taskQueue:deletionQueue,sourceId:source.sourceId})}});
   const sessions=await createSessionWorker({...config,taskQueue:sessionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,replicasImport,devinRecording});
-  const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:source.resolveDeletion,maxConcurrentActivityTaskExecutions:1});
+  const {recoverErasures}=createPostgresBoardState(database);
+  const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:async input=>({...await source.resolveDeletion(input),recoverIncognitoErasures:recoverErasures}),maxConcurrentActivityTaskExecutions:1});
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
   await Promise.all([identity.ready(),prepareTeamOperations(database)]);
   const team=await createTeamWorker(config,'team-member-v1',{database,store,prefix,directory:identity.directory,organizationId:settings.organizationId,

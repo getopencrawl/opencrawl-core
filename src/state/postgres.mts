@@ -50,7 +50,7 @@ export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,metho
   if(!relation)throw new Error('Missing schema index table: '+table);
   const attributes=(await client.query('SELECT attname,atttypid::regtype::text AS type,attcollation::int AS collation FROM pg_attribute WHERE attrelid=$1 AND attnum>0 AND NOT attisdropped',[relation.oid])).rows;
   const columns=new Map<string,{type:string;collation:number}>(attributes.map(row=>[row.attname,row]));
-  const classes:Record<string,string>=method==='btree'?{text:'text_ops',bigint:'int8_ops',uuid:'uuid_ops'}:{jsonb:'jsonb_ops',tsvector:'tsvector_ops'};
+  const classes:Record<string,string>=method==='btree'?{text:'text_ops',bigint:'int8_ops',uuid:'uuid_ops','timestamp with time zone':'timestamptz_ops'}:{jsonb:'jsonb_ops',tsvector:'tsvector_ops'};
   const rendered:string[]=[],options:number[]=[],collations:number[]=[],opclasses:string[]=[];
   for(const key of keys){
     const plain=/^([a-z_]+)( DESC)?$/.exec(key),lower=/^lower\(([a-z_]+)\)$/.exec(key),json=/^\(\(([a-z_]+) -> '([-a-z]+)'::text\)\)$/.exec(key);
