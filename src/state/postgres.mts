@@ -42,7 +42,7 @@ export async function ensureByteOrderIndex(client:PoolClient,table:string,index:
 /** Fixed owning-site index declarations, called under the owning schema lock.
  * Existing indexes are checked in catalogs; CREATE INDEX, even IF NOT EXISTS,
  * takes a writer-conflicting lock and belongs only to a missing-index upgrade. */
-export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,method='btree',predicate,jsonKey}:{table:string;name:string;keys:readonly string[];method?:'btree'|'gin';predicate?:{column:string;equals:string;notNull?:string};jsonKey?:{column:string;key:string}}){
+export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,method='btree',predicate,jsonKey}:{table:string;name:string;keys:readonly string[];method?:'btree'|'gin';predicate?:{column:string;equals:string;notNull?:string};jsonKey?:{column:string;key:string;absent?:boolean}}){
   const identifier=/^[a-z_]+$/;
   if(jsonKey&&(!identifier.test(jsonKey.column)||!/^[-a-zA-Z]+$/.test(jsonKey.key)||predicate))throw new Error('Invalid schema JSON index predicate');
   if(!identifier.test(table)||!identifier.test(name)||!['btree','gin'].includes(method)||!keys.length||keys.length>8||predicate&&(!identifier.test(predicate.column)||!/^[-a-z]+$/.test(predicate.equals)||predicate.notNull&&!identifier.test(predicate.notNull)))throw new Error('Invalid schema index declaration');
@@ -63,7 +63,8 @@ export async function ensureSchemaIndex(client:PoolClient,{table,name,keys,metho
   }
   if(predicate&&(!columns.has(predicate.column)||columns.get(predicate.column)?.type!=='text'||predicate.notNull&&!columns.has(predicate.notNull)))throw new Error('Invalid schema index predicate');
   if(jsonKey&&columns.get(jsonKey.column)?.type!=='jsonb')throw new Error('Invalid schema JSON index column');
-  const condition=jsonKey?`(${jsonKey.column} ? '${jsonKey.key}'::text)`:predicate?predicate.notNull?`((${predicate.column} = '${predicate.equals}'::text) AND (${predicate.notNull} IS NOT NULL))`:`(${predicate.column} = '${predicate.equals}'::text)`:null;
+  const keyCondition=jsonKey?`(${jsonKey.column} ? '${jsonKey.key}'::text)`:null;
+  const condition=jsonKey?(jsonKey.absent?`(NOT ${keyCondition})`:keyCondition):predicate?predicate.notNull?`((${predicate.column} = '${predicate.equals}'::text) AND (${predicate.notNull} IS NOT NULL))`:`(${predicate.column} = '${predicate.equals}'::text)`:null;
   const {rows}=await client.query(`SELECT idx.relkind,i.indisvalid,i.indisready,i.indislive,i.indisunique,i.indisexclusion,i.indrelid=$1 AS owns_table,
     i.indnkeyatts,i.indnatts,am.amname,i.indcollation::oid[] AS collations,i.indoption::smallint[] AS options,
     ARRAY(SELECT pg_get_indexdef(i.indexrelid,n,false) FROM generate_series(1,i.indnkeyatts)n) AS keys,

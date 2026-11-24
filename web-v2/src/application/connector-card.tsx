@@ -43,7 +43,7 @@ export function ConnectorCard({source, action, actionLink, pending = false, busy
   const lastSynced = source.lastSyncedAt && Number.isFinite(Date.parse(source.lastSyncedAt)) ? source.lastSyncedAt : null;
   const waitingForStatus = source.statusUnavailable || source.statusUpdatedAt === null;
   const measuredImport = initialImport(source) && (Boolean(source.total) || source.finishing);
-  const showProgress = waitingForStatus || measuredImport || source.state === 'error' || source.state === 'connecting';
+  const showProgress = waitingForStatus || measuredImport || source.state === 'error' || source.state === 'connecting' || source.state === 'disconnecting';
   return <IntegrationCard name={source.name} icon={providerIcon(source)} compact={compact} status={status}
     metrics={source.rows?.map(row => ({label: row.label, count: row.count, ...streamStatus(source, row)}))}
     metricsLabel={`${source.name} imported data`}

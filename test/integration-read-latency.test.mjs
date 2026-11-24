@@ -13,6 +13,27 @@ const record = {...principal,environment:'production',integrationId:'int_'+'a'.r
 const service = (airbyte, records=[record], options={}) => createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider},airbyte,...options,
   registry:{listTenant:async tenant=>records.filter(record=>record.tenantId===tenant)},buckets:{},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned'});
 
+test('disconnect cards distinguish pending cleanup, interrupted removal and completion', async () => {
+  const records = [{...record, status: 'disconnecting'}];
+  const integrations = service({}, records);
+  const card = async () => (await integrations.list(principal))[0];
+
+  assert.equal((await card()).recoveryAction, 'disconnect');
+  Object.assign(records[0], {lifecycleCommandId: 'cmd_a', lifecycleOperation: 'disconnect'});
+  const pending = await card();
+  assert.equal(pending.state, 'disconnecting');
+  assert.equal(sourceStatus(pending).label, 'Disconnecting');
+  assert.match(sourceProgress(pending), /pending/);
+  assert.equal(pending.recoveryAction, undefined);
+
+  records[0].error = 'recovery';
+  assert.match(sourceProgress(await card()), /waiting for the provider/);
+  records[0].cleanupBlockedReason = 'Unknown external create result';
+  assert.equal((await card()).recoveryAction, 'disconnect');
+  records[0].status = 'disconnected';
+  assert.equal((await card()).state, 'disconnected');
+});
+
 test('cold and concurrent reads return immediately while one status refresh remains blocked',async()=>{
   const jobs=gate(), streams=gate(),calls=[];
   const integrations=service({jobs:async()=>{calls.push('jobs');return jobs.promise;},streamCounts:async()=>{calls.push('streams');return streams.promise;}});

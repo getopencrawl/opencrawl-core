@@ -99,8 +99,35 @@ export function createAirbyte(options: AirbyteOptions) {
     throw new Error('Airbyte resource listing exceeded its recovery limit');
   }
 
+  interface BoundJob {jobId:number;connectionId:string;jobType:string;status:string}
+  const terminal = (status:string) => ['succeeded','failed','cancelled'].includes(status);
+  function boundJob(job:BoundJob,connectionId:string) {
+    if (!Number.isSafeInteger(job?.jobId) || job.jobId < 0 || job.connectionId !== connectionId ||
+        !['sync','reset','clear','refresh'].includes(job.jobType) ||
+        !terminal(job.status) && !['pending','queued','running','incomplete'].includes(job.status)) {
+      throw new Error('Airbyte job binding changed');
+    }
+    return job;
+  }
+  async function latestJob(connectionId:string, syncOnly=false) {
+    const query = new URLSearchParams({connectionId,limit:'1',orderBy:'createdAt|DESC'});
+    if (syncOnly) query.set('jobType','sync');
+    const page = await request<Page<BoundJob>>('GET','/jobs?'+query);
+    if (!Array.isArray(page?.data) || page.data.length > 1 || !page.data.length && page.next) throw new Error('Invalid Airbyte job listing');
+    if (!page.data.length) return null;
+    const job = boundJob(page.data[0],connectionId);
+    if (syncOnly && job.jobType !== 'sync') throw new Error('Airbyte sync job type changed');
+    return job;
+  }
+
   return {
-    declarativeSources: (workspaceId: string) => request<Page<AirbyteResource>>('GET', `/workspaces/${workspaceId}/definitions/declarative_sources`).then(r => r?.data || []),
+    async declarativeSources(workspaceId: string) {
+      const page = await request<Page<AirbyteResource>>('GET', `/workspaces/${workspaceId}/definitions/declarative_sources`);
+      if (!Array.isArray(page?.data) || page.next || page.data.some(row => typeof row?.name !== 'string')) {
+        throw new Error('Incomplete Airbyte definition listing');
+      }
+      return page.data;
+    },
     createDeclarativeSource: (workspaceId: string, name: string, manifest: ConnectorManifest) => request<AirbyteResource>('POST', `/workspaces/${workspaceId}/definitions/declarative_sources`, {name, manifest}),
     // The public PUT edits the definition's Builder project, which API-created definitions don't
     // have (404). Publish a new active manifest version instead, as the Builder's Publish does.
@@ -115,6 +142,10 @@ export function createAirbyte(options: AirbyteOptions) {
     destinations: (workspaceId: string) => resources('destinations', workspaceId),
     sources: (workspaceId: string) => resources('sources', workspaceId),
     connections: (workspaceId: string) => resources('connections', workspaceId),
+    resource: (type:'connections'|'sources'|'destinations',id:string) => {
+      if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('Invalid Airbyte resource ID');
+      return request<AirbyteResource>('GET', `/${type}/${id}`);
+    },
     destinationDefinitions: (workspaceId: string) => request<Page<AirbyteResource>>('GET', `/workspaces/${workspaceId}/definitions/destinations`).then(r => r?.data || []),
     destinationDefinitionVersion: (actorDefinitionId: string) => config<{
       dockerRepository: string; dockerImageTag: string; supportsRefreshes: boolean; connectorIPCOptions?: unknown;
@@ -147,7 +178,30 @@ export function createAirbyte(options: AirbyteOptions) {
       }
       return found ? counts : null;
     },
-    /** Newest first. */
+    async latestSyncJobId(connectionId:string):Promise<string|null>{
+      const job = await latestJob(connectionId,true);
+      return job ? String(job.jobId) : null;
+    },
+    async drainConnection(connectionId:string, existing:AirbyteResource|null) {
+      const pending = () => Object.assign(new Error('Waiting for Airbyte writers to stop'), {code:'AirbyteDrainPending'});
+      const path = '/connections/'+encodeURIComponent(connectionId);
+      if (existing && existing.status !== 'inactive') {
+        if (existing.status !== 'active') throw pending();
+        await request('PATCH',path,{status:'inactive'});
+        const paused = await request<AirbyteResource>('GET',path);
+        if (paused.connectionId !== connectionId || paused.status !== 'inactive') throw pending();
+      }
+      // Airbyte serializes jobs for each connection. The schedule is disabled
+      // before inspecting the latest job on that connection, including resets.
+      const job = await latestJob(connectionId);
+      if (!job || terminal(job.status)) return;
+      if (!existing) throw pending();
+      await request('DELETE','/jobs/'+job.jobId).catch(error=>{
+        if (![404,409].includes((error as {status?:number}).status??0)) throw error;
+      });
+      const current = boundJob(await request<BoundJob>('GET','/jobs/'+job.jobId),connectionId);
+      if (current.jobId !== job.jobId || current.jobType !== job.jobType || !terminal(current.status)) throw pending();
+    },
     jobs: (connectionId: string, limit = 20) => request<Page<AirbyteJob>>('GET', `/jobs?connectionId=${connectionId}&limit=${limit}&orderBy=createdAt%7CDESC`).then(r => r?.data || []),
   };
 }

@@ -140,8 +140,16 @@ migration for ordinary feature delivery. Network shared-file contents and refs l
 existing domains individually with their own tested cutover and recovery plan.
 
 Temporal runs session indexing/deletion and connector indexing. Deployments can also bind the shared durable adapter for guarded team role changes and removals. A team workflow loads an authenticated operation reference from PostgreSQL. The existing object-store guard still serializes organization changes and holds unknown provider outcomes for operator reconciliation.
-The unfinished connector-lifecycle rewrite and online whole-state migration
-have been retired. Preserve current authorization and idempotency behavior.
+
+Hosted Airbyte provisioning and disconnect commands also run in Temporal. After a verified callback or explicit
+request, PostgreSQL commits the requested connection state and its scoped
+command together. Activities load that command and its current resource
+binding on every attempt. Temporal history holds command references only.
+Hosted admission starts the workflow immediately. The worker scans pending
+commands on boot and every ten minutes, with a one-minute schedule catchup.
+Airbyte creates with an unknown outcome must be reconciled against the owning
+workspace before execution can continue. The former whole-state migration
+and unfinished connector-lifecycle rewrite remain retired.
 Self-host startup initializes and verifies an empty application database
 (`src/state/initialize.mts`). There is no upgrade path from older versions
 during alpha; an older installation keeps its release or starts from an empty

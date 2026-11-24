@@ -7,7 +7,7 @@ import type {ConnectorDefinition,ProxyRequest,ProviderData} from '../integration
 import type {ConnectorCredential,SourceSetup} from '../application/onboarding-types.mjs';
 import type {SourceCredentialProxy} from '../integrations/proxy-http.mjs';
 import {createSingleOrganizationRegistry} from '../integrations/local-registry.mjs';
-import {createIntegrations} from '../integrations/service.mjs';
+import {createIntegrations, type Integrations} from '../integrations/service.mjs';
 import {createAirbyte} from '../integrations/airbyte.mjs';
 import {createProviderCatalog} from '../integrations/providers.mjs';
 import {connectorManifest} from '../integrations/manifests.mjs';
@@ -30,7 +30,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     const registry=createSingleOrganizationRegistry({database,organizationId:settings.organizationId});
     const body='External sources are disabled on this instance. Ask your administrator to enable Airbyte. Agent capture, memories, search and the board remain available.';
     const disabled=async():Promise<never>=>{throw Object.assign(new Error(body),{status:503,expose:true});};
-    const integrations:ReturnType<typeof createIntegrations>={
+    const integrations:Integrations={
       providers:()=>Object.values(providers),
       async list(principal){
         if(principal.tenantId!==settings.organizationId)throw Object.assign(new Error('Workspace scope denied'),{status:403});
@@ -110,7 +110,7 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   // An operator has no other record of why Airbyte refused a connection.
   const log=(event:string,data:Record<string,unknown>)=>console.error(JSON.stringify({event,...data,...(typeof data.message==='string'?{message:data.message.slice(0,2000)}:{})}));
   const product=createIntegrations({environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:authorization,providers,github,log});
-  const integrations:ReturnType<typeof createIntegrations>={...product,
+  const integrations:Integrations={...product,
     async list(principal){const setup=await pending();return (await product.list(principal)).map(card=>setup[card.provider]?{...card,state:'setup-required' as const,setup:setup[card.provider]}:card);},
     async connect(principal,id,input){const setup=(await pending())[id];if(setup)throw Object.assign(new Error(setup.body),{status:503,expose:true});return product.connect(principal,id,input);},
   };

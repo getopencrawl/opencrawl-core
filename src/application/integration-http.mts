@@ -42,7 +42,7 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
           if(!admin)return adminRequired();
           try {
             const disconnected = await integrations.disconnectAll(principal);
-            track('integrations_disconnected_all', principal, {count: Array.isArray(disconnected) ? disconnected.length : Number(disconnected) || 0});
+            track('integrations_disconnect_all_requested', principal, {count: Array.isArray(disconnected) ? disconnected.length : Number(disconnected) || 0});
             return json(200, {disconnected});
           }
           catch (error) {
@@ -68,7 +68,7 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
             return json(200, result);
           }
           if (route.action === 'retry' || route.action === 'disconnect') await integrations[route.action](principal, provider.id);
-          track(route.action === 'disconnect' ? 'integration_disconnected' : 'integration_sync_retried', principal, {provider: provider.id});
+          track(route.action === 'disconnect' ? 'integration_disconnect_requested' : 'integration_retry_requested', principal, {provider: provider.id});
           return json(200, {ok: true});
         } catch (error) {
           // Our own 409s explain themselves (storage not ready, setup still running); only a live connection is "already connected".

@@ -97,7 +97,7 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
   const canManage = (item: OnboardingSource) => canConfigure || item.scope === 'user';
   function choose(item: OnboardingSource) {
     if(item.setup){setSetupError('');setSetupSource(item);return;}
-    if (!canManage(item) || isSourceConnected(item) || pending.has(item.id)) return;
+    if (!canManage(item) || isSourceConnected(item) || item.state === 'disconnecting' || pending.has(item.id)) return;
     if (item.auth === 'api-key') {setSecretSource(item); setSecret('');}
     else void connect(item);
   }
@@ -112,10 +112,12 @@ export function SourcesOnboarding({adapter, initialSources, authorize = url => w
   const tile = (item: OnboardingSource) => {
     const done = isSourceConnected(item);
     const busy = pending.has(item.id);
+    const removing = item.state === 'disconnecting';
     const error = errors.get(item.id);
-    return <li className="connector-cell" key={item.id}><Button variant="plain" className="connector-tile" aria-disabled={done || busy || (!canManage(item) && !item.setup)} aria-busy={busy || undefined} aria-label={`${item.setup?'Set up':done ? 'Connected to' : busy ? 'Connecting to' : 'Connect'} ${item.name}`} aria-describedby={error ? `connector-error-${item.id}` : undefined} data-connected={done ? '' : undefined} data-error={error ? '' : undefined} onClick={() => choose(item)}>
-      <span className="connector-logo-slot" aria-hidden="true">{item.icon && <img className="connector-logo" src={item.icon} alt="" width={32} height={32} />}</span><span className="connector-name">{item.name}</span><span className="connector-tile-status" aria-hidden="true"><Icon name={done || busy ? 'check' : 'plus'} className={done || busy ? 'signal-mark' : undefined} /></span>
-    </Button>{item.setup&&<p className="connector-tile-note">{item.setup.requirement || 'Setup required'}</p>}{error && <p id={`connector-error-${item.id}`} className="connector-tile-error" role="alert">{error}</p>}</li>;
+    const label = removing ? 'Disconnecting' : item.setup ? 'Set up' : done ? 'Connected to' : busy ? 'Connecting to' : 'Connect';
+    return <li className="connector-cell" key={item.id}><Button variant="plain" className="connector-tile" disabled={removing} aria-disabled={removing || done || busy || (!canManage(item) && !item.setup)} aria-busy={busy || undefined} aria-label={`${label} ${item.name}`} aria-describedby={error ? `connector-error-${item.id}` : undefined} data-connected={done ? '' : undefined} data-error={error ? '' : undefined} onClick={() => choose(item)}>
+      <span className="connector-logo-slot" aria-hidden="true">{item.icon && <img className="connector-logo" src={item.icon} alt="" width={32} height={32} />}</span><span className="connector-name">{item.name}</span><span className="connector-tile-status" aria-hidden="true"><Icon name={removing ? 'loader' : done || busy ? 'check' : 'plus'} className={done || busy ? 'signal-mark' : undefined} /></span>
+    </Button>{removing&&<p className="connector-tile-note">Disconnecting</p>}{item.setup&&<p className="connector-tile-note">{item.setup.requirement || 'Setup required'}</p>}{error && <p id={`connector-error-${item.id}`} className="connector-tile-error" role="alert">{error}</p>}</li>;
   };
   // Connectors that can start now come first; the rest say what they are waiting for.
   const ready = matches.filter(item => !item.setup), locked = matches.filter(item => item.setup);

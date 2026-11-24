@@ -78,6 +78,15 @@ test('unconfigured OSS connectors remain visible and explain setup without start
   expect(connections).toBe(0);
 });
 
+test('onboarding keeps a connector unavailable while its removal runs', async ({page, request}) => {
+  await request.post('/__test/state', {data: {status: complete, sources: [
+    {id: 'slack', name: 'Slack', state: 'disconnecting', auth: 'oauth'},
+  ]}});
+  await page.goto('/onboarding/sources');
+  await expect(page.getByRole('button', {name: 'Disconnecting Slack'})).toBeDisabled();
+  await expect(page.getByRole('button', {name: 'Connect Slack', exact: true})).toHaveCount(0);
+});
+
 for(const viewport of [{name:'desktop',width:1280,height:813},{name:'mobile',width:390,height:844}]){
   test(`setup-required notes stay attached to compact connector tiles at ${viewport.name} width`,async({page,request})=>{
     const setup=(id:string,name:string)=>({id,name,state:'setup-required',setup:{title:`Set up ${name}`,body:'Ask your administrator to configure this connection.'}});

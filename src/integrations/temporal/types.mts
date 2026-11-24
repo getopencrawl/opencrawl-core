@@ -34,7 +34,7 @@ export interface IntegrationCommands {
   clearSecret(reference: IntegrationCommandReference): Promise<void>;
   fail(reference: IntegrationCommandReference, reason: IntegrationCommandFailure): Promise<void>;
   complete(reference: IntegrationCommandReference): Promise<void>;
-  listPending(input: {cursor?: string | null; limit?: number}): Promise<IntegrationCommandPage>;
+  listPending(input: {cursor?: string | null; limit?: number; operations?: readonly IntegrationOperation[]}): Promise<IntegrationCommandPage>;
 }
 /** requestLifecycle is implemented by the integration registry in the same
  * transaction as desired-state mutation and encrypted secret handoff. */
