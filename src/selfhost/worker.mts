@@ -8,7 +8,7 @@ import {hkdfSync} from 'node:crypto';
 import {createPostgresBoardState} from '../state/board.mjs';
 import {createSessionIngest} from '../sessions/ingest.mjs';
 import {sessionDeletionScheduler,sessionIndexingScheduler} from '../sessions/temporal/client.mjs';
-import {selfhostTemporalSettings} from './temporal-settings.mjs';
+import {selfhostTeamQueue,selfhostTemporalSettings} from './temporal-settings.mjs';
 import {selfhostState} from './state.mjs';
 import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
@@ -66,7 +66,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:async input=>({...await source.resolveDeletion(input),recoverIncognitoErasures:recoverErasures}),maxConcurrentActivityTaskExecutions:1});
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
   await Promise.all([identity.ready(),prepareTeamOperations(database)]);
-  const team=await createTeamWorker(config,'team-member-v1',{database,store,prefix,directory:identity.directory,organizationId:settings.organizationId,
+  const team=await createTeamWorker(config,selfhostTeamQueue(database),{database,store,prefix,directory:identity.directory,organizationId:settings.organizationId,
     credentials:{capture:createCaptureCredentials({store,prefix})}},bundleRoot+'/team.cjs');
   const workers=connectors?[sessions,deletions,connectors,team]:[sessions,deletions,team];
   // An operator sets this only after the receiver and worker rollout is complete.

@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {readFileSync} from 'node:fs';
 import type {connectorClient} from '../connectors/temporal/client.mjs';
 import type {WorkerConnectionOptions} from '../connectors/temporal/types.mjs';
@@ -25,4 +27,12 @@ export function selfhostTemporalSettings(env:NodeJS.ProcessEnv=process.env):{
   };
   if(apiKey){connectionOptions.apiKey=apiKey;connectionOptions.metadata={'temporal-namespace':namespace};}
   return {address,namespace,connectionOptions};
+}
+
+/** Other installations may share this operator's external Temporal namespace. */
+export function selfhostTeamQueue(database:Pick<ApplicationDatabase,'namespace'|'sourceIdentity'>) {
+  const source=database.sourceIdentity;
+  if (!source?.organizationId) throw Error('Team worker requires a bound installation');
+  const identity=JSON.stringify([database.namespace,source.organizationId,source.bucket,source.prefix]);
+  return 'team-member-v1-'+createHash('sha256').update(identity).digest('hex');
 }

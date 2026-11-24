@@ -4,7 +4,7 @@ import {sharedFilesLimits} from '../files/git-http.mjs';
 import {postgresSharedFiles} from '../files/store.mjs';
 import {createSearchActivity,startActivityRetention} from '../state/search-activity.mjs';
 import {loadContextSuggestions} from './context-suggestions.mjs';
-import {selfhostTemporalSettings} from './temporal-settings.mjs';
+import {selfhostTeamQueue,selfhostTemporalSettings} from './temporal-settings.mjs';
 import {hkdfSync} from 'node:crypto';
 import {createReplicasImport} from '../integrations/replicas-import.mjs';
 import {devinRecordingRuntime} from '../integrations/devin-recording-runtime.mjs';
@@ -42,7 +42,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   await prepareTeamOperations(database);
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
-  const writeTeamChange=durableTeamWrites(database,indexing.client,'team-member-v1');
+  const writeTeamChange=durableTeamWrites(database,indexing.client,selfhostTeamQueue(database));
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
   const devinState=createDevinState(database,Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'devin-first-turn-credentials-v1',32)));await devinState.ready();
   const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
