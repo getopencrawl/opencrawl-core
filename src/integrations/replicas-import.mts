@@ -46,7 +46,24 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:replicas-import:schema',0))");
+    // Even IF NOT EXISTS takes writer-conflicting locks for CREATE INDEX and ALTER TABLE.
+    // Inspect the same relations and additive columns the upgrade below prepares.
+    const schema=await client.query<{current:boolean}>(`SELECT
+      NOT EXISTS (SELECT 1 FROM unnest(ARRAY[
+        'imports','deferred','workspace_inventories','snapshots','threads','catalog_records',
+        'deferred_continuation','deferred_unconfirmed','deferred_chat','pending_evidence','threads_native'
+      ]) AS required(name) WHERE to_regclass('opencrawl_replicas_'||name) IS NULL)
+      AND to_regclass('opencrawl_replicas_deferred_active') IS NULL
+      AND NOT EXISTS (SELECT 1 FROM (VALUES
+        ('workspace_inventories','export_check'),('workspace_inventories','chat_versions'),
+        ('snapshots','evidence_complete'),('snapshots','evidence_cursor'),('snapshots','evidence_thread'),('snapshots','evidence_retry_at')
+      ) AS required(relation,column_name) WHERE NOT EXISTS (SELECT 1 FROM pg_attribute
+        WHERE attrelid=to_regclass('opencrawl_replicas_'||relation) AND attname=column_name AND NOT attisdropped)) AS current`);
+    if(schema.rows[0]!.current)return;
     await client.query('CREATE TABLE IF NOT EXISTS opencrawl_replicas_imports(namespace text NOT NULL,tenant text NOT NULL,state jsonb NOT NULL,credential bytea,PRIMARY KEY(namespace,tenant))');
+    // Every import operation, including older workers, reads this relation first.
+    // Allow that transaction to finish before taking any lock on its dependent tables.
+    await client.query('LOCK TABLE opencrawl_replicas_imports IN ACCESS EXCLUSIVE MODE');
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_deferred(
       namespace text NOT NULL, tenant text NOT NULL, id bigint GENERATED ALWAYS AS IDENTITY,
       retry_at timestamptz NOT NULL, chat jsonb NOT NULL, checkpoint jsonb NOT NULL, issue jsonb NOT NULL,
