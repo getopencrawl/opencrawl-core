@@ -22,13 +22,15 @@ import {authDenied,issueFor,retryDelay,type ImportIssue,type ImportOperation} fr
 export interface ReplicasImportStatus {
   id:string;organization:{id:string;name:string};phase:'preview'|'importing'|'complete'|'disconnected'|'failed';
   total:number;processed:number;imported:number;events:number;turns:number;pages:number;updatedAt:string;
-  requiresReconnect?:boolean;error?:string;waitingForSource?:boolean;blocked?:number;blockedChats?:number;retryAt?:string;
+  requiresReconnect?:boolean;error?:string;waitingForSource?:boolean;blocked?:number;blockedChats?:number;unavailable?:number;retryAt?:string;
 }
 export type ReplicasImportInput={action:'connect';apiKey:string}|{action:'stop';id:string};
 export interface ReplicasJob {tenantId:string;id:string}
 interface State extends ReplicasImportStatus,HistoryCheckpoint {
   background?:boolean;queue:ReplicasConversation[];next:string|null;listCursors:string[];completedSessions:string[];
   workspaceChecks?:{id:string;at:number}[];
+  // Persisted blocked counts every durable checkpoint, including parked entries, for rolling-worker compatibility.
+  sourceAvailabilityChecked?:boolean;
   nextCatalogAt?:string; dailyCatalog?:boolean; rosterCutoff?:string; archivePending?:boolean;
   initialCatalog?:boolean;freshSteps?:number;continuationSteps?:number;exportReviewSteps?:number;retryAttempts?:number;recentIssues?:ImportIssue[];
 }
@@ -90,18 +92,20 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       'The previous import stopped before recording the provider status. Reconnect to resume from the saved page.':state.error;
     return {id,organization,phase:phase==='importing'&&!state.background?'preview':phase,total,processed,imported,events,turns,pages,updatedAt,error,blocked,retryAt,waitingForSource};
   }
-  async function status(principal:Principal,includeBlockedChats=true){
+  async function status(principal:Principal,includeBlockedChats=true,reader:Pick<ApplicationDatabase['pool'],'query'>=database.pool){
     await ready();
-    const row=(await database.pool.query(`SELECT jsonb_strip_nulls(to_jsonb(summary)) AS state, (i.credential IS NULL AND summary.phase='complete') AS reconnect,
-      CASE WHEN $3 AND summary.blocked>0 THEN
-        (SELECT count(DISTINCT (chat->>'workspace_id',chat->>'chat_id'))::int
-           FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2) END AS blocked_chats
+    const row=(await reader.query(`SELECT jsonb_strip_nulls(to_jsonb(summary)) AS state, (i.credential IS NULL AND summary.phase='complete') AS reconnect,
+      counts.retrying,counts.blocked_chats
       FROM opencrawl_replicas_imports AS i
       CROSS JOIN LATERAL jsonb_to_record(i.state) AS summary(id text,organization jsonb,phase text,background boolean,
         total bigint,processed bigint,imported bigint,events bigint,turns bigint,pages bigint,"updatedAt" text,
         error text,blocked bigint,"retryAt" text,"waitingForSource" boolean)
+      LEFT JOIN LATERAL (SELECT count(*)::int AS retrying,
+        count(DISTINCT (chat->>'workspace_id',chat->>'chat_id')) FILTER(WHERE $3)::int AS blocked_chats
+        FROM opencrawl_replicas_deferred WHERE namespace=i.namespace AND tenant=i.tenant AND NOT (${confirmedAbsence})
+        AND summary.blocked>0) counts ON summary.blocked>0
       WHERE i.namespace=$1 AND i.tenant=$2`,[namespace,principal.tenantId,includeBlockedChats])).rows[0];
-    return row?{...visible(row.state as State),...(row.reconnect?{requiresReconnect:true}:{}),blockedChats:row.blocked_chats??undefined}:null;
+    return row?{...visible(row.state as State),...(row.retrying!=null?{blocked:row.retrying,unavailable:row.state.blocked-row.retrying}:{}),...(row.reconnect?{requiresReconnect:true}:{}),blockedChats:includeBlockedChats?row.blocked_chats??undefined:undefined}:null;
   }
   async function savePage(client:Pick<ApplicationDatabase['pool'],'query'>,principal:Principal,state:State,chat:ReplicasConversation,history:ReplicasHistory){
     const next=history.before_cursor??null;
@@ -151,9 +155,16 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       state.initialCatalog=true;state.dailyCatalog=true;state.rosterCutoff=new Date(now()-day).toISOString();state.listCursors=[];delete state.retryAt;
       state.nextCatalogAt=new Date(now()+day).toISOString();
     }
+    const pending=deferredHistory(client,namespace,principal.tenantId);
+    if(!state.sourceAvailabilityChecked){
+      if(state.blocked){
+        await pending.reconcileRosters(state.id,now());
+        if(!state.queue.length&&!state.next&&!state.initialCatalog&&!(await pending.oldest(false,now())))delete state.retryAt;
+      }
+      state.sourceAvailabilityChecked=true;
+    }
     if(state.retryAt&&Date.parse(state.retryAt)>now())return;
     delete state.retryAt;
-    const pending=deferredHistory(client,namespace,principal.tenantId);
     const hasFresh=Boolean(state.queue.length||state.next||state.initialCatalog);
     const reviewScope:[string,string,string]=[namespace,principal.tenantId,state.id];
     const sweep=Boolean(state.workspaceChecks?.length);
@@ -186,8 +197,18 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       // Once the catalog is drained, let a readable long transcript advance
       // while still servicing the oldest unrelated retry at least every fifth step.
       const preferContinuation=!hasFresh&&(state.continuationSteps??0)<freshStepsPerRetry;
-      const next=await pending.oldest(preferContinuation,now(),state.nextCatalogAt?Date.parse(state.nextCatalogAt):undefined);
-      if(!next)throw new Error('Replicas deferred checkpoint missing');
+      const next=await pending.oldest(preferContinuation,now());
+      if(!next){
+        if(hasFresh){await processPage(principal,state,api,pending,false,client);return;}
+        const nextReview=await nextWorkspaceExportReview(client,reviewScope,sweep,state.nextCatalogAt,true);
+        if(nextReview===undefined){
+          const {rows:[ledger]}=await client.query('SELECT count(*)::int AS total FROM opencrawl_replicas_deferred WHERE namespace=$1 AND tenant=$2',[namespace,principal.tenantId]);
+          if(ledger.total!==state.blocked)throw new Error('Replicas deferred checkpoint count mismatch');
+          state.phase='complete';delete state.waitingForSource;delete state.error;
+        }else if(nextReview<=now()){await review();}
+        else {state.retryAt=new Date(nextReview).toISOString();state.waitingForSource=true;}
+        return;
+      }
       const {row,wake}=next;
       if(wake<=now()){
         state.continuationSteps=preferContinuation&&row.issue.continuation&&row.checkpoint.before?(state.continuationSteps??0)+1:0;
@@ -211,7 +232,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         const nextReview=await nextWorkspaceExportReview(client,reviewScope,sweep,state.nextCatalogAt);
         if(nextReview!==undefined&&nextReview<=now()){await review();return;}
         state.retryAt=new Date(Math.min(wake,nextReview??Infinity,state.nextCatalogAt?Date.parse(state.nextCatalogAt):Infinity)).toISOString();
-        state.waitingForSource=await pending.onlyAbsent();
+        state.waitingForSource=false;
         console.info(JSON.stringify({event:'replicas.import.wait',tenantId:principal.tenantId,importId:state.id,
           pendingRecords:state.blocked,waitingForSource:state.waitingForSource,retryAt:state.retryAt,nextCatalogAt:state.nextCatalogAt,
           deferredAt:row.retry_at.toISOString(),deferredWakeAt:new Date(wake).toISOString(),
@@ -277,7 +298,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
             if(!confirmed)throw new ReplicasPageError('empty_unverified','Replicas could not confirm this empty chat in its workspace.');
           }
         }
-        if(retry&&state.blocked)await pending.releaseBackoff(chat,state,new Date(now()).toISOString(),Boolean(history.events.length||replicasTurns(history).length));
+        if(state.blocked&&(retry||history.events.length||replicasTurns(history).length))await pending.releaseBackoff(chat,state,new Date(now()).toISOString(),Boolean(history.events.length||replicasTurns(history).length));
         delete state.waitingForSource;
         operation='ingest';
         await savePage(client,principal,state,chat,history);
@@ -345,7 +366,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       const priorChatAttempts=Math.max(state.chatAttempts??0,missing?previousMissingAttempt:0);
       const attempt=(decision==='defer'?priorChatAttempts:state.retryAttempts??0)+1;
       const wait=retryDelay(attempt,decision==='defer'?60_000:2_000,error instanceof ReplicasProviderError?error.retryAfterMs:0);
-      let retryAt=new Date(now()+wait).toISOString();
+      const retryAt=new Date(now()+wait).toISOString();
       const issue:ImportIssue={...fields,importId:state.id,decision,attempt,identityCheck,elapsedMs:Math.max(0,now()-started),
         ...(error!==cause&&cause instanceof ReplicasProviderError?{originalHttpStatus:cause.status,originalOperation:cause.operation,originalRequestId:cause.requestId}:{}),at:new Date(now()).toISOString(),
         ...(decision==='defer'||decision==='retry'?{retryAt}:{}),
@@ -359,12 +380,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         const ids=observation.ids;
         if(ids){
           const listed=ids.has(chat.chat_id);
-          if(!listed){
-            issue.workspaceAbsentAt=new Date(observation.checkAt).toISOString();
-            const backstop=attempt>=3?now()+7*day:observation.next;
-            retryAt=new Date(Math.max(Date.parse(retryAt),backstop)).toISOString();
-            issue.retryAt=retryAt;
-          }
+          if(!listed)issue.workspaceAbsentAt=new Date(observation.checkAt).toISOString();
           if(observation.fresh){
             const saved=new Set(state.completedSessions);
             issue.workspaceInventory={result:listed?'listed':'absent',chats:ids.size,
@@ -432,7 +448,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         if(identity.caller!=='organization_api_key')throw replicasError('Create an organization API key in Replicas Settings → API Keys.');
         if(state?.background&&(state.phase==='importing'||state.phase==='complete'&&credential)){
           if(state.organization.id!==identity.organization.id)throw replicasError('This workspace already has a Replicas import in progress.',409);
-          return visible(state);
+          return state.blocked?await status(principal,true,client):visible(state);
         }
         const resume=state&&(['failed','importing','disconnected'].includes(state.phase)||state.phase==='complete'&&state.organization.id===identity.organization.id)?state:undefined;
         if(resume&&resume.organization.id!==identity.organization.id)throw replicasError('Use the Replicas organization that owns the saved import.',409);
@@ -447,7 +463,11 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         await client.query('DELETE FROM opencrawl_replicas_catalog_records WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
         if(resume?.id)await client.query(`UPDATE opencrawl_replicas_snapshots SET import_id=$4 WHERE namespace=$1 AND tenant=$2 AND import_id=$3`,[namespace,principal.tenantId,resume.id,generation]);
         await client.query('DELETE FROM opencrawl_replicas_snapshots WHERE namespace=$1 AND tenant=$2 AND import_id<>$3',[namespace,principal.tenantId,generation]);
-        delete state.waitingForSource;
+        if(resume?.id){
+          // A new credential must verify source absence independently.
+          await client.query("UPDATE opencrawl_replicas_deferred SET issue=issue-'workspaceAbsentAt' WHERE namespace=$1 AND tenant=$2 AND issue ? 'workspaceAbsentAt'",[namespace,principal.tenantId]);
+        }
+        delete state.sourceAvailabilityChecked;delete state.waitingForSource;
         state.id=generation;state.background=true;state.retryAttempts=0;delete state.error;delete state.retryAt;
         state.phase=state.queue.length||state.initialCatalog||state.next||state.blocked?'importing':'complete';
         if(!resume)await step(client,principal,state,api);
@@ -469,7 +489,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         }
       }
       if(state.phase==='importing'&&!state.queue.length&&!state.next&&!state.initialCatalog&&!state.blocked){
-        const next=await nextWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length),state.nextCatalogAt);
+        const next=await nextWorkspaceExportReview(client,[namespace,principal.tenantId,state.id],Boolean(state.workspaceChecks?.length),state.nextCatalogAt,true);
         if(next===undefined)state.phase='complete';
         else if(next>now()){state.retryAt=new Date(next).toISOString();state.waitingForSource=true;}
       }
@@ -490,6 +510,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         console.info(JSON.stringify({event:'replicas.import.transition',tenantId:principal.tenantId,importId:state.id,
           action:input.action,phase:state.phase,processed:state.processed,total:state.total,blocked:state.blocked??0,pages:state.pages}));
       }
+      if(input.action!=='step'&&state.blocked)return status(principal,true,client);
       return {...visible(state),...(input.action==='step'&&state.archivePending?{archivePending:true}:{})};
     });
   }
@@ -501,7 +522,8 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       account:history?.organization.name,synced:history?.imported,units:['session','sessions'],
       message:phase==='failed'?history?.error:undefined,
       lastSyncedAt:phase==='complete'?history?.updatedAt:undefined,
-      rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'}]:[],history:history??undefined};
+      rows:history&&state!=='disconnected'?[{label:'Sessions',count:history.imported,done:phase==='complete'},
+        ...(history.unavailable?[{label:'Unavailable history entries',count:history.unavailable,done:true}]:[])]:[],history:history??undefined};
   }
   const capturePairs:CaptureLookup=async(tenant,visible)=>{await ready();return visibleCapturePairs(database.pool,namespace,tenant,visible);};
   const currentCapture:CurrentCaptureLookup=async(principal,current)=>{await ready();return currentReplicasCapture(database.pool,namespace,principal,current);};
