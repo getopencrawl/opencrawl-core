@@ -2,6 +2,7 @@ import {digest} from '../scope.mjs';
 import type {IntegrationRecord} from '../../integrations/types.mjs';
 import type {IntegrationRegistry} from '../../integrations/ports.mjs';
 import {INDEXED_PROVIDERS, eligible, denied} from '../../integrations/resolver.mjs';
+import {CONNECTOR_PURGE_SETTLE_MS} from '../../integrations/purge.mjs';
 
 export type ConnectorState = 'active' | 'disconnected';
 export interface RegistryPosition {tenantId: string; integrationId: string}
@@ -29,9 +30,6 @@ export function connectorMaintenanceJob(sourceId: string, generation: string, re
   if (record.status === 'disconnected') job.disconnectedAt = record.disconnectedAt;
   return {job, id: digest([sourceId, generation, job.tenantId, job.userId, job.connectionId, job.disconnectedAt || 'active'])};
 }
-
-// The longest indexing activity can finish a write for ten minutes after disconnect.
-const settleMs = 11 * 60_000;
 
 export function connectorMaintenance({sourceId, environment, generation, registry, listPage, ensureActive, purge, now = Date.now}: MaintenanceOptions) {
   if (!sourceId || !/^v[1-9]\d*$/.test(generation)) throw new Error('Invalid connector maintenance binding');
@@ -82,7 +80,7 @@ export function connectorMaintenance({sourceId, environment, generation, registr
       await purge(record);
       // A pass started before the deadline may have missed a final write, even
       // if deletion took long enough to finish after the deadline.
-      if (started < at + settleMs) return at + settleMs;
+      if (started < at + CONNECTOR_PURGE_SETTLE_MS) return at + CONNECTOR_PURGE_SETTLE_MS;
       await registry.update(record, {searchPurge: {generation, disconnectedAt: job.disconnectedAt}}, {
         whenStatus: ['disconnected'], whenFields: {disconnectedAt: job.disconnectedAt},
       });

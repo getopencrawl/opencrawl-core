@@ -5,11 +5,11 @@ import {deleteConnectorSchedules} from '../dist/src/integrations/purge.mjs';
 
 const start = Date.parse('2026-01-01T00:00:00Z');
 const make = (tenantId, changes = {}) => ({tenantId, userId:'user_alice', integrationId:'int_'+'1'.repeat(26),
-  environment:'selfhost', provider:'slack', scope:'team', status:'disconnected', disconnectedAt:new Date(start).toISOString(), ...changes});
+  environment:'production', provider:'slack', scope:'team', status:'disconnected', disconnectedAt:new Date(start).toISOString(), ...changes});
 function fixture(rows) {
   let now = start;
   const writes = [];
-  const activity = () => connectorMaintenance({sourceId:'test',environment:'selfhost',generation:'v1',now:()=>now,
+  const activity = () => connectorMaintenance({sourceId:'test',environment:'production',generation:'v1',now:()=>now,
     listPage:async()=>({records:rows,cursor:null}),
     registry:{get:async(t,u,id)=>rows.find(r=>r.tenantId===t&&r.userId===u&&r.integrationId===id)??null,
       async update(row, patch, options) {
@@ -34,7 +34,7 @@ test('separate owners with colliding connection IDs settle independently and the
   assert.deepEqual((await f.activity().listConnectorMaintenance(scan)).jobs.map(x=>x.job.tenantId),['org_b']);
 });
 test('activity retries, stale inputs and malformed references cannot target a reconnected or foreign connection',async()=>{
-  const a=make('org_a'),f=fixture([a,make('org_b',{environment:'production'}),make('org_c',{disconnectedAt:'bad'})]);
+  const a=make('org_a'),f=fixture([a,make('org_b',{environment:'selfhost'}),make('org_c',{disconnectedAt:'bad'})]);
   const {jobs}=await f.activity().listConnectorMaintenance({sourceId:'test',status:'disconnected'});
   assert.equal(jobs.length,1);
   const {job}=jobs[0];

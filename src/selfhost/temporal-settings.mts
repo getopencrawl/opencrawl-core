@@ -1,4 +1,3 @@
-import {connectorTransitionScheduler} from '../connectors/temporal/client.mjs';
 import {readFileSync} from 'node:fs';
 import type {connectorClient} from '../connectors/temporal/client.mjs';
 import type {WorkerConnectionOptions} from '../connectors/temporal/types.mjs';
@@ -26,9 +25,4 @@ export function selfhostTemporalSettings(env:NodeJS.ProcessEnv=process.env):{
   };
   if(apiKey){connectionOptions.apiKey=apiKey;connectionOptions.metadata={'temporal-namespace':namespace};}
   return {address,namespace,connectionOptions};
-}
-
-export function selfhostConnectorTransition(env:NodeJS.ProcessEnv, organizationId:string, temporal:ReturnType<typeof selfhostTemporalSettings>) {
-  return connectorTransitionScheduler({...temporal,sourceId:'selfhost-'+organizationId+'-v1',generation:'v1',
-    taskQueue:(env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1')+'-maintenance-v1'});
 }
