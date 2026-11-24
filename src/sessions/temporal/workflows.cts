@@ -109,7 +109,10 @@ async function repairReplicasLiveV1(job:ReplicasRepairJob):Promise<void>{
   for(let step=0;step<200;step++){
     pending=false;
     const delay=await liveRepairs.repairReplicasLivePage(job);
-    if(delay===null)return;
+    if(delay===null){
+      if(pending)continue;
+      return;
+    }
     if(delay>0)await condition(()=>pending,delay);
     if(workflowInfo().continueAsNewSuggested)break;
   }

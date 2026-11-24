@@ -1,3 +1,4 @@
+import {ReplicasProviderError} from '../../integrations/replicas-api.mjs';
 import {ApplicationFailure} from '@temporalio/common';
 import {activityInfo,Context} from '@temporalio/activity';
 import type {ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
@@ -18,7 +19,12 @@ export function replicasActivities(imports:Pick<ReplicasImport,'runStep'|'repair
     runReplicasImportStep,
     async repairReplicasLivePage(job:ReplicasRepairJob){
       try{return await imports.repairLiveCapture(job,Context.current().cancellationSignal);}
-      catch{throw ApplicationFailure.retryable('Replicas live repair checkpoint unavailable','ReplicasRepairUnavailable');}
+      catch(error){
+        if(error instanceof ReplicasProviderError&&error.status===429){
+          throw ApplicationFailure.create({message:'Replicas live repair rate limited',type:'ReplicasRateLimited',nextRetryDelay:Math.max(30000,error.retryAfterMs??0)});
+        }
+        throw ApplicationFailure.retryable('Replicas live repair checkpoint unavailable','ReplicasRepairUnavailable');
+      }
     },
     // Activities scheduled by pre-upgrade workflow tasks keep their boolean contract.
     async importReplicasPage(job:ReplicasJob){return (await runReplicasImportStep(job)).done;},

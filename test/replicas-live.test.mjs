@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
-import {TestWorkflowEnvironment} from '@temporalio/testing';
+import {ReplicasProviderError} from '../dist/src/integrations/replicas-api.mjs';
+import {MockActivityEnvironment,TestWorkflowEnvironment} from '@temporalio/testing';
 import {Worker} from '@temporalio/worker';
 import {sessionIndexingScheduler} from '../dist/src/sessions/temporal/client.mjs';
 import {replicasActivities} from '../dist/src/sessions/temporal/replicas.mjs';
@@ -25,14 +26,15 @@ async function until(predicate){
 async function liveService(t,options){
   const env=await TestWorkflowEnvironment.createLocal(),taskQueue='replicas-live-'+randomUUID();
   const scheduler=sessionIndexingScheduler({address:env.address,namespace:env.namespace??'default',taskQueue,sourceId:'fixture',generation:'v1'});
+  let handle;
   const service=createReplicasImport({...options,schedule:async job=>{
-    if(job.kind==='live-repair')await scheduler.scheduleReplicasImport(job);
+    if(job.kind==='live-repair')handle=env.client.workflow.getHandle(await scheduler.scheduleReplicasImport(job));
   }});
   const worker=await Worker.create({connection:env.nativeConnection,namespace:env.namespace??'default',taskQueue,
     workflowsPath:new URL('../dist/src/sessions/temporal/workflows.cjs',import.meta.url).pathname,activities:replicasActivities(service)});
   const run=worker.run();
   t.after(async()=>{worker.shutdown();await run;await scheduler.close();await env.teardown();});
-  return service;
+  return {...service,repairHandle:()=>handle};
 }
 test('Replicas streams share the history identity, resume after storage, repair gaps, and require the exact authorized scope',async t=>{
   const database=await applicationDatabaseFixture(t),records=[],requests=[],streams=[];
@@ -70,7 +72,7 @@ test('Replicas streams share the history identity, resume after storage, repair 
     }});
   await service.action(owner,{action:'connect',apiKey:'fixture-org-key'});
   const baseline=requests.length;
-  assert.equal(await service.repairLiveCapture({kind:'live-repair',tenantId:'unbound',organizationId:org,id:randomUUID()},new AbortController().signal),null);
+  await assert.rejects(service.repairLiveCapture({kind:'live-repair',tenantId:'unbound',organizationId:org,id:randomUUID()},new AbortController().signal),/does not serve/);
   for(const scope of [{tenantId:'other',organizationId:org},{tenantId:owner.tenantId,organizationId:otherOrg}]){
     const stop=new AbortController();const done=service.runLiveCapture(scope,stop.signal);
     await delay(100);stop.abort();await done;
@@ -101,6 +103,7 @@ test('Replicas streams share the history identity, resume after storage, repair 
   assert.equal(repaired.events[0].id,before.events[0].id);
   assert.deepEqual(repaired.owner,before.owner);
   await until(async()=>!(await database.pool.query('SELECT gap_since FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0].gap_since);
+  await until(async()=>{const handle=service.repairHandle();return handle&&(await handle.describe()).status.name==='COMPLETED';});
   const agent={tenantId:owner.tenantId,userId:'workspace-agent',owner:{kind:'shared',provider:'replicas',organizationId:org,workspaceId:workspace,environmentId:randomUUID()}};
   const own=async(harness,sessionId)=>(await service.currentCapture(agent,{harness,sessionId}))?.sessionId;
   assert.equal(await own('claude-code',claudeThread),'replicas-chat:'+chatId);
@@ -232,12 +235,12 @@ test('ancillary-only reads flush at the deadline, at the buffer limit and at EOF
 test('repair resumes a committed page and fences newer gap and tail intents',async t=>{
   const database=await applicationDatabaseFixture(t),key=randomBytes(32),scope={tenantId:owner.tenantId,organizationId:org};
   const binding=[database.namespace,owner.tenantId,org,workspace];
-  let release,entered,failWake=false;
+  let release,entered,failWake=false,discovered=0;
   const requested=[],written=[];
   const request=async(input,options)=>{
     const url=new URL(input);
     if(url.pathname.endsWith('/whoami'))return Response.json({caller:'organization_api_key',organization:{id:org,name:'Fixture'}});
-    if(url.pathname==='/v1/replica')return Response.json({page:1,total_pages:1,replicas:[]});
+    if(url.pathname==='/v1/replica'){discovered++;return Response.json({page:1,total_pages:1,replicas:[]});}
     if(url.pathname.endsWith('/conversations'))return Response.json({conversations:[chat],total:1,next_cursor:null});
     assert.equal(new Headers(options.headers).get('replicas-org-id'),org);
     assert.equal(url.pathname,'/v1/replica/'+workspace+'/history');
@@ -254,27 +257,30 @@ test('repair resumes a committed page and fences newer gap and tail intents',asy
   },ingest:async(_p,b)=>{written.push(...b.events.map(e=>e.id));}});
   const connect=async service=>{
     submitted.length=0;
-    const stop=new AbortController(),running=service.runLiveCapture(scope,stop.signal);
-    await until(()=>submitted.length>0);
+    const before=discovered,stop=new AbortController(),running=service.runLiveCapture(scope,stop.signal);
+    await until(()=>discovered>before);
     return async()=>{stop.abort();await running;};
   };
   let service=open();
   const {id}=await service.action(owner,{action:'connect',apiKey:'test-private-key'});
-  failWake=true;
   let close=await connect(service);
   const job={...scope,id,kind:'live-repair'},signal=new AbortController().signal;
   try{
     assert.equal(await service.repairLiveCapture({...job,id:randomUUID()},signal),null);
-    assert.equal(await service.repairLiveCapture({...job,tenantId:'other'},signal),null);
-    await until(()=>submitted.length>=2);
+    await assert.rejects(service.repairLiveCapture({...job,tenantId:'other'},signal),/does not serve/);
+    assert.deepEqual(submitted,[],'an idle collector starts no workflow');
     await database.pool.query(`INSERT INTO opencrawl_replicas_live_workspaces(namespace,tenant,organization,workspace,gap_since,gap_generation)
       VALUES($1,$2,$3,$4,now()-interval '1 hour',1)`,binding);
+    // Simulate a crash after the SQL commit and before its Temporal wake.
+    await close();service=open();failWake=true;close=await connect(service);
+    await until(()=>submitted.length>=2);
     await service.repairLiveCapture(job,signal); // select a catalog page
     await service.repairLiveCapture(job,signal); // commit the first history page
     await close();service=open();close=await connect(service);
     await service.repairLiveCapture(job,signal);
     assert.deepEqual(requested,[null,'next']);
     assert.equal(new Set(written).size,2,'occurrences across the checkpoint retain distinct event IDs');
+    assert.equal(await service.repairLiveCapture(job,signal),null,'the workflow can finish as soon as the queue drains');
     const position=async()=>(await database.pool.query('SELECT gap_since,gap_generation FROM opencrawl_replicas_live_workspaces WHERE namespace=$1',[database.namespace])).rows[0];
     assert.equal((await position()).gap_since,null);
 
@@ -300,4 +306,20 @@ test('repair resumes a committed page and fences newer gap and tail intents',asy
     await service.action(owner,{action:'stop',id});
     assert.equal(await service.repairLiveCapture(job,signal),null);
   }finally{release?.resolve();await close();}
+});
+
+test('provider rate limits tell Temporal when the repair may run again',async()=>{
+  const activity=new MockActivityEnvironment();
+  const job={kind:'live-repair',tenantId:'fixture',organizationId:org,id:randomUUID()};
+  for(const operation of ['identity','history']){
+    const activities=replicasActivities({repairLiveCapture:async()=>{
+      throw new ReplicasProviderError('private provider response',429,operation,undefined,120000);
+    }});
+    await assert.rejects(activity.run(activities.repairReplicasLivePage,job),error=>{
+      assert.equal(error.type,'ReplicasRateLimited');
+      assert.equal(error.nextRetryDelay,120000);
+      assert.equal(error.message,'Replicas live repair rate limited');
+      return true;
+    });
+  }
 });

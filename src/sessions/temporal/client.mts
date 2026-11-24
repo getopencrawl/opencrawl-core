@@ -126,7 +126,7 @@ export function sessionIndexingScheduler(config:SessionIndexingBinding & {addres
         await current.connection.withDeadline(Date.now()+10000,()=>current.client.workflow.signalWithStart('repairReplicasLiveV1',{
           workflowId,taskQueue:config.taskQueue,args:[job],signal:'replicasRepairPending',signalArgs:[],
           workflowIdReusePolicy:WorkflowIdReusePolicy.ALLOW_DUPLICATE}));
-        return;
+        return workflowId;
       }
       await current.connection.withDeadline(Date.now()+10000,()=>current.client.workflow.start('importReplicasHistoryV1',{
         workflowId:'replicas-history-'+job.id,taskQueue:config.taskQueue,args:[job],workflowIdConflictPolicy:'USE_EXISTING',

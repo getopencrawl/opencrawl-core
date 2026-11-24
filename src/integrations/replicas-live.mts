@@ -2,8 +2,9 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {z} from 'zod';
 import type {ApplicationDatabase,ApplicationTransaction} from '../state/postgres.mjs';
 import {writeReplicasEvents,type ReplicasIngest} from './replicas-batch.mjs';
+import type {SessionEvent} from '../sessions/types.mjs';
 import {record} from '../sessions/replicas-record.mjs';
-import {replicasRecords,replicasSession} from './replicas-events.mjs';
+import {replicasRecords,replicasSession,replicasDigest,replicasPageEntries,projectReplicasEntries} from './replicas-events.mjs';
 import {replicasThread,saveReplicasThread} from './replicas-threads.mjs';
 import {replicasSenderEvidence} from './replicas-senders.mjs';
 import {replicasLiveApi} from './replicas-live-api.mjs';
@@ -14,8 +15,7 @@ import {sealedEnvelope} from './credential-vault.mjs';
 export interface ReplicasLiveScope {tenantId:string;organizationId:string}
 export interface ReplicasRepairJob extends ReplicasLiveScope {kind:'live-repair';id:string}
 interface GapPosition {
-  generation:string; catalog:string|null; catalogCursors:string[]; chats:ReplicasConversation[];
-  before:string|null; historyCursors:string[]; occurrences:Record<string,number>;
+  generation:string; catalog:string|null; chats:Array<Pick<ReplicasConversation,'workspace_id'|'chat_id'|'title'|'workspace_name'|'senders'>>;before:string|null;
 }
 type Connection={id:string;credential:Buffer};
 type Api=ReturnType<typeof replicasLiveApi>;
@@ -24,6 +24,7 @@ const pause=(ms:number,signal:AbortSignal)=>delay(ms,undefined,{signal}).catch((
 const retry=(error:unknown,attempt:number)=>Math.max(error instanceof ReplicasProviderError?error.retryAfterMs??0:0,Math.min(30000,300*2**Math.min(attempt,7)));
 const liveState='opencrawl_replicas_live_workspaces';
 const tails='opencrawl_replicas_live_tails';
+const markers='opencrawl_replicas_live_repair_markers';
 
 function diagnostic(scope:ReplicasLiveScope,operation:string,error:unknown){
   console.warn(JSON.stringify({event:'replicas.live.retry',tenantId:scope.tenantId,operation,
@@ -35,7 +36,8 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
 }){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   // Only worker-configured scopes may resolve a repair job to a provider credential.
-  const repairs=new Map<string,(job:ReplicasRepairJob,signal:AbortSignal)=>Promise<number|null>>();
+  type Repair=(job:ReplicasRepairJob,signal:AbortSignal)=>Promise<number|null>;
+  const repairs=new Map<string,Set<Repair>>();
   const scopeKey=(scope:ReplicasLiveScope)=>JSON.stringify([scope.tenantId,scope.organizationId]);
   async function run(scope:ReplicasLiveScope,stop:AbortSignal){
     if(!scope.tenantId?.trim()||!uuid.safeParse(scope.organizationId).success)throw new Error('Explicit Replicas live capture scope required');
@@ -50,9 +52,8 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
         await action(tx);
       });
     }
-    async function capture(tx:ApplicationTransaction,workspace:string,chat:string,history:ReplicasHistory,mode:'history'|'live',title?:string,occurrences:Record<string,number>={},catalog:Record<string,unknown>={}){
+    async function capture(tx:ApplicationTransaction,workspace:string,chat:string,history:ReplicasHistory,mode:'history'|'live',title?:string,catalog:Record<string,unknown>={},events:SessionEvent[]=replicasRecords(chat,history)){
       const identity=replicasSession(scope.tenantId,scope.organizationId,workspace,chat);
-      const events=replicasRecords(chat,history,occurrences);
       if(events.length){
         const evidence=replicasSenderEvidence({...catalog,workspace_id:workspace},history);
         // History and live frames have the same provider records and immutable IDs.
@@ -153,6 +154,14 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
     }
     function notifyRepair(active:Connection){pendingWake=active;dispatchRepair();}
 
+    async function nextRepairDelay(){
+      const result=await database.pool.query<{delay:number|null}>(`SELECT ceil(extract(epoch FROM (min(at)-now()))*1000)::float8 AS delay FROM (
+        SELECT min(due) AS at FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 UNION ALL
+        SELECT min(retry_at) FROM ${liveState} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND gap_since IS NOT NULL) pending`,binding);
+      const delay=result.rows[0]?.delay;
+      return delay==null?null:Math.max(0,delay);
+    }
+
     // One Activity advances at most one tail and one catalog/history page. All
     // provider data, continuation tokens and occurrence counts stay in Postgres.
     async function repair(job:ReplicasRepairJob,signal:AbortSignal):Promise<number|null>{
@@ -160,31 +169,28 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
       signal=AbortSignal.any([stop,signal]);
       const active=(await database.pool.query<Connection>(connectionSql+" AND state->>'id'=$4",[...binding,job.id])).rows[0];
       if(!active)return null;
-      const tail=(await database.pool.query<{workspace:string;chat:string;generation:string;tail_id:string}>(`SELECT workspace,chat,generation,tail_id FROM ${tails}
+      const tail=(await database.pool.query<{workspace:string;chat:string;generation:string;row_version:string}>(`SELECT workspace,chat,generation,xmin::text AS row_version FROM ${tails}
         WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND due<=now() ORDER BY due LIMIT 1`,binding)).rows[0];
       const gap=(await database.pool.query<{workspace:string;gap_since:Date;gap_generation:string;gap_step:string;gap_position:GapPosition|null}>(`SELECT workspace,gap_since,gap_generation,gap_step,gap_position FROM ${liveState}
         WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND gap_since IS NOT NULL AND retry_at<=now() ORDER BY retry_at,workspace LIMIT 1`,binding)).rows[0];
-      if(!tail&&!gap){
-        const pending=await database.pool.query<{delay:number|null}>(`SELECT ceil(extract(epoch FROM (min(at)-now()))*1000)::float8 AS delay FROM (
-          SELECT min(due) AS at FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 UNION ALL
-          SELECT min(retry_at) FROM ${liveState} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND gap_since IS NOT NULL) pending`,binding);
-        return Math.max(0,Math.min(60_000,pending.rows[0]?.delay??60_000));
-      }
+      if(!tail&&!gap)return nextRepairDelay();
       const api=replicasLiveApi(envelope.open(identityPath,active.credential).toString(),scope.organizationId,signal,request);
       const who=await api.identity();
       if(who.caller!=='organization_api_key'||who.organization.id!==scope.organizationId)throw new Error('Replicas repair organization identity mismatch');
       if(tail){
-        const tailKey=[...binding,tail.workspace,tail.chat,tail.generation,tail.tail_id];
+        // A deleted and recreated row may reuse a generation; its PostgreSQL row version distinguishes it.
+        const tailKey=[...binding,tail.workspace,tail.chat,tail.generation,tail.row_version];
         try{
           const history=await api.history({workspace_id:tail.workspace,chat_id:tail.chat});
           await hold(active,async tx=>{
             await capture(tx,tail.workspace,tail.chat,history,'history');
-            await tx.query(`DELETE FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6 AND tail_id=$7`,tailKey);
+            await tx.query(`DELETE FROM ${tails} WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6 AND xmin::text=$7`,tailKey);
           });
         }catch(error){
           signal.throwIfAborted();
+          if(error instanceof ReplicasProviderError&&error.status===429)throw error;
           diagnostic(scope,'turn_history',error);
-          await hold(active,async tx=>{await tx.query(`UPDATE ${tails} SET due=now()+$8*interval '1 millisecond' WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6 AND tail_id=$7`,[...tailKey,Math.max(30000,retry(error,1))]);});
+          await hold(active,async tx=>{await tx.query(`UPDATE ${tails} SET due=now()+$8*interval '1 millisecond' WHERE namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND chat=$5 AND generation=$6 AND xmin::text=$7`,[...tailKey,Math.max(30000,retry(error,1))]);});
         }
       }
       if(!gap)return 0;
@@ -192,11 +198,21 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
       const stateKey=[...binding,workspace,generation,gap.gap_step];
       const fence='namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4 AND gap_generation=$5 AND gap_step=$6 AND gap_since IS NOT NULL';
       const position:GapPosition=gap.gap_position?.generation===generation ? gap.gap_position :
-        {generation,catalog:null,catalogCursors:[],chats:[],before:null,historyCursors:[],occurrences:{}};
+        {generation,catalog:null,chats:[],before:null};
+      const markerScope=[...binding,workspace,generation];
+      const markerWhere='namespace=$1 AND tenant=$2 AND organization=$3 AND workspace=$4';
       const checkpoint=async(tx:ApplicationTransaction)=>{
         const done=!position.catalog&&!position.chats.length;
-        await tx.query(`UPDATE ${liveState} SET gap_since=CASE WHEN $7 THEN NULL ELSE gap_since END,gap_position=$8::jsonb,gap_step=gap_step+1,retry_at=now() WHERE ${fence}`,
-          [...stateKey,done,done?null:JSON.stringify(position)]);
+        const advanced=await tx.query(`UPDATE ${liveState} SET gap_since=CASE WHEN $7 THEN NULL ELSE gap_since END,
+          gap_position=$8::jsonb,gap_step=gap_step+1,retry_at=now() WHERE ${fence}`,[...stateKey,done,done?null:JSON.stringify(position)]);
+        if(!advanced.rowCount)return false;
+        await tx.query(`DELETE FROM ${markers} WHERE ${markerWhere} AND generation ${done?'<=':'<'} $5`,markerScope);
+        return true;
+      };
+      const rememberCursor=async(tx:ApplicationTransaction,lane:string,cursor:string)=>{
+        const inserted=await tx.query(`INSERT INTO ${markers}(namespace,tenant,organization,workspace,generation,lane,marker)
+          VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING 1`,[...markerScope,lane,replicasDigest(cursor)]);
+        if(!inserted.rowCount)throw new Error('Repeated Replicas repair cursor');
       };
       try{
         const chat=position.chats[0];
@@ -204,29 +220,55 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
           if(chat.workspace_id!==workspace)throw new Error('Replicas workspace export scope mismatch');
           const history=await api.history(chat,position.before);
           const next=history.before_cursor??null;
-          if(history.has_more&&!next||next&&position.historyCursors.includes(next))throw new Error('Invalid Replicas history continuation');
+          if(history.has_more&&!next)throw new Error('Missing Replicas history continuation');
+          const entries=replicasPageEntries(chat.chat_id,history),lane='records:'+chat.chat_id;
           await hold(active,async tx=>{
-            await capture(tx,workspace,chat.chat_id,history,'history','[Replicas history] '+(chat.title??chat.workspace_name),position.occurrences,chat);
-            const times=history.events.map(e=>Date.parse(String(record(e)?.timestamp)));
-            if(next&&(history.codex_asp_transcript||!times.length||!times.every(t=>Number.isFinite(t)&&t<since.getTime()))){
-              position.before=next;position.historyCursors.push(next);
-            }else{
-              position.chats.shift();position.before=null;position.historyCursors=[];position.occurrences={};
+            // Duplicate deliveries share this checkpoint. Its lock never covers the live cursor writer.
+            const lock=JSON.stringify(['replicas-live-gap',...markerScope]);
+            await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[lock]);
+            const current=await tx.query(`SELECT 1 FROM ${liveState} WHERE ${fence}`,stateKey);
+            if(!current.rowCount)return;
+            const cursorLane='history:'+chat.chat_id;
+            if(next){
+              const seen=await tx.query(`SELECT 1 FROM ${markers} WHERE ${markerWhere} AND generation=$5 AND lane=$6 AND marker=$7`,
+                [...markerScope,cursorLane,replicasDigest(next)]);
+              if(seen.rowCount)throw new Error('Repeated Replicas history continuation');
             }
-            await checkpoint(tx);
+            const prior=await tx.query<{marker:string;n:number}>(`SELECT marker,n FROM ${markers} WHERE ${markerWhere} AND generation=$5
+              AND lane=$6 AND marker=ANY($7::text[])`,[...markerScope,lane,entries.map(e=>e.hash)]);
+            const counts:Record<string,number>=Object.fromEntries(prior.rows.map(row=>[row.marker,row.n]));
+            const events=projectReplicasEntries(entries,counts);
+            await capture(tx,workspace,chat.chat_id,history,'history','[Replicas history] '+(chat.title??chat.workspace_name),chat,events);
+            const times=history.events.map(e=>Date.parse(String(record(e)?.timestamp)));
+            const pastGap=!history.codex_asp_transcript&&times.length>0&&times.every(t=>Number.isFinite(t)&&t<since.getTime());
+            position.before=pastGap?null:next;
+            if(!position.before)position.chats.shift();
+            if(!await checkpoint(tx))return;
+            if(position.before){
+              await rememberCursor(tx,cursorLane,position.before);
+              const hashes=Object.keys(counts);
+              await tx.query(`INSERT INTO ${markers}(namespace,tenant,organization,workspace,generation,lane,marker,n)
+                SELECT $1,$2,$3,$4,$5,$6,k,n FROM unnest($7::text[],$8::int[]) AS page(k,n)
+                ON CONFLICT(namespace,tenant,organization,workspace,generation,lane,marker) DO UPDATE SET n=EXCLUDED.n`,
+                [...markerScope,lane,hashes,hashes.map(k=>counts[k])]);
+            }else{
+              await tx.query(`DELETE FROM ${markers} WHERE ${markerWhere} AND generation=$5 AND lane=ANY($6::text[])`,[...markerScope,[cursorLane,lane]]);
+            }
           });
         }else{
           const page=await api.conversations(position.catalog,workspace);
           if(page.conversations.some(chat=>chat.workspace_id!==workspace))throw new Error('Replicas workspace export scope mismatch');
-          const next=page.next_cursor;
-          if(next&&position.catalogCursors.includes(next))throw new Error('Repeated Replicas catalog cursor');
-          if(next)position.catalogCursors.push(next);
-          position.catalog=next;
-          position.chats=page.conversations.filter(chat=>!(Date.parse(chat.updated_at)<since.getTime()));
-          await hold(active,checkpoint);
+          position.catalog=page.next_cursor;
+          // One bounded catalog page. Save only fields needed for capture, never the provider's arbitrary metadata.
+          position.chats=page.conversations.filter(chat=>!(Date.parse(chat.updated_at)<since.getTime()))
+            .map(({workspace_id,chat_id,title,workspace_name,senders})=>({workspace_id,chat_id,title,workspace_name,senders}));
+          await hold(active,async tx=>{
+            if(await checkpoint(tx)&&position.catalog)await rememberCursor(tx,'catalog',position.catalog);
+          });
         }
       }catch(error){
         signal.throwIfAborted();
+        if(error instanceof ReplicasProviderError&&error.status===429)throw error;
         diagnostic(scope,'gap_history',error);
         await hold(active,async tx=>{await tx.query(`UPDATE ${liveState} SET retry_at=now()+$7*interval '1 millisecond' WHERE ${fence}`,[...stateKey,Math.max(30000,retry(error,1))]);});
       }
@@ -239,9 +281,8 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
       const who=await api.identity();
       if(who.caller!=='organization_api_key'||who.organization.id!==scope.organizationId)throw new Error('Replicas live organization identity mismatch');
       const streams=new Map<string,{stop:AbortController;run:Promise<void>}>();
-      // Starting the durable consumer before streaming also recovers a crash
-      // between the first committed intent and its first wake.
-      notifyRepair(active);
+      // Recover a crash after the intent commit and before signal-with-start.
+      if(await nextRepairDelay()!==null)notifyRepair(active);
       try{
         while(!signal.aborted){
           const current=await database.pool.query<Connection>(connectionSql,binding);
@@ -260,43 +301,53 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
     }
     let initialized=false,attempt=0;
     const registered=scopeKey(scope);
-    repairs.set(registered,repair);
-    while(!stop.aborted){
-      try{
-        await ready();
-        const found=await database.pool.query<Connection>(connectionSql,binding);
-        const active=found.rows[0];
-        if(!active){await pause(5000,stop);continue;}
-        const client=await database.pool.connect();
-        const lost=new AbortController(),onError=()=>lost.abort();
-        client.on('error',onError);
-        try{
-          const lock='replicas-live:'+JSON.stringify(binding);
-          const locked=await client.query<{ok:boolean}>('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS ok',[lock]);
-          if(locked.rows[0]?.ok){
-            try{
-              if(!initialized){
-                await client.query(`CREATE TABLE IF NOT EXISTS ${liveState}(namespace text NOT NULL,tenant text NOT NULL,organization text NOT NULL,
-                  workspace text NOT NULL,cursor text,observed_at timestamptz,gap_since timestamptz,gap_generation bigint NOT NULL DEFAULT 0,retry_at timestamptz NOT NULL DEFAULT now(),
-                  PRIMARY KEY(namespace,tenant,organization,workspace))`);
-                await client.query(`CREATE TABLE IF NOT EXISTS ${tails}(namespace text NOT NULL,tenant text NOT NULL,organization text NOT NULL,
-                  workspace text NOT NULL,chat text NOT NULL,generation bigint NOT NULL DEFAULT 1,due timestamptz NOT NULL DEFAULT now(),
-                  PRIMARY KEY(namespace,tenant,organization,workspace,chat))`);
-                await client.query(`ALTER TABLE ${liveState} ADD COLUMN IF NOT EXISTS gap_position jsonb, ADD COLUMN IF NOT EXISTS gap_step bigint NOT NULL DEFAULT 0`);
-                // A completed and recreated tail starts a fresh generation sequence.
-                await client.query(`ALTER TABLE ${tails} ADD COLUMN IF NOT EXISTS tail_id uuid NOT NULL DEFAULT gen_random_uuid()`);
-                initialized=true;
-              }
-              await follow(active,AbortSignal.any([stop,lost.signal]));attempt=0;
-            }finally{if(!lost.signal.aborted)await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[lock]);}
-          }
-        }finally{client.removeListener('error',onError);client.release(lost.signal.aborted);}
-        await pause(1000,stop);
-      }catch(error){if(!stop.aborted){diagnostic(scope,'discovery',error);await pause(retry(error,attempt++),stop);}}
+    const resolvers=repairs.get(registered)??new Set<Repair>();
+    repairs.set(registered,resolvers);resolvers.add(repair);
+    try{await collect();}finally{
+      resolvers.delete(repair);
+      if(!resolvers.size)repairs.delete(registered);
+      await waking;
     }
-    await waking;
+    async function collect(){
+      while(!stop.aborted){
+        try{
+          await ready();
+          const found=await database.pool.query<Connection>(connectionSql,binding);
+          const active=found.rows[0];
+          if(!active){await pause(5000,stop);continue;}
+          const client=await database.pool.connect();
+          const lost=new AbortController(),onError=()=>lost.abort();
+          client.on('error',onError);
+          try{
+            const lock='replicas-live:'+JSON.stringify(binding);
+            const locked=await client.query<{ok:boolean}>('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS ok',[lock]);
+            if(locked.rows[0]?.ok){
+              try{
+                if(!initialized){
+                  await client.query(`CREATE TABLE IF NOT EXISTS ${liveState}(namespace text NOT NULL,tenant text NOT NULL,organization text NOT NULL,
+                    workspace text NOT NULL,cursor text,observed_at timestamptz,gap_since timestamptz,gap_generation bigint NOT NULL DEFAULT 0,retry_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY(namespace,tenant,organization,workspace))`);
+                  await client.query(`CREATE TABLE IF NOT EXISTS ${tails}(namespace text NOT NULL,tenant text NOT NULL,organization text NOT NULL,
+                    workspace text NOT NULL,chat text NOT NULL,generation bigint NOT NULL DEFAULT 1,due timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY(namespace,tenant,organization,workspace,chat))`);
+                  await client.query(`ALTER TABLE ${liveState} ADD COLUMN IF NOT EXISTS gap_position jsonb, ADD COLUMN IF NOT EXISTS gap_step bigint NOT NULL DEFAULT 0`);
+                  await client.query(`CREATE TABLE IF NOT EXISTS ${markers}(namespace text NOT NULL,tenant text NOT NULL,organization text NOT NULL,
+                    workspace text NOT NULL,generation bigint NOT NULL,lane text NOT NULL,marker text NOT NULL,n integer NOT NULL DEFAULT 0,
+                    PRIMARY KEY(namespace,tenant,organization,workspace,generation,lane,marker))`);
+                  initialized=true;
+                }
+                await follow(active,AbortSignal.any([stop,lost.signal]));attempt=0;
+              }finally{if(!lost.signal.aborted)await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[lock]);}
+            }
+          }finally{client.removeListener('error',onError);client.release(lost.signal.aborted);}
+          await pause(1000,stop);
+        }catch(error){if(!stop.aborted){diagnostic(scope,'discovery',error);await pause(retry(error,attempt++),stop);}}
+      }
+    }
   }
   return {runLiveCapture:run,async repairLiveCapture(job:ReplicasRepairJob,signal:AbortSignal){
-    return await repairs.get(scopeKey(job))?.(job,signal)??null;
+    const repair=repairs.get(scopeKey(job))?.values().next().value;
+    if(!repair)throw new Error('This worker does not serve the requested Replicas live binding');
+    return repair(job,signal);
   }};
 }
