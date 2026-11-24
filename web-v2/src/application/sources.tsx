@@ -144,7 +144,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
       await adapter.disconnect(selected.provider, request.signal);
       if (!current(request)) return;
       setConfirmation(null);
-      setSuccess(`${selected.name} disconnected and its imported data deleted.`);
+      setSuccess(`Removal requested for ${selected.name}.`);
     });
   }
 
@@ -166,7 +166,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
         <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
           {group.items.map(source => source.provider==='devin'&&adapter.devinRecording
             ? <DevinRecordingCard key={source.provider} source={source} mutate={adapter.devinRecording} onChange={()=>void reload()}/>
-            : source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `${source.name} removal completed and its imported data deleted.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+            : source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? `Removal requested for ${source.name}.` : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
@@ -194,7 +194,7 @@ export function SourceRow({source, canManage = false, pending, active, connect, 
   const [open, setOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const available = source.state === 'disconnected' || source.state === 'setup-required';
-  const action = available ? canManage ? 'Connect' : 'Details' : !canManage || source.state === 'unavailable' ? 'Details' : source.state === 'error' ? 'Fix connection' : 'Manage';
+  const action = available ? canManage ? 'Connect' : 'Details' : !canManage || source.state === 'unavailable' || source.state === 'disconnecting' ? 'Details' : source.state === 'error' ? 'Fix connection' : 'Manage';
   const restart = source.state === 'connecting' || source.recoveryAction === 'connect';
   const retryable = source.state === 'error' && !source.reconnect && !restart;
   function invoke(callback: () => void) {setOpen(false); callback();}

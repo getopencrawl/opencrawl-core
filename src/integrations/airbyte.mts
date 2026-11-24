@@ -115,6 +115,10 @@ export function createAirbyte(options: AirbyteOptions) {
     destinations: (workspaceId: string) => resources('destinations', workspaceId),
     sources: (workspaceId: string) => resources('sources', workspaceId),
     connections: (workspaceId: string) => resources('connections', workspaceId),
+    resource: (type:'connections'|'sources'|'destinations',id:string) => {
+      if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('Invalid Airbyte resource ID');
+      return request<AirbyteResource>('GET', `/${type}/${id}`);
+    },
     destinationDefinitions: (workspaceId: string) => request<Page<AirbyteResource>>('GET', `/workspaces/${workspaceId}/definitions/destinations`).then(r => r?.data || []),
     destinationDefinitionVersion: (actorDefinitionId: string) => config<{
       dockerRepository: string; dockerImageTag: string; supportsRefreshes: boolean; connectorIPCOptions?: unknown;
@@ -148,6 +152,15 @@ export function createAirbyte(options: AirbyteOptions) {
       return found ? counts : null;
     },
     /** Newest first. */
+    async latestSyncJobId(connectionId:string):Promise<string|null>{
+      const result=await config<{jobs:Array<{job:{id:number;configId:string;configType:string}}>}>('/jobs/list',
+        {configTypes:['sync'],configId:connectionId,pagination:{pageSize:1}});
+      if(!Array.isArray(result?.jobs)||result.jobs.length>1)throw new Error('Invalid Airbyte sync job listing');
+      if(!result.jobs.length)return null;
+      const job=result.jobs[0]?.job;
+      if(!job||job.configType!=='sync'||job.configId!==connectionId||!Number.isSafeInteger(job.id)||job.id<0)throw new Error('Airbyte sync job binding changed');
+      return String(job.id);
+    },
     jobs: (connectionId: string, limit = 20) => request<Page<AirbyteJob>>('GET', `/jobs?connectionId=${connectionId}&limit=${limit}&orderBy=createdAt%7CDESC`).then(r => r?.data || []),
   };
 }

@@ -1,4 +1,13 @@
 import type {ApplicationDatabase} from '../state/postgres.mjs';
+import {createHash,hkdfSync} from 'node:crypto';
+import {createIntegrationCommands} from '../state/integration-commands.mjs';
+import {createIntegrationResources} from '../state/integration-resources.mjs';
+import type {IdentityDirectory} from '../identity/types.mjs';
+import {currentVerifiedUser} from '../identity/auth.mjs';
+import {activeMemberships} from '../identity/principal.mjs';
+import {isAdmin} from '../identity/team.mjs';
+import type {AirbyteLifecycle} from '../integrations/service.mjs';
+import type {LegacyCursor} from '../integrations/temporal/runtime.mjs';
 import type {SelfhostSettings} from './settings.mjs';
 import {airbyteEnabled} from './settings.mjs';
 import type {createObjectStore} from '../sessions/s3-store.mjs';
@@ -21,7 +30,14 @@ import {createSlackOAuth,slackOAuthManifest} from '../integrations/slack-oauth.m
 import {createComposioOAuth} from '../integrations/composio.mjs';
 import {connectorSettingsStore} from '../integrations/connector-settings.mjs';
 import {errorInfo} from '../errors.mjs';
-export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env){
+export function selfhostIntegrationBinding(organizationId:string,namespace:string) {
+  const id=createHash('sha256').update(JSON.stringify([organizationId,namespace])).digest('hex');
+  const sourceId='selfhost-integration-'+id;
+  return {sourceId,taskQueue:sourceId+'-v1'};
+}
+
+export function selfhostServices(settings:SelfhostSettings,store:ReturnType<typeof createObjectStore>,database:ApplicationDatabase,env:NodeJS.ProcessEnv=process.env,
+  runtime?:{directory:IdentityDirectory;start:AirbyteLifecycle['start']}){
   const enabled=airbyteEnabled(env);
   const definitions:Record<string,ConnectorDefinition>=Object.fromEntries(['slack','notion','circleback','granola','linear'].map(id=>[id,{name:`OpenCrawl ${id} (operator-owned)`,manifest:connectorManifest(id)}]));
   definitions.github={name:'OpenCrawl GitHub (app)',docker:{repository:env.AIRBYTE_GITHUB_REPOSITORY||'opencrawl/source-github',tag:env.AIRBYTE_GITHUB_TAG||'local'}};
@@ -38,14 +54,17 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
           auth:provider.auth==='api-key'?'api-key' as const:'oauth' as const,state:'setup-required' as const,
           setup:{title:'Enable external sources',requirement:'Airbyte disabled',body}}));
       },
-      connect:disabled,complete:disabled,retry:disabled,disconnect:disabled,disconnectAll:disabled,recoverRecord:disabled,
+      connect:disabled,complete:disabled,retry:disabled,disconnect:disabled,disconnectAll:disabled,recoverRecord:disabled,executeCommand:disabled,
     };
-    return {registry,providers,integrations,connectors:undefined,oauth:undefined,sourceCredentials:undefined,connectorSettings:undefined,recover:async()=>{},close:registry.close};
+    return {registry,providers,integrations,connectors:undefined,commandWorker:undefined,oauth:undefined,sourceCredentials:undefined,connectorSettings:undefined,recover:async()=>{},close:registry.close};
   }
   const required=(key:string)=>{const value=env[key];if(!value)throw new Error(`${key} is required`);return value;};
   const workspaceId=required('AIRBYTE_WORKSPACE_ID');if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(workspaceId))throw new Error('Invalid Airbyte workspace');
   const airbyte=createAirbyte({url:required('AIRBYTE_URL'),clientId:required('AIRBYTE_CLIENT_ID'),clientSecret:required('AIRBYTE_CLIENT_SECRET')});
-  const registry=createSingleOrganizationRegistry({database,organizationId:settings.organizationId});
+  const commands=runtime?createIntegrationCommands({database,environment:'selfhost',
+    encryptionKey:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'integration-command-secret-v1',32))}):undefined;
+  const resources=runtime?createIntegrationResources({database,environment:'selfhost'}):undefined;
+  const registry=createSingleOrganizationRegistry({database,organizationId:settings.organizationId,commands:commands?.transactional});
   const buckets=singleOrganizationStorage(settings.organizationId,store);
   const destination=singleOrganizationDestination({organizationId:settings.organizationId,bucket:store.bucket,region:env.OPENCRAWL_LANDING_S3_REGION||'us-east-1',endpoint:env.OPENCRAWL_AIRBYTE_S3_ENDPOINT||env.OPENCRAWL_LANDING_S3_ENDPOINT,
     accessKeyId:required('OPENCRAWL_LANDING_S3_ACCESS_KEY_ID'),secretAccessKey:required('OPENCRAWL_LANDING_S3_SECRET_ACCESS_KEY'),definitionId:env.AIRBYTE_S3_DESTINATION_DEFINITION_ID});
@@ -109,7 +128,23 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   }
   // An operator has no other record of why Airbyte refused a connection.
   const log=(event:string,data:Record<string,unknown>)=>console.error(JSON.stringify({event,...data,...(typeof data.message==='string'?{message:data.message.slice(0,2000)}:{})}));
-  const product=createIntegrations({environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:authorization,providers,github,log});
+  const lifecycle:AirbyteLifecycle|undefined=runtime&&commands&&resources?{requests:registry,commands,resources,start:runtime.start,
+    async validateCleanupTarget(record){
+      if(record.environment!=='selfhost' || record.tenantId!==settings.organizationId || (record.s3Bucket!==undefined && record.s3Bucket!==store.bucket))
+        throw new Error('Connector cleanup storage scope denied');
+      return record.s3Prefix ?? null;
+    },
+    async authorize(command, record) {
+      const actor=command.requestedBy;
+      if(record.environment!=='selfhost'||record.tenantId!==settings.organizationId||command.reference.tenantId!==settings.organizationId||
+        (record.scope==='user' && actor!==record.userId))return false;
+      const user=await currentVerifiedUser(runtime.directory,actor);
+      if(user.status===503)throw new Error('Account verification unavailable');
+      if(user.status!==200)return false;
+      const members=await activeMemberships(runtime.directory,actor,settings.organizationId);
+      return members.length===1 && (record.scope==='user'||isAdmin(members[0]));
+    }}:undefined;
+  const product=createIntegrations({environment:'selfhost',appUrl:settings.url,registry,buckets,legacyBucket:store.bucket,workspaceId:async()=>workspaceId,destination,airbyte,oauth:authorization,providers,github,log,lifecycle});
   const integrations:ReturnType<typeof createIntegrations>={...product,
     async list(principal){const setup=await pending();return (await product.list(principal)).map(card=>setup[card.provider]?{...card,state:'setup-required' as const,setup:setup[card.provider]}:card);},
     async connect(principal,id,input){const setup=(await pending())[id];if(setup)throw Object.assign(new Error(setup.body),{status:503,expose:true});return product.connect(principal,id,input);},
@@ -143,5 +178,21 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
   const denied=async():Promise<never>=>{throw Object.assign(new Error('Connector authorization unavailable'),{status:403});};
   const sourceCredentials:SourceCredentialProxy={proxyCredential:async(id:string,secret:string,userId:string,input:ProxyRequest)=>
     /^grant_[a-f0-9]{48}$/.test(id)?oauth?oauth.proxyCredential(id,secret,userId,input):denied():(await broker())?.proxyCredential(id,secret,userId,input)??denied()};
-  return {registry,integrations,providers,connectors,oauth,sourceCredentials,connectorSettings,recover,close:registry.close};
+  const commandWorker=commands&&resources?{
+    async ready(){await registry.ready();await commands.ready();await resources.ready();},
+    listPending:(input:Parameters<typeof commands.listPending>[0])=>commands.listPending({...input,operations:['provision','disconnect']}),
+    execute(reference:Parameters<typeof product.executeCommand>[0], signal:AbortSignal){
+      if(reference.tenantId!==settings.organizationId)throw new Error('Workspace scope denied');
+      return product.executeCommand(reference,signal);
+    },
+    async adoptLegacy(cursor:LegacyCursor|null){
+      const page=await registry.listUnclaimedLifecycle({cursor:cursor??undefined,providers:Object.keys(providers),limit:25});
+      for(const record of page.records){
+        try{await product.recoverRecord(record);}
+        catch{log('integration.command.adoption_pending',{integrationId:record.integrationId});}
+      }
+      return page.cursor;
+    },
+  }:undefined;
+  return {registry,integrations,providers,connectors,commandWorker,oauth,sourceCredentials,connectorSettings,recover,close:registry.close};
 }

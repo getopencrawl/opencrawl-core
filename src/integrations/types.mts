@@ -18,6 +18,8 @@ export interface IntegrationRecord {
   provisionIntent?: ProvisionIntent | null; provisionProtocol?: number; sharedResourceProtocol?:1; provisionRun?: string;
   provisionVersion?: string; resourceVersion?: string; error?: string | null;
   lifecycleCommandId?: string; lifecycleOperation?: 'provision' | 'disconnect' | 'sync' | 'consent';
+  initialSyncIntent?: {commandId:string;previousJobId:string|null};
+  disconnectProgress?: {commandId:string;resourceVersion:string|null;next:'data'|'grants'|'finish';deletedObjects?:number};
   oauthIntent?: {resource:'auth-config'|'link';attemptId:string;requestedAt:string;callbackUrl?:string;config?:{toolkit:string;name:string;scheme?:string}}|null;
   oauthLinkAttemptId?:string;
   oauthVersion?:string;

@@ -1,7 +1,7 @@
 import {randomBytes} from 'node:crypto';
 import type {ApplicationDatabase} from './postgres.mjs';
 import type {Environment} from '../integrations/types.mjs';
-export interface IntegrationResourceKey {kind:'airbyte-definition'|'airbyte-manifest'|'oauth-auth-config';scope:string;name:string;fingerprint:string}
+export interface IntegrationResourceKey {kind:'airbyte-workspace'|'airbyte-definition'|'airbyte-manifest'|'oauth-auth-config';scope:string;name:string;fingerprint:string}
 export interface IntegrationResource {id:string;fingerprint:string}
 export interface IntegrationResources {
  ensure(key:IntegrationResourceKey,operations:{find():Promise<IntegrationResource|null>;create():Promise<string>}):Promise<string>;
@@ -15,7 +15,7 @@ export function createIntegrationResources({database,environment}:{database:Appl
  if(!['selfhost','production','staging'].includes(environment))throw new Error('Explicit integration resource environment required');
  let preparing:Promise<void>|undefined;
  function params(key:IntegrationResourceKey){
-  if(!['airbyte-definition','airbyte-manifest','oauth-auth-config'].includes(key.kind)||![key.scope,key.name].every(valid)||!/^[a-f0-9]{64}$/.test(key.fingerprint))throw new Error('Invalid shared integration resource scope');
+  if(!['airbyte-workspace','airbyte-definition','airbyte-manifest','oauth-auth-config'].includes(key.kind)||![key.scope,key.name].every(valid)||!/^[a-f0-9]{64}$/.test(key.fingerprint))throw new Error('Invalid shared integration resource scope');
   return [database.namespace,environment,key.kind,key.scope,key.name];
  }
  const where='namespace=$1 AND environment=$2 AND kind=$3 AND scope=$4 AND name=$5';
@@ -28,9 +28,16 @@ export function createIntegrationResources({database,environment}:{database:Appl
  }
  return {
   async ready(){preparing??=database.transaction(async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl:integration-resources:schema',0))");await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_integration_resources(
-   namespace text NOT NULL,environment text NOT NULL,kind text NOT NULL CHECK(kind IN ('airbyte-definition','airbyte-manifest','oauth-auth-config')),scope text NOT NULL,name text NOT NULL,
+   namespace text NOT NULL,environment text NOT NULL,kind text NOT NULL CHECK(kind IN ('airbyte-definition','airbyte-manifest','oauth-auth-config','airbyte-workspace')),scope text NOT NULL,name text NOT NULL,
    fingerprint text NOT NULL,attempt_id text NOT NULL,resource_id text,status text NOT NULL CHECK(status IN ('pending','resolved')),requested_at timestamptz NOT NULL DEFAULT now(),settled_at timestamptz,
-   PRIMARY KEY(namespace,environment,kind,scope,name))`);}).catch(error=>{preparing=undefined;throw error;});await preparing;},
+   PRIMARY KEY(namespace,environment,kind,scope,name))`);
+   const name='opencrawl_integration_resources_kind_check';
+   const constraint=(await client.query("SELECT convalidated,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='opencrawl_integration_resources'::regclass AND contype='c' AND conname=$1",[name])).rows[0];
+   const prior="CHECK ((kind = ANY (ARRAY['airbyte-definition'::text, 'airbyte-manifest'::text, 'oauth-auth-config'::text])))";
+   const current="CHECK ((kind = ANY (ARRAY['airbyte-definition'::text, 'airbyte-manifest'::text, 'oauth-auth-config'::text, 'airbyte-workspace'::text])))";
+   if(!constraint?.convalidated||![current,prior].includes(constraint.definition))throw new Error('Unsupported integration resource constraint');
+   if(constraint.definition===prior)await client.query("ALTER TABLE opencrawl_integration_resources DROP CONSTRAINT opencrawl_integration_resources_kind_check, ADD CONSTRAINT opencrawl_integration_resources_kind_check CHECK(kind IN ('airbyte-definition','airbyte-manifest','oauth-auth-config','airbyte-workspace'))");
+  }).catch(error=>{preparing=undefined;throw error;});await preparing;},
   async ensure(key,{find,create}){
    const values=params(key),observed=await find();
    if(observed&&(!valid(observed.id)||!/^[a-f0-9]{64}$/.test(observed.fingerprint)))throw pending();

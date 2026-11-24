@@ -47,6 +47,7 @@ export async function ensureRegistrySchema(database:ApplicationDatabase){
     if(organization.attnotnull)await client.query('ALTER TABLE opencrawl_integration_bindings ALTER COLUMN organization_id DROP NOT NULL');
     if(!binding)await client.query('ALTER TABLE opencrawl_integration_bindings ADD COLUMN binding_id text');
     await ensureSchemaIndex(client,{table:'opencrawl_integrations',name:'opencrawl_integrations_owner',keys:['namespace','environment','tenant_id','user_id']});
+    await ensureSchemaIndex(client,{table:'opencrawl_integrations',name:'opencrawl_integrations_unclaimed',keys:['namespace','environment','status','tenant_id','integration_id'],jsonKey:{column:'record',key:'lifecycleCommandId',absent:true}});
   });
 }
 
@@ -127,13 +128,15 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
       });
     },
   };
-  async function requestLifecycle(identity:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>,operation:IntegrationCommandOperation,secrets:IntegrationCommandSecret={},requestedBy?:string):Promise<IntegrationCommandReference>{
+  async function requestLifecycle(identity:Pick<IntegrationRecord,'tenantId'|'userId'|'integrationId'>,operation:IntegrationCommandOperation,secrets:IntegrationCommandSecret={},requestedBy?:string,
+    consent?: Pick<IntegrationRecord,'installationId'|'githubRepositoryIds'|'account'|'workspace'|'s3Prefix'>):Promise<IntegrationCommandReference>{
     scope(identity.tenantId,identity.userId);
     const checked=validateCommand(operation,secrets,requestedBy);
     await ready();return database.transaction(async client=>{
       const record=await locked(client,identity);if(!record)throw conflict();
       const reference=(commandId:string):IntegrationCommandReference=>({environment,tenantId:record!.tenantId,userId:record!.userId,integrationId:record!.integrationId,commandId});
       const prior=record!.lifecycleCommandId?await checked.commands.read(client,reference(record!.lifecycleCommandId)):null;
+      if(consent && (operation!=='provision' || record.status!=='connecting' || Object.keys(consent).some(key=>!['installationId','githubRepositoryIds','account','workspace','s3Prefix'].includes(key))))throw conflict();
       if(operation==='consent'&&record!.status!=='connecting')throw conflict();
       if(prior?.operation===operation&&prior.status==='pending')return prior.reference;
       if(operation==='disconnect'&&record!.status==='disconnected'&&prior?.operation==='disconnect')return prior.reference;
@@ -146,7 +149,8 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
       }
       if(operation==='provision')await claimProvider(client,record!);
       const ref=reference(randomUUID());
-      await save(client,{...record!,status:operation==='disconnect'?'disconnecting':operation==='provision'?'provisioning':record!.status,lifecycleCommandId:ref.commandId,lifecycleOperation:operation});
+      await save(client,{...record!,...consent,status:operation==='disconnect'?'disconnecting':operation==='provision'?'provisioning':record!.status,
+        ...(operation==='provision'||operation==='disconnect'?{provisionRun:ref.commandId,provisionVersion:randomUUID()}:{}),lifecycleCommandId:ref.commandId,lifecycleOperation:operation});
       await checked.commands.enqueue(client,ref,operation,secrets,checked.requestedBy);
       return ref;
     });
@@ -206,6 +210,18 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
     const after=await readRecordIn(client,identity);if(!isDeepStrictEqual(after,next))throw conflict();return after;
   }
   return {...registry,requestLifecycle,createWithLifecycle,abandonWithLifecycle,ready,validateImportRecord,readRecordIn,projectRecordIn,close:()=>{},
+    async listUnclaimedLifecycle({cursor,limit=50,providers}:{cursor?:{tenantId:string;integrationId:string};limit?:number;providers?:string[]}={}){
+      if(!Number.isInteger(limit)||limit<1||limit>500)throw new Error('Invalid lifecycle adoption page size');
+      if(cursor){scope(cursor.tenantId);if(!/^int_[a-f0-9]{26}$/.test(cursor.integrationId))throw denied();}
+      await ready();
+      const {rows}=await database.pool.query(`SELECT record FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2
+        AND NOT (record ? 'lifecycleCommandId') AND status IN ('provisioning','disconnecting','error')
+        AND (status<>'error' OR record->>'error' IN ('setup','recovery')) AND ($3::text[] IS NULL OR provider=ANY($3))
+        AND ($4::text IS NULL OR (tenant_id,integration_id)>($4,$5))
+        ORDER BY tenant_id,integration_id LIMIT $6`,[database.namespace,environment,providers??null,cursor?.tenantId??null,cursor?.integrationId??null,limit+1]);
+      const records=rows.slice(0,limit).map(row=>decode(row.record)),last=records.at(-1);
+      return {records,cursor:rows.length>limit&&last?{tenantId:last.tenantId,integrationId:last.integrationId}:null};
+    },
     async exportRecord(tenantId:string,userId:string,integrationId:string){
       scope(tenantId,userId);
       if(!/^int_[a-f0-9]{26}$/.test(integrationId))throw denied();

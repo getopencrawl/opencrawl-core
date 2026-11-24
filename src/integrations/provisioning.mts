@@ -93,5 +93,19 @@ export function createProvisioning({environment, registry, airbyte, now = () => 
     return remember(record, intent, result?.[resource]);
   }
 
-  return {ensure, reconcile};
+  async function remove(record:IntegrationRecord,workspaceId:string){
+    const gone=(error:unknown)=>{if(errorInfo(error).status!==404)throw error;};
+    const deletes={connectionId:airbyte.deleteConnection,sourceId:airbyte.deleteSource,destinationId:airbyte.deleteDestination};
+    for(const resource of ['connectionId','sourceId','destinationId'] as const){
+      const id=record.airbyte?.[resource];
+      if(!id)continue;
+      const actual=await airbyte.resource(TYPES[resource],id).catch(error=>{gone(error);return null;});
+      if(!actual)continue;
+      const migrated=resource==='destinationId'&&record.airbyteMigration?.newDestinationId===id&&actual.name===record.airbyteMigration?.name;
+      if(actual[resource]!==id||actual.workspaceId!==workspaceId||actual.name!==provisioningLabel(record)&&!migrated||
+        resource==='connectionId'&&(actual.sourceId!==record.airbyte?.sourceId||actual.destinationId!==record.airbyte?.destinationId))throw pending();
+      await deletes[resource](id).catch(gone);
+    }
+  }
+  return {ensure, reconcile, remove};
 }

@@ -14,7 +14,9 @@ import {sessionDeletionScheduler,sessionIndexingScheduler} from '../sessions/tem
 import {singleOrganizationSessionSource} from './indexing.mjs';
 import {pathToFileURL} from 'node:url';
 import {selfhostSettings} from './settings.mjs';
-import {selfhostServices} from './services.mjs';
+import {selfhostIntegrationBinding,selfhostServices} from './services.mjs';
+import {connectorClient} from '../connectors/temporal/client.mjs';
+import {startIntegrationCommand} from '../integrations/temporal/runtime.mjs';
 import {selfhostApplication} from './application.mjs';
 import {createLocalIdentity} from '../identity/better-auth.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
@@ -36,8 +38,14 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
   await identity.ready();
-  const services=selfhostServices(settings,store,database,env);
   const temporal=selfhostTemporalSettings(env);
+  const binding=selfhostIntegrationBinding(settings.organizationId,database.namespace);
+  const services=selfhostServices(settings,store,database,env,{directory:identity.directory,async start(reference){
+    const {client,connection}=await connectorClient({...temporal,connectionOptions:{...temporal.connectionOptions,connectTimeout:5000}});
+    try{return await connection.withDeadline(Date.now()+10000,()=>startIntegrationCommand(client,binding.taskQueue,reference));}
+    finally{await connection.close();}
+  }});
+  await services.commandWorker?.ready();
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const indexing=sessionIndexingScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const scheduleSessionDeletion=sessionDeletionScheduler({...temporal,taskQueue:env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1',sourceId:'sessions-'+settings.organizationId+'-v1'});
@@ -53,8 +61,6 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   // Header/request deadlines still bound slow clients independently.
   server.keepAliveTimeout=125000;server.keepAliveTimeoutBuffer=1000;
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(Number(env.PORT||8092),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});});
-  // Recovery has the same durable create fence as an explicit Retry in the UI.
-  services.recover().catch(()=>console.error(JSON.stringify({event:'integration.recovery_failed'})));
   process.once('SIGTERM',()=>{void shutdown();});process.once('SIGINT',()=>{void shutdown();});
   return {server,shutdown};
 }

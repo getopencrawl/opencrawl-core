@@ -202,6 +202,27 @@ test('recovery dialogs preserve sign-in, sync and removal actions and member per
   await expect(page.getByRole('button',{name:/Restart sign-in|Retry|Disconnect/})).toHaveCount(0);
 });
 
+test('accepted removal stays pending until the source can be connected again', async ({page}) => {
+  await page.clock.install();
+  let item: SourceCard = {...source(1), name: 'Slack', provider: 'slack'};
+  await page.route('**/api/console/sources', route => route.fulfill({json: {items: [item]}}));
+  await page.goto('/integrations-fixture');
+  const card = page.getByRole('article', {name: 'Slack', exact: true});
+  const dialog = page.getByRole('dialog');
+  await card.getByRole('button', {name: 'Manage Slack'}).click();
+  await dialog.getByRole('button', {name: 'Disconnect Slack'}).click();
+  item = {...item, state: 'disconnecting', rows: undefined, synced: undefined};
+  await dialog.getByRole('button', {name: 'Disconnect and delete'}).click();
+  await expect(page.getByText('Removal requested for Slack.')).toBeVisible();
+  await expect(card).toContainText('Removal of this connection and its imported data is pending.');
+  await card.getByRole('button', {name: 'Details Slack'}).click();
+  await expect(dialog.getByRole('button', {name: /Retry|Disconnect|Sync|Connect/i})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  item = {...item, state: 'disconnected'};
+  await page.clock.runFor(30_001);
+  await expect(card.getByRole('button', {name: 'Connect Slack'})).toBeVisible();
+});
+
 test('cards keep account context in Manage and directly open OAuth or required setup',async({page,context})=>{
   const connected={...source(1),name:'Connected source',account:'Example account',connectedBy:'admin@example.com'};
   const direct={...source(4),provider:'linear',name:'Linear'};

@@ -10,8 +10,10 @@ import {standaloneEventIdentities} from '../sessions/postgres-identities.mjs';
 import {mkdir,writeFile,unlink} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
-import {selfhostSettings} from './settings.mjs';
-import {selfhostServices} from './services.mjs';
+import {airbyteEnabled,selfhostSettings} from './settings.mjs';
+import {selfhostIntegrationBinding,selfhostServices} from './services.mjs';
+import {createLocalIdentity} from '../identity/better-auth.mjs';
+import {buildIntegrationWorkflows,createIntegrationWorker,ensureIntegrationRecoverySchedule,startIntegrationCommand} from '../integrations/temporal/runtime.mjs';
 import {singleOrganizationSessionSource} from './indexing.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
 import {createSessionWorker,buildSessionWorkflows} from '../sessions/temporal/worker.mjs';
@@ -41,14 +43,23 @@ export async function withTemporalStartupRetry<T>(run:()=>Promise<T>,{timeoutMs=
 }
 export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const {database}=await selfhostState(env);
-  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env),services=selfhostServices(settings,store,database,env);
+  const settings=selfhostSettings(env),{store,prefix}=sessionStorage(env);
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const config=selfhostTemporalSettings(env),{namespace}=config;
+  const scheduling=await connectorClient(config);
+  const binding=selfhostIntegrationBinding(settings.organizationId,database.namespace);
+  const identity=airbyteEnabled(env)?await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId}):undefined;
+  await identity?.ready();
+  const services=selfhostServices(settings,store,database,env,identity&&{directory:identity.directory,start:ref=>
+    scheduling.connection.withDeadline(Date.now()+10000,()=>startIntegrationCommand(scheduling.client,binding.taskQueue,ref))});
+  await services.commandWorker?.ready();
   const taskQueue=env.TEMPORAL_CONNECTOR_TASK_QUEUE||'connector-indexing-v1',sessionQueue=env.TEMPORAL_SESSION_TASK_QUEUE||'session-indexing-v1',deletionQueue=env.TEMPORAL_SESSION_DELETION_TASK_QUEUE||'session-deletion-v1';
   const bundleRoot=env.OPENCRAWL_WORKFLOW_DIRECTORY||'/tmp/opencrawl-workflows';await mkdir(bundleRoot,{recursive:true});
   if(services.connectors)await buildConnectorWorkflows(bundleRoot+'/connectors.cjs');
+  const lifecycleBundle=bundleRoot+'/integration-lifecycle.cjs';
+  if(services.commandWorker)await buildIntegrationWorkflows(lifecycleBundle);
   await buildSessionWorkflows(bundleRoot+'/sessions.cjs');
-  const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
+  const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
   const indexing=sessionIndexingScheduler({...config,taskQueue:sessionQueue,sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
   const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),
@@ -60,6 +71,10 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const {recoverErasures}=createPostgresBoardState(database);
   const deletions=await createSessionWorker({...config,taskQueue:deletionQueue,bundlePath:bundleRoot+'/sessions.cjs',resolve:source.resolve,resolveDeletion:async input=>({...await source.resolveDeletion(input),recoverIncognitoErasures:recoverErasures}),maxConcurrentActivityTaskExecutions:1});
   const workers=connectors?[sessions,deletions,connectors]:[sessions,deletions];
+  if(services.commandWorker) {
+    workers.push(await createIntegrationWorker({...config,...binding,...services.commandWorker,environment:'selfhost',bundlePath:lifecycleBundle}));
+    await withTemporalStartupRetry(()=>ensureIntegrationRecoverySchedule(scheduling.client,binding));
+  }
   // An operator sets this only after the receiver and worker rollout is complete.
   // Starting the worker first must not remove recovery for old API producers.
   const captureCutover=env.OPENCRAWL_SESSION_INDEXING_CUTOVER==='1'
@@ -95,6 +110,6 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const stop=()=>{liveStop.abort();stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
   const runs=workers.map(x=>x.worker.run());tick();
-  try{await Promise.all(runs);}finally{stop();await live;await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await Promise.all([database.close(),eventIdentities.close()]);}
+  try{await Promise.all(runs);}finally{stop();await live;await Promise.allSettled(runs);await inFlight;await unlink(readiness).catch(()=>{});await indexing.close();await scheduling.connection.close();await Promise.all(workers.map(x=>x.connection.close()));services.close();await identity?.close();await Promise.all([database.close(),eventIdentities.close()]);}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await runSelfhostWorker();
