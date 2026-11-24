@@ -137,3 +137,26 @@ test('Temporal returns the team outcome after committed intake and resumes a rev
     assert.equal(f.writes(),2);
   } finally {await stop();}
 });
+
+test('an unavailable Temporal start can occupy only two API database admissions',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t),bothStarted=Promise.withResolvers(),allowStarts=Promise.withResolvers();
+  const waiting=Promise.withResolvers(),finish=Promise.withResolvers();
+  let count=0;
+  const client={connection:{withDeadline:(_time,fn)=>fn()},workflow:{start:async()=>{
+    if(++count===2)bothStarted.resolve();
+    await allowStarts.promise;
+    return {executeUpdate:async()=>{waiting.resolve();return finish.promise;}};
+  }}};
+  const write=durableTeamWrites(f.database,client,'team-admissions-test');
+  const first=write(admitted),second=write(admitted);
+  try {
+    await bothStarted.promise;
+    await assert.rejects(write(admitted),{status:503});
+    assert.equal(count,2);
+    allowStarts.resolve();
+    await waiting.promise;
+    const third=write(admitted);
+    finish.resolve({ok:true});
+    await Promise.all([first,second,third]);assert.equal(count,3);
+  } finally {allowStarts.resolve();finish.resolve({ok:true});}
+});
