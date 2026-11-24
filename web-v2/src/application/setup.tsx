@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react';
-import {Icon, LinkButton, Notice, Page, Section, Table, Tabs} from '../design/components.tsx';
+import {Icon, Notice, Page, Section, Table, Tabs} from '../design/components.tsx';
 import {nativeInstallCommand} from '../../../src/sessions/cli-installation.mjs';
 import {CommandSnippet} from '../onboarding/copy.tsx';
 import {connectionCommands} from '../onboarding/model.ts';
@@ -31,7 +31,7 @@ function AgentInstructions({mcpUrl, first}: {mcpUrl: string; first: boolean}) {
   const text = platform === 'windows'
     ? `${windows.cli}\n${windows.recording}`
     : `${nativeInstallCommand()} -s -- --connect${apiArg}`;
-  return <Section className="oc-host-install" title={first ? 'Connect your first host' : 'Connect another host'}
+  return <Section className="oc-host-install" title={first ? 'Connect your first computer' : undefined}
     description={platform === 'windows'
       ? 'On the computer you want to connect, paste these commands into PowerShell. Sign in and choose which agents to record.'
       : 'On the computer you want to connect, paste this command into Terminal. Sign in and choose which agents to record.'}>
@@ -39,25 +39,25 @@ function AgentInstructions({mcpUrl, first}: {mcpUrl: string; first: boolean}) {
       <Tabs label="Operating system" items={platforms} value={platform} onChange={setPlatform}/>
       <CommandSnippet key={platform} label="Copy setup command" text={text}/>
     </div>
-    {first && <ol className="oc-host-guide" aria-label="Setup steps">
+    <ol className="oc-host-guide" aria-label="Setup steps">
       {setupSteps.map(step => <li key={step.title}>
         <h3>{step.title}</h3>
         <p>{step.detail}</p>
       </li>)}
-    </ol>}
+    </ol>
   </Section>;
 }
 
 const recentContactWindow = 15 * 60_000;
 
-function LastSeen({at, now, agent}: {at?: string; now: number; agent?: string}) {
+function LastSeen({at, now, agent}: {at?: string; now: number; agent: string}) {
   const seen = Date.parse(at ?? '');
   const valid = Number.isFinite(seen);
   const age = now - seen;
   const exact = valid ? new Date(seen).toLocaleString() : '';
-  return <span className={(agent ? 'oc-host-last-contact' : 'oc-computer-contact') + ' oc-presence'}
+  return <span className="oc-host-last-contact oc-presence"
     data-recent={valid ? age >= -60_000 && age < recentContactWindow : undefined}>
-    {at && valid ? <>{agent ? 'Last contact ' : 'Seen '}<time dateTime={at} title={(agent ? 'Last contact from ' + agent + ' at ' : 'Last setup report or live capture received ') + exact}>{age < -60_000 ? exact : ago(at,now)}</time></> : agent ? 'No signal yet' : 'Last check-in unknown'}
+    {at && valid ? <>Last contact <time dateTime={at} title={`Last contact from ${agent} at ${exact}`}>{age < -60_000 ? exact : ago(at,now)}</time></> : 'No signal yet'}
   </span>;
 }
 
@@ -75,7 +75,7 @@ function captureStatus(agent: Agent) {
 function ComputerTile({installation, now}: {installation: Installation; now: number}) {
   const agents = installation.clients.filter(client => client.installed || client.forward || client.pluginState === 'error' || client.pluginState === 'prepared' || client.pluginState === 'pending');
   return <li className="oc-host-report">
-    <header className="oc-host-title"><div><Icon name="monitor" size={19}/><h3>{installation.machine.label}</h3></div><LastSeen at={installation.updatedAt} now={now}/></header>
+    <header className="oc-host-title"><Icon name="monitor" size={19}/><h3>{installation.machine.label}</h3></header>
     {agents.length > 0 ? <Table className="oc-host-agents" label={`Agent verification on ${installation.machine.label}`}>
       <thead><tr><th scope="col">Agent</th><th scope="col">Workspace connection</th><th scope="col">Session capture</th></tr></thead>
       <tbody>{agents.map(agent => {
@@ -112,24 +112,23 @@ function ComputerGrid({installations}: {installations: Installation[]}) {
 export function SetupPage({status, error, mcpUrl}: {mcpUrl: string; status: NonNullable<Bootstrap['setup']>; error: string}) {
   const {installations} = status;
   const first = installations.length === 0;
-  const searchable = installations.some(host => host.clients.some(agent => agent.forward && agent.proof.state === 'verified'));
   return <Page className="oc-management-page" bodyClassName="oc-host-setup" title="Setup">
     {error && <Notice tone="danger">{error}</Notice>}
-    <div className="oc-host-start">
-      <header className="oc-host-welcome" data-first={first}>
-        <div><h2>{first ? 'Welcome to OpenCrawl' : searchable ? 'Your first session is searchable' : installations.length === 1 ? 'Your host has checked in' : 'Your hosts have checked in'}</h2>
-          <p>{first ? 'OpenCrawl lets your agents talk to each other and read each other’s session histories. Run the setup command below on the computer where you use your agents.'
-            : searchable ? 'Open Sessions to revisit captured work. You can see which agents have finished setup below.'
-            : 'Continue in the agents you selected. This page will show when each one connects and records a searchable session.'}</p></div>
-        {first && <img src="/assets/setup-first-host.png" alt="" width="136" height="64"/>}
+    {first && <div className="oc-host-start">
+      <header className="oc-host-welcome">
+        <div><h2>Welcome to OpenCrawl</h2>
+          <p>OpenCrawl lets your agents talk to each other and read each other’s session histories. Run the setup command below on the computer where you use your agents.</p></div>
+        <img src="/assets/setup-first-host.png" alt="" width="136" height="64"/>
       </header>
-      <AgentInstructions mcpUrl={mcpUrl} first={first}/>
-    </div>
-    <Section className="oc-hosts-section" title="Your hosts"
-      description={first ? undefined : 'Check the connection and recording status for each agent you selected.'}
-      actions={searchable ? <LinkButton to="/sessions" variant="secondary">View sessions<Icon name="arrow-right" size={15}/></LinkButton> : undefined}>
-      {first ? <div className="oc-host-wait"><Icon name="monitor" size={20}/><div><strong>Waiting for your first host</strong><p>This list updates automatically when your computer checks in.</p></div></div>
+      <AgentInstructions mcpUrl={mcpUrl} first/>
+    </div>}
+    <Section className="oc-hosts-section" title="Your computers">
+      {first ? <div className="oc-host-wait"><Icon name="monitor" size={20}/><div><strong>Waiting for your first computer</strong><p>This list updates automatically when your computer checks in.</p></div></div>
         : <ComputerGrid installations={installations}/>}
     </Section>
+    {!first && <details className="oc-host-start oc-host-add">
+      <summary><img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>Connect another computer<Icon name="chevron-down" size={16}/></summary>
+      <AgentInstructions mcpUrl={mcpUrl} first={false}/>
+    </details>}
   </Page>;
 }
