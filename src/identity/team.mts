@@ -2,7 +2,7 @@ import type {HostedUser, IdentityDirectory, Principal} from './types.mjs';
 import {errorInfo} from './types.mjs';
 import {activeMemberships} from './principal.mjs';
 import type {RoleWriteGuard, TeamRole} from './role-write.mjs';
-import {isAdmin, teamChange, authorizeTeamChange, applyTeamChange, verifyTeamChange, type TeamChange} from './team-change.mjs';
+import {isAdmin, teamChange, authorizeTeamChange, applyTeamChange, verifyTeamChange, type TeamChange, type TeamChangeRequest} from './team-change.mjs';
 export {isAdmin} from './team-change.mjs';
 
 interface AdminMembership {userId: string; organizationId: string; status: string; role?: {slug: string}; roles?: Array<{slug: string}>}
@@ -16,19 +16,22 @@ export function teamService(directory: IdentityDirectory, roleGuard?: RoleWriteG
     if (!isAdmin(member)) fail(403, 'Only an organization admin can do that.');
     return member;
   };
-  async function write(change:TeamChange) {
-    if (durableWrite) return durableWrite(change);
+  async function write(change:TeamChangeRequest) {
+    if (durableWrite) {
+      const {actorMembershipId,targetMembershipId}=await authorizeTeamChange(directory,change);
+      return durableWrite({...change,actorMembershipId,targetMembershipId});
+    }
     if (!roleGuard || (change.role==='remove' && !revokeCaptureCredentials))
       return fail(503,change.role==='remove'?'Member removal is temporarily unavailable.':'Role changes are temporarily unavailable. Please try again later.');
     const guard=await roleGuard(change.organizationId,change.actorId,change.userId,change.role);
     let attempted=false,confirmed=false;
     try {
-      const {membershipId,needsWrite}=await authorizeTeamChange(directory,change);
+      const {actorMembershipId,targetMembershipId,needsWrite}=await authorizeTeamChange(directory,change);
       if (needsWrite) {
         attempted=true;
-        await applyTeamChange(directory,change,membershipId);
+        await applyTeamChange(directory,change,targetMembershipId);
         if (change.role==='remove') await revokeCaptureCredentials!({tenantId:change.organizationId,userId:change.userId});
-        await verifyTeamChange(directory,change,membershipId);
+        await verifyTeamChange(directory,{...change,actorMembershipId,targetMembershipId});
         confirmed=true;
       }
     } catch (error) {

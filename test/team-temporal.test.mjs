@@ -6,6 +6,7 @@ import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-dat
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {roleWriteGuard} from '../dist/src/identity/role-write.mjs';
+import {teamService} from '../dist/src/identity/team.mjs';
 import {admitTeamChange,prepareTeamOperations,teamChangeActivities} from '../dist/src/identity/team-operation.mjs';
 import {durableTeamWrites} from '../dist/src/identity/temporal/client.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -14,6 +15,7 @@ import {join} from 'node:path';
 import {buildTeamWorkflows,createTeamWorker} from '../dist/src/identity/temporal/worker.mjs';
 
 const change={organizationId:'org_team',actorId:'user_admin',userId:'user_member',role:'remove'};
+const admitted={...change,actorMembershipId:'om_user_admin',targetMembershipId:'om_user_member'};
 async function fixture(t) {
   const database=await applicationDatabaseFixture(t);
   await prepareTeamOperations(database);
@@ -28,7 +30,7 @@ async function fixture(t) {
     updateOrganizationMembership:async(id,{roleSlug})=>{writes++;const item=members.get('user_member');assert.equal(id,item.id);item.role={slug:roleSlug};return item;},
   }};
   const options={database,directory,store,prefix,credentials:{capture:credential},organizationId:change.organizationId};
-  return {database,directory,credential,members,writes:()=>writes,options,ref:(command=change)=>admitTeamChange(database,command,async ref=>ref)};
+  return {database,directory,credential,members,writes:()=>writes,options,ref:(command=admitted)=>admitTeamChange(database,command,async ref=>ref)};
 }
 
 test('team changes bind the queued reference to committed intake, guard ownership and checkpointed cleanup',{skip:!postgresUrl},async t=>{
@@ -38,7 +40,7 @@ test('team changes bind the queued reference to committed intake, guard ownershi
   await assert.rejects(bad.advanceTeamChange(ref),/scope mismatch/);
   assert.equal((await worker.advanceTeamChange({...ref,operationId:randomUUID()})).outcome.ok,false);
   let rolledBack;
-  await assert.rejects(admitTeamChange(f.database,change,async ref=>{rolledBack=ref;throw Error('start was not accepted');}),/not accepted/);
+  await assert.rejects(admitTeamChange(f.database,admitted,async ref=>{rolledBack=ref;throw Error('start was not accepted');}),/not accepted/);
   assert.equal((await worker.advanceTeamChange(rolledBack)).outcome.ok,false);
   assert.equal(f.writes(),0);
   const blocked=await roleWriteGuard(f.options.store,f.options.prefix)(tenantId,'user_prior',userId,'admin');
@@ -55,6 +57,23 @@ test('team changes bind the queued reference to committed intake, guard ownershi
   assert.equal(f.writes(),1);
   await worker.forgetCompletedTeamChange(next);
   assert.equal((await worker.advanceTeamChange(next)).outcome.ok,false);
+});
+
+test('queued changes reject replacement memberships for the administrator and teammate',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t),worker=teamChangeActivities(f.options);
+  for(const userId of [change.actorId,change.userId]) {
+    let queued;
+    const service=teamService(f.directory,undefined,undefined,async command=>{queued=await f.ref(command);});
+    await service.removeMember({id:change.actorId},change.organizationId,change.userId);
+    const member=f.members.get(userId);
+    f.members.set(userId,{...member,id:member.id+'_rejoined'});
+    const result=await worker.advanceTeamChange(queued);
+    assert.equal(result.review,false);
+    assert.equal(result.outcome.status,409);
+    assert.equal(f.writes(),0);
+    assert.equal(f.members.get(userId).id,member.id+'_rejoined');
+    await worker.forgetCompletedTeamChange(queued);
+  }
 });
 
 test('a rejoin before readback cannot reactivate credentials issued to the removed membership',{skip:!postgresUrl},async t=>{
@@ -102,12 +121,13 @@ test('Temporal returns the team outcome after committed intake and resumes a rev
   };
   let stop=await start();
   try {
-    const write=durableTeamWrites(f.database,environment.client,queue);
-    await write({...change,role:'admin'});
+    const service=teamService(f.directory,undefined,undefined,durableTeamWrites(f.database,environment.client,queue));
+    const actor={id:change.actorId};
+    await service.changeRole(actor,change.organizationId,change.userId,'admin');
     assert.equal(f.members.get('user_member').role.slug,'admin');
     const apply=f.directory.userManagement.deleteOrganizationMembership;
     f.directory.userManagement.deleteOrganizationMembership=async id=>{await apply(id);throw Error('response unavailable');};
-    await assert.rejects(write(change),{status:503});
+    await assert.rejects(service.removeMember(actor,change.organizationId,change.userId),{status:503});
     await stop();
     stop=await start();
     const {rows:[ref]}=await f.database.pool.query("UPDATE opencrawl_team_operations SET phase='applied' WHERE namespace=$1 AND phase='dispatching' RETURNING organization,operation",[f.database.namespace]);

@@ -20,7 +20,7 @@ export interface TeamChangeOptions {
 type Versions=Record<string,StoreVersion|null>;
 interface Row {
   actor:string;target:string;role:TeamChange['role'];phase:'queued'|'guarded'|'dispatching'|'applied'|'release'|'done';
-  membership:string|null;versions:Versions|null;outcome:ChangeOutcome|null;
+  actor_membership:string;membership:string;versions:Versions|null;outcome:ChangeOutcome|null;
 }
 const table='opencrawl_team_operations';
 const where='namespace=$1 AND organization=$2 AND operation=$3';
@@ -37,7 +37,7 @@ export async function prepareTeamOperations(database:ApplicationDatabase) {
       namespace text NOT NULL,organization text NOT NULL,operation uuid NOT NULL,actor text NOT NULL,target text NOT NULL,
       role text NOT NULL CHECK(role IN ('admin','member','remove')),
       phase text NOT NULL CHECK(phase IN ('queued','guarded','dispatching','applied','release','done')),
-      membership text,versions jsonb,outcome jsonb,
+      actor_membership text NOT NULL,membership text NOT NULL,versions jsonb,outcome jsonb,
       PRIMARY KEY(namespace,organization,operation))`);
   });
 }
@@ -53,10 +53,11 @@ function lockKey(key:string[]) {return JSON.stringify(['team-operation',...key])
 export async function admitTeamChange<T>(database:ApplicationDatabase,change:TeamChange,start:(ref:TeamOperationRef)=>Promise<T>) {
   teamChange(change.organizationId,change.actorId,change.userId,change.role);
   if (!user.test(change.actorId)) rejectChange(403,'An authenticated teammate is required.');
+  if (!change.actorMembershipId || !change.targetMembershipId) rejectChange(409,'The workspace membership could not be confirmed.');
   const ref={organizationId:change.organizationId,operationId:randomUUID()}, key=binding(database,ref);
   return database.transaction(async db=>{
     await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[lockKey(key)]);
-    await db.query(`INSERT INTO ${table}(namespace,organization,operation,actor,target,role,phase) VALUES($1,$2,$3,$4,$5,$6,'queued')`,[...key,change.actorId,change.userId,change.role]);
+    await db.query(`INSERT INTO ${table}(namespace,organization,operation,actor,target,role,actor_membership,membership,phase) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued')`,[...key,change.actorId,change.userId,change.role,change.actorMembershipId,change.targetMembershipId]);
     return start(ref);
   });
 }
@@ -72,9 +73,10 @@ export function teamChangeActivities({database,directory,store,prefix,credential
         // A session lock serializes late activity completions. Each checkpoint below
         // commits independently, before a potentially unfenceable provider call.
         await db.query('SELECT pg_advisory_lock(hashtextextended($1,0))',[lockKey(key)]);
-        const {rows:[row]}=await db.query<Row>(`SELECT actor,target,role,phase,membership,versions,outcome FROM ${table} WHERE ${where}`,key);
+        const {rows:[row]}=await db.query<Row>(`SELECT actor,target,role,phase,actor_membership,membership,versions,outcome FROM ${table} WHERE ${where}`,key);
         if (!row) return {review:false,outcome:{ok:false,status:409,message:'The team operation was not admitted.'}};
-        const change=teamChange(ref.organizationId,row.actor,row.target,row.role), principal={tenantId:ref.organizationId,userId:row.target};
+        const change={...teamChange(ref.organizationId,row.actor,row.target,row.role),actorMembershipId:row.actor_membership,targetMembershipId:row.membership};
+        const principal={tenantId:ref.organizationId,userId:row.target};
         const done=async(outcome:ChangeOutcome,hasGuard:boolean)=>{
           const next=hasGuard?'release':'done';
           await db.query(`UPDATE ${table} SET phase=$4,outcome=$5 WHERE ${where}`,[...key,next,JSON.stringify(outcome)]);
@@ -98,7 +100,10 @@ export function teamChangeActivities({database,directory,store,prefix,credential
           let authorized:Awaited<ReturnType<typeof authorizeTeamChange>>|undefined;
           try {
             if (change.role!=='admin') await checkLastAdmin?.(change.organizationId,change.userId);
-            authorized=await authorizeTeamChange(directory,change);
+            const current=await authorizeTeamChange(directory,change);
+            if (current.actorMembershipId!==change.actorMembershipId || current.targetMembershipId!==change.targetMembershipId)
+              rejectChange(409,'Workspace membership changed after this team change was requested.');
+            authorized=current;
           }
           catch (error) {
             const {status,message,expose}=errorInfo(error);
@@ -113,18 +118,17 @@ export function teamChangeActivities({database,directory,store,prefix,credential
               versions={};
               for (const [name,group] of Object.entries(credentials)) versions[name]=await group.removalVersion(principal);
             }
-            await db.query(`UPDATE ${table} SET phase='dispatching',membership=$4,versions=$5 WHERE ${where}`,[...key,authorized.membershipId,versions]);
+            await db.query(`UPDATE ${table} SET phase='dispatching',versions=$4 WHERE ${where}`,[...key,versions]);
             row.versions=versions;
             // From this point a timeout, process death, or lost response requires
             // provider evidence. An empty directory lookup cannot re-arm the write.
-            try {await applyTeamChange(directory,change,authorized.membershipId);}
+            try {await applyTeamChange(directory,change,change.targetMembershipId);}
             catch {return held;}
             await db.query(`UPDATE ${table} SET phase='applied' WHERE ${where}`,key);
-            row.phase='applied';row.membership=authorized.membershipId;
+            row.phase='applied';
           }
         }
         if (row.phase==='applied') {
-          if (!row.membership) throw Error('Team operation is missing its membership');
           if (change.role==='remove') {
             // Always invalidate the generation that existed at dispatch, including
             // when WorkOS already shows a replacement membership. A repeated CAS
@@ -134,7 +138,7 @@ export function teamChangeActivities({database,directory,store,prefix,credential
               return held;
             for (const [name,version] of Object.entries(versions)) await credentials[name]!.revokeVersion(principal,version);
           }
-          try {await verifyTeamChange(directory,change,row.membership);}
+          try {await verifyTeamChange(directory,change);}
           catch (error) {
             if (errorInfo(error).expose) return held;
             throw error;
