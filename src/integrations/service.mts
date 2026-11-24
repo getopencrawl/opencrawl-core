@@ -87,7 +87,8 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   };
   const durable = createProvisioning({environment, registry, airbyte, now});
   const countAdmission = (record: IntegrationRecord) => recordCounts?.accepts?.(record) === false ? undefined : recordCounts;
-  const distinct = (!recordCounts || recordCounts.accepts) && typeof buckets?.list === 'function' ? createRecordCounts({buckets, legacyBucket, log, now}) : null;
+  let legacyCounts: ReturnType<typeof createRecordCounts> | undefined;
+  const legacyReader = () => typeof buckets?.list === 'function' ? legacyCounts ??= createRecordCounts({buckets, legacyBucket, log, now}) : null;
   const countScope = (record: IntegrationRecord) => connectorCountScope(environment, record.tenantId, record.userId, record.integrationId,
     {bucket: record.s3Bucket || legacyBucket, rawPrefix: required(record.s3Prefix, 'raw source prefix'), provider: record.provider});
 
@@ -206,9 +207,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
         const succeeded = new Set(jobs.filter(job => job.status === 'succeeded').map(job => Number(job.jobId)));
         const admission = countAdmission(record);
         if (admission) observeCounts(admission, record, refreshing, key, succeeded, runningJob(jobs[0]), observedAt);
-        else if (distinct) {
-          await distinct.get(record, providerFor(record.provider), succeeded, {wait:0});
-        }
+        else await legacyReader()?.get(record, providerFor(record.provider), succeeded, {wait:0});
       }).catch(error => {
         refreshing.failed = true;
         log('integration.status.refresh_failed', {provider: record.provider, integrationId: record.integrationId, message: errorInfo(error).message});
@@ -325,7 +324,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // before the cleanup snapshot; an unresolved request cannot be declared gone.
     if (record.provisionIntent) record = await durable.reconcile(record);
     const {connectionId, sourceId, destinationId} = record.airbyte || {};
-    distinct?.forget(record.integrationId);
+    legacyCounts?.forget(record.integrationId);
     // Stop Airbyte before deleting its landing data. Native source workers
     // fail their next scope check; an already-started storage write still needs
     // the separate worker quiescence/reconciliation policy.
@@ -403,8 +402,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
-    const unique = admission ? status.counts : distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 0}) : null;
-    const awaitingCount = (admission || distinct) && succeededSyncs.size > 0 && !unique;
+    const fallback = admission ? null : legacyReader();
+    const unique = admission ? status.counts : await fallback?.get(record, provider, succeededSyncs, {wait: 0});
+    const awaitingCount = (admission || fallback) && succeededSyncs.size > 0 && !unique;
     const counts = !unique ? (awaitingCount ? null : live) : !succeededSyncs.size && live
       ? Object.fromEntries([...new Set([...Object.keys(live), ...Object.keys(unique)])].map(s => [s, Math.max(live[s] || 0, unique[s] || 0)]))
       : unique;

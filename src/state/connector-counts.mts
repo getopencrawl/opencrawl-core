@@ -153,8 +153,11 @@ export function createConnectorCounts(database:ApplicationDatabase, legacyBucket
     },
     async listPending(environment:Environment,limit=25):Promise<CountScope[]> {
       check(environments.includes(environment) && Number.isInteger(limit) && limit>0 && limit<=25,'dispatch range');
-      await ready();
       return database.transaction(async db=>{
+        // A recovery sweep cannot find committed demand before the writer has
+        // created its table. Keep schema initialization off connector discovery.
+        await db.query("SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='2s'");
+        if (!(await db.query('SELECT to_regclass($1) AS relation',[table])).rows[0].relation) return [];
         const now=Date.now(),out:CountScope[]=[];
         const {rows}=await db.query(`SELECT h.tenant_id,h.user_id,h.integration_id,h.binding,${bindingFields} ${joined}
           WHERE h.namespace=$1 AND h.environment=$2 AND h.dispatch_at<=$3 AND i.status='active'
