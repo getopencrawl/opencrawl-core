@@ -126,6 +126,38 @@ live('superseded provisioning and an unverified cleanup target cannot mutate for
   await f.finish(removal);
 });
 
+live('provisioning positively verifies each stored resource in a shared Airbyte workspace before continuing', async t => {
+  const f = await fixture(t), ref = await f.connect();
+  await f.step(ref);
+  const destination = f.stored.get('destination');
+  const held = async expectedEffects => {
+    await assert.rejects(f.step(ref), {code: 'ProvisioningRecoveryPending'});
+    assert.equal((await f.read(ref)).error, 'recovery');
+    assert.deepEqual(f.effects, expectedEffects);
+  };
+  f.stored.set('destination', {...destination, name: destination.name.replace('org_team', 'org_other')});
+  await held(['create destination']);
+  f.stored.delete('destination');
+  await held(['create destination']);
+  f.stored.set('destination', destination);
+  await f.step(ref);
+
+  const source = f.stored.get('source');
+  f.stored.set('source', {...source, name: source.name.replace('org_team', 'org_other')});
+  await held(['create destination', 'create source']);
+  f.stored.set('source', source);
+  await f.step(ref);
+
+  const connection = f.stored.get('connection');
+  for (const mismatch of [{sourceId: 'foreign'}, {destinationId: 'foreign'}, {name: 'foreign'}]) {
+    f.stored.set('connection', {...connection, ...mismatch});
+    await held(['create destination', 'create source', 'create connection']);
+  }
+  f.stored.set('connection', connection);
+  await f.finish(ref);
+  assert.deepEqual(f.effects, ['create destination', 'create source', 'create connection', 'sync']);
+});
+
 live('revocation terminates an unstarted provision and drops its secret',async t=>{
   const f=await fixture(t),ref=await f.connect();
   f.revoke();

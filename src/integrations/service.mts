@@ -300,6 +300,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     }
     try {
       const validatedWorkspace = reference ? await boundWorkspace(record) : undefined;
+      if (validatedWorkspace) {
+        await durable.inspectResources(record, validatedWorkspace, 'provision', lifecycle!.migratedDestinationMatches);
+      }
       if (record.provisionIntent) {
         record = await durable.reconcile(record);
         if(reference){if(record.airbyte?.sourceId)await lifecycle!.commands.clearSecret(reference);return record;}
@@ -356,7 +359,9 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       // Never replace the durable resource map with a stale local snapshot after
       // an ambiguous POST or a concurrent recovery/disconnect.
       const failed = (await registry.get(record.tenantId, record.userId, record.integrationId))!;
-      await registry.update(failed, {status: 'error', error: failed.provisionIntent || failed.initialSyncIntent ? 'recovery' : errorInfo(error).code === 'ProvisioningKeyRequired' ? 'reconnect' : 'setup'},
+      const code = errorInfo(error).code;
+      const recovery = failed.provisionIntent || failed.initialSyncIntent || code === 'ProvisioningRecoveryPending';
+      await registry.update(failed, {status: 'error', error: recovery ? 'recovery' : code === 'ProvisioningKeyRequired' ? 'reconnect' : 'setup'},
         {whenStatus: ['provisioning'], whenFields: {provisionVersion: failed.provisionVersion, provisionRun: run}})
         .catch(failure => {if (errorInfo(failure).code !== 'ConditionalCheckFailedException') throw failure;});
       throw error;
