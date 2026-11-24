@@ -26,6 +26,8 @@ test('disconnect cards distinguish pending cleanup, interrupted removal and comp
   assert.match(sourceProgress(pending), /pending/);
   assert.equal(pending.recoveryAction, undefined);
 
+  records[0].error = 'recovery';
+  assert.match(sourceProgress(await card()), /waiting for the provider/);
   records[0].cleanupBlockedReason = 'Unknown external create result';
   assert.equal((await card()).recoveryAction, 'disconnect');
   records[0].status = 'disconnected';

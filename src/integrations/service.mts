@@ -494,7 +494,10 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (record.status === 'provisioning') return record.lifecycleCommandId || provisioning.has(record.integrationId) ? {...shown, state: 'syncing', synced: 0}
       : {...shown, state: 'error', message: 'Connection setup was interrupted. Retry to recover it.'};
     if (record.status === 'disconnecting') {
-      if (record.lifecycleCommandId && record.lifecycleOperation === 'disconnect' && !record.cleanupBlockedReason) return {...shown, state: 'disconnecting'};
+      if (record.lifecycleCommandId && record.lifecycleOperation === 'disconnect' && !record.cleanupBlockedReason) {
+        const waiting = record.error === 'recovery' || record.oauthIntent || record.airbyteMigration || record.airbyteLandingMode === 'scoped-preparing-v1';
+        return {...shown, state: 'disconnecting', ...(waiting ? {message:'Removal is waiting for the provider to confirm the connection’s resources. Contact support if this persists.'} : {})};
+      }
       return {...shown, state: 'error', recoveryAction: 'disconnect', message: 'Disconnecting is not complete. Retry to finish removing this connection.'};
     }
     if (record.status === 'error' && record.error === 'setup') return {...shown, state: 'error', message: 'We couldn’t finish setting up this connection.'};

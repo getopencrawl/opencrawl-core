@@ -36,7 +36,7 @@ export function sourceProgress(source: SourceCard): string {
   if (source.state === 'syncing' && source.total) return `${Math.min(count, source.total).toLocaleString()} of ${source.total.toLocaleString()} ${units[1]} imported${source.eta && source.eta > 0 ? `. ${remaining(source.eta)}` : ''}`;
   if (source.state === 'syncing') return count ? `${countText} imported` : 'Preparing your import…';
   if (source.state === 'connecting') return 'Finish signing in using the window that opened.';
-  if (source.state === 'disconnecting') return 'Removal of this connection and its imported data is pending.';
+  if (source.state === 'disconnecting') return source.message || 'Removal of this connection and its imported data is pending.';
   if (source.state === 'error') return source.message || (source.recoveryAction === 'disconnect' ? 'Removal did not finish. Retry to finish deleting imported data.' : 'This source needs attention. Try syncing again.');
   if (source.state === 'unavailable') return 'Connection status is temporarily unavailable. We’ll check again automatically.';
   return countText;
