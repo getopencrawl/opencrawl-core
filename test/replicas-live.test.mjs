@@ -311,6 +311,9 @@ test('repair resumes a committed page and fences newer gap and tail intents',asy
 test('provider rate limits tell Temporal when the repair may run again',async()=>{
   const activity=new MockActivityEnvironment();
   const job={kind:'live-repair',tenantId:'fixture',organizationId:org,id:randomUUID()};
+  const {ReplicasRepairScopeUnavailable}=await import('../dist/src/integrations/replicas-live.mjs');
+  const unconfigured=replicasActivities({repairLiveCapture:async()=>{throw new ReplicasRepairScopeUnavailable();}});
+  await assert.rejects(activity.run(unconfigured.repairReplicasLivePage,job),{type:'ReplicasRepairScopeUnavailable',nextRetryDelay:'1 minute'});
   for(const operation of ['identity','history']){
     const activities=replicasActivities({repairLiveCapture:async()=>{
       throw new ReplicasProviderError('private provider response',429,operation,undefined,120000);

@@ -14,6 +14,7 @@ import {sealedEnvelope} from './credential-vault.mjs';
 
 export interface ReplicasLiveScope {tenantId:string;organizationId:string}
 export interface ReplicasRepairJob extends ReplicasLiveScope {kind:'live-repair';id:string}
+export class ReplicasRepairScopeUnavailable extends Error {}
 interface GapPosition {
   generation:string; catalog:string|null; chats:Array<Pick<ReplicasConversation,'workspace_id'|'chat_id'|'title'|'workspace_name'|'senders'>>;before:string|null;
 }
@@ -347,7 +348,7 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
   }
   return {runLiveCapture:run,async repairLiveCapture(job:ReplicasRepairJob,signal:AbortSignal){
     const repair=repairs.get(scopeKey(job))?.values().next().value;
-    if(!repair)throw new Error('This worker does not serve the requested Replicas live binding');
+    if(!repair)throw new ReplicasRepairScopeUnavailable('This worker does not serve the requested Replicas live binding');
     return repair(job,signal);
   }};
 }
