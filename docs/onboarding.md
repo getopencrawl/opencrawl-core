@@ -36,8 +36,12 @@ Work sessions can use the desktop app’s own runtime. Open the app’s coding s
 once to initialize it. Unavailable integrations appear disabled below the recording
 choices. Available history
 and native approval steps vary by agent. Run `opencrawl setup` to choose again.
-Setup reuses a valid sign-in for the workspace you select. To read the choices saved on this machine,
-run `opencrawl setup status --local --json`.
+Setup reuses a valid sign-in for the workspace you select. To read the choices for
+a saved capture installation, run `opencrawl setup status --local --json`.
+If you opted out of recording on a fresh machine, that command reports
+`SETUP_NOT_STARTED` because no capture installation was created. Run
+`opencrawl doctor --json` instead and check for `status: green` and
+`recordingOff: true`.
 
 ## Automatic plugin updates
 
@@ -61,11 +65,16 @@ also stages downloads. Devin Cloud follows the Git revision chosen in Devin.
 
 ## Run setup on someone's behalf
 
-On a supported machine, run `opencrawl setup --json` to read the machine's plan.
+On a supported machine, request a plan with `opencrawl setup --json`. For a
+self-hosted workspace, add `--api <workspace-url>`. If the JSON status is
+`action_required`, follow the sign-in or signup instructions and request the plan
+again; an exit code of zero alone does not mean a plan was returned.
+
 Use the plan's `applyCommand` after the person has approved the recording and
 history choices. It carries the API origin, selections and plan ID. The CLI
-returns any remaining native approval or sign-in tasks. Inspect the workspace
-with `opencrawl setup status --json`.
+returns any remaining native approval or sign-in tasks. Inspect Cloud workspace
+status with `opencrawl setup status --json`, or use
+`opencrawl setup status --api <workspace-url> --json` for a self-hosted workspace.
 
 ## Earlier guided web flow
 
