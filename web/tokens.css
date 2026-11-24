@@ -41,11 +41,11 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
-  --radius-badge: 4px;
-  --radius-control: 6px;
-  --radius-message: 10px;
-  --radius-panel: 12px;
-  --control-height: 40px;
+  --radius-badge: 3px;
+  --radius-control: 4px;
+  --radius-message: 7px;
+  --radius-panel: 8px;
+  --control-height: 32px;
   --header-height: 72px;
   --pane-inset: 32px;
   --page-width: 1200px;
