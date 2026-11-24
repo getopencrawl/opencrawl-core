@@ -46,15 +46,17 @@ export function createParticipation({scope,repository,now,requestCaptureErasure,
       const session=args.currentSession;
       // A shared workload principal can represent multiple people's conversations.
       if(principal.owner)throw fail('A personal session owner is required for erasure',403);
+      const intent={tenantId:principal.tenantId,userId:principal.userId,...session};
       await repository.transaction(key,async tx=>{
         const id=boardIdentity(principal.userId,session.sessionId);
-        await tx.blockPublication(id);
+        await tx.blockPublicationAndQueueErasure(intent);
         const participant=await tx.participant(id);
         if(participant&&!participant.left)await tx.putParticipant(id,{...participant,left:true,pending:null});
         await tx.removeAgent(id);
       });
       if(!requestCaptureErasure)throw fail('Session erasure is unavailable',503);
       const result=await requestCaptureErasure(principal,session);
+      await repository.transaction(key,tx=>tx.acknowledgeErasure(intent));
       return {session,boardBlocked:true,...result};
     }
     const time=now(),id='session'in args?boardIdentity(principal.userId,args.session):'';

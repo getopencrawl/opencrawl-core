@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -69,7 +70,13 @@ test('real Temporal deletion retries, survives worker replacement, recovers unse
   await f.upload(batch({owner:peer}));await f.upload(batch({owner:other}));
   const config={sourceId:'deletion-fixture',taskQueue:'deletion-fixture'};
   const firstAttempt=pause();let archives=0;
-  const binding={...f.options,purgeCopies:async()=>{archives++;if(archives===1){firstAttempt.resolve();throw Object.assign(Error('PRIVATE_PROVIDER_BODY'),{status:403,code:'AccessDenied'});}return 0;}};
+  let recoveredIncognito=false;
+  const binding={...f.options,recoverIncognitoErasures:async deliver=>{
+    if(!recoveredIncognito){
+      await deliver({...peer,harness:'codex',sessionId:'incognito-session'});
+      recoveredIncognito=true;
+    }
+  },purgeCopies:async()=>{archives++;if(archives===1){firstAttempt.resolve();throw Object.assign(Error('PRIVATE_PROVIDER_BODY'),{status:403,code:'AccessDenied'});}return 0;}};
   const resolveDeletion=async input=>{if(input.sourceId!==config.sourceId)throw Object.assign(new Error('denied'),{permanent:true});return binding;};
   const workerOptions={address:env.address,namespace:'default',taskQueue:config.taskQueue,bundlePath,resolve:async()=>{throw Error('not indexing');},resolveDeletion,maxConcurrentActivityTaskExecutions:1};
   const writeStarted=pause(),releaseWrite=pause(),put=f.store.put;
@@ -124,6 +131,13 @@ test('real Temporal deletion retries, survives worker replacement, recovers unse
   runtime=await createSessionWorker(workerOptions);
   await runtime.worker.runUntil(async()=>{
     await recovery.result();
+    assert.equal(recoveredIncognito,true);
+    const pending=await requests.readFor(peer,{harness:'codex',sessionId:'incognito-session'});
+    assert.equal(pending.sessionId,'incognito-session');
+    await env.client.workflow.execute('recoverSessionDeletionsV1',{workflowId:'next-sweep',taskQueue:config.taskQueue,args:[{sourceId:config.sourceId}]});
+    // Await the specific deletion child even if it has already removed its intent.
+    const incognitoHash=createHash('sha256').update(JSON.stringify([f.options.prefix,peer.tenantId,peer.userId,'codex','incognito-session'])).digest('hex');
+    await env.client.workflow.getHandle('session-delete-v1-'+incognitoHash).result();
     assert.deepEqual(await env.client.workflow.getHandle(workflowId).result(),{completed:true});
     const recovered=env.client.workflow.getHandle('session-delete-v1-'+lostKey.split('/').at(-1).slice(0,-5));
     assert.deepEqual(await recovered.result(),{completed:true});

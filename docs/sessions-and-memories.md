@@ -128,6 +128,13 @@ another person's resource is never confirmed.
   arguments cannot supply credentials, arbitrary owners or search/storage scopes.
   Accepted deletions continue if the owner later leaves the organization.
 
+  Incognito commits its erasure intent and board publication block in one
+  PostgreSQL transaction. The API hands the request to session deletion and
+  revokes visibility before acknowledging the device. If that handoff is
+  interrupted, the deletion recovery schedule copies the outstanding intent
+  to the protected deletion store. A later sweep starts the same deletion
+  workflow even if the device stays offline.
+
   An ambiguous remote write never expires into a claim of successful deletion.
   Operators inspect Temporal activity failures for unresolved writes, object locks
   or missing permissions. No cleanup error or transcript content enters the UI;
