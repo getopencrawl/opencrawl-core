@@ -221,6 +221,7 @@ test('accepted removal stays pending until the source can be connected again', a
   item = {...item, state: 'disconnected'};
   await page.clock.runFor(30_001);
   await expect(card.getByRole('button', {name: 'Connect Slack'})).toBeVisible();
+  await expect(page.getByText('Slack disconnected and its imported data deleted.')).toBeVisible();
 });
 
 test('cards keep account context in Manage and directly open OAuth or required setup',async({page,context})=>{
