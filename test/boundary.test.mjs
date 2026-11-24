@@ -33,7 +33,7 @@ function checkImports(source, file, root = sourceRoot) {
     // Document parsers run only in the bounded, credential-free extraction thread.
     if (file.href.endsWith('/connectors/document-text-worker.mts') && ['parse5', 'pdfjs-dist/legacy/build/pdf.mjs'].includes(specifier)) continue;
     // Temporal is an optional customer-operated adapter, not a domain dependency.
-    if ((file.href.includes('/connectors/temporal/') || file.href.includes('/sessions/temporal/') || file.href.includes('/integrations/temporal/') || file.href.includes('/state/online-temporal/')) && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
+    if ((file.href.includes('/connectors/temporal/') || file.href.includes('/sessions/temporal/') || file.href.includes('/integrations/temporal/') || file.href.includes('/identity/temporal/') || file.href.includes('/state/online-temporal/')) && ['@temporalio/worker', '@temporalio/activity', '@temporalio/workflow', '@temporalio/common', '@temporalio/client'].includes(specifier)) continue;
     assert.ok(specifier.startsWith('./') || specifier.startsWith('../'), `Forbidden core dependency: ${specifier}`);
     assert.ok(new URL(specifier, file).href.startsWith(root.href), `Dependency escapes product runtime: ${specifier}`);
   }
