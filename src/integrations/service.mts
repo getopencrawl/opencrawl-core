@@ -357,7 +357,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
   }
 
   /** What the card shows. Airbyte and the OAuth adapter details never leave the server. */
-  async function view(principal: Principal, record: IntegrationRecord | null, provider: Provider): Promise<SourceCard & {integrationId?: string; connectedById?: string}>  {
+  async function view(principal: Principal, record: IntegrationRecord | null, provider: Provider, currentBucket?: () => Promise<string|null>): Promise<SourceCard & {integrationId?: string; connectedById?: string}>  {
     const base = {provider: provider.id, name: provider.name, description: provider.description, primaryMetric: provider.primaryMetric, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp};
     if (!record) return provider.unavailableReason
       ? {...base,state:'setup-required',setup:{title:`${provider.name} is not available yet`,requirement:'Indexing not available',body:provider.unavailableReason}}
@@ -386,6 +386,8 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     if (record.status === 'error' && record.error === 'recovery') return {...shown, state: 'error', message: 'Connection setup is waiting for an earlier request to finish. Retry later; contact support if it persists.'};
     if (record.status === 'error' && record.error === 'reconnect') return {...shown, state: 'error', reconnect: true, message: `We couldn’t finish setting up ${provider.name}. Disconnect it, then connect again with your API key.`};
     if (recordCounts && (record.tenantId !== principal.tenantId || record.environment !== environment)) throw new Error('Source binding is outside the admitted scope');
+    const admission = countAdmission(record);
+    if (admission && currentBucket && (await currentBucket()) !== (record.s3Bucket || legacyBucket)) throw new Error('Source storage binding changed');
     const status = statusFor(record);
     const statusUpdatedAt = status.updatedAt === undefined ? null : new Date(status.updatedAt).toISOString();
     // Do not invent a running import or zero count before the first measurement.
@@ -401,7 +403,6 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     // Distinct records from the bucket: Airbyte's per-sync row counts repeat every full-refresh
     // stream and every updated record. Only initial live import progress comes from Airbyte.
     const succeededSyncs = new Set(jobs.filter(j => j.status === 'succeeded').map(j => Number(j.jobId)));
-    const admission = countAdmission(record);
     const unique = admission ? status.counts : distinct ? await distinct.get(record, provider, succeededSyncs, {wait: 0}) : null;
     const awaitingCount = (admission || distinct) && succeededSyncs.size > 0 && !unique;
     const counts = !unique ? (awaitingCount ? null : live) : !succeededSyncs.size && live
@@ -561,11 +562,14 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
 
     async list(principal: Principal): Promise<Array<SourceCard & {integrationId?: string; connectedById?: string}>> {
       const records = await registry.listTenant(principal.tenantId);
+      let bucket: Promise<string|null> | undefined;
+      const readBucket=recordCounts?.currentBucket;
+      const currentBucket=readBucket ? () => bucket ??= readBucket(principal.tenantId) : undefined;
       return Promise.all(Object.values(providers).map(provider => {
         // A teammate's unfinished sign-in never hides a live team connection.
         const live = records.filter(r => visible(principal, provider, r));
         const record = newest(live.filter(r => r.status !== 'connecting')) || newest(live);
-        return view(principal, record, provider).catch(error => {
+        return view(principal, record, provider, currentBucket).catch(error => {
           log('integration.status.failed', {provider: provider.id, message: errorInfo(error).message});
           return {provider: provider.id, name: provider.name, description: provider.description, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp, state: 'unavailable' as const};
         });

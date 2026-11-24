@@ -8,6 +8,8 @@ export function connectorCountScope(environment: Environment, tenantId: string, 
 
 export interface IntegrationCountAdmission {
   accepts?(record: IntegrationRecord): boolean;
+  /** Revalidate shared storage ownership before showing a cached measurement. */
+  currentBucket?(tenantId: string): Promise<string | null>;
   request(scope: CountScope, succeeded: readonly number[], observedAt: number, active: boolean): Promise<{counts: Record<string, number> | null; dispatch: boolean}>;
   schedule(reference: {tenantId: string; userId: string; connectionId: string}): Promise<unknown>;
   erase(scope: CountScope): Promise<boolean>;

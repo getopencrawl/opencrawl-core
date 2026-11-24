@@ -204,6 +204,23 @@ test('a mismatched registry row cannot admit a durable count request',async()=>{
   assert.equal(attempts,0);
 });
 
+test('cached counts recheck current storage once per tenant listing and hide a revoked binding',async()=>{
+  const records=[record,{...record,provider:'github',integrationId:'int_'+'b'.repeat(26)}];
+  let ownerBucket='owned',fail=false,checks=0,requests=0;
+  const integrations=createIntegrations({environment:'production',appUrl:'https://app.example',providers:{slack:provider,github:{...provider,id:'github'}},
+    registry:{listTenant:async()=>records},buckets:{},oauth:{},destination:{},workspaceId:async()=>'workspace',legacyBucket:'owned',
+    airbyte:{jobs:async()=>[{status:'succeeded',jobId:1}],streamCounts:async()=>({messages:999})},recordCounts:{
+      currentBucket:async tenant=>{checks++;assert.equal(tenant,principal.tenantId);if(fail)throw Error('registry unavailable');return ownerBucket;},
+      request:async()=>{requests++;return {counts:{messages:12},dispatch:false};}}});
+  await integrations.list(principal);await tick();
+  assert.deepEqual((await integrations.list(principal)).map(card=>card.synced),[12,12]);assert.equal(checks,2);assert.equal(requests,2);
+  ownerBucket='replacement';
+  assert.deepEqual((await integrations.list(principal)).map(card=>[card.state,card.synced]),[['unavailable',undefined],['unavailable',undefined]]);
+  fail=true;assert.deepEqual((await integrations.list(principal)).map(card=>card.synced),[undefined,undefined]);
+  fail=false;ownerBucket='owned';assert.deepEqual((await integrations.list(principal)).map(card=>card.synced),[12,12]);
+  assert.equal(checks,5);assert.equal(requests,2);
+});
+
 test('a cold source card serves its prewarmed PostgreSQL measurement while Temporal is unavailable',{timeout:30000},async t=>{
   const database=await applicationDatabaseFixture(t);
   const registry=createSingleOrganizationRegistry({database,organizationId:principal.tenantId});t.after(()=>registry.close());
