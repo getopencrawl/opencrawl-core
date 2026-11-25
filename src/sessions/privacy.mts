@@ -5,28 +5,54 @@ import {maskPatterns,secretName,SECRET_MASK,literal} from './credential-patterns
 import type {ObjectStore, Principal, SessionEvent} from './types.mjs';
 
 import type {PrivacyPreference} from '../application/library-types.mjs';
-export function createPrivacyPreferences(store:ObjectStore, prefix:string, eligible:(owner:Principal)=>boolean | Promise<boolean>) {
-  async function key(owner:Principal) {
+export type StoredPrivacyPreference=Omit<PrivacyPreference,'subject'>;
+export interface PrivacyPreferenceRepository {
+  read(subject:string):Promise<StoredPrivacyPreference|null>;
+  replace(subject:string,revision:string,next:StoredPrivacyPreference):Promise<boolean>;
+}
+type Eligible=(owner:Principal)=>boolean|Promise<boolean>;
+
+export function decodePrivacyPreference(data:Uint8Array):StoredPrivacyPreference {
+  const settings=JSON.parse(Buffer.from(data).toString());
+  if(typeof settings?.enabled!=='boolean'||typeof settings.rules!=='string'||typeof settings.revision!=='string')throw Error('Invalid privacy preference');
+  return {enabled:settings.enabled,rules:settings.rules,revision:settings.revision};
+}
+
+export function privacyPreferences(repository:PrivacyPreferenceRepository,eligible:Eligible) {
+  async function subjectFor(owner:Principal) {
     if (!await eligible(owner)) fail(404,'Session privacy is unavailable');
-    return prefix+'/'+sessionScope(owner)+'/preferences/session-privacy.json';
+    return sessionScope(owner);
   }
   async function read(owner:Principal):Promise<PrivacyPreference> {
-    const data=await store.get(await key(owner),{maxBytes:16384});
-    const settings=data ? JSON.parse(data.toString()) : {enabled:true,rules:'',revision:'0'};
-    if(typeof settings.enabled!=='boolean'||typeof settings.rules!=='string'||typeof settings.revision!=='string') throw Error('Invalid privacy preference');
-    return {...settings,subject:sessionScope(owner)};
+    const subject=await subjectFor(owner);
+    const saved=await repository.read(subject);
+    return {...saved??{enabled:true,rules:'',revision:'0'},subject};
   }
   async function change(owner:Principal,input:PrivacyPreference) {
-    const path=await key(owner);
-    if(input.subject!==sessionScope(owner)) fail(409,'Your workspace or account changed.');
+    const subject=await subjectFor(owner);
+    if(input.subject!==subject) fail(409,'Your workspace or account changed.');
     if(typeof input.enabled!=='boolean'||typeof input.rules!=='string'||input.rules.length>1500) fail(400,'Invalid privacy preference');
-    const current=await store.readVersion(path,{maxBytes:16384});
-    if((current.data?JSON.parse(current.data.toString()).revision:'0')!==input.revision) fail(409,'Privacy settings changed. Reload and try again.');
     const next={enabled:input.enabled,rules:input.rules.trim(),revision:randomUUID()};
-    if(!await store.compareAndSet(path,current.version,Buffer.from(JSON.stringify(next)))) fail(409,'Privacy settings changed. Reload and try again.');
-    return {...next,subject:sessionScope(owner)};
+    if(!await repository.replace(subject,input.revision,next)) fail(409,'Privacy settings changed. Reload and try again.');
+    return {...next,subject};
   }
   return {eligible,read,change};
+}
+
+export function createPrivacyPreferences(store:ObjectStore,prefix:string,eligible:Eligible) {
+  const key=(subject:string)=>prefix+'/'+subject+'/preferences/session-privacy.json';
+  return privacyPreferences({
+    async read(subject) {
+      const data=await store.get(key(subject),{maxBytes:16384});
+      return data?decodePrivacyPreference(data):null;
+    },
+    async replace(subject,revision,next) {
+      const path=key(subject);
+      const current=await store.readVersion(path,{maxBytes:16384});
+      if ((current.data?decodePrivacyPreference(current.data).revision:'0')!==revision) return false;
+      return store.compareAndSet(path,current.version,Buffer.from(JSON.stringify(next)));
+    },
+  },eligible);
 }
 export type PrivacyPreferences=ReturnType<typeof createPrivacyPreferences>;
 

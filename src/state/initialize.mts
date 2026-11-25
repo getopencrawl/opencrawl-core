@@ -4,6 +4,7 @@ import {pathToFileURL} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {applicationDatabase} from './settings.mjs';
 import {prepareScopedState,requireScopedState} from './scoped.mjs';
+import {createOnboardingRepository} from './onboarding.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
 import {createPostgresBoardState} from './board.mjs';
 import {ensureIdentitySchema} from '../identity/better-auth.mjs';
@@ -11,8 +12,8 @@ import {createSingleOrganizationRegistry} from '../integrations/local-registry.m
 import type {ApplicationDatabase} from './postgres.mjs';
 export type InitializeCommand='initialize'|'verify';
 const commands:readonly string[]=['initialize','verify'];
-export async function initializeApplicationState({database,bucket,prefix,organizationId,url,secret,command}:{
-  database:ApplicationDatabase;bucket:string;prefix:string;organizationId:string;url:string;secret:string;command:InitializeCommand;
+export async function initializeApplicationState({database,bucket,prefix,organizationId,url,secret,command,store}:{
+  store?:ReturnType<typeof sessionStorage>['store'];database:ApplicationDatabase;bucket:string;prefix:string;organizationId:string;url:string;secret:string;command:InitializeCommand;
 }){
   if(!commands.includes(command)||!/^org_[A-Za-z0-9]+$/.test(organizationId)||database.sourceIdentity?.organizationId!==organizationId||database.sourceIdentity.prefix!==prefix||database.sourceIdentity.bucket!==bucket)throw new Error('Exact application-state binding required');
   await prepareScopedState(database);
@@ -32,6 +33,7 @@ export async function initializeApplicationState({database,bucket,prefix,organiz
     if((await registry.listTenant(organizationId)).length)throw new Error('Database already contains integration data; start from an empty database');
     const board=createPostgresBoardState(database);await board.ready();
     if((await database.pool.query('SELECT 1 FROM opencrawl_board_heads WHERE namespace=$1 LIMIT 1',[database.namespace])).rows.length)throw new Error('Database already contains board data; start from an empty database');
+    if(store)await createOnboardingRepository(database,store,prefix).migrate();
     await client.query("UPDATE opencrawl_scoped_installations SET state='ready',verified_at=now() WHERE namespace=$1",[database.namespace]);
     await requireScopedState(database);return {command,ready:true,created:true};
   }finally{try{await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[lock]);}finally{client.release();}}
@@ -40,6 +42,6 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   const [command,...rest]=process.argv.slice(2);
   if(!commands.includes(command||'')||rest.length)throw new Error('Usage: state/initialize initialize|verify');
   const database=applicationDatabase(),{store,prefix}=sessionStorage();
-  try{await store.checkAccess();console.log(JSON.stringify(await initializeApplicationState({database,bucket:store.bucket||'',prefix,organizationId:process.env.OPENCRAWL_ORGANIZATION_ID||'',url:process.env.OPENCRAWL_URL||'',secret:process.env.OPENCRAWL_AUTH_SECRET||'',command:command as InitializeCommand})));}
+  try{await store.checkAccess();console.log(JSON.stringify(await initializeApplicationState({database,store,bucket:store.bucket||'',prefix,organizationId:process.env.OPENCRAWL_ORGANIZATION_ID||'',url:process.env.OPENCRAWL_URL||'',secret:process.env.OPENCRAWL_AUTH_SECRET||'',command:command as InitializeCommand})));}
   finally{await database.close();}
 }
