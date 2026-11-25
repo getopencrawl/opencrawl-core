@@ -13,6 +13,7 @@ import {createApplicationDatabase} from '../src/state/postgres.mjs';
 import {createPostgresBoardState} from '../src/state/board.mjs';
 import {createLocalIdentity} from '../src/identity/better-auth.mjs';
 import {createLocalSessionStore} from '../src/sessions/local-store.mjs';
+import {createCaptureCredentials} from '../src/sessions/credentials.mjs';
 import {createSessionIngest} from '../src/sessions/ingest.mjs';
 import {createSessionSearch} from '../src/sessions/search.mjs';
 import {createSessionPipeline} from '../src/sessions/indexer.mjs';
@@ -49,7 +50,7 @@ const imports=createReplicasImport({database,schedule:scheduler.scheduleReplicas
 }});
 const worker=await Worker.create({connection:temporal.nativeConnection,namespace:temporal.namespace??'default',taskQueue,workflowsPath:new URL('../src/sessions/temporal/workflows.cjs',import.meta.url).pathname,activities:replicasActivities(imports)});
 const running=worker.run();
-const app=selfhostApplication({settings:{organizationId:tenantId,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:secret,setupToken:setup,registryPath:'unused',search:searchOptions},store,prefix,identity,boardState:{namespace:database.namespace,board},replicasImport:imports});
+const app=selfhostApplication({captureCredentials:createCaptureCredentials({store,prefix}),settings:{organizationId:tenantId,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:secret,setupToken:setup,registryPath:'unused',search:searchOptions},store,prefix,identity,boardState:{namespace:database.namespace,board},replicasImport:imports});
 let loginCookies:string[]=[];
 const server=createServer((req,res)=>{
   // One-shot loopback fixture login, using cookies from the real signup path.

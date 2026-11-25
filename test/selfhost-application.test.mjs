@@ -9,7 +9,7 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {selfhostTeamWrites} from '../dist/src/selfhost/team-writes.mjs';
-import {createCaptureCredentials as removalCredentials} from '../dist/src/sessions/credentials.mjs';
+import {createCredentialState} from '../dist/src/state/credentials.mjs';
 import {selfhostApplication} from '../dist/src/selfhost/application.mjs';
 import {createSetupState} from '../dist/src/state/setup.mjs';
 import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
@@ -19,24 +19,26 @@ import {postgresSharedFiles} from '../dist/src/files/store.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,replicasBindings,cliSetup,files,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,cliSetup,files,publicOrigin,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
-  const store=createLocalSessionStore(dir),prefix='sessions/selfhost/v1';
+  const bucket='selfhost-fixture',store={...createLocalSessionStore(dir),bucket},prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  const origin='http://localhost:'+server.address().port;
-  const {database,state:boardState}=await boardStateFixture(t);
+  const listenOrigin='http://localhost:'+server.address().port,origin=publicOrigin??listenOrigin;
+  const {database,state:boardState}=await boardStateFixture(t,{sourceIdentity:{version:1,bucket,prefix,organizationId:org}});
   const setupState=cliSetup?createSetupState(database):undefined;await setupState?.ready();
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
   const settings={sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
-  const teamWrite=selfhostTeamWrites({database,store,prefix,organizationId:org,directory:identity.directory,credentials:{capture:removalCredentials({store,prefix})}}).write;
-  app=selfhostApplication({teamWrite,settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
+  const credentialState=createCredentialState(database,store,prefix),captureCredentials=credentialState.credentials('capture');
+  await credentialState.ready();
+  const teamWrite=selfhostTeamWrites({database,store,prefix,organizationId:org,directory:identity.directory,credentials:{capture:captureCredentials}}).write;
+  app=selfhostApplication({captureCredentials,teamWrite,settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
     const jar=who?jars.get(who)||new Map():null;
-    const response=await fetch(origin+path,{redirect:'manual',...options,headers:{...(jar?.size?{cookie:[...jar].map(([k,v])=>k+'='+v).join('; ')}:{}),...options.headers}});
+    const response=await fetch(listenOrigin+path,{redirect:'manual',...options,headers:{...(jar?.size?{cookie:[...jar].map(([k,v])=>k+'='+v).join('; ')}:{}),...options.headers}});
     if(jar){for(const line of response.headers.getSetCookie()){const [pair]=line.split(';'),i=pair.indexOf('=');const name=pair.slice(0,i),value=pair.slice(i+1);if(!value||/Max-Age=0/i.test(line))jar.delete(name);else jar.set(name,value);}jars.set(who,jar);}
     return response;
   };
@@ -50,7 +52,7 @@ async function fixture(t,options={}){
     assert.equal((await identity.invitationLinks()).has(email),false);
     return invited;
   };
-  return {request,post,identity,store,prefix,origin,admin,settings,join:join_};
+  return {request,post,identity,store,prefix,origin,admin,settings,credentialState,join:join_};
 }
 
 test('CLI setup leaves authenticated pages and console operations open before any agent receipt',async t=>{
@@ -329,15 +331,23 @@ test(`MCP clients complete consent, token exchange and revocation with ${new URL
   assert.equal(denial.searchParams.get('error'),'access_denied');assert.equal(denial.searchParams.has('code'),false);
 });
 
-test('delegated capture works for the configured team, remains write-only, and obeys revocation',async t=>{
-  const f=await fixture(t);await f.admin();
+test('retained and new self-host capture tokens remain upload-only and obey revocation after activation',async t=>{
+  const f=await fixture(t,{publicOrigin:'https://selfhost.example'});await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const p={tenantId:org,userId:member.userId};
-  const credentials=createCaptureCredentials({store:f.store,prefix:f.prefix}),issued=await credentials.issue(p);
+  const legacy=createCaptureCredentials({store:f.store,prefix:f.prefix}),issued=await legacy.issue(p);
   const request=path=>f.request(path,null,{headers:{authorization:'Bearer '+issued.token}});
+  assert.equal((await f.credentialState.migrate('activate')).backend,'postgres');
   assert.equal((await request('/api/sessions/identity')).status,200);
   assert.equal((await request('/api/sessions/search?query=private')).status,403);
-  await credentials.revoke(p,issued.id);assert.equal((await request('/api/sessions/identity')).status,401);
+  assert.equal((await f.post('/capture/cloud/revoke','admin',{id:issued.id})).status,200);
+  assert.equal((await request('/api/sessions/identity')).status,401);
+  assert.ok(await legacy.authenticate(issued.token),'The source record stays frozen');
+  const page=await f.post('/capture/cloud','admin',{});assert.equal(page.status,200);
+  const payload=JSON.parse(/<script[^>]+id="opencrawl-page"[^>]*>(.*?)<\/script>/s.exec(await page.text())[1]);
+  const fresh=payload.page.credential;
+  assert.equal((await f.request('/api/sessions/identity',null,{headers:{authorization:'Bearer '+fresh.token}})).status,200);
+  assert.equal(await legacy.authenticate(fresh.token),null);
 });
 
 test('self-host capture acknowledges only after raw storage and the durable indexing handoff',async t=>{
@@ -424,6 +434,7 @@ test('admin removal immediately denies existing browser, CLI, Git, MCP and captu
  assert.equal(namedRefs.headers.get('content-type'),'application/x-git-upload-pack-advertisement');
  await namedRefs.arrayBuffer();
  const captureAuth={authorization:'Bearer '+capture.data.token};
+ assert.equal((await f.credentialState.migrate('activate')).backend,'postgres');
  assert.equal((await f.request('/api/files',null,{headers:captureAuth})).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,200);
  const mcp={method:'POST',headers:{...auth,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'removal-test',version:'1'}}})};
@@ -450,6 +461,8 @@ test('admin removal immediately denies existing browser, CLI, Git, MCP and captu
  assert.equal((await f.request('/api/console/bootstrap','bob-again')).status,200);
  assert.equal((await f.request('/api/cli/me',null,{headers:auth})).status,401);
  assert.equal((await f.request('/api/sessions/identity',null,{headers:captureAuth})).status,401);
+ const sourceCredentials=createCaptureCredentials({store:f.store,prefix:f.prefix});
+ assert.ok(await sourceCredentials.authenticate(capture.data.token),'The frozen source still has the original unrevoked credential');
 });
 
 test('self-host admin can invite a teammate before agent verification without opening the workspace',async t=>{

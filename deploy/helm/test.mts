@@ -60,6 +60,45 @@ test('installation plan bundles all resources and preserves independent external
   const external=configuration({...input,postgresql:{enabled:false},databases:{app:{mode:'external',existingSecret:'app-db'}},temporal:{mode:'external',address:'temporal.test:7233'},opensearch:{mode:'external',url:'https://search.test'},objectStorage:{mode:'external',endpoint:'https://s3.test',bucket:'existing',existingSecret:'s3'},airbyte:{mode:'disabled'}});
   assert.equal(plan(external).steps.length,2);assert.equal(plan(external).steps[0].components?.postgresql,false);assert.deepEqual(plan(external).databases,{app:'external'});
 });
+test('only a newly allocated Helm landing prefix bootstraps credential authority',t=>{
+  const dir=mkdtempSync(join(tmpdir(),'opencrawl-helm-credential-source-'));
+  t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const stub=join(dir,'kubectl.mjs');
+  writeFileSync(stub,`#!${process.execPath}
+import {readFileSync,writeFileSync,existsSync} from 'node:fs';
+const args=process.argv.slice(2),file=name=>process.env.TEST_SECRET_PREFIX+name;
+if(args.includes('get') && args.includes('secret')){
+  const p=file(args[args.indexOf('secret')+1]);
+  if(existsSync(p)){
+    const stored=JSON.parse(readFileSync(p));
+    const data=Object.fromEntries(Object.entries(stored).map(([k,v])=>[k,Buffer.from(v).toString('base64')]));
+    process.stdout.write(JSON.stringify({data}));
+  }
+}
+if(args.includes('apply')){
+  const obj=JSON.parse(readFileSync(0));
+  if(obj.kind==='Secret')writeFileSync(file(obj.metadata.name),JSON.stringify(obj.stringData));
+}
+`,{mode:0o700});
+  function run(name:string,prefix?:string){
+    const config=join(dir,name+'.json'),state=join(dir,name);
+    writeFileSync(config,JSON.stringify({...input,airbyte:{mode:'disabled'},objectStorage:{prefix}}));
+    const result=spawnSync(process.execPath,[join(root,'install.mts'),'--config',config,'--state-dir',state,'--apply'],{
+      encoding:'utf8',env:{...process.env,KUBECTL:stub,HELM:stub,TEST_SECRET_PREFIX:state+'-'},
+    });
+    assert.equal(result.status,0,result.stderr);
+    const runtime=JSON.parse(readFileSync(state+'-opencrawl-runtime-credentials','utf8'));
+    return {runtime,prefix:JSON.parse(readFileSync(join(state,'application.json'),'utf8')).runtime.env.OPENCRAWL_LANDING_S3_PATH};
+  }
+  const created=run('default');
+  assert.equal(created.runtime.OPENCRAWL_ALLOCATED_LANDING_PREFIX,created.prefix);
+  assert.match(created.prefix,/^org_[a-f0-9]{24}\/capture\/v1$/);
+  assert.equal(run('default').runtime.OPENCRAWL_ALLOCATED_LANDING_PREFIX,created.prefix);
+  const prior=join(dir,'default-opencrawl-credentials'),secrets=JSON.parse(readFileSync(prior,'utf8'));
+  delete secrets.OPENCRAWL_ALLOCATED_LANDING_PREFIX;writeFileSync(prior,JSON.stringify(secrets));
+  assert.equal(run('default').runtime.OPENCRAWL_ALLOCATED_LANDING_PREFIX,undefined);
+  assert.equal(run('external-prefix','retained/source').runtime.OPENCRAWL_ALLOCATED_LANDING_PREFIX,undefined);
+});
 test('Airbyte bootstrap reads only the successful attempt of the completed Job',()=>{
   const pod=(name:string,uid:string,phase:string,exitCode:number)=>({
     metadata:{name,ownerReferences:[{kind:'Job',uid,controller:true}]},

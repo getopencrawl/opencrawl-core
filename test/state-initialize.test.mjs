@@ -4,6 +4,10 @@ import {randomUUID} from 'node:crypto';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {initializeApplicationState} from '../dist/src/state/initialize.mjs';
 import {requireScopedState} from '../dist/src/state/scoped.mjs';
+import {memorySessionStore} from './session-store-fixture.mjs';
+import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
+import {createCredentialState} from '../dist/src/state/credentials.mjs';
+import {main as credentialCommand} from '../dist/src/selfhost/credential-state.mjs';
 const organizationId='org_scoped',prefix='sessions/scoped/v1',bucket='scoped-test',skip=!postgresUrl;
 async function fixture(t){
  const sourceIdentity={version:1,bucket,prefix,organizationId},database=await applicationDatabaseFixture(t,{sourceIdentity});
@@ -25,6 +29,33 @@ test('initialization admits only the exact configured binding and known commands
  await assert.rejects(f.run('initialize',{bucket:'another-bucket'}),/binding/);
  await assert.rejects(f.run('migrate'),/binding/);
  await assert.rejects(requireScopedState(f.database),/initialization/);
+});
+test('self-host initializes credential authority once and leaves ready installations on their existing backend',{skip},async t=>{
+ const objects=memorySessionStore(),owner={tenantId:organizationId,userId:'user_operator'};
+ const store={...objects,bucket,async listPage(key,options){
+   const page=await objects.listPage(key,options);
+   if(!options.delimiter)return page;
+   assert.equal(page.keys.length,0,'No onboarding owner directories in this fixture');
+   return {...page,prefixes:[]};
+ }};
+ const previouslyReady=await fixture(t),empty=await fixture(t),allocated=await fixture(t);
+ const open=f=>createCredentialState(f.database,store,prefix);
+ await previouslyReady.run('initialize'); // Ready installation from before the credential migration.
+ assert.equal((await previouslyReady.run('initialize',{store,allocatedLandingPrefix:prefix})).created,false);
+ assert.equal(await open(previouslyReady).active(),false);
+ await empty.run('initialize',{store,allocatedLandingPrefix:'different/prefix'});
+ assert.equal(await open(empty).active(),false);
+ await allocated.run('initialize',{store,allocatedLandingPrefix:prefix});
+ assert.equal(await open(allocated).active(),true);
+ const legacy=createCaptureCredentials({store,prefix}),retained=await legacy.issue(owner);
+ const reused=await fixture(t);
+ await reused.run('initialize',{store,allocatedLandingPrefix:prefix});
+ assert.equal((await reused.run('verify',{store,allocatedLandingPrefix:prefix})).ready,true);
+ const bridge=open(reused);
+ assert.equal(await bridge.active(),false);
+ assert.equal((await bridge.credentials('capture').authenticate(retained.token)).userId,owner.userId);
+ assert.equal((await bridge.migrate('activate')).backend,'postgres');
+ await assert.rejects(credentialCommand(['activate'],{}),/--legacy-writers-drained/);
 });
 test('an interrupted initialization resumes and an unsupported earlier installation is refused',{skip},async t=>{
  const f=await fixture(t);await f.run('initialize');
