@@ -20,9 +20,10 @@ const database=applicationDatabase();
 try {
   await database.ready();
   await requireScopedState(database);
-  const checkpointSource=createSlackRunCheckpoints(database).source({environment:'selfhost',binding:config.binding,bucket:store.bucket});
+  const checkpointSource=createSlackRunCheckpoints(database).source({environment:'selfhost',binding:config.binding,bucket:store.bucket,objectPrefix:config.s3.prefix});
   const guarded=guardConnectorWrites({binding:config.binding,store});
-  if ((await guarded.writeBarrier.inspect()).closed) throw new Error('Slack source connection is closed');
+  const writers=await guarded.writeBarrier.inspect();
+  if (writers.closed || writers.pending) throw new Error('Slack source connection is closed or has unresolved writes');
   await checkpointSource.adopt(store);
   const constructors={files:createSlackFileCapture,messages:createSlackMessageCapture,references:createSlackMessageReferenceCapture};
   const capture=constructors[mode as keyof typeof constructors]({binding:config.binding,checkpoints:checkpointSource.checkpoints,

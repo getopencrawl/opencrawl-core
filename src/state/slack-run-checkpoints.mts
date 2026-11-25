@@ -3,6 +3,7 @@ import type {PoolClient} from 'pg';
 import type {ApplicationDatabase} from './postgres.mjs';
 import {ensureRegistrySchema} from '../integrations/local-registry.mjs';
 import {sourcePaginationProgress, advanceSourcePagination, type SourceProgress} from '../connectors/workflow.mjs';
+import {normalizeS3Prefix} from '../sessions/s3-key-prefix.mjs';
 import {digest, validateBinding} from '../connectors/scope.mjs';
 import type {ConnectorBinding, ConnectorStore} from '../connectors/types.mjs';
 import {captureKinds, checkpointLimit, validateCheckpoint, type SlackRunCheckpoints} from '../connectors/slack-run-checkpoints.mjs';
@@ -12,6 +13,7 @@ interface Source {
   environment: Environment;
   binding: ConnectorBinding;
   bucket: string;
+  objectPrefix?: string;
   owner?: {userId: string; connectedAccountId: string};
 }
 const sources = 'opencrawl_slack_capture_sources';
@@ -41,12 +43,12 @@ export function createSlackRunCheckpoints(database: ApplicationDatabase) {
     await preparing;
   }
 
-  function source({environment, binding, bucket, owner}: Source) {
+  function source({environment, binding, bucket, objectPrefix, owner}: Source) {
     validateBinding(binding);
     if (binding.provider !== 'slack' || !bucket || !['selfhost','staging','production'].includes(environment) ||
         (!owner && environment !== 'selfhost') || (owner && (!owner.userId || !owner.connectedAccountId))) denied();
     const args = [database.namespace, environment, binding.tenantId, binding.connectionId];
-    const identity = digest([binding.workspaceId, bucket, binding.rawPrefix, owner?.userId ?? null, owner?.connectedAccountId ?? null]);
+    const identity = digest([binding.workspaceId, bucket, normalizeS3Prefix(objectPrefix), binding.rawPrefix, owner?.userId ?? null, owner?.connectedAccountId ?? null]);
     async function authorize(db: PoolClient) {
       const result = await db.query(`SELECT user_id,status,provider,record FROM opencrawl_integrations WHERE ${key} FOR SHARE`, args);
       const record = result.rows[0];

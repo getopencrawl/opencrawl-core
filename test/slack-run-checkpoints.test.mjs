@@ -50,6 +50,7 @@ test('quiesced adoption verifies all three checkpoint families, resumes pacing, 
   assert.equal(objects.get(legacy),message);
   const a=await source.checkpoints.open('messages-v1',runId),b=await source.checkpoints.open('messages-v1',runId);
   await a.save(a.bytes);await assert.rejects(b.save(b.bytes),/latest revision/);
+  await assert.rejects(repo.source({...scope,objectPrefix:'other-path'}).current(),/binding changed/);
   await assert.rejects(repo.source({...scope,owner:{...owner,connectedAccountId:'other'}}).current(),/binding changed/);
   await registry.update(record,{status:'disconnecting'});
   await assert.rejects(a.save(a.bytes),/binding changed/);

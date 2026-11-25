@@ -54,7 +54,7 @@ bodies, API responses, credentials and checkpoint contents stay out of history.
 Customer-operated Temporal resolvers use `createSlackRunCheckpoints(database)`
 from `@getopencrawl/opencrawl-core/state/slack-run-checkpoints`. Bind the
 repository to the resolved source with `.source({environment:'selfhost',
-binding,bucket:store.bucket})`, await `.adopt(store)` before polling the queue,
+binding,bucket:store.bucket,objectPrefix:config.s3.prefix})`, await `.adopt(store)` before polling the queue,
 and supply the bound `.checkpoints` to activities. Separate self-hosted
 installations have separate application namespaces. The stored binding also
 pins the source bucket and workspace.
