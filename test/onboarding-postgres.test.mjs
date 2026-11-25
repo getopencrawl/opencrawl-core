@@ -16,7 +16,11 @@ async function fixture(t,organizationId=null){
  const store={bucket,
    async get(k){calls.push(k);return entries.get(k)??null;},
    async put(k,v){calls.push(k);entries.set(k,v);},
-   async listPage(p,{delimiter}){assert.equal(delimiter,'/');const paths=[...entries.keys()].filter(k=>k.startsWith(p)).map(k=>k.slice(p.length).split('/')[0]+'/');return {prefixes:[...new Set(paths)].map(k=>p+k),keys:[],nextToken:null};}
+   async listPage(p,{delimiter,continuationToken}){if(!delimiter){
+     // Exercise pagination inside a directory as well as positive GETs.
+     const keys=[...entries.keys()].filter(k=>k.startsWith(p)&&(!continuationToken||k>continuationToken)).sort();
+     return {keys:keys.slice(0,2),nextToken:keys.length>2?keys[1]:null};
+   }assert.equal(delimiter,'/');const paths=[...entries.keys()].filter(k=>k.startsWith(p)).map(k=>k.slice(p.length).split('/')[0]+'/');return {prefixes:[...new Set(paths)].map(k=>p+k),keys:[],nextToken:null};}
  };
  function seed(scope,snapshot){for(const [kind,value] of Object.entries(snapshot))entries.set(base(scope)+kind+'.json',Buffer.from(JSON.stringify(value)));}
  const open=()=>createOnboardingRepository(database,store,prefix);
@@ -83,4 +87,20 @@ test('activation fences source writes until each reported outcome is known',{ski
  f.store.put=async()=>{throw Error('uncertain');};
  await assert.rejects(control.repository.write(owner,'mcpTest',{observedAt}),/uncertain/);
  await assert.rejects(control.migrate(),/uncertain outcome/);
+});
+
+test('operator inventory visits existing receipt files only and rejects unknown or disappearing files',{skip},async t=>{
+ const f=await fixture(t),control=f.open();
+ f.seed(owner,{cli:{observedAt}});
+ f.entries.set(base(owner),Buffer.alloc(0));
+ f.entries.set(base(owner)+'future.json',Buffer.from('{}'));
+ await assert.rejects(control.migrate(),/Unexpected or repeated/);
+ f.entries.delete(base(owner)+'future.json');
+ const get=f.store.get.bind(f.store);
+ f.store.get=async()=>null;
+ await assert.rejects(control.migrate(),/disappeared/);
+ f.store.get=get;
+ await control.migrate();f.calls.length=0;
+ assert.deepEqual(await control.verify(),{phase:'postgres',owners:1,receipts:1});
+ assert.deepEqual(f.calls,[base(owner)+'cli.json']);
 });

@@ -3,7 +3,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {retainedOwnerScopes} from '../sessions/s3-store.mjs';
 import type {ObjectStore} from '../sessions/types.mjs';
 import {objectOnboardingReceipts, onboardingReceiptKey, onboardingKinds, validateReceipt, validateReceiptScope,
-  type OnboardingRepository, type ReceiptMap} from '../onboarding-receipts.mjs';
+  type OnboardingKind, type OnboardingRepository, type ReceiptMap} from '../onboarding-receipts.mjs';
 import type {ApplicationDatabase, ApplicationTransaction} from './postgres.mjs';
 
 const schemaReady=new WeakMap<ApplicationDatabase,Promise<void>>();
@@ -60,12 +60,12 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
   }
 
   const ownerQuery = 'SELECT receipts, source_hash FROM opencrawl_onboarding_owners WHERE namespace=$1 AND owner=$2';
-  async function adopt(db:ApplicationTransaction, owner:string, sourceReceipts?:ReceiptMap):Promise<ReceiptMap> {
+  async function adopt(db:ApplicationTransaction, owner:string):Promise<ReceiptMap> {
     authorizeOwner(owner);
     const key=[namespace,owner];
     const prior=(await db.query(ownerQuery,key)).rows[0];
-    if (prior && !sourceReceipts) return prior.receipts;
-    const snapshot=sourceReceipts ?? await objects.read(owner,onboardingKinds);
+    if (prior) return prior.receipts;
+    const snapshot=await objects.read(owner,onboardingKinds);
     const digest=fingerprint(snapshot);
     const {rows:[inserted]}=await db.query(`INSERT INTO opencrawl_onboarding_owners(namespace,owner,receipts,source_hash)
       VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING receipts,source_hash`,[...key,JSON.stringify(snapshot),digest]);
@@ -146,21 +146,65 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
     }
   }
 
-  async function scan(copy:boolean) {
-    let owners=0, receipts=0;
-    for await (const owner of retainedOwnerScopes(store,prefix,tenantHash)) {
-      const snapshot=await objects.read(owner,onboardingKinds);
-      const count=Object.keys(snapshot).length;
-      if(!count)continue;
-      if(copy)await database.transaction(db=>adopt(db,owner,snapshot));
-      else {
-        const {rows:[row]}=await database.pool.query(ownerQuery,[namespace,owner]);
-        if(row?.source_hash!==fingerprint(snapshot) || Object.keys(snapshot).some(kind=>!(kind in row.receipts)) ||
-           snapshot.completed && !isDeepStrictEqual(snapshot.completed,row.receipts.completed))
-          throw Error('Retained onboarding receipts differ from their import');
+  async function retainedReceipts(owner:string) {
+    const directory=prefix+'/'+owner+'/onboarding/';
+    const names=new Map(onboardingKinds.map(kind=>[onboardingReceiptKey(prefix,owner,kind),kind]));
+    const kinds=new Set<OnboardingKind>(), cursors=new Set<string>();
+    let cursor:string|null=null;
+    do{
+      const page=await store.listPage(directory,{continuationToken:cursor,maxKeys:32});
+      if(page.prefixes?.length)throw Error('Unexpected retained onboarding directory');
+      for(const key of page.keys){
+        if(key===directory)continue; // Optional S3 directory marker.
+        const kind=names.get(key);
+        if(!kind || kinds.has(kind))throw Error('Unexpected or repeated retained onboarding object');
+        kinds.add(kind);
       }
-      owners++; receipts+=count;
+      cursor=page.nextToken;
+      if(cursor!==null){
+        if(typeof cursor!=='string' || !cursor || cursors.has(cursor))throw Error('Invalid retained onboarding cursor');
+        cursors.add(cursor);
+      }
+    }while(cursor!==null);
+    const receipts=await objects.read(owner,[...kinds]);
+    if(Object.keys(receipts).length!==kinds.size)throw Error('Listed onboarding receipt disappeared');
+    return {owner,receipts,source_hash:fingerprint(receipts)};
+  }
+
+  async function scan(copy:boolean) {
+    let owners=0,receipts=0;
+    async function batch(scopes:string[]){
+      // Eight directory listings and at most 48 positive GETs in flight. The
+      // operator uses a single data connection beside its lifecycle lock.
+      const found=(await Promise.all(scopes.map(retainedReceipts))).filter(row=>Object.keys(row.receipts).length);
+      if(!found.length)return;
+      await database.transaction(async db=>{
+        if(copy) {
+          const {rows}=await db.query(`INSERT INTO opencrawl_onboarding_owners(namespace,owner,receipts,source_hash)
+            SELECT $1,s.owner,s.receipts,s.source_hash FROM jsonb_to_recordset($2) AS s(owner text,receipts jsonb,source_hash text)
+            ORDER BY s.owner ON CONFLICT DO NOTHING RETURNING owner,receipts`,[namespace,JSON.stringify(found)]);
+          const inserted=new Map(rows.map(row=>[row.owner,row.receipts]));
+          for(const row of found)if(inserted.has(row.owner) && !isDeepStrictEqual(inserted.get(row.owner),row.receipts))
+            throw Error('Onboarding receipt copy differs from its source');
+        }
+        const {rows}=await db.query(`SELECT owner,receipts,source_hash FROM opencrawl_onboarding_owners
+          WHERE namespace=$1 AND owner=ANY($2::text[])`,[namespace,found.map(row=>row.owner)]);
+        const targets=new Map(rows.map(row=>[row.owner,row]));
+        for(const row of found){
+          const target=targets.get(row.owner);
+          if(target?.source_hash!==row.source_hash || Object.keys(row.receipts).some(kind=>!(kind in target.receipts)) ||
+             row.receipts.completed && !isDeepStrictEqual(row.receipts.completed,target.receipts.completed))
+            throw Error('Retained onboarding receipts differ from their import');
+          owners++;receipts+=Object.keys(row.receipts).length;
+        }
+      });
     }
+    let scopes:string[]=[];
+    for await(const owner of retainedOwnerScopes(store,prefix,tenantHash)){
+      scopes.push(owner);
+      if(scopes.length===8){await batch(scopes);scopes=[];}
+    }
+    if(scopes.length)await batch(scopes);
     const {rows:[total]}=await database.pool.query(
       'SELECT count(*) FROM opencrawl_onboarding_owners WHERE namespace=$1 AND source_hash<>$2',[namespace,fingerprint({})]);
     if(Number(total.count)!==owners)throw Error('Retained onboarding owner count differs from import');
