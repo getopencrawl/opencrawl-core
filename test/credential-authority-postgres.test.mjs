@@ -218,7 +218,10 @@ test('native credentials require the sealed installation and preserve family-spe
   const legacy=upgrade.credentials('capture');
   await legacy.revokeAll(owner);
   const version=await legacy.removalVersion(owner),retained=await legacy.issue(owner);
-  await upgrade.migrate('activate');
+  const {receipt}=await upgrade.migrate('activate');
+  await database.pool.query("UPDATE opencrawl_credential_authority SET receipt='null'::jsonb WHERE namespace=$1",[database.namespace]);
+  await assert.rejects(native.ready(),/not active/);
+  await database.pool.query("UPDATE opencrawl_credential_authority SET receipt=$2 WHERE namespace=$1",[database.namespace,receipt]);
   const foreign=createPostgresCredentialState({...database,sourceIdentity:{...database.sourceIdentity,prefix:'other'}});
   await assert.rejects(foreign.credentials('capture').authenticate(retained.token),/not active/);
   await native.ready();

@@ -1,5 +1,5 @@
 import {credentialService} from '../sessions/credential-service.mjs';
-import {postgresCredentialRepository,type CredentialFamily} from './credential-records.mjs';
+import {credentialFamilies,postgresCredentialRepository,type CredentialFamily} from './credential-records.mjs';
 import type {ApplicationDatabase} from './postgres.mjs';
 
 export type {CredentialFamily} from './credential-records.mjs';
@@ -10,9 +10,12 @@ export function createPostgresCredentialState(database:ApplicationDatabase) {
   if(!sourceIdentity)throw Error('Credential storage binding required');
   let checked:Promise<void>|undefined;
   function ready() {
-    checked??=database.pool.query(`SELECT 1 FROM opencrawl_credential_authority WHERE namespace=$1 AND source=$2::jsonb
-      AND receipt IS NOT NULL AND activated_at IS NOT NULL`,[namespace,sourceIdentity]).then(({rowCount})=>{
-      if(rowCount!==1)throw Error('PostgreSQL credential authority is not active for this installation');
+    checked??=database.pool.query(`SELECT receipt FROM opencrawl_credential_authority WHERE namespace=$1 AND source=$2::jsonb
+      AND receipt IS NOT NULL AND activated_at IS NOT NULL`,[namespace,sourceIdentity]).then(({rows:[row]})=>{
+      const receipt=row?.receipt;
+      if(typeof receipt?.sha256!=='string' || !/^[0-9a-f]{64}$/.test(receipt.sha256) || credentialFamilies.some(family=>
+        ![receipt[family]?.records,receipt[family]?.generations].every(n=>Number.isSafeInteger(n) && n>=0)))
+        throw Error('PostgreSQL credential authority is not active for this installation');
     }).catch(error=>{checked=undefined;throw error;});
     return checked;
   }
