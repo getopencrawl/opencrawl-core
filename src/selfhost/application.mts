@@ -30,7 +30,7 @@ import {activeMemberships,singleOrganizationPrincipal} from '../identity/princip
 import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
 import {roleWriteGuard} from '../identity/role-write.mjs';
-import {createOnboardingStatus} from '../onboarding-status.mjs';
+import {createOnboardingStatus,type OnboardingRepository} from '../onboarding-status.mjs';
 import {deriveOnboarding,hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {createOnboardingObserver} from '../application/onboarding-observer.mjs';
 import {createGuidedOnboarding} from '../application/onboarding.mjs';
@@ -77,6 +77,7 @@ export interface SelfhostApplicationOptions {
   contextSuggestions?:ContextSuggestionsExtension;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   setupState?:SetupState;
+  onboardingRepository?:OnboardingRepository;
   sharedFiles?:SharedFilesStore;
   filesLimits?:Parameters<typeof createSharedFilesHandler>[0]['limits'];
   recording?:import('../sessions/recording.mjs').RecordingPolicy;
@@ -94,7 +95,7 @@ export interface SelfhostApplicationOptions {
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
 export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
-  devinState,devinIdentityKey,usageActivity,contextSuggestions={},
+  onboardingRepository,devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
@@ -140,7 +141,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
     if(isReplicasToken(token))return workloads.identify(token);
     return null;
   }
-  const onboarding=createOnboardingStatus({store,prefix,
+  const onboarding=createOnboardingStatus({...(onboardingRepository?{repository:onboardingRepository}:{store,prefix}),
     onSharedReady:async p=>{if(p.owner?.provider==='devin')await devin?.connections.confirmInstallation(p);else await replicas.confirmInstallation(p);},
     sharedInstallations:async p=>(await Promise.all([replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
   const search=createSessionSearch({...settings.search,store,prefix});

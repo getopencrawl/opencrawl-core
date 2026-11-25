@@ -21,6 +21,7 @@ import {sessionStorage} from '../sessions/storage.mjs';
 import {createDrainableServer} from '../application/request-lifecycle.mjs';
 import {createRecordingPolicy} from '../state/recording.mjs';
 import {createDevinState} from '../state/devin.mjs';
+import {createOnboardingRepository} from '../state/onboarding.mjs';
 import {createSetupState} from '../state/setup.mjs';
 export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const contextSuggestions=await loadContextSuggestions(env.OPENCRAWL_CONTEXT_SUGGESTIONS_MODULE);
@@ -32,6 +33,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const usageActivity=createSearchActivity(database);await usageActivity.ready();
   const stopRetention=startActivityRetention(usageActivity);
   const recording=createRecordingPolicy(database);await recording.ready();
+  const onboarding=createOnboardingRepository(database,store,prefix);await onboarding.ready();
   const setupState=createSetupState(database);await setupState.ready();
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
@@ -45,7 +47,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
   const devinRecording=devinRecordingRuntime({database,secret:settings.authSecret,audience:settings.url,schedule:indexing.scheduleDevinRecording,
     sessions:{...settings.search,store,prefix,eventIdentities,scheduleIndexing:indexing.schedule,scheduleDeletion:scheduleSessionDeletion}});
-  const {server,shutdown}=createDrainableServer(selfhostApplication({sharedFiles,filesLimits:sharedFilesLimits(env),usageActivity,contextSuggestions,settings,store,devinState,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,devinRecording,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){await stopRetention();services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
+  const {server,shutdown}=createDrainableServer(selfhostApplication({onboardingRepository:onboarding.repository,sharedFiles,filesLimits:sharedFilesLimits(env),usageActivity,contextSuggestions,settings,store,devinState,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,devinRecording,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){await stopRetention();services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
   const requestTimeout=Number(env.OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS??60000);
   if(!Number.isSafeInteger(requestTimeout)||requestTimeout<0)throw new Error('Invalid OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS');
   server.requestTimeout=requestTimeout;server.headersTimeout=10000;
