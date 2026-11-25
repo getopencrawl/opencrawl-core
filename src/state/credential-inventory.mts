@@ -19,7 +19,7 @@ export async function credentialInventory(store:ObjectStore,root:string,organiza
     const folder=credentialPrefix(root,family)+(kind==='record'?'/_credentials/':'/_credential-generations/');
     const cursors=new Set<string>();let previous='',cursor:string|null=null;
     do{
-      const page=await credentialSource(()=>store.listPage(folder,{continuationToken:cursor,maxKeys:128}));
+      const page=await credentialSource(()=>store.listPage(folder,{continuationToken:cursor,maxKeys:128,requireComplete:true}));
       if(page.prefixes?.length)throw Error('Incomplete credential source listing');
       const paths=page.keys.filter(key=>key!==folder);
       for(let n=0;n<paths.length;n+=8){

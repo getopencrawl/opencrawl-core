@@ -1,6 +1,8 @@
 import {randomBytes} from 'node:crypto';
 import type {Principal, ObjectStore, StoreVersion} from './types.mjs';
-import {parseJson} from './types.mjs';
+function credentialJson<T>(bytes:Buffer):T{
+  try{return JSON.parse(bytes.toString());}catch{throw Error('Invalid credential source document');}
+}
 import {digest,sessionScope} from './ingest.mjs';
 import {fail as deny} from '../errors.mjs';
 
@@ -79,7 +81,7 @@ export function objectCredentialRepository(store:ObjectStore,prefix:string):Cred
   async function generation(principal:Principal){
     const bytes=await credentialSource(()=>store.get(generationKey(principal)));
     if(!bytes)return '';
-    const value=parseJson<{generation?:unknown}>(bytes).generation;
+    const value=credentialJson<{generation?:unknown}>(bytes).generation;
     if(!credentialDigest(value))deny(503,'Credential revocation state unavailable');
     return value;
   }
@@ -90,7 +92,7 @@ export function objectCredentialRepository(store:ObjectStore,prefix:string):Cred
     },
     async lookup(id){
       const bytes=await credentialSource(()=>store.get(key(id)));if(!bytes)return null;
-      const record=parseJson<CredentialRecord>(bytes);
+      const record=credentialJson<CredentialRecord>(bytes);
       if(record.schemaVersion!==1 || record.id!==id || record.revoked || !Number.isFinite(Date.parse(record.expiresAt)))return null;
       sessionScope(record.principal);
       return (record.generation??'')===await generation(record.principal) ? {principal:record.principal,expiresAt:record.expiresAt} : null;
@@ -105,7 +107,7 @@ export function objectCredentialRepository(store:ObjectStore,prefix:string):Cred
     },
     async revoke(principal,id){
       const bytes=await credentialSource(()=>store.get(key(id)));if(!bytes)return;
-      const record=parseJson<CredentialRecord>(bytes);
+      const record=credentialJson<CredentialRecord>(bytes);
       if(sessionScope(record.principal)!==sessionScope(principal))deny(403,'Credential owner mismatch');
       await credentialSource(()=>store.put(key(id),Buffer.from(JSON.stringify({...record,revoked:true})),'application/json'));
     },
