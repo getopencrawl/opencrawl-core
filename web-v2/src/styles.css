@@ -45,11 +45,11 @@
 .usage-query-row:hover { background: var(--surface-subtle); }
 .usage-query-row [aria-expanded=true] svg { transform: rotate(180deg); }
 .usage-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-agent { display: inline-flex; position: relative; align-items: center; vertical-align: middle; }
+.usage-agent { display: inline-flex; align-items: center; vertical-align: middle; }
 .usage-agent .oc-agent-avatar { width: 24px; height: 24px; margin: 0; }
-.usage-agent:is(:hover,:focus-visible)::after { content: attr(data-tooltip); position: absolute; left: 100%; z-index: 2; white-space: nowrap; padding: var(--space-1) var(--space-2); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-control); }
 .usage-query-table .usage-query-detail { white-space: normal; overflow-wrap: anywhere; text-align: left; color: var(--muted); }
 .usage-query-detail p { white-space: pre-wrap; color: var(--text); }
+.usage-query-byline { margin-block: var(--space-1); font-size: var(--text-xs); }
 .usage-history-dialog { width: min(720px,94vw); }
 .usage-history-dialog .oc-dialog-body { max-height: 65dvh; overflow: auto; }
 @container (max-width: 649px) {
@@ -72,8 +72,7 @@
 }
 
 .usage-overview .report-metric dt { color: var(--text); font-weight: 550; }
-.usage-overview .usage-pane:first-child .report-bar { fill: var(--quiet); }
-.usage-token-pane .report-bar,.usage-token-pane .report-trend-line { fill: var(--accent); }
+.usage-overview .report-bar { fill: var(--accent); }
 .usage-token-pane .report-trend-line { fill: none; stroke: var(--accent); }
 .usage-query-table thead th { font-weight: 500; text-transform: none; letter-spacing: normal; }
 .usage-query-table .usage-query { font-weight: 500; }

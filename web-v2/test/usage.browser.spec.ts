@@ -102,6 +102,8 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   const left = page.getByRole('img',{name:'Agent searches per day'}), right = page.getByRole('img',{name:'Session tokens indexed per day'});
   await expect(left.locator('.report-bar-hit')).toHaveCount(30);
   await expect(right.locator('.report-bar-hit')).toHaveCount(30);
+  const tokenBarColor = await right.locator('.report-bar').last().evaluate(bar => getComputedStyle(bar).fill);
+  await expect(left.locator('.report-bar').last()).toHaveCSS('fill', tokenBarColor);
   const recent=page.getByRole('region',{name:'Recent agent queries',exact:true});
   await expect(recent.locator('tbody tr')).toHaveCount(5);
   await expect(recent.locator('.usage-query')).toHaveText(Array.from({length:5},(_,i)=>'agent query '+i));
@@ -111,11 +113,20 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   const timestamp = row.locator('time');
   const compactTime = await timestamp.innerText();
   const fullTime = await timestamp.evaluate((element: HTMLTimeElement) => new Date(element.dateTime).toLocaleString());
+  await row.getByRole('img').hover();
+  // Hit-test the first word where the avatar's hover label used to cover the query.
+  expect(await row.locator('.usage-query').evaluate(cell => {
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    const rect = range.getBoundingClientRect();
+    return document.elementFromPoint(rect.left + 1, rect.top + rect.height / 2) === cell;
+  })).toBe(true);
   await row.getByText('agent query 0', {exact: true}).click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await expect(timestamp).toHaveText(fullTime);
   await expect(recent.locator('time')).toHaveCount(5);
-  await expect(recent.locator('.usage-query-detail')).toHaveText(/^agent query 0\s*View session$/);
+  await expect(recent.locator('.usage-query-detail p')).toHaveText('agent query 0');
+  await expect(recent.getByText('Alex Example / Otter', {exact: true})).toBeVisible();
   await recent.getByText('agent query 0', {exact: true}).last().click();
   await expect(recent.getByRole('link', {name: 'View session', exact: true})).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s0');
   await timestamp.click();
@@ -136,6 +147,7 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await expect(dialog.locator('tbody tr')).toHaveCount(9);
   const lastRow = dialog.locator('tbody tr').last();
   await lastRow.getByRole('cell').nth(1).click();
+  await expect(dialog.getByText('Alex Example', {exact: true})).toBeVisible();
   await expect(dialog.getByRole('link', {name: 'View session', exact: true})).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s8');
   await expect(dialog.locator('time')).toHaveCount(9);
   await page.keyboard.press('Escape');

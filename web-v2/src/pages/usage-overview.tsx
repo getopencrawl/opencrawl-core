@@ -26,15 +26,16 @@ function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names
   const fullTimestamp = at.toLocaleString();
   return <>
     <tr className="usage-query-row" onClick={() => setExpanded(open => !open)}>
-      <td><span className="usage-agent" role="img" tabIndex={0} aria-label={identity} data-tooltip={identity}>
+      <td><span className="usage-agent" role="img" aria-label={identity}>
         <AgentAvatar name={row.agentName || row.at}/>
       </span></td>
-      <td className="usage-query" title={query}>{query.split('\n')[0]}</td>
+      <td className="usage-query">{query.split('\n')[0]}</td>
       <td><time dateTime={row.at} title={fullTimestamp}>{expanded || showDate ? fullTimestamp : time.format(at)}</time></td>
       <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query}><Icon name="chevron-down" size={14}/></Button></td>
     </tr>
     {expanded && <tr><td colSpan={4} className="usage-query-detail">
       <p>{query}</p>
+      <div className="usage-query-byline">{identity}</div>
       {row.sessionId && row.harness && <SessionLink {...row} label="View session"/>}
     </td></tr>}
   </>;
