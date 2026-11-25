@@ -95,3 +95,18 @@ test('directory inventory skips raw pages, orphan directories and advancing empt
   assert.equal((await source.adopt({...store,listPage})).count,1);
   assert.deepEqual(reads.sort(),[location(kind,'old-page-only'),name].sort());
 });
+
+test('hosted native checkpoints refuse a missing historical binding and enroll a new authorized source without S3',{skip:!postgresUrl},async t=>{
+  const {source,repo,scope}=await setup(t);
+  const kind='files-v1',id='resume',body=bytes(id,{cutoff:10});
+  await assert.rejects(source.nativeCheckpoints(new Date('2026-01-01')).open(kind,id),/not been imported/);
+  assert.equal(await source.current(),null);
+  const native=source.nativeCheckpoints(new Date('2025-12-31'));
+  const [first,other]=await Promise.all([native.open(kind,id),native.open(kind,id)]);
+  await first.save(body);
+  await assert.rejects(other.save(body),/latest revision/);
+  const historical=source.nativeCheckpoints(new Date('2026-02-01'));
+  assert.deepEqual((await historical.open(kind,id)).bytes,body);
+  assert.equal((await source.current()).count,0);
+  await assert.rejects(repo.source({...scope,objectPrefix:'mismatched'}).nativeCheckpoints(new Date()).open(kind,id),/binding changed/);
+});

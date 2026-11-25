@@ -1,3 +1,4 @@
+import type {ConditionalStore} from '../sessions/types.mjs';
 import {activateSelfhostTeamGuard} from '../identity/team-guard-authority.mjs';
 import {admitTeamChange,prepareTeamOperations,teamChangeActivities,type TeamChangeOptions,type TeamOperationRef} from '../identity/team-operation.mjs';
 import {rejectChange,type TeamChange} from '../identity/team-change.mjs';
@@ -5,7 +6,7 @@ import {rejectChange,type TeamChange} from '../identity/team-change.mjs';
 /** Local accounts can be administered even when the Temporal frontend is offline.
  * An interrupted synchronous request leaves its existing operation recoverable
  * without repeating a provider write whose outcome is unknown. */
-export function selfhostTeamWrites(options:TeamChangeOptions & {organizationId:string}) {
+export function selfhostTeamWrites(options:TeamChangeOptions & {organizationId:string;store:ConditionalStore;prefix:string}) {
   const {database,organizationId,store,prefix}=options,activities=teamChangeActivities(options);
   let ready:Promise<void>|undefined;
   async function run(change?:TeamChange) {

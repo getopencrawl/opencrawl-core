@@ -57,41 +57,59 @@ export function createSlackRunCheckpoints(database: ApplicationDatabase) {
       if (!record || record.status !== 'active' || record.provider !== 'slack' || record.record.scope !== 'team' ||
           record.record.s3Bucket !== bucket || record.record.s3Prefix + '/' !== binding.rawPrefix || record.record.workspace !== binding.workspaceId ||
           (owner && (owner.userId !== record.user_id || owner.connectedAccountId !== record.record.connectedAccountId))) denied();
+      return record.record.createdAt as string;
     }
     async function receipt(db: PoolClient) {
       const {rows} = await db.query(`SELECT binding,imported_count,import_digest FROM ${sources} WHERE ${key}`,args);
       if (rows.length && rows[0].binding !== identity) denied();
       return rows.length ? {count:Number(rows[0].imported_count), digest:String(rows[0].import_digest)} : null;
     }
-    async function owned<T>(work:(db:PoolClient)=>Promise<T>):Promise<T> {
+    async function owned<T>(verifiedAt:number|undefined,work:(db:PoolClient)=>Promise<T>):Promise<T> {
       await ready();
       return database.transaction(async db => {
-        await authorize(db);
-        if (!await receipt(db)) throw new Error('Slack checkpoints have not been imported');
+        const createdAt=await authorize(db);
+        const source=await db.query(`SELECT binding FROM ${sources} WHERE ${key}`,args);
+        if (source.rowCount) {
+          if (source.rows[0].binding!==identity) denied();
+        } else {
+          // A pre-cutover binding may have retained runs. Only a newly registered
+          // owner can initialize this key without a verified historical import.
+          if (verifiedAt===undefined || !owner || !createdAt || !(Date.parse(createdAt)>verifiedAt))
+            throw new Error('Slack checkpoints have not been imported for this binding');
+          await db.query(`INSERT INTO ${sources}(namespace,environment,tenant_id,integration_id,binding,imported_count,import_digest)
+            VALUES($1,$2,$3,$4,$5,0,$6) ON CONFLICT DO NOTHING`,[...args,identity,createHash('sha256').digest('hex')]);
+          if (!await receipt(db)) denied();
+        }
         return work(db);
       });
     }
-    const checkpoints: SlackRunCheckpoints = {
-      async open(kind, runId) {
-        if (!captureKinds.includes(kind) || !/^[A-Za-z0-9_-]{1,150}$/.test(runId)) denied();
-        const params = [...args,kind,runId];
-        const where = key+' AND kind=$5 AND run_id=$6';
-        const row = await owned(async db => (await db.query(`SELECT revision,body FROM ${runs} WHERE ${where}`,params)).rows[0]);
-        let revision: string | null = row?.revision ?? null;
-        return {bytes: row?.body ?? null, async save(bytes) {
-          validateCheckpoint(binding,kind,runId,bytes);
-          revision = await owned(async db => {
-            const next = revision === null
-              ? await db.query(`INSERT INTO ${runs}(namespace,environment,tenant_id,integration_id,kind,run_id,body)
-                  VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING revision`,[...params,bytes])
-              : await db.query(`UPDATE ${runs} SET revision=revision+1,body=$7 WHERE ${where} AND revision=$8 RETURNING revision`,[...params,bytes,revision]);
-            if (!next.rowCount) throw new Error('Slack checkpoint changed; retry from its latest revision');
-            return next.rows[0].revision as string;
-          });
-        }};
-      }
-    };
-    return {checkpoints,
+    function runCheckpoints(verifiedAt?:number): SlackRunCheckpoints {
+      return {
+        async open(kind, runId) {
+          if (!captureKinds.includes(kind) || !/^[A-Za-z0-9_-]{1,150}$/.test(runId)) denied();
+          const params = [...args,kind,runId];
+          const where = key+' AND kind=$5 AND run_id=$6';
+          const row = await owned(verifiedAt,async db => (await db.query(`SELECT revision,body FROM ${runs} WHERE ${where}`,params)).rows[0]);
+          let revision: string | null = row?.revision ?? null;
+          return {bytes: row?.body ?? null, async save(bytes) {
+            validateCheckpoint(binding,kind,runId,bytes);
+            revision = await owned(verifiedAt,async db => {
+              const next = revision === null
+                ? await db.query(`INSERT INTO ${runs}(namespace,environment,tenant_id,integration_id,kind,run_id,body)
+                    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING revision`,[...params,bytes])
+                : await db.query(`UPDATE ${runs} SET revision=revision+1,body=$7 WHERE ${where} AND revision=$8 RETURNING revision`,[...params,bytes,revision]);
+              if (!next.rowCount) throw new Error('Slack checkpoint changed; retry from its latest revision');
+              return next.rows[0].revision as string;
+            });
+          }};
+        }
+      };
+    }
+    return {checkpoints:runCheckpoints(),
+      nativeCheckpoints(verifiedAt:Date) {
+        if (!owner || !Number.isFinite(verifiedAt.getTime())) denied();
+        return runCheckpoints(verifiedAt.getTime());
+      },
       async current() {
         await ready();
         return database.transaction(async db => {await authorize(db);return receipt(db);});

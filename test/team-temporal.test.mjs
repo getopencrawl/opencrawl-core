@@ -7,8 +7,8 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {roleWriteGuard} from '../dist/src/identity/role-write.mjs';
 import {teamService} from '../dist/src/identity/team.mjs';
-import {admitTeamChange,prepareTeamOperations,teamChangeActivities} from '../dist/src/identity/team-operation.mjs';
-import {readTeamGuardAuthority,inventoryTeamGuards,pauseLegacyTeamGuards,resumeLegacyTeamGuards,activateTeamGuards,activateSelfhostTeamGuard} from '../dist/src/identity/team-guard-authority.mjs';
+import {admitTeamChange,prepareTeamOperations,preparePostgresTeamOperations,teamChangeActivities} from '../dist/src/identity/team-operation.mjs';
+import {readTeamGuardAuthority,activateSelfhostTeamGuard} from '../dist/src/identity/team-guard-authority.mjs';
 import {selfhostTeamWrites} from '../dist/src/selfhost/team-writes.mjs';
 import {durableTeamWrites} from '../dist/src/identity/temporal/client.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -19,10 +19,11 @@ import {buildTeamWorkflows} from '../dist/src/identity/temporal/worker.mjs';
 
 const change={organizationId:'org_team',actorId:'user_admin',userId:'user_member',role:'remove'};
 const admitted={...change,actorMembershipId:'om_user_admin',targetMembershipId:'om_user_member'};
-async function fixture(t) {
+async function fixture(t, sealed=true) {
   const database=await applicationDatabaseFixture(t);
   await prepareTeamOperations(database);
   const store=memorySessionStore(),prefix='test',credential=createCaptureCredentials({store,prefix});
+  if (sealed) await activateSelfhostTeamGuard(database,store,prefix,change.organizationId);
   const members=new Map([['user_admin','admin'],['user_member','member']].map(([userId,slug])=>[userId,{
     id:'om_'+userId,organizationId:change.organizationId,userId,status:'active',role:{slug},
   }]));
@@ -46,9 +47,10 @@ test('team changes bind the queued reference to committed intake, guard ownershi
   await assert.rejects(admitTeamChange(f.database,admitted,async ref=>{rolledBack=ref;throw Error('start was not accepted');}),/not accepted/);
   assert.equal((await worker.advanceTeamChange(rolledBack)).outcome.ok,false);
   assert.equal(f.writes(),0);
-  const blocked=await roleWriteGuard(f.options.store,f.options.prefix)(tenantId,'user_prior',userId,'admin');
+  const other=await f.ref();
+  await f.database.pool.query("UPDATE opencrawl_team_operations SET phase='guarded' WHERE namespace=$1 AND operation=$2",[f.database.namespace,other.operationId]);
   assert.equal((await worker.advanceTeamChange(ref)).outcome.status,409);
-  await blocked.release();
+  await f.database.pool.query("DELETE FROM opencrawl_team_operations WHERE namespace=$1 AND operation=$2",[f.database.namespace,other.operationId]);
   const next=await f.ref();
   const original=f.options.credentials.capture.revokeVersion;
   let attempts=0;
@@ -111,7 +113,6 @@ test('unconfirmed provider writes keep the original guard through retries and op
 
 test('Temporal returns the team outcome after committed intake and resumes a reviewed removal',{skip:!postgresUrl||process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:150000},async t=>{
   const f=await fixture(t),queue='team-test-'+randomUUID();
-  await activateNative(f);
   const binary=process.env.OPENCRAWL_TEST_TEMPORAL_BINARY;
   const environment=await TestWorkflowEnvironment.createLocal(binary?{server:{executable:{type:'existing-path',path:binary}}}:{});
   t.after(()=>environment.teardown());
@@ -166,42 +167,16 @@ test('an unavailable Temporal start can occupy only two API database admissions'
   } finally {allowStarts.resolve();finish.resolve({ok:true});}
 });
 
-async function activateNative(f) {
-  const {database,options:{store,prefix}}=f;
-  await pauseLegacyTeamGuards(database);
-  const {digest}=await inventoryTeamGuards(store,prefix);
-  await activateTeamGuards(database,store,prefix,digest);
-}
-test('SQL authority requires a complete frozen inventory and drained team operations',{skip:!postgresUrl},async t=>{
-  const f=await fixture(t),{store,prefix}=f.options,key=prefix+'/organization-role-writes/org_team.json';
-  const orphan=await roleWriteGuard(store,prefix)(change.organizationId,change.actorId,change.userId,'remove');
-  const ref=await f.ref();
-  await pauseLegacyTeamGuards(f.database);
-  await assert.rejects(f.ref(),{status:503});
-  await assert.rejects(teamChangeActivities(f.options).advanceTeamChange(ref),/temporarily unavailable/);
-  const held=await inventoryTeamGuards(store,prefix);
-  assert.deepEqual([held.held,held.idle,held.unknown],[1,0,0]);
-  await assert.rejects(activateTeamGuards(f.database,store,prefix,held.digest),/reconciliation/);
-  await orphan.release();
-  const idle=await inventoryTeamGuards(store,prefix);
-  assert.deepEqual([idle.held,idle.idle,idle.unknown],[0,1,0]);
-  await assert.rejects(activateTeamGuards(f.database,store,prefix,held.digest),/changed/);
-  const saved=await store.get(key);
-  await store.put(key,Buffer.from('{"schemaVersion":1,"state":"idle"}'));
-  const malformed=await inventoryTeamGuards(store,prefix);
-  assert.equal(malformed.unknown,1);
-  await assert.rejects(activateTeamGuards(f.database,store,prefix,malformed.digest),/reconciliation/);
-  await store.put(key,saved);
-  await resumeLegacyTeamGuards(f.database);
-  const again=await f.ref();
-  await f.database.pool.query("UPDATE opencrawl_team_operations SET phase='dispatching' WHERE namespace=$1 AND operation=$2",[f.database.namespace,again.operationId]);
-  await pauseLegacyTeamGuards(f.database);
-  const source=await inventoryTeamGuards(store,prefix);
-  await assert.rejects(activateTeamGuards(f.database,store,prefix,source.digest),/uncertain/);
+test('native team admission requires a completed receipt and retries readiness after recovery',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t,false),{store,prefix,organizationId}=f.options;
+  await assert.rejects(f.ref(),/receipt is required/);
+  await assert.rejects(preparePostgresTeamOperations(f.database),/receipt is required/);
+  await activateSelfhostTeamGuard(f.database,store,prefix,organizationId);
+  await preparePostgresTeamOperations(f.database);
+  assert.ok((await f.ref()).operationId);
 });
 test('SQL guard serializes different operations and retains an uncertain provider outcome across worker restart',{skip:!postgresUrl},async t=>{
   const f=await fixture(t);
-  await activateNative(f);
   const store=f.options.store;
   const forbid=name=>{const original=store[name];store[name]=async(key,...args)=>{assert(!key.includes('/organization-role-writes/'),'native worker used an object guard');return original(key,...args);};};
   forbid('readVersion');forbid('compareAndSet');
@@ -219,13 +194,12 @@ test('SQL guard serializes different operations and retains an uncertain provide
   assert.equal((await restarted.advanceTeamChange(first)).review,true);
   assert.equal((await restarted.advanceTeamChange(await f.ref())).outcome.status,409);
   assert.equal(dispatches,1);
-  await assert.rejects(resumeLegacyTeamGuards(f.database),/already active/);
   await f.database.pool.query("UPDATE opencrawl_team_operations SET phase='applied' WHERE namespace=$1 AND operation=$2 AND phase='dispatching'",[f.database.namespace,first.operationId]);
   assert.equal((await restarted.advanceTeamChange(first)).outcome.ok,true);
   assert.equal(dispatches,1);
 });
 test('self-host fence retains a standalone held guard and blocks old binaries after migration',{skip:!postgresUrl},async t=>{
-  const f=await fixture(t),{database,options:{store,prefix,organizationId}}=f;
+  const f=await fixture(t,false),{database,options:{store,prefix,organizationId}}=f;
   const legacy=roleWriteGuard(store,prefix),orphan=await legacy(organizationId,change.actorId,change.userId,'remove');
   const local=selfhostTeamWrites(f.options);
   await assert.rejects(local.write({...admitted,organizationId:'org_foreign'}),{status:403});
@@ -250,7 +224,6 @@ test('self-host fence retains a standalone held guard and blocks old binaries af
 });
 test('two admitted administrators cannot demote one another past the last active admin in native mode',{skip:!postgresUrl},async t=>{
   const f=await fixture(t);
-  await activateNative(f);
   f.members.get(change.userId).role={slug:'admin'};
   f.directory.userManagement.updateOrganizationMembership=async(id,{roleSlug})=>{
     const member=[...f.members.values()].find(row=>row.id===id);

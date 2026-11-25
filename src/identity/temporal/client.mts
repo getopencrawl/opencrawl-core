@@ -3,7 +3,7 @@ import {admitTeamChange,type TeamOperationRef} from '../team-operation.mjs';
 import {rejectChange,type ChangeOutcome,type TeamChange} from '../team-change.mjs';
 import type {ApplicationDatabase} from '../../state/postgres.mjs';
 import type workflows from './workflows.cjs';
-export {prepareTeamOperations,teamChangeActivities} from '../team-operation.mjs';
+export {prepareTeamOperations,preparePostgresTeamOperations,teamChangeActivities} from '../team-operation.mjs';
 export type {TeamChange,TeamOperationRef};
 
 export function durableTeamWrites(database:ApplicationDatabase,source:Client|(()=>Promise<Client>),taskQueue:string) {
