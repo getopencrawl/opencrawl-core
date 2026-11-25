@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
-import {preparePrivacyPreferences,postgresPrivacyPreferenceRepository,listPrivacyPreferenceSubjects} from '../dist/src/state/privacy-preferences.mjs';
+import {preparePrivacyPreferences,postgresPrivacyPreferenceRepository,listPrivacyPreferenceSubjects,countPrivacyPreferences} from '../dist/src/state/privacy-preferences.mjs';
 import {privacyPreferences} from '../dist/src/sessions/privacy.mjs';
 
 const connectionString=process.env.OPENCRAWL_TEST_POSTGRES_URL;
@@ -35,6 +35,8 @@ test('privacy preferences preserve revisions, isolate owners and serialize compe
   assert.deepEqual(await service.read(owner),winner);
   assert.deepEqual(await listPrivacyPreferenceSubjects(database.pool,database.namespace),[defaults.subject]);
   assert.deepEqual(await listPrivacyPreferenceSubjects(database.pool,database.namespace,defaults.subject),[]);
+  assert.equal(await countPrivacyPreferences(database.pool,database.namespace),1);
+  assert.equal(await countPrivacyPreferences(database.pool,outside),0);
   const initial=await service.read(other);
   const creates=await Promise.allSettled([true,false].map(enabled=>service.change(other,{...initial,enabled})));
   assert.equal(creates.filter(r=>r.status==='fulfilled').length,1);
