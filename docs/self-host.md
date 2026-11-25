@@ -334,3 +334,50 @@ An operator can uninstall the app directly in GitHub when nothing else needs it.
 
 Usage shows recorded session and search activity. Hosted billing-period token
 totals enter through a separate host adapter.
+
+### Onboarding receipt storage
+
+New installations initialize the six per-user onboarding milestones in the application
+database. An existing installation first runs the compatible receiver against its
+original object keys. After every older receiver and operator process has drained,
+run these commands in the new receiver image with its normal database, organization
+and object-store configuration.
+
+```sh
+node dist/src/state/onboarding-migrate.mjs status
+node dist/src/state/onboarding-migrate.mjs migrate
+node dist/src/state/onboarding-migrate.mjs verify
+```
+
+The importer lists only the configured organization's hashed owner directories. It
+validates and copies the original receipt timestamps, client and harness, then checks
+each copy against the source. While it runs, a live update imports that owner's
+baseline first. An interruption leaves the phase at `importing`. Rerun `migrate`
+to finish. `verify` compares the retained source fingerprints and owner count
+independently. Later observations can advance in PostgreSQL while the original
+completion timestamp survives. Keep the source objects through the verification
+and recovery window.
+
+A bridge writer records its intended change before sending it to object storage.
+If migration reports an outstanding write, wait for the active request to finish
+and retry. For a stranded entry, stop and drain every receiver and operator writer.
+Inspect `opencrawl_onboarding_source_writes` for the exact namespace, operation
+UUID, hashed owner, kind, requested receipt and start time. Use the storage provider's
+request audit and object version history to establish a terminal outcome for the
+outstanding PUT. A client timeout, process exit, or momentary object read alone
+cannot establish that a late PUT is impossible. Retain a copy of the relevant object
+versions. If the PUT failed and no newer observation supersedes it, reconcile the
+requested observation at that exact key, preserving earlier completion or known MCP
+client metadata as applicable. Read back the final value. Only after proving the
+request has settled may an operator delete that exact namespace/operation row and
+retry migration. If its outcome is still unknown, keep object authority and escalate
+to the storage provider.
+
+To return to an older receiver, first run
+`node dist/src/state/onboarding-migrate.mjs restore` from the compatible image.
+It pauses receipt writes, copies each current PostgreSQL value back to its original
+key and verifies readback before returning authority to object storage.
+For a restore that lost its response to a PUT, keep PostgreSQL authoritative
+and establish the terminal provider outcome for that export before retrying.
+Use the same image to resume. Start the older release only
+after `status` reports `object`.
