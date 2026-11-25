@@ -13,6 +13,11 @@ import {createSingleOrganizationRegistry} from '../integrations/local-registry.m
 import type {ApplicationDatabase} from './postgres.mjs';
 export type InitializeCommand='initialize'|'verify';
 const commands:readonly string[]=['initialize','verify'];
+export function allocatedCredentialPrefix(env:NodeJS.ProcessEnv,prefix:string){
+  if(env.OPENCRAWL_ALLOCATED_LANDING_PREFIX===prefix)return prefix;
+  if(env.OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW==='1' && env.OPENCRAWL_LANDING_S3_ENDPOINT==='http://s3:8333' &&
+     env.OPENCRAWL_LANDING_S3_BUCKET==='opencrawl' && prefix==='sessions/self-hosted/v1')return prefix;
+}
 export async function initializeApplicationState({database,bucket,prefix,organizationId,url,secret,command,store,allocatedLandingPrefix}:{
   allocatedLandingPrefix?:string;
   store?:ReturnType<typeof sessionStorage>['store'];database:ApplicationDatabase;bucket:string;prefix:string;organizationId:string;url:string;secret:string;command:InitializeCommand;
@@ -56,6 +61,6 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   const [command,...rest]=process.argv.slice(2);
   if(!commands.includes(command||'')||rest.length)throw new Error('Usage: state/initialize initialize|verify');
   const database=applicationDatabase(),{store,prefix}=sessionStorage();
-  try{await store.checkAccess();console.log(JSON.stringify(await initializeApplicationState({database,store,bucket:store.bucket||'',prefix,allocatedLandingPrefix:process.env.OPENCRAWL_ALLOCATED_LANDING_PREFIX,organizationId:process.env.OPENCRAWL_ORGANIZATION_ID||'',url:process.env.OPENCRAWL_URL||'',secret:process.env.OPENCRAWL_AUTH_SECRET||'',command:command as InitializeCommand})));}
+  try{await store.checkAccess();console.log(JSON.stringify(await initializeApplicationState({database,store,bucket:store.bucket||'',prefix,allocatedLandingPrefix:allocatedCredentialPrefix(process.env,prefix),organizationId:process.env.OPENCRAWL_ORGANIZATION_ID||'',url:process.env.OPENCRAWL_URL||'',secret:process.env.OPENCRAWL_AUTH_SECRET||'',command:command as InitializeCommand})));}
   finally{await database.close();}
 }

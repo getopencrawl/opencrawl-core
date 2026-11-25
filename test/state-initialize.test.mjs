@@ -2,13 +2,22 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {initializeApplicationState} from '../dist/src/state/initialize.mjs';
+import {allocatedCredentialPrefix,initializeApplicationState} from '../dist/src/state/initialize.mjs';
 import {requireScopedState} from '../dist/src/state/scoped.mjs';
 import {memorySessionStore} from './session-store-fixture.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {createCredentialState} from '../dist/src/state/credentials.mjs';
 import {main as credentialCommand} from '../dist/src/selfhost/credential-state.mjs';
 const organizationId='org_scoped',prefix='sessions/scoped/v1',bucket='scoped-test',skip=!postgresUrl;
+test('bundled storage allocation applies only to the exact default Compose source',()=>{
+ const env={OPENCRAWL_LANDING_S3_BUCKET:'opencrawl',OPENCRAWL_LANDING_S3_ENDPOINT:'http://s3:8333',OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW:'1'};
+ const bundled='sessions/self-hosted/v1';
+ assert.equal(allocatedCredentialPrefix(env,bundled),bundled);
+ assert.equal(allocatedCredentialPrefix({...env,OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW:''},bundled),undefined);
+ assert.equal(allocatedCredentialPrefix({...env,OPENCRAWL_LANDING_S3_ENDPOINT:'https://retained.example'},bundled),undefined);
+ assert.equal(allocatedCredentialPrefix({...env,OPENCRAWL_LANDING_S3_BUCKET:'retained'},bundled),undefined);
+ assert.equal(allocatedCredentialPrefix(env,'custom/retained'),undefined);
+});
 async function fixture(t){
  const sourceIdentity={version:1,bucket,prefix,organizationId},database=await applicationDatabaseFixture(t,{sourceIdentity});
  const input={database,bucket,prefix,organizationId,url:'http://localhost:3000',secret:'scoped-test-secret-longer-than-thirty-two'};
