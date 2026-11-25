@@ -75,8 +75,9 @@ for (const width of [1440, 390, 320]) test(`tabs and the date range sit on one b
   await expect(page.getByRole('button', {name:'30 days', exact:true})).toHaveAttribute('aria-pressed','true');
   for (const name of ['Overview', 'Searches', 'Proactive suggestions', 'Team', 'Activity', 'Sources']) {
     await tab(page, name).click();
-    if (['Overview', 'Searches', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart')).toHaveCount(name === 'Overview' ? 2 : 1);
-    if (['Overview', 'Searches', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart .report-bar-axis').first()).toHaveText('0');
+    if (['Overview', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart')).toHaveCount(name === 'Overview' ? 2 : 1);
+    if (['Overview', 'Proactive suggestions', 'Team'].includes(name)) await expect(page.locator('.report-bar-chart .report-bar-axis').first()).toHaveText('0');
+    if (name === 'Searches') await expect(page.getByRole('region', {name: 'Search history'}).getByRole('table')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
     const frameWidth = await page.locator('main .oc-page').evaluate(el => el.clientWidth);
     expect(await page.locator('main .oc-page-body').evaluate(el => el.clientWidth)).toBe(frameWidth);
@@ -141,16 +142,20 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await toggle.press('Space');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await page.getByRole('button',{name:'View all searches'}).click();
-  const dialog=page.getByRole('dialog',{name:'Recent agent queries'});
-  await expect(dialog.locator('tbody tr').first()).toContainText('agent query 0');
-  await dialog.locator('tbody tr').last().scrollIntoViewIfNeeded();
-  await expect(dialog.locator('tbody tr')).toHaveCount(9);
-  const lastRow = dialog.locator('tbody tr').last();
-  await lastRow.getByRole('cell').nth(1).click();
-  await expect(dialog.getByText('Alex Example', {exact: true})).toBeVisible();
-  await expect(dialog.getByRole('link', {name: 'View session', exact: true})).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s8');
-  await expect(dialog.locator('time')).toHaveCount(9);
-  await page.keyboard.press('Escape');
+  await expect(tab(page, 'Searches')).toBeFocused();
+  await expect(tab(page, 'Searches')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const table = page.getByRole('region', {name: 'Search history'}).getByRole('table');
+  await expect(table.getByRole('columnheader')).toHaveText(['', 'Query', 'Searcher', /Date & time/, 'Session']);
+  const firstRow = table.locator('tbody tr').first();
+  await expect(firstRow.getByRole('cell').nth(1)).toHaveText('agent query 0');
+  await expect(firstRow.getByRole('cell').nth(2)).toHaveText('Alex Example / Otter');
+  await expect(firstRow.locator('svg.oc-agent-avatar')).toBeVisible();
+  await expect(firstRow.getByRole('link', {name: 'View session'})).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s0');
+  await table.locator('tbody tr').last().scrollIntoViewIfNeeded();
+  await expect(table.locator('tbody tr')).toHaveCount(9);
+  await expect(table.locator('tbody tr').last().getByRole('link')).toHaveAttribute('href', '/sessions?user=user_alex&harness=claude-code&id=s8');
+  await tab(page, 'Overview').click();
   await expect(recent.locator('tbody tr')).toHaveCount(5);
   await page.getByRole('button',{name:'90 days',exact:true}).click();
   await expect(right.locator('.report-bar-hit')).toHaveCount(90);
@@ -160,35 +165,31 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await expect(left.locator('.report-bar-hit')).toHaveCount(7);
   await page.getByRole('button',{name:'Cumulative',exact:true}).click();
   await expect(page.getByRole('img',{name:'Cumulative indexed session tokens'}).locator('polyline')).toBeVisible();
+  await page.getByRole('button', {name: 'View all searches'}).click();
+  await expect(page.getByLabel('Date range')).toHaveValue('7d');
   expect(receipts.tokens).toEqual(['all']);
   expect(history).toContainEqual({kind:'agent',range:'30d',basis:'events',withQuery:true,before:page2});
 });
 
-test('Searches and Proactive context each count, chart and list only their own events for the selected range', async ({page}) => {
+test('Searches shows observed query history, and Proactive suggestions keeps its own chart and edits', async ({page}) => {
   const requests = await serve(page);
   await page.goto('/usage?split&activity');
   await tab(page, 'Searches').click();
-  await expect(chartTotal(page, 'Agent searches')).toHaveText('435');
-  await expect(page.locator('.report-metric')).toHaveCount(0);
-  const searches = page.getByRole('region', {name: 'Agent searches', exact: true});
-  await expect(await hoverDay(page, 'Agent searches', -1)).toHaveText(`${day(0)}29 searches`);
-  await expect(searches.locator('.report-bar')).toHaveCount(30);
-  const list = page.getByRole('region', {name: 'Searches', exact: true}).getByRole('table');
-  await expect(list.locator('thead th')).toHaveText(['Time', 'Query', 'From', 'Session']);
+  const list = page.getByRole('region', {name: 'Search history'}).getByRole('table');
   await expect(list.locator('tbody tr').first()).toContainText('agent query 0');
   await expect(list.locator('tbody tr').first()).toContainText('Alex Example');
-  await expect(list.locator('tbody tr').nth(1)).toContainText('Workspace member');
-  await page.getByLabel('Date range').selectOption('all');
-  await expect(searches.locator('.report-bar')).toHaveCount(40);
-  await expect(await hoverDay(page, 'Agent searches', 0)).toHaveText(`${day(39)}Not tracked`);
+  await expect(list.locator('tbody tr').nth(1)).toContainText('Unidentified searcher');
+  await expect(page.locator('.report-bar-chart')).toHaveCount(0);
+  await page.getByLabel('Date range').selectOption('7d');
+  await expect.poll(() => requests.history).toContainEqual({kind: 'agent', range: '7d', basis: 'events', withQuery: true});
   await tab(page, 'Proactive suggestions').click();
+  await page.getByLabel('Date range').selectOption('all');
   await expect(chartTotal(page, 'Proactive context edits')).toHaveText('1,540');
   await expect(await hoverDay(page, 'Proactive context edits', -1)).toHaveText(`${day(0)}78 edits`);
   const edits = page.getByRole('region', {name: 'Edits', exact: true}).getByRole('table');
   await expect(edits.locator('thead th')).toHaveText(['Time', 'Triggering message', 'Search', 'Results', 'From', 'Session']);
   await expect(edits.locator('tbody tr').first()).toContainText('prompt 0');
-  expect(requests.history).toContainEqual({kind: 'agent', range: '30d'});
-  expect(requests.history).toContainEqual({kind: 'agent', range: 'all'});
+  expect(requests.history).toContainEqual({kind: 'agent', range: '30d', basis: 'events', withQuery: true});
   expect(requests.history).toContainEqual({kind: 'proactive', range: 'all', edits: true});
   expect(requests.history!.some(input => (input as {kind: string}).kind === 'proactive' && !(input as {edits?: boolean}).edits)).toBe(false);
 });
@@ -296,13 +297,13 @@ test('slow lists and charts show a visible spinner instead of a blank panel', as
   await expect(page.getByRole('region',{name:'Recent agent queries'}).getByRole('table')).toBeVisible();
 });
 
-test('with a billing meter every search row shows what it cost and why, and the arithmetic adds up', async ({page}) => {
+test('Searches filters withheld rows even on a metered workspace and Proactive suggestions still reports charges', async ({page}) => {
   await serve(page);
   const charge = (credits: number, reason: string) => ({charge: {credits, reason}});
   const agentRows = [
     {...searchRow(0, 'agent'), operation: 'Workspace', returned: 4, ...charge(3, 'charged')},
     {...searchRow(1, 'agent'), userId: 'user_sam', operation: 'Board', returned: 0, ...charge(0, 'no_results')},
-    {...searchRow(2, 'agent'), operation: 'Sessions', returned: null, outcome: 'failed', ...charge(0, 'failed')},
+    {...searchRow(2, 'agent'), operation: 'Sessions', sessionId: null, returned: null, outcome: 'failed', ...charge(0, 'failed')},
     {...searchRow(3, 'agent'), userId: 'user_sam', operation: 'Workspace', queries: [], sessionId: null, returned: 2, withheld: 'private', ...charge(3, 'charged')},
     {...searchRow(4, 'agent'), queries: [], sessionId: null, withheld: 'session_deleted', ...charge(3, 'charged')},
     {...searchRow(5, 'agent'), userId: '', operation: '', queries: [], harness: null, sessionId: null, returned: null, withheld: 'unrecorded', ...charge(3, 'charged')},
@@ -315,22 +316,11 @@ test('with a billing meter every search row shows what it cost and why, and the 
   });
   await page.goto('/usage?split&activity');
   await tab(page, 'Searches').click();
-  const panel = page.getByRole('region', {name: 'Searches', exact: true}), list = panel.getByRole('table'), rows = list.locator('tbody tr');
-  await expect(panel.locator('.usage-charge-summary')).toHaveText('4 searches charged × 3 credits = 12 credits. 1 search with no results and 1 failed: free.');
-  await expect(list.locator('thead th')).toHaveText(['Time', 'Query', 'Searched', 'Results', 'From', 'Session', 'Charge']);
-  await expect(rows).toHaveCount(6);
-  const cells = (index: number) => rows.nth(index).locator('td');
-  await expect(cells(0)).toContainText(['agent query 0', 'Workspace', '4', 'Alex Example', 's0', '3 credits']);
-  await expect(cells(1).nth(6)).toHaveText('FreeNo results');
-  await expect(cells(2).nth(6)).toHaveText('FreeSearch failed');
-  await expect(cells(3).nth(1)).toHaveText('Private session');
-  await expect(cells(3).nth(6)).toHaveText('3 credits');
-  await expect(cells(3).nth(4)).toContainText('Sam Example');
-  await expect(cells(4).nth(1)).toHaveText('Deleted with its session');
-  await expect(cells(5).nth(1)).toHaveText('Recorded before search text was kept');
-  await expect(cells(5).nth(4)).toHaveText('Not recorded');
-  // The charged rows on screen are the charge.
-  expect(await rows.filter({hasText: '3 credits'}).count()).toBe(4);
+  const list = page.getByRole('region', {name: 'Search history'}).getByRole('table');
+  await expect(list.locator('tbody tr')).toHaveCount(3);
+  await expect(list.locator('tbody tr').nth(1)).toContainText('Sam Example');
+  await expect(list.getByRole('columnheader', {name: 'Charge'})).toHaveCount(0);
+  await expect(list.locator('tbody tr').nth(2).getByRole('cell').last()).toHaveText('Not recorded');
   await tab(page, 'Proactive suggestions').click();
   const edits = page.getByRole('region', {name: 'Edits', exact: true});
   await expect(edits.locator('.usage-charge-summary')).toHaveText('1 edit charged × 10 credits = 10 credits.');

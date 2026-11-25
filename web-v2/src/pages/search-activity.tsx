@@ -2,7 +2,7 @@ import {consoleResourceKey,useConsoleResource} from '../data.tsx';
 import {Button,DailyBarChart,LoadingState,Notice,Section} from '../design/components.js';
 import {Link} from '../router.js';
 import type {ConsoleDataAdapter} from './types.js';
-import type {CallTotals,HistoryRequest,SearchActivityRow} from '../../../src/application/search-activity.mjs';
+import type {HistoryRequest,SearchActivityRow} from '../../../src/application/search-activity.mjs';
 import type {UsageRange} from '../../../src/application/usage-range.mjs';
 import {compact,count,harnessName,plural} from './usage-model.ts';
 import {PagedList} from './usage-list.tsx';
@@ -40,55 +40,36 @@ function Charge({charge}:{charge:NonNullable<SearchActivityRow['charge']>}){
   if(charge.reason==='charged')return <strong>{plural(charge.credits,'credit')}</strong>;
   return <>Free<span className="report-email">{charge.reason==='failed'?'Search failed':'No results'}</span></>;
 }
-/** The arithmetic behind the charge for this range: charged rows times the rate, and what was free. */
-function chargeSummary(totals:CallTotals,edits:boolean){
-  const charged=edits?totals.nonSilent:totals.agentSearches,rate=edits?totals.rates!.proactive:totals.rates!.agent;
-  const sum=`${plural(charged,edits?'edit':'search',edits?'edits':'searches')} charged × ${plural(rate,'credit')} = ${plural(charged*rate,'credit')}.`;
-  const free=totals.uncharged;
-  return edits||!free||free.noResults+free.failed===0?sum:`${sum} ${plural(free.noResults,'search','searches')} with no results and ${count(free.failed)} failed: free.`;
-}
-
-/** One billable count on a tab: its number, its bars by day, then its rows. */
-function ActivityTab({adapter,scope,range,names,kind}:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames;kind:'agent'|'proactive'}){
+export function ProactiveTab({adapter,scope,range,names}:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames}){
   const {data,error,loading,reload}=useCallTotals(adapter,scope,range);
-  const edits=kind==='proactive';
-  const label=edits?'Proactive context edits':'Agent searches';
-  const value=(totals:CallTotals)=>edits?totals.nonSilent:totals.agentSearches;
-  const request:HistoryRequest={kind,range,...edits?{edits:true as const}:{}};
   const billed=data?.charged===true;
   return <>
-    {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>{label} couldn’t update.</Notice>}
-    {loading&&!data&&<LoadingState spinner label={'Loading '+label.toLowerCase()+'…'}/>}
-    {data&&<Section className="report-panel" headingLevel={3} title={label}
-      description={edits?'Proactive searches that ran and returned at least one result. OpenCrawl runs these on its own when an agent gets a new prompt; ones that find nothing are not counted.'
-        :billed?'Searches your agents ran that returned at least one result. Searches with no results, or that failed, are listed below and are free.'
-        :'Every search your agents ran through OpenCrawl.'} actions={<span className="report-chart-total" title={count(value(data))}>{compact(value(data))}</span>}>
-      <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:edits?day.nonSilent:day.agentSearches}))} label={label+' per day'}
-        unit={n=>edits?plural(n,'edit'):plural(n,'search','searches')}/>
+    {error&&<Notice tone="warning" actions={<Button onClick={reload}>Try again</Button>}>Proactive context edits couldn’t update.</Notice>}
+    {loading&&!data&&<LoadingState spinner label="Loading proactive context edits…"/>}
+    {data&&<Section className="report-panel" headingLevel={3} title="Proactive context edits"
+      description="Proactive searches that ran and returned at least one result. OpenCrawl runs these on its own when an agent gets a new prompt; ones that find nothing are not counted."
+      actions={<span className="report-chart-total" title={count(data.nonSilent)}>{compact(data.nonSilent)}</span>}>
+      <DailyBarChart days={(data.daily??[]).map(day=>({date:day.date,value:day.nonSilent}))} label="Proactive context edits per day" unit={n=>plural(n,'edit')}/>
     </Section>}
-    <Section className="report-panel" headingLevel={3} title={edits?'Edits':'Searches'}>
-      {data?.charged&&data.rates&&<p className="report-note usage-charge-summary">{chargeSummary(data,edits)}</p>}
-      <PagedList<SearchActivityRow,NonNullable<HistoryRequest['before']>> cacheKey={[...consoleResourceKey(adapter,'usage-search-lines'),kind,range]} label={edits?'Proactive context edits':'Agent searches'}
-        className="usage-search-history" empty={edits?'No proactive context edits in this period.':'No agent searches in this period.'}
-        load={async(before,signal)=>scoped(scope,await adapter.searchHistory({...request,...before?{before}:{}},signal))}
-        head={<tr><th scope="col">Time</th>{edits&&<th scope="col">Triggering message</th>}<th scope="col">{edits?'Search':'Query'}</th>
-          {billed&&!edits&&<th scope="col">Searched</th>}{(edits||billed)&&<th scope="col">Results</th>}<th scope="col">From</th><th scope="col">Session</th>{billed&&<th scope="col">Charge</th>}</tr>}
+    <Section className="report-panel" headingLevel={3} title="Edits">
+      {billed&&data.rates&&<p className="report-note usage-charge-summary">{plural(data.nonSilent,'edit')} charged × {plural(data.rates.proactive,'credit')} = {plural(data.nonSilent*data.rates.proactive,'credit')}.</p>}
+      <PagedList<SearchActivityRow,NonNullable<HistoryRequest['before']>> cacheKey={[...consoleResourceKey(adapter,'usage-search-lines'),'proactive',range]} label="Proactive context edits"
+        className="usage-search-history" empty="No proactive context edits in this period."
+        load={async(before,signal)=>scoped(scope,await adapter.searchHistory({kind:'proactive',range,edits:true,before},signal))}
+        head={<tr><th scope="col">Time</th><th scope="col">Triggering message</th><th scope="col">Search</th>
+          <th scope="col">Results</th><th scope="col">From</th><th scope="col">Session</th>{billed&&<th scope="col">Charge</th>}</tr>}
         row={row=><tr key={row.id}>
           <td>{time(row.at)}</td>
-          {edits&&<td>{row.withheld?<Withheld reason={row.withheld}/>:row.message??<span className="report-email">Message unavailable</span>}</td>}
-          <td>{row.withheld?(edits?null:<Withheld reason={row.withheld}/>):row.queries.length?row.queries.join('\n'):<span className="report-email">No query text</span>}</td>
-          {billed&&!edits&&<td>{row.operation||<span className="report-email">Not recorded</span>}</td>}
-          {(edits||billed)&&<td>{row.returned==null?<span className="report-email">{row.charge?.reason==='failed'?'None':'Not recorded'}</span>:count(row.returned)}</td>}
+          <td>{row.withheld?<Withheld reason={row.withheld}/>:row.message??<span className="report-email">Message unavailable</span>}</td>
+          <td>{row.withheld?null:row.queries.length?row.queries.join('\n'):<span className="report-email">No query text</span>}</td>
+          <td>{row.returned==null?<span className="report-email">{row.charge?.reason==='failed'?'None':'Not recorded'}</span>:count(row.returned)}</td>
           <td>{row.userId?<From userId={row.userId} harness={row.harness} names={names}/>:<span className="report-email">Not recorded</span>}</td>
           <td><SessionLink userId={row.userId} harness={row.harness} sessionId={row.sessionId}/></td>
           {billed&&<td>{row.charge?<Charge charge={row.charge}/>:null}</td>}
         </tr>}/>
       <p className="report-note">{billed
-        ?(edits?'Every edit that was charged is listed. A check that finds nothing is free and is not listed.':'Every search is listed, charged or not. A search costs credits only when its results reach the agent.')+' Search text from a session you can’t open is hidden; the row and its charge are still shown.'
-        :'The total counts every '+(edits?'edit':'search')+'. The list shows those from sessions you can see, for the last 30 days at most.'}</p>
+        ?'Every edit that was charged is listed. A check that finds nothing is free and is not listed. Search text from a session you can’t open is hidden; the row and its charge are still shown.'
+        :'The total counts every edit. The list shows those from sessions you can see, for the last 30 days at most.'}</p>
     </Section>
   </>;
 }
-
-export const SearchesTab=(props:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames})=><ActivityTab {...props} kind="agent"/>;
-export const ProactiveTab=(props:{adapter:ActivityAdapter;scope:string;range:UsageRange;names:MemberNames})=><ActivityTab {...props} kind="proactive"/>;

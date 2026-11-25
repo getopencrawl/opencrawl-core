@@ -50,8 +50,13 @@
 .usage-query-table .usage-query-detail { white-space: normal; overflow-wrap: anywhere; text-align: left; color: var(--muted); }
 .usage-query-detail p { white-space: pre-wrap; color: var(--text); }
 .usage-query-byline { margin-block: var(--space-1); font-size: var(--text-xs); }
-.usage-history-dialog { width: min(720px,94vw); }
-.usage-history-dialog .oc-dialog-body { max-height: 65dvh; overflow: auto; }
+.usage-query-history table { table-layout: fixed; min-width: 43rem; }
+.usage-query-history :is(td, th) { text-align: left; overflow-wrap: anywhere; }
+.usage-query-history th:first-child { width: 2.5rem; }
+.usage-query-history th:nth-child(3) { width: 23%; }
+.usage-query-history th:nth-child(4) { width: 10rem; }
+.usage-query-history th:last-child { width: 7rem; }
+.usage-history-query { white-space: pre-wrap; }
 @container (max-width: 649px) {
   .usage-overview .report-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .usage-overview .report-metric:last-child { grid-column: 1/-1; }
@@ -76,5 +81,4 @@
 .usage-token-pane .report-trend-line { fill: none; stroke: var(--accent); }
 .usage-query-table thead th { font-weight: 500; text-transform: none; letter-spacing: normal; }
 .usage-query-table .usage-query { font-weight: 500; }
-.usage-history-dialog .usage-query-table :is(th,td):nth-child(3) { width: clamp(90px,25vw,176px); white-space: normal; }
 .usage-view-all { display: inline-flex; align-items: center; gap: var(--space-1); }

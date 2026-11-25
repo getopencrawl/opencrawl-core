@@ -1,81 +1,19 @@
 import {useState} from 'react';
 import {consoleResourceKey, useConsoleResource} from '../data.tsx';
-import {Button, DailyBarChart, Dialog, Icon, LoadingState, MetricGrid, Notice, Section, Table} from '../design/components.tsx';
-import {AgentAvatar} from '../design/agent-avatar.tsx';
+import {Button, DailyBarChart, Icon, LoadingState, MetricGrid, Notice, Section} from '../design/components.tsx';
 import type {ConsoleDataAdapter} from './types.ts';
-import type {SearchActivityPage, SearchActivityRow} from '../../../src/application/search-activity.mjs';
-import {scoped, SessionLink, type ActivityAdapter, type MemberNames} from './search-activity.tsx';
-import {PagedList} from './usage-list.tsx';
+import {scoped, type ActivityAdapter, type MemberNames} from './search-activity.tsx';
+import {RecentQueries, type QueryRange} from './usage-queries.tsx';
 import {count, plural} from './usage-model.ts';
 
 const periods = ['7d', '30d', '90d', 'all'] as const;
-type Period = typeof periods[number];
+export type OverviewPeriod = typeof periods[number];
 const dayLength = 86_400_000;
 const shortDate = new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
-const time = new Intl.DateTimeFormat(undefined, {hour: 'numeric', minute: '2-digit', second: '2-digit'});
-const zone = new Intl.DateTimeFormat('en-US', {timeZoneName: 'shortGeneric'}).formatToParts().find(part=>part.type==='timeZoneName')?.value;
 const formatMtok = new Intl.NumberFormat('en-US', {maximumFractionDigits: 2});
 const refresh = {staleMilliseconds: 60_000, autoRefreshMilliseconds: 60_000};
 
-function QueryRow({row, names, showDate = false}: {row: SearchActivityRow; names: MemberNames; showDate?: boolean}) {
-  const [expanded, setExpanded] = useState(false);
-  const human = names.get(row.userId);
-  const identity = [human, row.agentName].filter(Boolean).join(' / ') || 'Unidentified searcher';
-  const query = row.queries.join('\n').trim();
-  const at = new Date(row.at);
-  const fullTimestamp = at.toLocaleString();
-  return <>
-    <tr className="usage-query-row" onClick={() => setExpanded(open => !open)}>
-      <td><span className="usage-agent" role="img" aria-label={identity}>
-        <AgentAvatar name={row.agentName || row.at}/>
-      </span></td>
-      <td className="usage-query">{query.split('\n')[0]}</td>
-      <td><time dateTime={row.at} title={fullTimestamp}>{expanded || showDate ? fullTimestamp : time.format(at)}</time></td>
-      <td><Button variant="quiet" aria-expanded={expanded} aria-label={'Details for ' + query}><Icon name="chevron-down" size={14}/></Button></td>
-    </tr>
-    {expanded && <tr><td colSpan={4} className="usage-query-detail">
-      <p>{query}</p>
-      <div className="usage-query-byline">{identity}</div>
-      {row.sessionId && row.harness && <SessionLink {...row} label="View session"/>}
-    </td></tr>}
-  </>;
-}
-
-const columns = (label: string) => <tr><th scope="col" aria-label="Agent"/><th scope="col">Query</th><th scope="col">{label}{zone && ` (${zone})`}</th><th scope="col" aria-label="Details"/></tr>;
-
-function RecentQueries({adapter, scope, period, names}: {adapter: ActivityAdapter; scope: string; period: Period; names: MemberNames}) {
-  const [open, setOpen] = useState(false);
-  const range = period === '7d' ? '7d' : '30d'; // Query text is retained for 30 days.
-  const key = [...consoleResourceKey(adapter, 'observed-query-history'), scope, range];
-  async function load(before: string | undefined, signal: AbortSignal): Promise<SearchActivityPage> {
-    const rows: SearchActivityRow[] = [];
-    let next = before;
-    // A privacy-filtered page can be empty even while more visible queries follow.
-    do {
-      const page = scoped(scope, await adapter.searchHistory({kind: 'agent', range, basis: 'events', withQuery: true, before: next}, signal));
-      rows.push(...page.rows.filter(row => !row.withheld && row.queries.some(query => query.trim())));
-      if (!page.next || page.next === next || rows.length >= (before ? 1 : 5)) return {rows, next: page.next === next ? null : page.next};
-      next = page.next;
-    } while (!signal.aborted);
-    throw new DOMException('Search history request cancelled', 'AbortError');
-  }
-  const recent = useConsoleResource(key, signal => load(undefined, signal), refresh);
-  const entries = recent.data?.rows ?? [];
-  return <>
-    {recent.error && <Notice tone="warning" actions={<Button onClick={recent.reload}>Try again</Button>}>Recent searches couldn’t update.</Notice>}
-    {recent.loading && <LoadingState spinner label="Loading recent searches…"/>}
-    {entries.length > 0 && <Table label="Recent agent queries" className="usage-query-table"><thead>{columns('Time')}</thead><tbody>{entries.slice(0,5).map(row => <QueryRow key={row.id} row={row} names={names}/>)}</tbody></Table>}
-    {recent.data && !entries.length && <p className="report-note">No recent searches visible to you.</p>}
-    {(entries.length > 5 || recent.data?.next) && <Button className="usage-view-all" variant="quiet" aria-label="View all searches" onClick={() => setOpen(true)}>View all{!recent.data?.next && ' '+count(entries.length)} <Icon name="arrow-right" size={14}/></Button>}
-    {open && <Dialog open onClose={() => setOpen(false)} title="Recent agent queries" className="usage-history-dialog">
-      <PagedList<SearchActivityRow,string> cacheKey={key} load={load} head={columns('Date & time')} className="usage-query-table" label="Agent queries" empty="No recent searches visible to you."
-        row={row => <QueryRow key={row.id} row={row} names={names} showDate/>}/>
-    </Dialog>}
-  </>;
-}
-
-export function UsageOverview({adapter, activity, scope, names}: {adapter: ConsoleDataAdapter; activity?: ActivityAdapter; scope: string; names: MemberNames}) {
-  const [period, setPeriod] = useState<Period>('30d');
+export function UsageOverview({adapter, activity, scope, names, period, setPeriod, onViewAll}: {adapter: ConsoleDataAdapter; activity?: ActivityAdapter; scope: string; names: MemberNames; period: OverviewPeriod; setPeriod: (period: OverviewPeriod) => void; onViewAll: (range: QueryRange) => void}) {
   const [cumulative, setCumulative] = useState(false);
   // The historic inventory is grouped once. All four ranges share this authorized read.
   const indexed = useConsoleResource([...consoleResourceKey(adapter, 'session-start-tokens'),scope], async signal => {
@@ -122,7 +60,7 @@ export function UsageOverview({adapter, activity, scope, names}: {adapter: Conso
         <Section className="usage-pane" title="Recent searches">
           {calls.error && <Notice tone="warning" actions={<Button onClick={calls.reload}>Try again</Button>}>Search activity couldn’t update.</Notice>}
           {calls.data && <DailyBarChart days={searches} label="Agent searches per day" unit={n=>plural(n,'search','searches')} height={118} shortDates/>}
-          {activity ? <RecentQueries adapter={activity} scope={scope} names={names} period={period}/> : <p className="report-note">Search activity unavailable.</p>}
+          {activity ? <RecentQueries adapter={activity} scope={scope} names={names} range={period === '7d' ? '7d' : '30d'} onViewAll={onViewAll}/> : <p className="report-note">Search activity unavailable.</p>}
         </Section>
         <Section className="usage-pane usage-token-pane" title="Indexed session tokens" actions={<div className="usage-segments" role="group" aria-label="Token chart display">
           {[false,true].map(mode=><Button variant="plain" key={String(mode)} aria-pressed={cumulative===mode} onClick={()=>setCumulative(mode)}>{mode?'Cumulative':'Daily'}</Button>)}</div>}>

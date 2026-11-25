@@ -1,5 +1,5 @@
-import {useEffect, useState} from 'react';
-import {ProactiveTab, SearchesTab, scoped} from './search-activity.tsx';
+import {useEffect, useRef, useState} from 'react';
+import {ProactiveTab, scoped} from './search-activity.tsx';
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
@@ -12,7 +12,8 @@ import type {UsageMember, UsageSource} from './usage-model.ts';
 import type {UsageSection} from '../../../src/application/reports.mjs';
 import type {UsageRange} from '../../../src/application/usage-range.mjs';
 import {reconcileUsage, usageSectionFailed} from './usage-recovery.ts';
-import {UsageOverview} from './usage-overview.tsx';
+import {UsageOverview, type OverviewPeriod} from './usage-overview.tsx';
+import {SearchesTab, type QueryRange} from './usage-queries.tsx';
 
 const refreshPolicy = {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000, reconcile: reconcileUsage};
 type Tab = 'overview' | 'searches' | 'proactive' | 'team' | 'activity' | 'sources';
@@ -182,12 +183,20 @@ function usePrefetchedRanges(ready: boolean, current: UsageRange, reads: Readonl
 export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: PageProps) {
   const [tab, setTab] = useState<Tab>('overview');
   const [range, setRange] = useState<UsageRange>('30d');
+  const [period, setPeriod] = useState<OverviewPeriod>('30d');
+  const toolbar = useRef<HTMLDivElement>(null);
+  function viewAllSearches(queryRange: QueryRange) {
+    setRange(queryRange);
+    setTab('searches');
+    requestAnimationFrame(() => toolbar.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus());
+  }
+  const queryRange = range === '7d' ? '7d' : '30d';
   const scope = reportScope ?? showActivity;
   const activity = showActivity && adapter.callTotals && adapter.searchHistory ? {adapter: adapter as ActivityAdapter, scope: showActivity} : undefined;
   const hasOverview = Boolean(scope && adapter.usageTokens);
   const team = useTeamReport(adapter, scope, range);
   const ranged = Boolean(scope && adapter.usageDetails);
-  usePrefetchedRanges(tab !== 'overview' && Boolean(team.data) && Boolean(scope), range, [
+  usePrefetchedRanges(tab !== 'overview' && tab !== 'searches' && Boolean(team.data) && Boolean(scope), range, [
     ...ranged ? [{key: (r: UsageRange) => [...consoleResourceKey(adapter, 'usage-details'), r], read: async (r: UsageRange, signal: AbortSignal) => ({workspace: null, ...scoped(scope!, await adapter.usageDetails!(signal, r))})}] : [],
     ...activity ? [{key: (r: UsageRange) => [...consoleResourceKey(activity.adapter, 'call-totals'), r], read: async (r: UsageRange, signal: AbortSignal) => scoped(activity.scope, await activity.adapter.callTotals(r, signal))}] : [],
   ]);
@@ -201,14 +210,14 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
   ];
   const current: Tab = tabs.some(item => item.value === tab) ? tab : tabs[0]!.value;
   return <Page title="Usage" bodyClassName="usage-report" actions={setupPrompt && current !== 'overview' ? <CopyPromptButton text={setupPrompt}/> : undefined}>
-    <div className="usage-toolbar">
+    <div className="usage-toolbar" ref={toolbar}>
       <Tabs label="Usage" items={tabs} value={current} onChange={value => setTab(value as Tab)}/>
-      {current !== 'overview' && <Select aria-label="Date range" value={range} onChange={event => setRange(event.target.value as UsageRange)}>
-        {ranges.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+      {current !== 'overview' && <Select aria-label="Date range" value={current === 'searches' ? queryRange : range} onChange={event => setRange(event.target.value as UsageRange)}>
+        {ranges.filter(item => current !== 'searches' || item.value !== 'all').map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
       </Select>}
     </div>
-    {current === 'overview' && scope && hasOverview && <UsageOverview adapter={adapter} activity={activity?.adapter} scope={scope} names={names}/>}
-    {current === 'searches' && activity && <SearchesTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
+    {current === 'overview' && scope && hasOverview && <UsageOverview adapter={adapter} activity={activity?.adapter} scope={scope} names={names} period={period} setPeriod={setPeriod} onViewAll={viewAllSearches}/>}
+    {current === 'searches' && activity && <SearchesTab adapter={activity.adapter} scope={activity.scope} range={queryRange} names={names}/>}
     {current === 'proactive' && activity && <ProactiveTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {(current === 'activity' || current === 'sources') && <>
       {team.error && <Notice tone={team.data ? 'warning' : 'danger'} actions={!team.data && <Button onClick={team.reload} disabled={team.loading}>Try again</Button>}>{team.data ? 'Usage couldn’t update. We’ll try again automatically while you’re viewing this page.' : team.error}</Notice>}
