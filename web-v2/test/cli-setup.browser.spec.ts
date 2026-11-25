@@ -84,15 +84,16 @@ test('computer tiles show connected agent names and allow connecting another age
     await expect(tile).not.toContainText('Codex');
   }
   await expect(computers.locator('details, button')).toHaveCount(0);
+  const addHost = page.getByText('Connect another computer',{exact:true});
+  const heading = page.getByRole('heading',{name:'Your computers'});
   for (const width of [1280, 900, 390, 320]) {
     await page.setViewportSize({width, height:850});
+    expect((await addHost.boundingBox())!.y).toBeLessThan((await heading.boundingBox())!.y);
     expect(await tiles.evaluateAll(items => items.every(el => el.scrollWidth <= el.clientWidth + 1))).toBe(true);
   }
   await page.setViewportSize({width:1280,height:800});
   const command = page.getByRole('button',{name:copyLabel});
-  const addHost = page.getByText('Connect another computer',{exact:true});
   await expect(command).toBeHidden();
-  expect((await computers.boundingBox())!.y).toBeLessThan((await addHost.boundingBox())!.y);
   await addHost.focus();
   await addHost.press('Enter');
   await expect(command.locator('code')).toHaveText(installer);
