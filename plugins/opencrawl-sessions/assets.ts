@@ -1,3 +1,4 @@
+import shareSkill from './shared/skills/oc-share/SKILL.md' with {type:'text'};
 import continueSkill from './shared/skills/oc-continue/SKILL.md' with {type:'text'};
 import memorySkill from './shared/skills/oc-import-memories/SKILL.md' with {type:'text'};
 import privacyPolicy from './shared/skills/oc-incognito/agents/openai.yaml' with {type:'text'};
@@ -21,8 +22,8 @@ export const hookAssets:Record<string,Record<string,string>>={
 };
 export const knowledgeSkill=asset9;
 
-export const companionSkills = {'oc-import-memories': memorySkill, 'oc-continue': continueSkill};
-export const sharedAssets={'skills/oc-continue/SKILL.md':continueSkill,'skills/oc-import-memories/SKILL.md':memorySkill,'skills/oc-incognito/agents/openai.yaml':privacyPolicy,'skills/oc-private/agents/openai.yaml':privacyPolicy,'skills/opencrawl-private/agents/openai.yaml':privacyPolicy,'skills/oc-readonly/agents/openai.yaml':privacyPolicy,'skills/oc-incognito/SKILL.md':privacySkill0,'skills/oc-private/SKILL.md':privacySkill1,'skills/opencrawl-private/SKILL.md':privacySkill2,'skills/oc-readonly/SKILL.md':privacySkill3,'scripts/opencrawl-hook.sh':sh,'scripts/opencrawl-hook.cmd':cmd,'scripts/opencrawl-hook.ps1':ps1,'skills/opencrawl/SKILL.md':knowledgeSkill,'skills/opencrawl-setup/SKILL.md':setupSkill};
+export const companionSkills = {'oc-import-memories': memorySkill, 'oc-continue': continueSkill, 'oc-share': shareSkill};
+export const sharedAssets={'skills/oc-share/SKILL.md':shareSkill,'skills/oc-continue/SKILL.md':continueSkill,'skills/oc-import-memories/SKILL.md':memorySkill,'skills/oc-incognito/agents/openai.yaml':privacyPolicy,'skills/oc-private/agents/openai.yaml':privacyPolicy,'skills/opencrawl-private/agents/openai.yaml':privacyPolicy,'skills/oc-readonly/agents/openai.yaml':privacyPolicy,'skills/oc-incognito/SKILL.md':privacySkill0,'skills/oc-private/SKILL.md':privacySkill1,'skills/opencrawl-private/SKILL.md':privacySkill2,'skills/oc-readonly/SKILL.md':privacySkill3,'scripts/opencrawl-hook.sh':sh,'scripts/opencrawl-hook.cmd':cmd,'scripts/opencrawl-hook.ps1':ps1,'skills/opencrawl/SKILL.md':knowledgeSkill,'skills/opencrawl-setup/SKILL.md':setupSkill};
 
 export const devinManifest={path:".devin-plugin/plugin.json",value:manifest4};
 export {readme, devinGuide};

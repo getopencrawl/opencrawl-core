@@ -84,6 +84,6 @@ fallback capture. Hosts without a usable supervisor keep that fallback.
 
 ## Continue a session or import personal memories
 
-Use `$oc-continue <session link, ID, or topic>` to pick up previous work in the current chat. Use `$oc-import-memories` to copy personal memory files from another client. Preview sources with `opencrawl memories scan --json`.
+Use `$oc-share` to get this chat’s OpenCrawl link. Use `$oc-continue <session link, ID, or topic>` to pick up previous work in the current chat. Use `$oc-import-memories` to copy personal memory files from another client. Preview sources with `opencrawl memories scan --json`.
 
 [Website](https://getopencrawl.com) · [Documentation](https://github.com/getopencrawl/opencrawl-core#readme) · [Issues](https://github.com/getopencrawl/opencrawl-core/issues)

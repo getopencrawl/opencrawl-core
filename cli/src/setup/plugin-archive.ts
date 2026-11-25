@@ -24,7 +24,7 @@ export function validateArtifact(value:unknown,entry:PackageRelease,platform:str
   data.filename!==`${entry.name==='opencrawl'?'opencrawl-'+entry.harness:entry.name}-${entry.version}-${platform}.zip`||data.sha256!==pin.sha256||data.executable!==executable||
   !Array.isArray(data.source)||JSON.stringify([...data.source].sort())!==JSON.stringify([...sourceFiles].sort()))throw invalid();
  const nativeFiles=entry.harness==='antigravity'?['hooks.json','mcp_config.json']:['hooks/hooks.json'];
- return {executable,manifest,allowed:new Set([manifest,...baseFiles,...(entry.listingIcon?['assets/icon.svg']:[]),...(entry.memoryImportSkill?['skills/oc-import-memories/SKILL.md']:[]),...(entry.continueSkill?['skills/oc-continue/SKILL.md']:[]),...nativeFiles,...sourceFiles,...(incognito?privateSkills:[]),...(incognito&&entry.harness==='codex'?privateSkills.map(path=>path.replace('SKILL.md','agents/openai.yaml')):[]),executable])};
+ return {executable,manifest,allowed:new Set([manifest,...baseFiles,...(entry.listingIcon?['assets/icon.svg']:[]),...(entry.memoryImportSkill?['skills/oc-import-memories/SKILL.md']:[]),...(entry.continueSkill?['skills/oc-continue/SKILL.md']:[]),...(entry.shareSkill?['skills/oc-share/SKILL.md']:[]),...nativeFiles,...sourceFiles,...(incognito?privateSkills:[]),...(incognito&&entry.harness==='codex'?privateSkills.map(path=>path.replace('SKILL.md','agents/openai.yaml')):[]),executable])};
 }
 
 /** Read regular allowlisted files into memory; never extract paths or run ZIP content. */
@@ -33,8 +33,8 @@ export async function readPluginArchive(archive:Buffer,metadata:Buffer,entry:Pac
  try{
   const {executable,manifest:manifestFile,allowed}=validateArtifact(JSON.parse(metadata.toString('utf8')),entry,platform,pin);
   // Older installation receipts pin both immutable digests but predate the
-  // three optional presentation/skill flags. Keep every runtime file mandatory.
-  const optional=historical?new Set(['assets/icon.svg','skills/oc-import-memories/SKILL.md','skills/oc-continue/SKILL.md']):new Set<string>();
+  // optional presentation and skill flags. Keep every runtime file mandatory.
+  const optional=historical?new Set(['assets/icon.svg','skills/oc-import-memories/SKILL.md','skills/oc-continue/SKILL.md','skills/oc-share/SKILL.md']):new Set<string>();
   for(const name of optional)allowed.add(name);
   const zip=await fromBufferPromise(archive,{lazyEntries:true,strictFileNames:true,validateEntrySizes:true});
   try{

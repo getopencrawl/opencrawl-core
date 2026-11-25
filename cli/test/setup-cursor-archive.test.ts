@@ -16,7 +16,7 @@ const platform='darwin-arm64';
 const realDir=process.env.OPENCRAWL_TEST_CURSOR_RELEASE_DIR;
 const published=packageRelease('cursor')!;
 // The checked-in test ZIP keeps its manifest version when the public pin advances.
-const entry=realDir?published:{...published,version:'0.3.0'};
+const entry=realDir?published:{...published,version:'0.3.0',shareSkill:false};
 const pin=published.archives![platform]!;
 const archive=readFileSync(realDir?join(realDir,basename(pin.url)):new URL('./fixtures/published-cursor-test.zip',import.meta.url));
 const metadata=realDir?readFileSync(join(realDir,basename(pin.metadataUrl))):Buffer.from(JSON.stringify({
@@ -101,6 +101,7 @@ test('Cursor selection installs the pinned archive offline, binds both MCP files
  const continuation = readFileSync(join(f.dir,'skills/oc-continue/SKILL.md'),'utf8');
  const canonical = readFileSync(new URL('../../plugins/opencrawl-sessions/shared/skills/oc-continue/SKILL.md',import.meta.url),'utf8');
  expect(continuation.replaceAll('\r\n','\n')).toBe(canonical.replaceAll('\r\n','\n'));
+ expect(existsSync(join(f.dir,'skills/oc-share/SKILL.md'))).toBe(Boolean(entry.shareSkill));
  const listing=read(join(f.dir,'.cursor-plugin/plugin.json'));
  expect(listing.name).toBe('opencrawl');
  expect(listing.description).toContain('OpenCrawl');

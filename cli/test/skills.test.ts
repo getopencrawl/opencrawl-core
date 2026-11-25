@@ -257,6 +257,7 @@ test('refresh installs companion skills and preserves each local conflict indepe
   const skill=join(parent,'oc-import-memories','SKILL.md');
   expect(readFileSync(skill,'utf8')).toContain('name: oc-import-memories');
   expect((await agentSkills('status',api,options)).results[0]?.status).toBe('current');
+  expect(readFileSync(join(parent,'oc-share','SKILL.md'),'utf8')).toBe(readFileSync(resolve(import.meta.dir,'../../plugins/opencrawl-sessions/shared/skills/oc-share/SKILL.md'),'utf8'));
   const continuation = join(parent, 'oc-continue');
   const canonical = readFileSync(resolve(import.meta.dir, '../../plugins/opencrawl-sessions/shared/skills/oc-continue/SKILL.md'), 'utf8');
   expect(readFileSync(join(continuation, 'SKILL.md'), 'utf8')).toBe(canonical);
