@@ -309,9 +309,12 @@ async function executeSetup(action:string,api:string,values:Values,{platform=pro
  if(values['capture-mode']!==undefined&&!['run','plan','apply'].includes(action))throw new CliError('INVALID_USAGE','Change capture mode through setup or setup apply.',64);
  const questionnaire=action==='run'&&interactive;
  const requestedMode=requestedCaptureMode(values['capture-mode'],questionnaire?'hook':retainedMode);
- const eligibility=(selections:SetupSelections)=>workload?{eligible:true,reason:'Existing workload supervisor'}:modeEligibility(chosen(selections,'plugins'),platform);
+ const eligibility=(selections:SetupSelections):ReturnType<typeof daemonEligibility>=>workload?{eligible:true,reason:'Existing workload supervisor'}:modeEligibility(chosen(selections,'plugins'),platform);
  const installationMode=(selections:SetupSelections):CaptureMode=>{
-  if(!chosen(selections,'forward').length||!eligibility(selections).eligible)return requestedMode;
+  if(!chosen(selections,'forward').length)return requestedMode;
+  const host=eligibility(selections);
+  if(host.requiresSystemd)throw new CliError('SETUP_DAEMON_UNAVAILABLE',host.reason,2);
+  if(!host.eligible)return requestedMode;
   if(values['capture-mode']==='hook')throw new CliError('SETUP_DAEMON_REQUIRED','Recording with these agents requires the background service. Run setup without --capture-mode hook.',2);
   return 'daemon';
  };

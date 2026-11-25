@@ -4,12 +4,15 @@ import {packageRelease,type CaptureMode} from './published-plugins.ts';
 import type {SetupState} from './state.ts';
 import {realpathSync} from 'node:fs';
 import {posix} from 'node:path';
+import {systemdUserManagerAvailable} from '../capture/daemon-service.ts';
 
 /** Scope and native-service eligibility stay separate from package availability. */
-export function daemonEligibility(clients:string[],platform:NodeJS.Platform=process.platform,env:NodeJS.ProcessEnv=process.env,capabilities:(client:string)=>{daemonHandoff:boolean;captureAvailable:boolean}|undefined=packageRelease){
- if(platform!=='darwin'||env.OPENCRAWL_AUTH||env.CLAUDE_CODE_REMOTE==='true'||env.SSH_CONNECTION)return {eligible:false,reason:'Background capture is available on a local Mac.'};
+export function daemonEligibility(clients:string[],platform:NodeJS.Platform=process.platform,env:NodeJS.ProcessEnv=process.env,capabilities:(client:string)=>{daemonHandoff:boolean;captureAvailable:boolean}|undefined=packageRelease,
+ systemdAvailable=systemdUserManagerAvailable):{eligible:boolean;reason:string;requiresSystemd?:boolean}{
+ if(!['darwin','linux'].includes(platform)||env.OPENCRAWL_AUTH||env.CLAUDE_CODE_REMOTE==='true'||platform==='darwin'&&env.SSH_CONNECTION)return {eligible:false,reason:'Background capture requires a local Mac or Linux with a systemd user manager.'};
  if(!clients.length)return {eligible:false,reason:'Select an agent to record first.'};
  if(clients.some(client=>!capabilities(client)?.daemonHandoff||!capabilities(client)?.captureAvailable))return {eligible:false,reason:'Background capture is not available for these plugin versions yet.'};
+ if(platform==='linux'&&!systemdAvailable())return {eligible:false,requiresSystemd:true,reason:'Linux session recording requires a running systemd user manager. Check systemctl --user status and retry setup.'};
  return {eligible:true,reason:'Retry uploads in the background, including after your agent closes.'};
 }
 /** A failed launch is evidence of missing readiness, not proof of a privacy denial. */

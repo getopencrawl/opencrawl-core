@@ -283,7 +283,7 @@ export async function loginIdentity(api:string,options:{organizationId?:string;n
 
 const hasLocalFlag=(args:string[])=>args.some(arg=>arg==='--local'||arg.startsWith('--local='));
 
-export async function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2), daemonSignal?: AbortSignal) {
   if(args[0]==='files-credential')return (await import('./shared-files.ts')).sharedFileCredential(args.slice(1));
   if(args[0]==='privacy-hook')return (await import('./incognito.ts')).privacyHook(args.slice(1));
   if(args[0]==='incognito')return (await import('./incognito.ts')).privacyCommand(args.slice(1));
@@ -495,7 +495,7 @@ export async function main(args = process.argv.slice(2)) {
       return data.partial || data.coverage.every((c: any) => c.state !== 'ready') ? 1 : 0;
     }
     if(command === 'collect') {
-      const data=await collectCommand(parsed.positionals[1]??'status',api,parsed.values);
+      const data=await collectCommand(parsed.positionals[1]??'status',api,parsed.values,daemonSignal);
       if(data!==null)emit(data,JSON.stringify(data,null,2));
       return 0;
     }
@@ -575,7 +575,16 @@ if (import.meta.main || (typeof OPENCRAWL_STANDALONE_ENTRY !== 'undefined' && OP
   if(delegated!==undefined)process.exit(delegated);
   // Once a one-use refresh has left, save its response before honoring a
   // cooperative shutdown. The request itself has a bounded deadline.
-  process.on('SIGINT', () => exitAfterCredentialRotation(130));
-  process.on('SIGTERM', () => exitAfterCredentialRotation(143));
-  process.exitCode = await main();
+  const args=process.argv.slice(2);
+  if(args[0]==='collect'&&args[1]==='daemon'){
+    const shutdown=new AbortController();
+    const stop=()=>shutdown.abort();
+    process.on('SIGINT',stop);process.on('SIGTERM',stop);
+    process.exitCode=await main(args,shutdown.signal);
+    if(shutdown.signal.aborted)exitAfterCredentialRotation(process.exitCode);
+  }else{
+    process.on('SIGINT', () => exitAfterCredentialRotation(130));
+    process.on('SIGTERM', () => exitAfterCredentialRotation(143));
+    process.exitCode=await main(args);
+  }
 }

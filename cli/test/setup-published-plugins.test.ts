@@ -62,7 +62,10 @@ test('daemon requires a supported local host and handoff capability; new profile
  const capable=()=>({daemonHandoff:true,captureAvailable:true});
  expect(daemonEligibility(['claude-code'],'darwin',{},()=>({daemonHandoff:true,captureAvailable:false})).eligible).toBe(false);
  expect(daemonEligibility(['claude-code'],'darwin',{},capable).eligible).toBe(true);
- for(const platform of ['linux','win32'] as const)expect(daemonEligibility(['claude-code'],platform,{},capable).eligible).toBe(false);
+ expect(daemonEligibility(['claude-code'],'win32',{},capable).eligible).toBe(false);
+ const linuxCli=['codex','claude-code','antigravity','cursor'];
+ expect(daemonEligibility(linuxCli,'linux',{SSH_CONNECTION:'test'},undefined,()=>true).eligible).toBe(true);
+ expect(daemonEligibility(linuxCli,'linux',{},undefined,()=>false)).toMatchObject({eligible:false,requiresSystemd:true});
  expect(daemonEligibility(['claude-code'],'darwin',{CLAUDE_CODE_REMOTE:'true'},capable).eligible).toBe(false);
  expect(daemonEligibility(['unknown'],'darwin',{}).eligible).toBe(false);
 });

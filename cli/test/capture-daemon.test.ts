@@ -78,6 +78,20 @@ async function fixture(run:(f:any)=>Promise<void>){
 }
 import {dirname} from 'node:path';
 
+if(process.platform!=='win32')isolatedTest('SIGTERM stops the foreground daemon cleanly',async()=>fixture(async()=>{
+  const statusFile=join(daemonDir(),'status.json');
+  const child=Bun.spawn([process.execPath,resolve(import.meta.dir,'../src/cli.ts'),'collect','daemon'],{env:{...process.env},stdout:'ignore',stderr:'pipe'});
+  try{
+    await Promise.race([
+      until(()=>existsSync(statusFile)&&JSON.parse(readFileSync(statusFile,'utf8')).pid===child.pid),
+      child.exited.then(async code=>{throw Error('Daemon exited before readiness ('+code+'): '+await new Response(child.stderr).text());}),
+    ]);
+    child.kill('SIGTERM');
+    expect(await child.exited).toBe(0);
+    expect(JSON.parse(readFileSync(statusFile,'utf8'))).toMatchObject({pid:child.pid,state:'stopped'});
+  }finally{child.kill();await child.exited;}
+}));
+
 isolatedTest('paused uploader checks only for queued work and wakes at a timed deadline',async()=>fixture(async f=>{
   const config=readCaptureConfig()!,queue=join(captureDir(),'queue');
   // The server clock is ahead of this laptop. Use its reported time to schedule expiry.

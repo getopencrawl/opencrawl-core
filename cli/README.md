@@ -73,13 +73,18 @@ background daemon migration for existing enabled capture. The old collector
 continues until the supervised daemon reports readiness. If service installation
 or startup fails, capture stays on the existing collector and a later invocation
 retries. Hooks do not wait for installation or startup. Disabled capture and
-custom launchers are preserved. On eligible Macs, setup offers background capture
-as a separate choice. A selected service must report readiness to finish setup.
+custom launchers are preserved. Guided setup installs a background service when
+you select session recording on a local Mac or a Linux host with a running
+systemd user manager. Linux setup works over SSH. Run `systemctl --user status`
+to check the user manager. Recording setup stops before enrollment if this
+manager is unavailable. The service must report readiness to finish setup. To
+check whether the user service can start at boot and keep running after the
+last logout, run `loginctl show-user "$USER" -p Linger`.
 
 Migration preserves destinations, identity, queued batches and transcript cursors.
-The daemon watches enrolled sessions and recovers pending hook notices without
-scanning history. Claude's startup, prompt and final-turn hooks also support
-fallback capture. Hosts without a usable supervisor keep that fallback.
+The daemon discovers new Codex, Claude Code, Antigravity and Cursor CLI sessions
+from their native files and recovers eligible changes after downtime. Existing
+hook-based installations keep their collector until migration succeeds.
 `opencrawl collect status --json` reports the selected worker.
 
 ## Continue a session or import personal memories

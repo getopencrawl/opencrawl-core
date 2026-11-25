@@ -105,7 +105,7 @@ async function antigravityHook(api:string,eventFlag?:string,plugin:PluginHookCon
   finish();
   return null;
 }
-export async function collectCommand(action:string,api:string,values:any) {
+export async function collectCommand(action:string,api:string,values:any,daemonSignal?:AbortSignal) {
   if(['backfill','install'].includes(action)&&(values.limit!==undefined||values['plan-id']!==undefined))throw new CliError('INVALID_USAGE','For a bounded import use history list --limit N and history import --plan-id ID --yes.',64);
   if((values.backfill!==undefined || values['defer-auth']) && action!=='install' || values['dry-run'] && action!=='backfill' || values.yes && !['backfill','install','purge'].includes(action))throw new CliError('INVALID_USAGE','Use --backfill with install; --dry-run with backfill; --yes with install, backfill or purge.',64);
   if(values.event!==undefined && action!=='hook')throw new CliError('INVALID_USAGE','Use --event only with collect hook.',64);
@@ -148,7 +148,12 @@ export async function collectCommand(action:string,api:string,values:any) {
     case 'titles': try{return await refreshCapturedTitles();}catch(e){recordError(e);throw e;}
     case 'flush': try{return await flushCaptureWork({retryRejected:values['retry-rejected']===true});}catch(e){recordError(e);throw e;}
     case 'upgrade-daemon': {const config=readCaptureConfig();if(!compiled()||!config||!ownedNativeCaptureCommand(config))return {state:'not-selected'};const result=await upgradeCaptureDaemon({command:[process.execPath]});atomicJson(join(captureDir(),'daemon','upgrade-result.json'),{...result,at:new Date().toISOString()});atomicJson(join(captureDir(),'daemon','upgrade-attempt.json'),{version,nextAttemptAt:Date.now()+(result.state==='busy'?60_000:15*60_000)});return result;}
-    case 'daemon': {if(!await awaitDaemonActivation())return null;await runCaptureDaemon({processStartupTask:processSessionStartTask});return null;}
+    case 'daemon': {
+      if(daemonSignal?.aborted||!await awaitDaemonActivation({signal:daemonSignal}))return null;
+      try{await runCaptureDaemon({signal:daemonSignal,processStartupTask:processSessionStartTask});}
+      catch(error){if(!daemonSignal?.aborted||error!==daemonSignal.reason)throw error;}
+      return null;
+    }
     case 'worker': {try{await ownedCaptureWorker();}catch(e){try{recordError(e);}catch{}}return null;}
     case 'hook': {
       if(!hasPluginContext()&&readCaptureConfig()?.hookOwnership==='plugin')return null;

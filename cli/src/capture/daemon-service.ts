@@ -114,6 +114,10 @@ export async function ensureCaptureDaemon(config=readCaptureConfig(),{platform=p
   await new Promise<void>((resolve,reject)=>{child.once('spawn',()=>resolve());child.once('error',reject);child.unref();});
 }
 
+export function systemdUserManagerAvailable(run=spawnSync){
+  return run('systemctl',['--user','show-environment'],{stdio:'ignore',timeout:5000}).status===0;
+}
+
 /** User-scoped OS supervision; hosts without a user manager receive an explicit
  * profile-bound foreground command for their own supervisor. */
 export async function installCaptureDaemon(config:CaptureConfig,{home=homedir(),service=true,platform=process.platform,run=spawnSync,ensure=ensureCaptureDaemon,hostRun,expectedConfig=config}:{expectedConfig?:CaptureConfig;home?:string;service?:boolean;platform?:NodeJS.Platform;run?:typeof spawnSync;ensure?:typeof ensureCaptureDaemon;hostRun?:HostInvoke}={}) {
@@ -134,7 +138,7 @@ export async function installCaptureDaemon(config:CaptureConfig,{home=homedir(),
   const userSystemctl=(args:string[])=>run('systemctl',['--user',...args],{stdio:'pipe',timeout:5000});
   let useHost=false,userManagerAvailable=false;
   if(service&&platform==='linux'){
-    userManagerAvailable=userSystemctl(['show-environment']).status===0;
+    userManagerAvailable=systemdUserManagerAvailable(run);
     useHost=previous?.kind==='systemd-host'||!userManagerAvailable&&configuredProvider()==='devin';
     if(useHost){
       if(configuredProvider()!=='devin')throw Error('Preserve Devin Cloud workload mode when repairing its capture host service');

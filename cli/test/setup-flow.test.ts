@@ -1195,6 +1195,13 @@ test('eligible apply requires the service and migrates an older hook installatio
  expect(readFileSync(queue,'utf8')).toBe('pending bytes');
 }));
 
+test('Linux recording with no systemd user manager fails before enrollment and still permits recording off',()=>fixture(async api=>{
+ const missing={platform:'linux' as const,modeEligibility:()=>({eligible:false,requiresSystemd:true,reason:'systemd unavailable'})};
+ await expect(setupCommand('apply',api,{plugins:'codex',forward:'codex',history:'none',yes:true},missing)).rejects.toMatchObject({code:'SETUP_DAEMON_UNAVAILABLE'});
+ expect(readCaptureConfig()).toBeNull();
+ expect(await setupCommand('plan',api,{plugins:'none',forward:'none',history:'none'},missing)).toMatchObject({selections:{forward:{codex:false}}});
+}));
+
 test('unavailable daemon and cancellation before installation make no enrollment changes',()=>fixture(async api=>{
  await expect(setupCommand('apply',api,{yes:true,plugins:'codex',forward:'codex',history:'none','capture-mode':'daemon'},{modeEligibility:()=>({eligible:false,reason:'Unsupported host'})})).rejects.toMatchObject({code:'SETUP_DAEMON_UNAVAILABLE'});
  expect(readCaptureConfig()).toBeNull();
