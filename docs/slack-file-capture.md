@@ -14,7 +14,8 @@ epoch-millisecond integer, and supply your own Slack user OAuth token with the
 required read scopes (`channels:read`, `files:read`). The token must belong to the
 intended workspace and be authorized for the configured public-channel policy.
 Do not put the token in the config file or source control. Supply the existing
-application database settings `OPENCRAWL_DATABASE_URL` and `OPENCRAWL_LANDING_S3_BUCKET`.
+initialized self-host installation's application database and source settings, including
+`OPENCRAWL_DATABASE_URL`, `OPENCRAWL_LANDING_S3_BUCKET` and `OPENCRAWL_ORGANIZATION_ID`.
 Keep the installation's namespace and landing path. Stop all previous capture
 processes for the connection before upgrading. The first run inventories each
 of its three capture prefixes, copies every retained run checkpoint to Postgres,

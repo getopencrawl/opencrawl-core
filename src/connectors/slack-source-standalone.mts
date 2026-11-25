@@ -1,6 +1,7 @@
 import type {ConnectorBinding} from './types.mjs';
 import type {MessageReference} from './capture-types.mjs';
 import {guardConnectorWrites} from './write-barrier.mjs';
+import {requireScopedState} from '../state/scoped.mjs';
 import {applicationDatabase} from '../state/settings.mjs';
 import {createSlackRunCheckpoints} from '../state/slack-run-checkpoints.mjs';
 import {readFile} from 'node:fs/promises';
@@ -17,6 +18,8 @@ const store=createObjectStore({...config.s3,credentials:awsCredentials()});await
 if(mode!=='references'&&!Number.isSafeInteger(config.cutoff))throw new Error('Set a stable capture cutoff in epoch milliseconds in the config');
 const database=applicationDatabase();
 try {
+  await database.ready();
+  await requireScopedState(database);
   const checkpointSource=createSlackRunCheckpoints(database).source({environment:'selfhost',binding:config.binding,bucket:store.bucket});
   const guarded=guardConnectorWrites({binding:config.binding,store});
   if ((await guarded.writeBarrier.inspect()).closed) throw new Error('Slack source connection is closed');
