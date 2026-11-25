@@ -11,7 +11,7 @@ function fixture(t){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'opencrawl-startup-')));
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   for(const name of ['dev','deploy','bin'])mkdirSync(join(root,name));
-  for(const name of ['dev/installer.mts','dev/airbyte-routes.mts','dev/pins.json','deploy/up.sh','deploy/.env.example','deploy/fresh-credential-volume.sh'])copyFileSync(join(source,name),join(root,name));
+  for(const name of ['dev/installer.mts','dev/airbyte-routes.mts','dev/pins.json','deploy/up.sh','deploy/.env.example'])copyFileSync(join(source,name),join(root,name));
   writeFileSync(join(root,'dev/up'),'#!/bin/sh\nprintf \"%s\\n\" \"$TEST_NODE_RUNTIME\"\n',{mode:0o755});
   writeFileSync(join(root,'bin/git'),'#!/bin/sh\nprintf \"%040d\\n\" 1\n',{mode:0o755});
   const log=join(root,'calls');
@@ -95,7 +95,7 @@ else if(process.argv.includes('ls')){if(process.env.TEST_DENIED)process.exit(1);
   const model=['name: opencrawl','services:','  s3:','    command:','      - mini','      - -dir=/data','      - -bucket=opencrawl',
     '    image: chrislusf/seaweedfs:4.52','    volumes:','      - type: volume','        source: s3','        target: /data',
     'volumes:','  s3:','    name: opencrawl_s3'].join('\n');
-  const probe=(overrides={})=>spawnSync('/bin/sh',[join(f.root,'deploy/fresh-credential-volume.sh'),'docker','compose'],
+  const probe=(overrides={})=>spawnSync('/bin/sh',[join(f.root,'deploy/up.sh'),'--check-fresh-credential-volume'],
     {encoding:'utf8',env:{...f.env,TEST_MODEL:model,TEST_EXISTING:'',...overrides}}).stdout;
   assert.equal(probe(),'1');
   assert.equal(probe({TEST_EXISTING:'opencrawl_s3'}),'');

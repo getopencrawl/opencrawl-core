@@ -191,7 +191,7 @@ async function up(){
   }
   writeCompose();
   console.log('Starting the normal storage and workflow dependencies...');
-  process.env.OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW=run('/bin/sh',[join(root,'deploy/fresh-credential-volume.sh'),'docker',...composeArgs],{capture:true});
+  process.env.OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW=run('/bin/sh',[join(root,'deploy/up.sh'),'--check-fresh-credential-volume',...composeArgs.slice(1)],{capture:true});
   compose(['up','-d','--wait','--wait-timeout','600','s3',...(sqlite?[]:['opensearch']),'temporal',...(airbyteEnabled?['fixture']:[])]);
   console.log('Building the shared product runtime and React console...');compose(['build','--build-arg','OPENCRAWL_SOURCE_REVISION='+run('git',['rev-parse','HEAD'],{capture:true}).trim(),'app']);
   if(airbyteEnabled)await startAirbyte(existing);

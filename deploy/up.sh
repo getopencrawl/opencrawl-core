@@ -1,5 +1,37 @@
 #!/bin/sh
 set -eu
+
+# Read the bundled service before Compose allocates volumes. Any unknown or
+# existing storage stays on the explicit migration path. Also called by dev/up.
+fresh_credential_volume() {
+  model=$(docker compose "$@" config s3) || return 0
+  volume=$(printf '%s\n' "$model" | awk '
+    /^name: [a-z0-9][a-z0-9_-]*$/ { project=$2 }
+    /^services:$/ { services=1; next }
+    /^[^ ]/ { services=0; volumes=($0=="volumes:"); resource=0; next }
+    services && /^    image: chrislusf\/seaweedfs:/ { image=1 }
+    services && /^    (entrypoint|build):/ { custom=1 }
+    services && /^      - mini$/ { mini=1 }
+    services && /^      - -dir=\/data$/ { dir=1 }
+    services && /^      - -bucket=opencrawl$/ { bucket=1 }
+    services && /^      - type: / { type=$3; source="" }
+    services && /^        source: / { source=$2 }
+    services && /^        target: \/data$/ { mount=(type=="volume" && source=="s3") }
+    volumes && /^  [^ ]/ { resource=($0=="  s3:") }
+    resource && /^    name: / { name=$2 }
+    resource && /^    (external|driver|driver_opts):/ { custom=1 }
+    END { if(project && name==project "_s3" && image && mini && dir && bucket && mount && !custom) print name }
+  ')
+  [ -n "$volume" ] || return 0
+  existing=$(docker volume ls --filter "name=^${volume}$" --format '{{.Name}}') || return 0
+  if [ -z "$existing" ]; then printf 1; fi
+}
+if [ "${1:-}" = --check-fresh-credential-volume ]; then
+  shift
+  fresh_credential_volume "$@"
+  exit 0
+fi
+
 umask 077
 sqlite=false
 while [ "$#" -gt 0 ]; do
@@ -84,7 +116,7 @@ if [ "$compose_build" = true ]; then
 elif [ "$compose_no_build" = true ]; then
   compose_build_flag=--no-build
 fi
-OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW=$(sh ./fresh-credential-volume.sh docker compose)
+OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW=$(fresh_credential_volume)
 export OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW
 docker compose up -d "$compose_build_flag" --wait --wait-timeout 600 "$@"
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."
