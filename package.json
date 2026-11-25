@@ -88,6 +88,7 @@
     "./application/onboarding": "./dist/src/application/onboarding.mjs",
     "./application/agent-activity": "./dist/src/application/agent-activity.mjs",
     "./state/search-activity": "./dist/src/state/search-activity.mjs",
+    "./state/slack-run-checkpoints": "./dist/src/state/slack-run-checkpoints.mjs",
     "./state/connector-counts": "./dist/src/state/connector-counts.mjs",
     "./connectors/count-snapshot": "./dist/src/connectors/count-snapshot.mjs",
     "./application/usage": "./dist/src/application/usage.mjs",

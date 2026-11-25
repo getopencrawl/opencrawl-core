@@ -19,8 +19,8 @@ node dist/src/connectors/slack-source-standalone.mjs config.json stable-run-id m
 ```
 
 The config must retain a stable epoch-millisecond `cutoff` across restarts.
-Capture writes exact API pages and cursor checkpoints under
-`capture/messages-v1/<run-id>/` beneath the bound raw prefix. Normalized input
+Capture stores cursor checkpoints and rate reservations in the application database.
+Exact API pages go under `capture/messages-v1/<run-id>/` beneath the bound raw prefix. Normalized input
 lands as immutable gzip Airbyte-shaped envelopes in `stream=canonical_messages/`;
 the channel ID comes from the enumerated/requested public channel. No source text
 or credentials belong in workflow arguments, results or history.

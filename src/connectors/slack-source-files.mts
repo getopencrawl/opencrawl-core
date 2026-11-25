@@ -1,3 +1,4 @@
+import {openSlackCheckpoint} from './slack-run-checkpoints.mjs';
 import type {SlackFile, SlackApiData, SlackQuery, TextPart} from './types.mjs';
 import type {FileCaptureOptions, FileCatalog, FileCheckpoint, FileTarget, FileChannelTarget, CaptureRun, CaptureStepResult} from './capture-types.mjs';
 import type {SourceProgress} from './workflow.mjs';
@@ -29,15 +30,15 @@ function apiText(file: SlackFile,comments: Record<string, string>) {
 /** The source adapter supplies provider-neutral, authenticated request/download
  * operations. State and raw text stay in the scoped store, never workflow history.
  * Exactly one capture workflow may advance a connection's run at a time. */
-export function createSlackFileCapture({binding,store,request,download,checkActive=async()=>{},now=Date.now}: FileCaptureOptions) {
+export function createSlackFileCapture({binding,store,checkpoints,request,download,checkActive=async()=>{},now=Date.now}: FileCaptureOptions) {
  validateBinding(binding);if(binding.provider!=='slack')invalidRecord('Slack source binding required');
  async function active(){validateBinding(binding);await checkActive(binding);}
  async function put(key: string,body: Uint8Array,type: string){await active();await store.put(key,body,type);}
  return {async step({runId,cutoff}: CaptureRun): Promise<CaptureStepResult> {
   if(!/^[A-Za-z0-9_-]{1,150}$/.test(runId||'')||!Number.isSafeInteger(cutoff)||cutoff<0)invalidRecord('Invalid source run');
   await active();
-  const stateKey=binding.rawPrefix+'capture/files-v1/'+runId+'/state.json';
-  const raw=await store.get(stateKey,{maxBytes:16*1024*1024});
+  const checkpoint=await openSlackCheckpoint(checkpoints,store,binding,'files-v1',runId);
+  const raw=checkpoint.bytes;
   const catalogKey=binding.rawPrefix+'capture/files-v1/catalog.json';
   const catalogBytes=await store.get(catalogKey,{maxBytes:16*1024*1024});
   const catalog: FileCatalog=catalogBytes?JSON.parse(catalogBytes.toString()) as FileCatalog:{scope:digest(binding),channels:[],files:{}};
@@ -52,7 +53,7 @@ export function createSlackFileCapture({binding,store,request,download,checkActi
    saved.channels=[...new Set([...saved.channels,...channels])];
   }
   const saveCatalog=async()=>{const catalog={scope:digest(binding),channels:[...new Set([...state.priorChannels,...Object.keys(state.channels)])],files:Object.fromEntries(Object.values(state.files).map(f=>[f.id,f.channels]))};await put(catalogKey,Buffer.from(JSON.stringify(catalog)),'application/json');};
-  const save=async()=>{await saveCatalog();const body=Buffer.from(JSON.stringify(state));if(body.length>16*1024*1024)invalidRecord('Capture checkpoint exceeds limit');await put(stateKey,body,'application/json');};
+  const save=async()=>{await saveCatalog();const body=Buffer.from(JSON.stringify(state));if(body.length>16*1024*1024)invalidRecord('Capture checkpoint exceeds limit');await active();await checkpoint.save(body);};
   const emit=async(stream: string,records: object[],observedAt: number)=>{
    if(!records.length)return;
    const body=Buffer.from(records.map(data=>JSON.stringify({_airbyte_extracted_at:observedAt,_airbyte_data:data})).join('\n')+'\n');
