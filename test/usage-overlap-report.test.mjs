@@ -57,7 +57,7 @@ test('source access failures still reject the report and cannot retain cached pr
 test('independent source failures are reported, and a display-name failure cannot suppress captured tokens', async () => {
   const failure=async()=>{throw new Error('Unavailable');};
   const report=await usageReport({principal,directory:{...directory,organizations:{getOrganization:failure}},captured:async()=>({tokens:42,since:'2026-11-01'}),
-    integrations:{list:failure},values:{read:failure},search:{usage:failure,overlap:async()=>({timeZone:'UTC',measuredAt:new Date().toISOString(),sessions:1,daily:[]})}});
+    integrations:{list:failure},search:{usage:failure,overlap:async()=>({timeZone:'UTC',measuredAt:new Date().toISOString(),sessions:1,daily:[]})}});
   assert.equal(report.capture.tokens,42);assert.equal(report.overlap.sessions,1);assert.equal(report.agents,null);
   assert.deepEqual(report.failedSources,['integrations','organization','sessions']);
 });
@@ -88,7 +88,7 @@ test('Usage highlights and details partition the reads for a full report', async
   const options = {principal, directory: {
     organizations: {getOrganization: read('organization', {name: 'Example'})},
     userManagement: {listOrganizationMemberships: read('members', {data: [{userId: user.id, organizationId: principal.tenantId, status: 'active', user}]}), getUser: read('user', user)},
-  }, captured: read('capture', {tokens: 42, since: '2026-01-01'}), values: {read: read('value', null)},
+  }, captured: read('capture', {tokens: 42, since: '2026-01-01'}),
     integrations: {list: read('integrations', [])}, connectors: {count: read('connectors', {total: 0, kinds: {}, providers: {}, connections: {}})},
     onboarding: {read: read('onboarding', {})}, search: {usage: read('activity', activity), overlap: read('overlap', {sessions: 1, daily: []})}};
   const highlights = await usageReport({...options, part: 'highlights'});
