@@ -246,3 +246,21 @@ test('self-host fence retains a standalone held guard and blocks old binaries af
   assert.equal(f.writes(),1);
   assert.equal((await database.pool.query('SELECT 1 FROM opencrawl_team_operations WHERE namespace=$1',[database.namespace])).rowCount,0);
 });
+test('two admitted administrators cannot demote one another past the last active admin in native mode',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t);
+  await activateNative(f);
+  f.members.get(change.userId).role={slug:'admin'};
+  f.directory.userManagement.updateOrganizationMembership=async(id,{roleSlug})=>{
+    const member=[...f.members.values()].find(row=>row.id===id);
+    member.role={slug:roleSlug};
+    return member;
+  };
+  const worker=teamChangeActivities({...f.options,checkLastAdmin:async(_org,target)=>{
+    if(![...f.members.values()].some(row=>row.userId!==target && row.role.slug==='admin'))throw Object.assign(Error('The workspace must keep an active administrator.'),{status:409,expose:true});
+  }});
+  const first=await f.ref({...admitted,role:'member'});
+  const second=await f.ref({...admitted,actorId:change.userId,userId:change.actorId,role:'member',actorMembershipId:admitted.targetMembershipId,targetMembershipId:admitted.actorMembershipId});
+  assert.equal((await worker.advanceTeamChange(first)).outcome.ok,true);
+  assert.equal((await worker.advanceTeamChange(second)).outcome.status,409);
+  assert.equal([...f.members.values()].filter(row=>row.role.slug==='admin').length,1);
+});
