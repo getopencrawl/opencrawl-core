@@ -5,7 +5,6 @@ import type {Integrations} from '../integrations/service.mjs';
 import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createOnboardingStatus, OnboardingReceipts} from '../onboarding-status.mjs';
 import {indexedSourceInventory} from './usage-inventory.mjs';
-import type {ValueReports} from './value-report.mjs';
 import type {SessionOverlap, UsageSource, UsageHighlights, UsageDetails, UsageReport} from './reports.mjs';
 import {consoleFailure} from './console.mjs';
 import {dailyOverlap} from '../sessions/overlap.mjs';
@@ -24,7 +23,7 @@ type Visible = (principal: Principal, rows: SearchActivityRow[]) => Promise<Sear
 interface ConnectionCount {total: number; kinds: Record<string, number>}
 interface Connectors {count(principal: Principal): Promise<ConnectionCount & {providers: Record<string, ConnectionCount>; connections: Record<string, ConnectionCount>}>}
 type Usage = Awaited<ReturnType<Sessions['usage']>>;
-export interface UsageOptions {principal: Principal; directory: IdentityDirectory; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; values?: ValueReports | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number | null; log?: Log; tokens?: TokenLedger | null; visible?: Visible | null}
+export interface UsageOptions {principal: Principal; directory: IdentityDirectory; integrations?: Pick<Integrations, 'list'> | null; search?: Sessions | null; connectors?: Connectors | null; onboarding?: ReturnType<typeof createOnboardingStatus> | null; captured?: ((principal: Principal) => Promise<{tokens: number; since: string}>) | null; tab?: string; days?: number | null; log?: Log; tokens?: TokenLedger | null; visible?: Visible | null}
 interface IndexReport {sessionEvents: number | null; connectorDocuments: number | null; connectorKinds: Record<string, number>; sources: Array<{name: string; count: number}>; searchMs: number | null; probes: number[]}
 // Shared usage report: integrations, WorkOS members, and session activity.
 // Activity and setup receipts are scoped to the selected organization.
@@ -60,7 +59,7 @@ export async function usageReport({principal, directory, integrations, search, c
       team ? soft('organization', () => directory.organizations.getOrganization(principal.tenantId)) : null,
       team && captured ? soft('capture', () => captured(principal)) : null,
     ]);
-    return {workspace: organization?.name || (team ? null : 'Personal workspace'), value: null,
+    return {workspace: organization?.name || (team ? null : 'Personal workspace'),
       capture: capture ? {tokens: capture.tokens, since: capture.since} : null};
   }
 
