@@ -123,6 +123,7 @@ async function install(c:Values,stateDir:string,through='application'){
   const organization=required(secrets.OPENCRAWL_ORGANIZATION_ID,'saved organization');
   const binding={organization,bucket:c.objectStorage.bucket,prefix:c.objectStorage.prefix||`${organization}/capture/v1`,namespace:c.temporal.namespace,index:c.opensearch.index||`opencrawl-selfhost-realm-${createHash('sha256').update(organization).digest('hex')}-v1`};
   const bindingPath=join(stateDir,'binding.json');if(existsSync(bindingPath)&&JSON.stringify(JSON.parse(readFileSync(bindingPath,'utf8')))!==JSON.stringify(binding))fail('BINDING_CHANGED','Installation identity/storage/Temporal binding changed; perform a separately verified migration');
+  if(!current && !c.objectStorage.prefix)secrets.OPENCRAWL_ALLOCATED_LANDING_PREFIX=binding.prefix;
   values('binding.json',binding);
   apply({apiVersion:'v1',kind:'Secret',metadata:{name:secretName,namespace:c.namespace,labels:{'app.kubernetes.io/managed-by':'opencrawl-installer','app.kubernetes.io/instance':c.release}},type:'Opaque',stringData:secrets});
   const dbs:Values[]=[];
@@ -163,6 +164,7 @@ async function install(c:Values,stateDir:string,through='application'){
   if(through==='airbyte')return;
   const runtimeSecret=c.release+'-runtime-credentials';
   const runtimeKeys=['OPENCRAWL_ORGANIZATION_ID','OPENCRAWL_AUTH_SECRET','OPENCRAWL_SETUP_TOKEN','OPENCRAWL_CONNECTOR_KEY',...(c.databases.app.mode==='bundled'?['OPENCRAWL_DATABASE_URL']:[])];
+  if(secrets.OPENCRAWL_ALLOCATED_LANDING_PREFIX===binding.prefix)runtimeKeys.push('OPENCRAWL_ALLOCATED_LANDING_PREFIX');
   apply({apiVersion:'v1',kind:'Secret',metadata:{name:runtimeSecret,namespace:c.namespace,labels:{'app.kubernetes.io/instance':c.release}},type:'Opaque',stringData:Object.fromEntries(runtimeKeys.map(k=>[k,secrets[k]]))});
   const extraEnv:Values[]=[];const ref=(env:string,secret:string,key=env)=>extraEnv.push({name:env,valueFrom:{secretKeyRef:{name:secret,key}}});
   if(c.databases.app.mode==='external')ref('OPENCRAWL_DATABASE_URL',c.databases.app.existingSecret);

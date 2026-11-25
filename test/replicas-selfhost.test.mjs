@@ -10,6 +10,7 @@ import {selfhostApplication} from '../dist/src/selfhost/application.mjs';
 import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
 import {createReplicasWorkloads,REPLICAS_ISSUER} from '../dist/src/identity/replicas.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
+import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createControls} from '../dist/src/sessions/controls.mjs';
 import {singleOrganizationSessionSource} from '../dist/src/selfhost/indexing.mjs';
@@ -26,7 +27,7 @@ test('self-host workspace identity uploads and uses board; cannot mint credentia
  const {publicKey,privateKey}=await generateKeyPair('RS256');let bindings=[{organizationId:org,environmentId:env,tenantId:organizationId}];
  const workloads=createReplicasWorkloads({audience:url,key:async()=>publicKey,bindings:()=>bindings});
  const settings={url,authOrigin:url+'/api/auth',clientId:'opencrawl-cli',organizationId,setupToken:'setup',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:organizationId}};
- app=selfhostApplication({settings,store,boardState,prefix,identity,workloadIdentity:workloads,readAsset:async()=>''});
+ app=selfhostApplication({captureCredentials:createCaptureCredentials({store,prefix}),settings,store,boardState,prefix,identity,workloadIdentity:workloads,readAsset:async()=>''});
  const token=await new SignJWT({organization_id:org,environment_id:env,workspace_id:workspace}).setProtectedHeader({alg:'RS256'}).setIssuer(REPLICAS_ISSUER).setAudience(url).setSubject(`org:${org}:env:${env}:workspace:${workspace}`).setIssuedAt().setExpirationTime('15m').sign(privateKey);
  const request=(path,body)=>fetch(url+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
  const me=await request('/api/cli/me');assert.equal(me.status,200);assert.equal((await me.json()).data.credential,'workspace-identity');

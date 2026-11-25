@@ -18,6 +18,7 @@ import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
 import {createDevinVerifier,DEVIN_ISSUER} from '../dist/src/identity/devin.mjs';
 import {createDevinConnections} from '../dist/src/identity/devin-connections.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
+import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {createSessionIngest} from '../dist/src/sessions/ingest.mjs';
 import {createControls} from '../dist/src/sessions/controls.mjs';
 import {singleOrganizationSessionSource} from '../dist/src/selfhost/indexing.mjs';
@@ -35,7 +36,7 @@ test('self-host admin connects Devin once; fresh cloud sessions use CLI, capture
   t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
   const {publicKey,privateKey}=await generateKeyPair('RS256');
   const settings={url,authOrigin:url+'/api/auth',clientId:'opencrawl-cli',organizationId,setupToken:'setup',search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:organizationId}};
-  app=selfhostApplication({settings,boardState,devinState,setupState,recording,eventIdentities,store,prefix,identity,devinIdentityKey:async()=>publicKey,readAsset:async()=>''});
+  app=selfhostApplication({captureCredentials:createCaptureCredentials({store,prefix}),settings,boardState,devinState,setupState,recording,eventIdentities,store,prefix,identity,devinIdentityKey:async()=>publicKey,readAsset:async()=>''});
   const sign=(session,changes={})=>new SignJWT({org_id:org,devin_id:session,...changes}).setProtectedHeader({alg:'RS256'}).setIssuer(DEVIN_ISSUER).setAudience(url).setSubject(`org_id:${org}`).setIssuedAt().setExpirationTime('60s').sign(privateKey);
   const token=await sign('cloud-one'),fresh=await sign('cloud-two');
   const request=(path,body,auth=token,headers={})=>fetch(url+path,{method:body!==undefined?'POST':'GET',headers:{authorization:'Bearer '+auth,'content-type':'application/json',...headers},...(body!==undefined?{body:JSON.stringify(body)}:{})});

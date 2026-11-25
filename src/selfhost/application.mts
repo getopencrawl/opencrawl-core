@@ -65,7 +65,7 @@ import {createSuggestionEvents} from '../search/suggestion-events.mjs';
 import type {ContextSuggestionsExtension} from './context-suggestions.mjs';
 import {createContextCheckHandler} from '../search/check-http.mjs';
 import {captureSetupPrompt,cloudCapturePage} from '../sessions/cloud-setup.mjs';
-import {createCaptureCredentials,isCaptureCredential} from '../sessions/credentials.mjs';
+import {type createCaptureCredentials,isCaptureCredential} from '../sessions/credentials.mjs';
 import {createSessionIngest,createCaptureHandler} from '../sessions/ingest.mjs';
 import {errorInfo} from '../errors.mjs';
 import type {Log} from '../integrations/ports.mjs';
@@ -79,6 +79,7 @@ export interface SelfhostApplicationOptions {
   contextSuggestions?:ContextSuggestionsExtension;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
   teamWrite?:ReturnType<typeof selfhostTeamWrites>['write'];
+  captureCredentials:ReturnType<typeof createCaptureCredentials>;
   setupState?:SetupState;
   onboardingRepository?:OnboardingRepository;
   sharedFiles?:SharedFilesStore;
@@ -98,7 +99,7 @@ export interface SelfhostApplicationOptions {
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
 export function selfhostApplication({settings,store,teamWrite,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasRepository,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
-  onboardingRepository,devinState,devinIdentityKey,usageActivity,contextSuggestions={},
+  captureCredentials:credentials,onboardingRepository,devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
@@ -122,7 +123,6 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
   const credentialProxy=sourceCredentials?connectorProxyHandler(sourceCredentials):null;
   const admit=singleOrganizationIdentity(directory,settings.organizationId),resolve=singleOrganizationPrincipal(directory,settings.organizationId);
   const accounts=localAuth({identity,url:settings.url,organizationId:settings.organizationId,setupToken:settings.setupToken,member:async browser=>(await admit(browser)).status===200});
-  const credentials=createCaptureCredentials({store,prefix});
   const identifyCli:typeof accounts.identifyToken=async(...args)=>{
     const result=await accounts.identifyToken(...args);
     if(result.status===200)admitActivity(result.principal);

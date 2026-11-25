@@ -335,6 +335,41 @@ An operator can uninstall the app directly in GitHub when nothing else needs it.
 Usage shows recorded session and search activity. Hosted billing-period token
 totals enter through a separate host adapter.
 
+### Capture credentials
+
+Cloud capture issues an upload-only token for an individual member. The receiver
+stores its hash, owner, expiration and revocation state. Removing a member also
+rotates the owner's credential generation so an old token stays revoked after
+the member rejoins. Compose and Helm record the exclusive landing prefix they
+allocate for a new installation. The initializer enables database-backed
+credentials before startup only when that prefix matches the configured source
+and its credential inventory is empty.
+
+For existing installations and operator-supplied prefixes, deploy the compatible
+receiver everywhere first.
+It continues to authenticate and revoke existing tokens against object storage
+until activation. Run the commands below in that image with the receiver's
+normal database, organization and storage configuration. `plan` counts retained
+credential records and owner generations. Before `activate`, drain every older
+receiver and operator process that can issue or revoke credentials, including
+in-flight team member removals. Keep them stopped.
+
+```sh
+node dist/src/selfhost/credential-state.mjs plan
+node dist/src/selfhost/credential-state.mjs activate --legacy-writers-drained
+node dist/src/selfhost/credential-state.mjs verify
+node dist/src/selfhost/credential-state.mjs status
+```
+
+Activation preserves the owner's generation and its original storage version
+so a team removal admitted before the switch can finish safely afterward.
+Verification compares the retained source with the import receipt. Later
+issues and revocations go to PostgreSQL. Keep the source objects through
+verification. An older receiver reading those frozen objects could accept a
+token revoked after cutover. Use a PostgreSQL-aware image for rollback and
+include the application database in backups. If activation reports an uncertain
+source write, follow [credential source-write recovery](credential-storage.md).
+
 ### Onboarding receipt storage
 
 New installations initialize the six per-user onboarding milestones in the application

@@ -9,6 +9,7 @@ import {mock} from 'node:test';
 import {createLocalIdentity} from '../../dist/src/identity/better-auth.mjs';
 import {selfhostApplication} from '../../dist/src/selfhost/application.mjs';
 import {createLocalSessionStore} from '../../dist/src/sessions/local-store.mjs';
+import {createCaptureCredentials} from '../../dist/src/sessions/credentials.mjs';
 
 const config=JSON.parse(process.env.OPENCRAWL_RESTART_TEST);
 if(config.now)mock.timers.enable({apis:['Date'],now:config.now});
@@ -24,7 +25,8 @@ const board=createPostgresBoardState(database);await board.ready();
 const boardState={namespace:database.namespace,board};
 const identity=await createLocalIdentity({url:origin,secret:config.secret,database,organizationId:settings.organizationId});
 await identity.ready();
-app=selfhostApplication({settings,identity,boardState,store:createLocalSessionStore(config.dir),prefix:'sessions/restart/v1',...(config.browser?{}:{readAsset:async()=>''})});
+const store=createLocalSessionStore(config.dir),prefix='sessions/restart/v1';
+app=selfhostApplication({captureCredentials:createCaptureCredentials({store,prefix}),settings,identity,boardState,store,prefix,...(config.browser?{}:{readAsset:async()=>''})});
 process.on('SIGTERM',()=>{
   server.close(async()=>{identity.close();await database.close();process.exit(0);});
   server.closeAllConnections();
