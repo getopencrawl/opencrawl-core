@@ -1,6 +1,7 @@
 import type {AwsCredentials, CredentialProvider, ListOptions, ReadOptions, ServiceError, StoreVersion, ObjectStore} from './types.mjs';
 import {normalizeS3Prefix, relativeS3Metadata, unescapeXml, xmlText} from './s3-key-prefix.mjs';
 export {normalizeS3Prefix} from './s3-key-prefix.mjs';
+export {retainedOwnerScopes} from './retained-owners.mjs';
 import {serviceError} from './types.mjs';
 /**
  * Minimal S3 client: enough for the receiver to land session segments in the user's S3 bucket
