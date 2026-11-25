@@ -37,6 +37,12 @@ test('privacy preferences preserve revisions, isolate owners and serialize compe
   assert.deepEqual(await listPrivacyPreferenceSubjects(database.pool,database.namespace,defaults.subject),[]);
   assert.equal(await countPrivacyPreferences(database.pool,database.namespace),1);
   assert.equal(await countPrivacyPreferences(database.pool,outside),0);
+  const escaped={enabled:true,rules:'nul\0 and lone \ud800',revision:'old\udcffrevision'};
+  assert.equal(await repo.replace(defaults.subject,winner.revision,escaped),true);
+  assert.deepEqual(await repo.read(defaults.subject),escaped);
+  assert.equal(await repo.replace(defaults.subject,'old\ufffdrevision',retained),false);
+  assert.equal(await repo.replace(defaults.subject,escaped.revision,retained),true);
+  assert.deepEqual(await repo.read(defaults.subject),retained);
   const initial=await service.read(other);
   const creates=await Promise.allSettled([true,false].map(enabled=>service.change(other,{...initial,enabled})));
   assert.equal(creates.filter(r=>r.status==='fulfilled').length,1);
