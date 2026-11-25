@@ -1,11 +1,13 @@
 import {randomBytes} from 'node:crypto';
 import type {Principal, ObjectStore, StoreVersion} from './types.mjs';
-function credentialJson<T>(bytes:Buffer):T{
-  try{return JSON.parse(bytes.toString());}catch{throw Error('Invalid credential source document');}
-}
 import {digest,sessionScope} from './ingest.mjs';
 import {fail as deny} from '../errors.mjs';
 
+function credentialJson<T>(bytes:Buffer):T{
+  try{return JSON.parse(bytes.toString());}catch{throw Error('Invalid credential source document');}
+}
+
+export const credentialReadLimit=16*1024*1024;
 export interface CredentialRecord {
   schemaVersion:1;id:string;principal:Principal;expiresAt:string;revoked:boolean;revokedAt?:string;generation?:string;
 }
@@ -69,6 +71,7 @@ export function credentialService(repository:CredentialRepository,now=Date.now) 
 /** Object transport messages can include a credential digest or an owner path. */
 export async function credentialSource<T>(run:()=>Promise<T>):Promise<T>{
   try{return await run();}catch(caught){
+    if((caught as {code?:unknown})?.code==='ObjectReadLimitExceeded')throw Error('Retained credential document exceeds its bounded read limit');
     const error=Object.assign(new Error('Credential source unavailable'),{status:503});
     if((caught as {writeOutcome?:unknown})?.writeOutcome==='not-applied')Object.assign(error,{writeOutcome:'not-applied'});
     throw error;
@@ -90,10 +93,10 @@ export function objectCredentialRepository(store:ObjectStore,prefix:string):Cred
       const bytes=Buffer.from(JSON.stringify({...record,generation:await generation(record.principal)}));
       await credentialSource(()=>store.put(key(record.id),bytes,'application/json'));
     },
-    async lookup(id){
+    async lookup(id,clock){
       const bytes=await credentialSource(()=>store.get(key(id)));if(!bytes)return null;
       const record=credentialJson<CredentialRecord>(bytes);
-      if(record.schemaVersion!==1 || record.id!==id || record.revoked || !Number.isFinite(Date.parse(record.expiresAt)))return null;
+      if(record.schemaVersion!==1 || record.id!==id || record.revoked || !(Date.parse(record.expiresAt)>clock()))return null;
       sessionScope(record.principal);
       return (record.generation??'')===await generation(record.principal) ? {principal:record.principal,expiresAt:record.expiresAt} : null;
     },

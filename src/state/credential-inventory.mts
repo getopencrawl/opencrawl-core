@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {credentialDigest,credentialSource,checkedCredentialRecord,type CredentialRecord} from '../sessions/credentials.mjs';
+import {credentialDigest,credentialReadLimit,credentialSource,checkedCredentialRecord,type CredentialRecord} from '../sessions/credentials.mjs';
 import {sessionScope,digest} from '../sessions/event-identity.mjs';
 import type {ObjectStore,StoreVersion} from '../sessions/types.mjs';
 
@@ -27,7 +27,7 @@ export async function credentialInventory(store:ObjectStore,root:string,organiza
           if(typeof path!=='string' || !path.startsWith(folder) || !path.endsWith('.json'))throw Error('Unexpected retained credential key');
           const id=path.slice(folder.length,-5);
           if(kind==='record'?!credentialDigest(id):!ownerPath.test(id))throw Error('Unexpected retained credential key');
-          const {data,version}=await credentialSource(()=>store.readVersion(path,{maxBytes:kind==='record'?64*1024:1024}));
+          const {data,version}=await credentialSource(()=>store.readVersion(path,{maxBytes:kind==='record'?credentialReadLimit:1024}));
           if(!data || version===null || !(typeof version==='string'&&version.length>0 || typeof version==='number'&&Number.isFinite(version)))throw Error('Credential source or version unavailable');
           let value:unknown;try{value=JSON.parse(data.toString());}catch{throw Error('Invalid retained credential document');}
           const sourceHash=digest(JSON.stringify([version,digest(data)]));

@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from 'node:util';
-import {credentialSource,credentialDigest} from '../sessions/credentials.mjs';
+import {credentialReadLimit,credentialSource,credentialDigest} from '../sessions/credentials.mjs';
 import {digest,sessionScope} from '../sessions/event-identity.mjs';
 import type {ObjectStore,StoreVersion} from '../sessions/types.mjs';
 import {credentialPrefix,type CredentialFamily} from './credential-inventory.mjs';
@@ -28,7 +28,7 @@ export async function verifyRecoveredCredentialWrite(store:ObjectStore,root:stri
   if(evidence.terminal==='not-dispatched')throw Error('Credential dispatch must be reconciled against the provider');
   const family=credentialPrefix(root,intent.family);
   const path=family+(intent.kind==='rotate'?'/_credential-generations/':'/_credentials/')+intent.object_id+'.json';
-  const read=()=>credentialSource(()=>store.readVersion(path,{maxBytes:intent.kind==='rotate'?1024:64*1024}));
+  const read=()=>credentialSource(()=>store.readVersion(path,{maxBytes:intent.kind==='rotate'?1024:credentialReadLimit}));
   const first=await read(),second=await read();
   if(!isDeepStrictEqual(first,second) || (first.data===null)!==(first.version===null))throw Error('Credential recovery source is unstable');
   if(first.data && digest(first.data)===intent.intended_hash)return;

@@ -192,3 +192,10 @@ test('identical credential IDs in the two namespaces stay bound to different own
  await agent.revoke(other,issued.id);assert.equal(await agent.authenticate(issued.token),null);
  assert.ok(await capture.authenticate(issued.token));
 });
+
+test('retains historical display metadata above 64 KiB byte-for-byte',{skip},async t=>{
+ const {open}=await fixture(t),state=open(),service=state.credentials('capture');
+ const displayName='a'.repeat(70*1024),token=await service.issue({...owner,name:displayName});
+ await state.migrate('activate');assert.equal((await service.authenticate(token.token)).name,displayName);
+ assert.equal((await state.migrate('verify')).receipt.capture.records,1);
+});

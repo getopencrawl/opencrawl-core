@@ -10,7 +10,10 @@ versions across cutover, including an explicit null when the marker was absent.
 Plan and activation scan only the two families' credential and generation
 directories. Activation waits for already-dispatched writes to settle, briefly
 serializes credential mutations, and commits all retained rows and their authority
-together after exact readback. Authentication continues throughout. A failed
+together after exact readback. The importer uses the object adapter's normal
+16 MiB per-record read limit and the revocation marker's existing 1 KiB limit.
+If either is exceeded, keep object authority and inspect the affected storage
+privately before a reviewed re-import. No row is skipped or truncated. Authentication continues throughout. A failed
 activation rolls back the target rows. Verify before fencing S3 access. After
 activation, recover the application with a release that supports PostgreSQL
 credential authority. A pre-bridge release reads frozen revocation state and
