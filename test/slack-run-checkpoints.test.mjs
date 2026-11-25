@@ -26,7 +26,7 @@ function location(kind,runId) {return binding.rawPrefix+'capture/'+kind+'/'+runI
 function bytes(runId,extra) {return Buffer.from(JSON.stringify({version:1,runId,scope:digest(binding),...extra}));}
 
 test('quiesced adoption verifies all three checkpoint families, resumes pacing, rejects stale saves and erases on disconnect',{skip:!postgresUrl},async t=>{
-  const {registry,record,repo,scope,source,objects,reads,store}=await setup(t);
+  const {database,registry,record,repo,scope,source,objects,reads,store}=await setup(t);
   const runId='inflight',cutoff=10000;
   const message=bytes(runId,{cutoff,channels:{},threads:{},cursor:'more',listed:false,nextDue:{'conversations.list':65000},pages:1,emitted:0,errors:[]});
   const legacy=location('messages-v1',runId);
@@ -52,12 +52,23 @@ test('quiesced adoption verifies all three checkpoint families, resumes pacing, 
   await a.save(a.bytes);await assert.rejects(b.save(b.bytes),/latest revision/);
   await assert.rejects(repo.source({...scope,objectPrefix:'other-path'}).current(),/binding changed/);
   await assert.rejects(repo.source({...scope,owner:{...owner,connectedAccountId:'other'}}).current(),/binding changed/);
-  await registry.update(record,{status:'disconnecting'});
+  const command='disconnect-A',progress={commandId:command,resourceVersion:null};
+  await registry.update(record,{status:'disconnecting',lifecycleCommandId:command,disconnectProgress:{...progress,next:'resources'}});
   await assert.rejects(a.save(a.bytes),/binding changed/);
+  await assert.rejects(source.checkpoints.open('messages-v1',runId),/binding changed/);
+  await registry.update(record,{status:'error',error:'setup'});
   await registry.update(record,{status:'active'});
-  assert.equal(await source.current(),null);
-  assert.equal((await source.adopt({...store,listPage:async()=>({keys:[]})})).count,0);
-  assert.equal((await source.checkpoints.open('messages-v1',runId)).bytes,null);
+  assert.deepEqual(await source.current(),imported);
+  assert.deepEqual((await source.checkpoints.open('messages-v1',runId)).bytes,a.bytes);
+  assert.notDeepEqual(a.bytes,message); // Recovery uses the latest DB cursor, even with old S3 bytes present.
+  await registry.update(record,{status:'disconnecting',disconnectProgress:{...progress,next:'data'}});
+  const rows=async()=>(await database.pool.query('SELECT count(*)::int AS n FROM opencrawl_slack_capture_runs WHERE namespace=$1',[database.namespace])).rows[0].n;
+  assert.equal(await rows(),3);
+  await registry.update(record,{disconnectProgress:{...progress,next:'grants'}});
+  assert.equal(await rows(),0);
+  await registry.update(record,{status:'disconnected'});
+  await assert.rejects(source.current(),/binding changed/);
+  assert.equal(await rows(),0);
 });
 
 test('incomplete or wrong-scope inventory rolls back ownership and every staged run',{skip:!postgresUrl},async t=>{
