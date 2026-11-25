@@ -1,6 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {bundledCredentialPrefix} from '../deploy/application-state-init.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {initializeApplicationState} from '../dist/src/state/initialize.mjs';
 import {requireScopedState} from '../dist/src/state/scoped.mjs';
@@ -9,6 +13,16 @@ import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {createCredentialState} from '../dist/src/state/credentials.mjs';
 import {main as credentialCommand} from '../dist/src/selfhost/credential-state.mjs';
 const organizationId='org_scoped',prefix='sessions/scoped/v1',bucket='scoped-test',skip=!postgresUrl;
+test('restoring a Compose installation preserves its original owner and raw session prefix',t=>{
+ const volume=mkdtempSync(join(tmpdir(),'selfhost-volume-'));t.after(()=>rmSync(volume,{recursive:true,force:true}));
+ const env={OPENCRAWL_ORGANIZATION_ID:organizationId,OPENCRAWL_LANDING_S3_BUCKET:'opencrawl',OPENCRAWL_LANDING_S3_ENDPOINT:'http://s3:8333'};
+ assert.equal(bundledCredentialPrefix(env,volume),undefined,'Earlier volumes stay on the bridge');
+ writeFileSync(join(volume,'.opencrawl-initial-owner'),organizationId+'\n');
+ assert.equal(bundledCredentialPrefix(env,volume),'sessions/self-hosted/v1');
+ assert.throws(()=>bundledCredentialPrefix({...env,OPENCRAWL_ORGANIZATION_ID:'org_regenerated'},volume),/Restore the original deployment/);
+ assert.equal(bundledCredentialPrefix({...env,OPENCRAWL_LANDING_S3_PATH:'operator/retained'},volume),undefined);
+ assert.equal(bundledCredentialPrefix({...env,OPENCRAWL_LANDING_S3_ENDPOINT:'https://store.example'},volume),undefined);
+});
 async function fixture(t){
  const sourceIdentity={version:1,bucket,prefix,organizationId},database=await applicationDatabaseFixture(t,{sourceIdentity});
  const input={database,bucket,prefix,organizationId,url:'http://localhost:3000',secret:'scoped-test-secret-longer-than-thirty-two'};

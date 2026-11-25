@@ -37,7 +37,6 @@ if [ ! -f .env ]; then
       -e "s/^OPENCRAWL_S3_SECRET_ACCESS_KEY=$/OPENCRAWL_S3_SECRET_ACCESS_KEY=$(secret)/" \
       -e "s/^OPENCRAWL_DATABASE_PASSWORD=$/OPENCRAWL_DATABASE_PASSWORD=$(secret)/" \
       -e "s/^OPENCRAWL_TEMPORAL_PASSWORD=$/OPENCRAWL_TEMPORAL_PASSWORD=$(secret)/" .env.example > .env
-  printf '\nOPENCRAWL_ALLOCATED_LANDING_PREFIX=sessions/%s/v1\n' "$(secret)" >> .env
   if [ "$sqlite" = true ]; then printf '\nCOMPOSE_FILE=%s\n' "$sqlite_files" >> .env; fi
   chmod 600 .env
   echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."

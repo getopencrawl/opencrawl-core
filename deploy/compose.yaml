@@ -17,8 +17,6 @@ x-runtime: &runtime
     OPENCRAWL_AUTH_SECRET: ${OPENCRAWL_AUTH_SECRET:?Run ./up.sh}
     OPENCRAWL_SETUP_TOKEN: ${OPENCRAWL_SETUP_TOKEN:?Run ./up.sh}
     OPENCRAWL_LANDING_S3_BUCKET: opencrawl
-    OPENCRAWL_LANDING_S3_PATH: ${OPENCRAWL_ALLOCATED_LANDING_PREFIX:-sessions/self-hosted/v1}
-    OPENCRAWL_ALLOCATED_LANDING_PREFIX: ${OPENCRAWL_ALLOCATED_LANDING_PREFIX:-}
     OPENCRAWL_LANDING_S3_REGION: us-east-1
     OPENCRAWL_LANDING_S3_ENDPOINT: http://s3:8333
     OPENCRAWL_LANDING_S3_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID:?Run ./up.sh}
@@ -84,16 +82,29 @@ services:
   app-state-ready:
     <<: *runtime
     restart: "no"
+    volumes: ["application:/data", "s3:/run/opencrawl-bundled-source:ro"]
     command: ["node", "deploy/application-state-init.mjs"]
     depends_on: {database-ready: {condition: service_completed_successfully}, s3: {condition: service_started}}
 
   s3:
     image: chrislusf/seaweedfs:4.52
     restart: unless-stopped
+    # Record the first owner only before SeaweedFS initializes a genuinely empty volume.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        contents=$$(ls -A /data)
+        if [ -z "$$contents" ]; then
+          (set -C; printf '%s\n' "$$OPENCRAWL_ORGANIZATION_ID" > /data/.opencrawl-initial-owner)
+        fi
+        exec /entrypoint.sh "$$@"
+      - opencrawl-s3
     command: >-
       mini -dir=/data -bucket=opencrawl -admin.password=${OPENCRAWL_S3_SECRET_ACCESS_KEY}
       -webdav=false -s3.port.iceberg=0 -s3.port.lance=0
     environment:
+      OPENCRAWL_ORGANIZATION_ID: ${OPENCRAWL_ORGANIZATION_ID:?Run ./up.sh}
       AWS_ACCESS_KEY_ID: ${OPENCRAWL_S3_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${OPENCRAWL_S3_SECRET_ACCESS_KEY}
     volumes: ["s3:/data"]

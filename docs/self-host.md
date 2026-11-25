@@ -340,10 +340,11 @@ totals enter through a separate host adapter.
 Cloud capture issues an upload-only token for an individual member. The receiver
 stores its hash, owner, expiration and revocation state. Removing a member also
 rotates the owner's credential generation so an old token stays revoked after
-the member rejoins. Compose and Helm record the exclusive landing prefix they
-allocate for a new installation. The initializer enables database-backed
-credentials before startup only when that prefix matches the configured source
-and its credential inventory is empty.
+the member rejoins. Bundled Compose records the first organization's ID on an
+empty SeaweedFS volume and keeps its original session prefix. Helm records the
+exclusive prefix allocated for a new organization. The initializer enables
+database-backed credentials before startup only when the installation matches
+its original storage and its credential inventory is empty.
 
 For existing installations and operator-supplied prefixes, deploy the compatible
 receiver everywhere first.
@@ -369,6 +370,12 @@ verification. An older receiver reading those frozen objects could accept a
 token revoked after cutover. Use a PostgreSQL-aware image for rollback and
 include the application database in backups. If activation reports an uncertain
 source write, follow [credential source-write recovery](credential-storage.md).
+
+When restoring an installation, use its backup and saved environment, including
+the original organization ID, database credentials and landing prefix.
+Regenerating `deploy/.env` creates a new identity. A retained SeaweedFS volume
+keeps its original owner marker and its raw sessions. Replacing the environment
+does not grant the new organization an automatic credential cutover.
 
 ### Onboarding receipt storage
 

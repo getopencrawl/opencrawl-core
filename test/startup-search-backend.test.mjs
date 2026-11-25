@@ -37,7 +37,6 @@ test('development startup saves SQLite and uses its profile for status and stop 
   const initial=f.dev(['--sqlite','--no-airbyte']);
   assert.equal(initial.status,1);assert.match(initial.stderr,/Allocate at least/); // No real containers in this unit test.
   assert.equal(JSON.parse(readFileSync(state)).searchBackend,'sqlite');
-  assert.match(JSON.parse(readFileSync(state)).allocatedLandingPrefix,/^sessions\/[a-f0-9]{48}\/v1$/);
   writeFileSync(join(f.root,'.opencrawl-dev/compose.env'),'');
   writeFileSync(join(f.root,'.opencrawl-dev/compose.json'),'{}');
   const status=f.dev(['status']);assert.equal(status.status,0,status.stderr);assert.match(status.stdout,/Search: SQLite FTS5/);
@@ -61,7 +60,6 @@ for(const args of [['--sqlite','--no-airbyte'],['--no-airbyte','--sqlite']])test
   const f=fixture(t),path=join(f.root,'deploy/.env');
   const initial=f.deploy(args);assert.equal(initial.status,0,initial.stderr);
   const saved=readFileSync(path,'utf8');assert.match(saved,/^COMPOSE_FILE=compose.yaml:compose.sqlite.yaml$/m);
-  assert.match(saved,/^OPENCRAWL_ALLOCATED_LANDING_PREFIX=sessions\/[a-f0-9]{48}\/v1$/m);
   assert.doesNotMatch(f.log(),/compose up/);
   const resume=f.deploy(['--no-airbyte']);assert.equal(resume.status,0,resume.stderr);
   assert.match(f.log(),/compose build --build-arg OPENCRAWL_SOURCE_REVISION=0{39}1 app/);assert.match(f.log(),/compose up -d --no-build --wait/);assert.equal(readFileSync(path,'utf8'),saved);

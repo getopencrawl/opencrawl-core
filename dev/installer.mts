@@ -16,7 +16,7 @@ interface State {
   databasePassword?:string;s3Key:string;s3Secret:string;temporalPassword:string;airbytePassword:string;airbyteClientId:string;
   airbyteClientSecret:string;airbyteDbPassword:string;airbyteStorageSecret:string;
   workspaceId?:string;airbyteInstalled?:boolean;airbyteConfigHash?:string;airbyteEnabled?:boolean;verifiedAt?:string;startedAt?:string;
-  searchBackend?:'opensearch'|'sqlite';allocatedLandingPrefix?:string;
+  searchBackend?:'opensearch'|'sqlite';
 }
 const root=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
 const stateDir=join(root,'.opencrawl-dev'),stateFile=join(stateDir,'state.json'),bin=join(stateDir,'bin');
@@ -69,7 +69,7 @@ if(existsSync(stateFile)){
   const origin=process.env.OPENCRAWL_DEV_ORIGIN||`http://localhost:${p}`,u=new URL(origin);
   if(u.origin!==origin||!(u.protocol==='https:'||u.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(u.hostname)))throw new Error('Dev origin must be loopback HTTP or an HTTPS origin you control');
   state={format:1,root,project:'ocdev-'+randomBytes(6).toString('hex'),createdAt:new Date().toISOString(),port:p,airbytePort:ap,origin,searchBackend:args.includes('--sqlite')?'sqlite':'opensearch',
-    organization:'org_'+randomBytes(12).toString('hex'),allocatedLandingPrefix:'sessions/'+randomBytes(24).toString('hex')+'/v1',email:'developer@opencrawl.example',password:secret(),authSecret:secret(),setupToken:secret(),connectorKey:randomBytes(32).toString('base64'),
+    organization:'org_'+randomBytes(12).toString('hex'),email:'developer@opencrawl.example',password:secret(),authSecret:secret(),setupToken:secret(),connectorKey:randomBytes(32).toString('base64'),
     s3Key:'dev'+randomBytes(10).toString('hex'),s3Secret:secret(),temporalPassword:secret(),airbytePassword:secret(),airbyteClientId:randomUUID(),airbyteClientSecret:secret(),airbyteDbPassword:secret(),airbyteStorageSecret:secret()};
   privateFile(stateFile,state);
 }
@@ -156,7 +156,6 @@ function writeCompose(airbyteAddress='127.0.0.1',workspaceId=state.workspaceId||
   const captureCutover=!state.startedAt&&!state.verifiedAt?'1':existsSync(envFile)?parseEnv(readFileSync(envFile,'utf8')).OPENCRAWL_SESSION_INDEXING_CUTOVER||'0':'0';
   const connectorEnv=Object.fromEntries(['COMPOSIO_API_KEY','COMPOSIO_BASE_URL','SLACK_CLIENT_ID','SLACK_CLIENT_SECRET','GITHUB_APP','AIRBYTE_GITHUB_REPOSITORY','AIRBYTE_GITHUB_TAG','OPENCRAWL_AIRBYTE_APP_URL'].filter(key=>supplied[key]).map(key=>[key,supplied[key]!]));
   const env={COMPOSE_PROJECT_NAME:state.project,OPENCRAWL_IMAGE_TAG:state.project,OPENCRAWL_URL:state.origin,OPENCRAWL_ORGANIZATION_ID:state.organization,
-    ...(state.allocatedLandingPrefix?{OPENCRAWL_ALLOCATED_LANDING_PREFIX:state.allocatedLandingPrefix}:{}),
     OPENCRAWL_AUTH_SECRET:state.authSecret,OPENCRAWL_SETUP_TOKEN:state.setupToken,OPENCRAWL_CONNECTOR_KEY:state.connectorKey,
     OPENCRAWL_S3_ACCESS_KEY_ID:state.s3Key,OPENCRAWL_S3_SECRET_ACCESS_KEY:state.s3Secret,OPENCRAWL_TEMPORAL_PASSWORD:state.temporalPassword,OPENCRAWL_DATABASE_PASSWORD:state.databasePassword,
     OPENCRAWL_SESSION_INDEXING_CUTOVER:captureCutover,
