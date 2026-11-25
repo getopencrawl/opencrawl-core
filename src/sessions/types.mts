@@ -24,7 +24,7 @@ export function serviceError(value: unknown): ServiceError {return value instanc
 export function parseJson<T>(value: string | Uint8Array): T {return JSON.parse(typeof value === 'string' ? value : Buffer.from(value).toString('utf8')) as T;}
 export type StoreVersion = string | number;
 export interface ReadOptions {maxBytes?: number}
-export interface ListOptions {delimiter?: string; continuationToken?: string | null; maxKeys?: number}
+export interface ListOptions {requireComplete?: boolean; delimiter?: string; continuationToken?: string | null; maxKeys?: number}
 export interface StorePage {keys: string[]; prefixes?: string[]; nextToken: string | null}
 export interface ConditionalStore {
   readVersion(key: string, options?: ReadOptions): Promise<{version: StoreVersion | null; data: Buffer | null}>;

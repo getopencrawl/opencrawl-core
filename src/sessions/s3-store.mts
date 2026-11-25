@@ -92,10 +92,14 @@ export function createObjectStore(config:S3Config) {
     return res;
   }
 
-  async function listPage(prefix: string, {delimiter, continuationToken, maxKeys=1000}: ListOptions = {}) {
+  async function listPage(prefix: string, {delimiter, continuationToken, maxKeys=1000, requireComplete=false}: ListOptions = {}) {
     if(!Number.isInteger(maxKeys)||maxKeys<1||maxKeys>1000)throw new Error('Invalid S3 page size');
     const res=await request('GET',undefined,{query:{'list-type':'2',prefix,delimiter,'continuation-token':continuationToken,'max-keys':String(maxKeys)}});
     if(res.status===404)throw await storeError(res, `LIST ${bucket}`);
+    if(requireComplete){
+      const {completeS3Page}=await import('./s3-list-page.mjs');
+      return completeS3Page(res,prefix,continuationToken,maxKeys);
+    }
     const xml=await res.text();
     const keys=[...xml.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>/g)].map(m=>unescapeXml(m[1]));
     const prefixes=[...xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]*)<\/Prefix>/g)].map(m=>unescapeXml(m[1]));

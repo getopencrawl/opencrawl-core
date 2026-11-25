@@ -55,3 +55,22 @@ test('S3 listings reject missing buckets, missing tokens and cursor cycles rathe
   assert.equal(calls,tokens.length);
  }
 });
+
+test('migration listings require a complete page, its exact count and an unambiguous cursor',async()=>{
+ const prefix='capture/',entry='<Contents><Key>capture/key</Key></Contents>';
+ const body=(contents,metadata,count='1')=>'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Prefix>capture/</Prefix><KeyCount>'+count+'</KeyCount>'+contents+metadata+'</ListBucketResult>';
+ const more='<IsTruncated>true</IsTruncated>',done='<IsTruncated>false</IsTruncated>',next='<NextContinuationToken>opaque&amp;next</NextContinuationToken>';
+ const page=(xml,continuationToken=null)=>createObjectStore({bucket:'test',credentials:{accessKeyId:'test',secretAccessKey:'test'},fetch:async()=>new Response(xml)}).listPage(prefix,{requireComplete:true,continuationToken});
+ assert.deepEqual(await page(body(entry+'<CommonPrefixes><Prefix>capture/sub/</Prefix></CommonPrefixes>',more+next,'2')),{keys:['capture/key'],prefixes:['capture/sub/'],nextToken:'opaque&next'});
+ assert.deepEqual(await page(body('',done+'<ContinuationToken>opaque&amp;next</ContinuationToken>','0'),'opaque&next'),{keys:[],prefixes:[],nextToken:null});
+ for(const xml of [
+   body(entry,''),body(entry,more),body(entry,done+next),body(entry,more+next+next),body(entry,done+more),
+   body(entry,done).replace('<KeyCount>1</KeyCount>',''), body(entry,done,'0'),body(entry,done).slice(0,-1),
+   body('<Contents></Contents><Contents><Key>capture/key</Key></Contents>',done),body(entry.replace('</Key>','</Owner>'),done),
+   body(entry.replace('capture/key','elsewhere/key'),done),body(entry,done).replace('<Prefix>capture/</Prefix>',''),
+   body(entry,done).replace('</IsTruncated>','</IsTruncated><Broken>'),'<Error><Code>InternalError</Code></Error>',
+ ]){
+   await assert.rejects(page(xml),{message:'Invalid or incomplete S3 listing'});
+ }
+ await assert.rejects(page(body(entry,more+next),'opaque&next'),{message:'Invalid or incomplete S3 listing'});
+});
