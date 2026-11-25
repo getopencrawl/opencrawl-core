@@ -12,6 +12,7 @@ export async function preparePrivacyPreferences(database:ApplicationDatabase) {
       namespace text NOT NULL, subject text NOT NULL CHECK (subject ~ '^tenants/[0-9a-f]{64}/users/[0-9a-f]{64}$'),
       enabled boolean NOT NULL, rules text NOT NULL, revision text NOT NULL,
       PRIMARY KEY(namespace,subject))`);
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS json_escaped boolean NOT NULL DEFAULT false`);
   });
 }
 
@@ -23,18 +24,27 @@ export function postgresPrivacyPreferenceRepository(db:Reader,namespace:string):
     if(!protectedSubject.test(subject))throw Error('Invalid privacy preference subject');
     return [namespace,subject];
   }
+  // PostgreSQL text excludes NUL and isolated UTF-16 surrogates. Preserve all
+  // strings accepted by the JSON API while keeping ordinary rows readable.
+  const textSafe=(value:string)=>value.isWellFormed()&&!value.includes('\0');
   return {
     async read(subject) {
-      const result=await db.query<StoredPrivacyPreference>(`SELECT enabled,rules,revision FROM ${table} WHERE namespace=$1 AND subject=$2`,scope(subject));
-      return result.rows[0]??null;
+      const result=await db.query<StoredPrivacyPreference & {json_escaped:boolean}>(`SELECT enabled,rules,revision,json_escaped FROM ${table} WHERE namespace=$1 AND subject=$2`,scope(subject));
+      const row=result.rows[0];
+      if(!row)return null;
+      const {enabled,rules,revision,json_escaped}=row;
+      return json_escaped?{enabled,rules:JSON.parse(rules),revision:JSON.parse(revision)}:{enabled,rules,revision};
     },
     async replace(subject,expected,next) {
-      const values=[...scope(subject),next.enabled,next.rules,next.revision,expected];
+      const escape=!textSafe(next.rules)||!textSafe(next.revision);
+      const values=[...scope(subject),next.enabled,escape?JSON.stringify(next.rules):next.rules,
+        escape?JSON.stringify(next.revision):next.revision,escape,textSafe(expected)?expected:null,JSON.stringify(expected)];
+      const matches=`${table}.revision=CASE WHEN ${table}.json_escaped THEN $8::text ELSE $7::text END`;
       const result=expected==='0'
-        ? await db.query(`INSERT INTO ${table}(namespace,subject,enabled,rules,revision) VALUES($1,$2,$3,$4,$5)
-            ON CONFLICT(namespace,subject) DO UPDATE SET enabled=EXCLUDED.enabled,rules=EXCLUDED.rules,revision=EXCLUDED.revision
-            WHERE ${table}.revision=$6`,values)
-        : await db.query(`UPDATE ${table} SET enabled=$3,rules=$4,revision=$5 WHERE namespace=$1 AND subject=$2 AND revision=$6`,values);
+        ? await db.query(`INSERT INTO ${table}(namespace,subject,enabled,rules,revision,json_escaped) VALUES($1,$2,$3,$4,$5,$6)
+            ON CONFLICT(namespace,subject) DO UPDATE SET enabled=EXCLUDED.enabled,rules=EXCLUDED.rules,revision=EXCLUDED.revision,json_escaped=EXCLUDED.json_escaped
+            WHERE ${matches}`,values)
+        : await db.query(`UPDATE ${table} SET enabled=$3,rules=$4,revision=$5,json_escaped=$6 WHERE namespace=$1 AND subject=$2 AND ${matches}`,values);
       return result.rowCount===1;
     },
   };
