@@ -44,7 +44,7 @@ export function credentialService(repository:CredentialRepository,now=Date.now) 
       manage(principal);
       if(version!==null && !(typeof version==='string' && version.length || typeof version==='number' && Number.isFinite(version)))deny(400,'Invalid credential removal version');
       await repository.rotate(principal,version);
-    },,
+    },
     async revokeAll(principal:Principal){manage(principal);await repository.rotate(principal);},
     async revoke(principal:Principal,id:string){
       manage(principal);if(!credentialDigest(id))deny(400,'Invalid credential ID');
