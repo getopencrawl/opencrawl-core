@@ -1,6 +1,9 @@
 import type {ConnectorBinding} from './types.mjs';
 import type {MessageReference} from './capture-types.mjs';
 import {guardConnectorWrites} from './write-barrier.mjs';
+import {requireScopedState} from '../state/scoped.mjs';
+import {applicationDatabase} from '../state/settings.mjs';
+import {createSlackRunCheckpoints} from '../state/slack-run-checkpoints.mjs';
 import {readFile} from 'node:fs/promises';
 import {createObjectStore,awsCredentials} from '../sessions/s3-store.mjs';
 import {createSlackMessageCapture} from './slack-source-messages.mjs';
@@ -12,6 +15,22 @@ const [configPath,runId,mode='files']=process.argv.slice(2);
 if(!configPath||!runId||!['files','messages','references'].includes(mode))throw new Error('Usage: SLACK_TOKEN=... node dist/src/connectors/slack-source-standalone.mjs config.json run-id [files|messages|references]');
 const config=JSON.parse(await readFile(configPath,'utf8')) as {binding: ConnectorBinding; s3: Parameters<typeof createObjectStore>[0]; cutoff: number; references: MessageReference[]};
 const store=createObjectStore({...config.s3,credentials:awsCredentials()});await store.checkAccess();
-const capture=({files:createSlackFileCapture,messages:createSlackMessageCapture,references:createSlackMessageReferenceCapture}[mode as 'files' | 'messages' | 'references'])({binding:config.binding,...guardConnectorWrites({binding:config.binding,store}),...createSlackHttpSource({token:process.env.SLACK_TOKEN,workspaceId:config.binding.workspaceId})});
 if(mode!=='references'&&!Number.isSafeInteger(config.cutoff))throw new Error('Set a stable capture cutoff in epoch milliseconds in the config');
-for(;;){const result=await capture.step({runId,cutoff:config.cutoff,references:config.references});if(result.done){console.log(JSON.stringify(result));if(result.failed)process.exitCode=1;break;}if(result.waitMs)await new Promise(resolve=>setTimeout(resolve,result.waitMs));}
+const database=applicationDatabase();
+try {
+  await database.ready();
+  await requireScopedState(database);
+  const checkpointSource=createSlackRunCheckpoints(database).source({environment:'selfhost',binding:config.binding,bucket:store.bucket,objectPrefix:config.s3.prefix});
+  const guarded=guardConnectorWrites({binding:config.binding,store});
+  const writers=await guarded.writeBarrier.inspect();
+  if (writers.closed || writers.pending) throw new Error('Slack source connection is closed or has unresolved writes');
+  await checkpointSource.adopt(store);
+  const constructors={files:createSlackFileCapture,messages:createSlackMessageCapture,references:createSlackMessageReferenceCapture};
+  const capture=constructors[mode as keyof typeof constructors]({binding:config.binding,checkpoints:checkpointSource.checkpoints,
+    ...guarded,...createSlackHttpSource({token:process.env.SLACK_TOKEN,workspaceId:config.binding.workspaceId})});
+  for(;;){
+    const result=await capture.step({runId,cutoff:config.cutoff,references:config.references});
+    if(result.done){console.log(JSON.stringify(result));if(result.failed)process.exitCode=1;break;}
+    if(result.waitMs)await new Promise(resolve=>setTimeout(resolve,result.waitMs));
+  }
+} finally {await database.close();}

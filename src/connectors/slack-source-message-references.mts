@@ -1,3 +1,4 @@
+import {openSlackCheckpoint} from './slack-run-checkpoints.mjs';
 import type {SlackCaptureOptions, SlackQuery, SlackApiData} from './types.mjs';
 import type {MessageReference, ReferenceRun, ReferenceCheckpoint, CaptureStepResult} from './capture-types.mjs';
 import {gzipSync} from 'node:zlib';
@@ -18,18 +19,19 @@ function referencesInput(references: MessageReference[]) {
 
 /** Refresh explicit native identities without pretending to enumerate a channel.
  * Operators serialize this with other history/replies captures for the workspace. */
-export function createSlackMessageReferenceCapture({binding,store,request,checkActive=async()=>{},now=Date.now}: SlackCaptureOptions) {
+export function createSlackMessageReferenceCapture({binding,store,checkpoints,request,checkActive=async()=>{},now=Date.now}: SlackCaptureOptions) {
  validateBinding(binding);if(binding.provider!=='slack')invalidRecord('Slack source binding required');
  const active=async()=>{validateBinding(binding);await checkActive(binding);};
  async function put(key: string,bytes: Uint8Array,type: string){await active();await store.put(key,bytes,type);}
  return {async step({runId,references}: ReferenceRun): Promise<CaptureStepResult> {
   if(!/^[A-Za-z0-9_-]{1,150}$/.test(runId||''))invalidRecord('Invalid reference capture run');
   const refs=referencesInput(references),inputHash=digest(refs);
-  await active();const prefix=binding.rawPrefix+'capture/message-references-v1/'+runId+'/',stateKey=prefix+'state.json';
-  const bytes=await store.get(stateKey,{maxBytes:1024*1024});
+  await active();const prefix=binding.rawPrefix+'capture/message-references-v1/'+runId+'/';
+  const checkpoint=await openSlackCheckpoint(checkpoints,store,binding,'message-references-v1',runId);
+  const bytes=checkpoint.bytes;
   const state: ReferenceCheckpoint=bytes?JSON.parse(bytes.toString()) as ReferenceCheckpoint:{version:1,scope:digest(binding),runId,inputHash,position:0,nextDue:{},pages:0,emitted:0,errors:[]};
   if(state.version!==1||state.scope!==digest(binding)||state.runId!==runId||state.inputHash!==inputHash||!Number.isSafeInteger(state.position)||state.position<0||state.position>refs.length)invalidRecord('Reference capture checkpoint scope mismatch');
-  const save=()=>put(stateKey,Buffer.from(JSON.stringify(state)),'application/json');
+  const save=async()=>{await active();await checkpoint.save(Buffer.from(JSON.stringify(state)));};
   const fail=async(method: string,code: string)=>{state.errors.push({position:state.position,method,code});state.position++;await save();return {done:false,waitMs:0};};
   if(state.position===refs.length)return {done:true,references:refs.length,pages:state.pages,emitted:state.emitted,failed:state.errors.length};
   const ref=refs[state.position],reply=micros(ref.threadTs)!==micros(ref.ts),method=reply?'conversations.replies':'conversations.history';

@@ -8,8 +8,7 @@ this OpenCrawl origin. The request cannot supply a destination tenant or a
 Replicas organization: those come from the admin approval and the verified token.
 The approving admin must still be an active admin when the prompt is redeemed.
 
-The resulting organization connection is ordinary product data in the configured
-object store. It authorizes native identities from that Replicas organization,
+The resulting organization connection belongs to the OpenCrawl workspace. It authorizes native identities from that Replicas organization,
 including new environments and personal environment forks. No long-lived human
 or machine API key, environment allowlist, or AWS Parameter Store configuration
 is required for new connections. A Replicas organization cannot be connected to
@@ -37,12 +36,33 @@ email text are not verified human identity. Existing private-resource rules appl
 
 ## Storage and migration
 
-`identity/replicas-v1/organizations/<org>.json` is the authoritative connection,
-written with conditional updates. The tenant indexes only locate records; reads
-recheck the record's tenant and revocation state. Setup hashes live under
-`identity/replicas-v1/setup/`. Neither location contains Replicas tokens.
-The same adapter operates in self-hosted installations and pins their configured
-single organization. Hosted routing supplies the verified connection's tenant.
+The application database holds one owner per Replicas organization, its confirmed
+installations and revocation time, and one record per hashed setup code. The
+same adapter pins the single organization on self-host and separates tenants on
+hosted deployments.
+
+To upgrade, deploy the release with the Replicas database adapter to every API
+and operator process. The adapter serves existing objects until activation. In
+the server container, with the same database and S3 environment, run:
+
+```sh
+node dist/src/selfhost/replicas-state.mjs check
+node dist/src/selfhost/replicas-state.mjs activate --legacy-writers-drained
+```
+
+Run activation after every older process has drained. The check validates each
+organization record, setup hash, and tenant index. Activation performs the same
+inventory under a write fence, reads back each database record, and commits the
+records and verified receipt together. An unknown object or inconsistent index
+aborts the transaction. A write with an uncertain S3 outcome also prevents
+activation. For a stranded write, stop Replicas writers, fence the legacy prefix
+against further S3 writes, and reconcile the affected authoritative organization
+or setup object and its index before clearing that specific pending operation.
+
+Before activation, the original image still reads the current S3 objects. After
+activation, recover using a release with this adapter and the same database.
+The retained S3 snapshot predates later claims, confirmations, and revocations.
+Rerunning activation returns the original receipt.
 
 `createReplicasConnections.migrateLegacy` imports an operator-approved legacy
 configuration. It validates the whole input for conflicting tenants before writing,

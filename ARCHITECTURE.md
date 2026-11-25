@@ -133,7 +133,7 @@ or service operated by OpenCrawl. This contract supersedes earlier hosted-only
 classification of reusable identity, integrations and product UI.
 
 The reconciled runtime keeps PostgreSQL authoritative for Better Auth, the
-integration registry, board messages/delivery, and capture event identities.
+integration registry, board messages/delivery, capture event identities, and onboarding receipts after their scoped cutover.
 Remaining product state uses the proven production object-store contracts.
 Do not reintroduce a second runtime core version or require a whole-application
 migration for ordinary feature delivery. Network shared-file contents and refs live in native bare Git repositories on operator-owned persistent storage. PostgreSQL owns their volume identities and indexes authenticated pushes from the durable Git reflog. Other new application state belongs in PostgreSQL; move

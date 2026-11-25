@@ -20,8 +20,8 @@ export interface ConnectorDocument {
 }
 export interface DocumentItem { id: string; document: ConnectorDocument; }
 export interface ReadOptions { maxBytes?: number; }
-export interface ListOptions { continuationToken?: string | null; maxKeys?: number; }
-export interface ObjectPage { keys: string[]; nextToken?: string | null; }
+export interface ListOptions { delimiter?: string; continuationToken?: string | null; maxKeys?: number; }
+export interface ObjectPage { keys: string[]; prefixes?: string[]; nextToken?: string | null; }
 export interface ConnectorStore {
   bucket?: string;
   get(key: string, options?: ReadOptions): Promise<Buffer | null>;
@@ -74,6 +74,7 @@ export type SlackQuery = Record<string, string | number | boolean | undefined>;
 export interface SlackApiResponse { status: number; headers?: Record<string, string>; data?: SlackApiData; }
 export type SlackRequest = (method: string, query: SlackQuery) => Promise<SlackApiResponse>;
 export interface SlackCaptureOptions {
+  checkpoints?: import('./slack-run-checkpoints.mjs').SlackRunCheckpoints;
   binding: ConnectorBinding; store: ConnectorStore; request: SlackRequest;
   checkActive?: (binding: ConnectorBinding) => Promise<unknown>; now?: () => number;
 }

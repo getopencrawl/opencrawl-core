@@ -93,6 +93,13 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
   async function save(client:PoolClient,record:IntegrationRecord){
     const next=validate({...record,updatedAt:new Date().toISOString()});
     await client.query('UPDATE opencrawl_integrations SET record=$6::jsonb,provider=$7,status=$8,revision=revision+1 WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND user_id=$4 AND integration_id=$5',[...key(record),JSON.stringify(next),next.provider,next.status]);
+    // Disconnect revokes admission while this transaction holds the integration
+    // row lock. Delete adopted Slack checkpoints and their temporary comments.
+    if (next.provider==='slack' && ['disconnecting','disconnected','abandoned'].includes(next.status) &&
+        (await client.query("SELECT to_regclass('opencrawl_slack_capture_sources') AS relation")).rows[0].relation) {
+      await client.query('DELETE FROM opencrawl_slack_capture_sources WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND integration_id=$4',
+        [database.namespace,environment,next.tenantId,next.integrationId]);
+    }
     return next;
   }
   async function claimProvider(client:PoolClient,record:IntegrationRecord){

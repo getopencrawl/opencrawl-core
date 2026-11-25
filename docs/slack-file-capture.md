@@ -13,7 +13,15 @@ Use the binding/S3 configuration from `connector-indexing.md`, add `cutoff` as a
 epoch-millisecond integer, and supply your own Slack user OAuth token with the
 required read scopes (`channels:read`, `files:read`). The token must belong to the
 intended workspace and be authorized for the configured public-channel policy.
-Do not put the token in the config file or source control.
+Do not put the token in the config file or source control. Supply the existing
+initialized self-host installation's application database and source settings, including
+`OPENCRAWL_DATABASE_URL`, `OPENCRAWL_LANDING_S3_BUCKET` and `OPENCRAWL_ORGANIZATION_ID`.
+Keep the installation's namespace and landing path. Stop all previous capture
+processes for the connection before upgrading. The first run inventories each
+of its three capture prefixes, copies every retained run checkpoint to Postgres,
+checks the stored bytes, and commits the binding's ownership receipt. A failed
+import leaves the old authority intact. After adoption, use a checkpoint-aware
+worker for retries and rollback. A pre-migration executable reads stale S3 state.
 
 ```sh
 # SLACK_TOKEN is supplied securely through the operator's environment.
@@ -36,12 +44,20 @@ to preserve channel and file-share identities that older catalogs may have misse
 For durable operation, build `buildSlackSourceWorkflows`, then run
 `createSlackSourceWorker` from the `connectors/slack-source-temporal` export.
 Schedule `captureSlackFilesV1` with trusted opaque connection references only.
-The resolver supplies `{binding, store, request, download}` after current
+The resolver supplies `{binding, store, checkpoints, request, download}` after current
 server-side authorization; every write rechecks it. One workflow at a time may
 advance each connection; use overlap SKIP. The workflow uses durable timers for
 rate limits, persists request reservations before sending, retries activities,
 and continues as new every 100 steps. Source
 bodies, API responses, credentials and checkpoint contents stay out of history.
+
+Customer-operated Temporal resolvers use `createSlackRunCheckpoints(database)`
+from `@getopencrawl/opencrawl-core/state/slack-run-checkpoints`. Bind the
+repository to the resolved source with `.source({environment:'selfhost',
+binding,bucket:store.bucket,objectPrefix:config.s3.prefix})`, await `.adopt(store)` before polling the queue,
+and supply the bound `.checkpoints` to activities. Separate self-hosted
+installations have separate application namespaces. The stored binding also
+pins the source bucket and workspace.
 
 Channel enumeration and each file's comment cursor use the shared pagination
 guard. Their scoped run/cutoff checkpoint stores one anchor token and decimal
@@ -61,8 +77,10 @@ All keys are relative to the authorized connection's `rawPrefix`:
 - `stream=file_documents/date=YYYY-MM-DD/sync=<run-id>/<hash>.jsonl.gz`:
   envelopes with integer `_airbyte_extracted_at` and `_airbyte_data` version 1.
 - `capture/files-v1/<run-id>/pages/<hash>.json`: exact API response evidence.
-- `capture/files-v1/<run-id>/state.json`: mutable cursor/rate/checkpoint state.
 - `capture/files-v1/catalog.json`: previously observed file/channel identities.
+
+The application database stores run IDs, cursors, retry reservations, counters and
+incomplete pagination state. Completed checkpoints stay addressable to retries.
 
 A file record contains `format_version: 1`, native `id`, `channel_id`, boolean
 `available`, `media_type`, optional title/name/user and `api_text: [{path,text}]`.
