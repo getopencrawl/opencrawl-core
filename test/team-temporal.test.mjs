@@ -228,6 +228,8 @@ test('self-host fence retains a standalone held guard and blocks old binaries af
   const f=await fixture(t),{database,options:{store,prefix,organizationId}}=f;
   const legacy=roleWriteGuard(store,prefix),orphan=await legacy(organizationId,change.actorId,change.userId,'remove');
   const local=selfhostTeamWrites(f.options);
+  await assert.rejects(local.write({...admitted,organizationId:'org_foreign'}),{status:403});
+  assert.equal((await database.pool.query('SELECT 1 FROM opencrawl_team_operations WHERE namespace=$1',[database.namespace])).rowCount,0);
   await assert.rejects(local.write(admitted),{status:503});
   assert.equal(f.writes(),0);
   await orphan.release();

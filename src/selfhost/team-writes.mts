@@ -9,6 +9,7 @@ export function selfhostTeamWrites(options:TeamChangeOptions & {organizationId:s
   const {database,organizationId,store,prefix}=options,activities=teamChangeActivities(options);
   let ready:Promise<void>|undefined;
   async function run(change?:TeamChange) {
+    if(change && change.organizationId!==organizationId)return rejectChange(403,'Team operation scope mismatch.');
     ready??=prepareTeamOperations(database).catch(error=>{ready=undefined;throw error;});
     await ready;
     const client=await database.pool.connect();
