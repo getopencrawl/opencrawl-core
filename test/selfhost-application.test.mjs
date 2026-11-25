@@ -16,7 +16,6 @@ import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
 import {createLocalSessionStore} from '../dist/src/sessions/local-store.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {postgresSharedFiles} from '../dist/src/files/store.mjs';
-import {valueReportKey} from '../dist/src/application/value-report.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
@@ -191,23 +190,21 @@ test('self-host team integration actions reject members through both HTTP and tR
   assert.deepEqual(calls,['connect','retry','disconnect','disconnect-all']);
 });
 
-test('OSS ignores historical judged reports stored for its own and other organizations',async t=>{
+test('self-host Usage serves recorded activity without looking up archived reports',async t=>{
   const f=await fixture(t,{search:{fetch:async()=>Response.json({error:{type:'index_not_found_exception'}},{status:404})}});
   await f.admin();
   const [member]=(await f.identity.directory.userManagement.listOrganizationMemberships({organizationId:org})).data;
   const onboarding=createOnboardingStatus({store:f.store,prefix:f.prefix}),principal={tenantId:org,userId:member.userId};
   await onboarding.cli(principal);await onboarding.mcpTest(principal);
   await onboarding.session(principal,{harness:'codex',events:[{kind:'message'}]});await onboarding.complete(principal);
-  const report={schema:4,measuredAt:'2026-11-09',window:{from:'2026-11-01',to:'2026-11-08',days:8},
-    model:{model:'Measured model',input:1,cacheRead:0,cacheWrite:0,output:1,asOf:'2026-11-09',share:100},
-    work:{sessions:1,tasks:1},spend:{input:1,cacheRead:0,cacheWrite:0,output:1},drift:{conflictsAvoided:0,duplicatesAvoided:0},usage:{searches:0,boardMessages:0},
-    value:{searchesUsed:0,fixesReused:0,found:{teammateWork:0,whereThingsLive:0,pastDecisions:0,pastFixes:0,other:0}}};
-  await f.store.put(valueReportKey(f.prefix,'org_foreign'),JSON.stringify(report));
-  assert.equal((await (await f.request('/api/console/usage','admin')).json()).value,null);
-  await f.store.put(valueReportKey(f.prefix,org),JSON.stringify(report));
+  const reads=[];
+  const get=f.store.get.bind(f.store);
+  f.store.get=(key,...args)=>{reads.push(key);return get(key,...args);};
   const response=await f.request('/api/console/usage','admin');assert.equal(response.status,200);
-  const result=await response.json();assert.equal(result.value,null);assert.equal(result.capture,null);
-
+  const result=await response.json();
+  assert.equal(Object.hasOwn(result,'value'),false);
+  assert.equal(result.capture,null);
+  assert.ok(reads.every(key=>!key.includes('/value/tenants/')));
 });
 test('OSS withholds a completed tRPC response if membership or admin role changes during its read',async t=>{
   const f=await fixture(t);await f.admin();
