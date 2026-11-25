@@ -5,7 +5,7 @@ const dependencies: Record<UsageSection, readonly UsageSource[]> = {
   workspace: ['organization'], agents: ['sessions'], overlap: ['overlap'],
   // A connector count failure still returns the current source list and sync states.
   ingestion: ['integrations'], members: ['members', 'sessions', 'integrations', 'onboarding'],
-  value: [], capture: ['capture'],
+  capture: ['capture'],
 };
 
 export function usageSectionFailed(report: Pick<UsageReport, 'failedSources'>, section: UsageSection) {
