@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
-import {preparePrivacyPreferences,postgresPrivacyPreferenceRepository,listPrivacyPreferenceSubjects,countPrivacyPreferences} from '../dist/src/state/privacy-preferences.mjs';
+import {preparePrivacyPreferences,postgresPrivacyPreferenceRepository} from '../dist/src/state/privacy-preferences.mjs';
 import {privacyPreferences} from '../dist/src/sessions/privacy.mjs';
 
 const connectionString=process.env.OPENCRAWL_TEST_POSTGRES_URL;
@@ -33,10 +33,6 @@ test('privacy preferences preserve revisions, isolate owners and serialize compe
   assert.equal(race.find(r=>r.status==='rejected').reason.status,409);
   const winner=race.find(r=>r.status==='fulfilled').value;
   assert.deepEqual(await service.read(owner),winner);
-  assert.deepEqual(await listPrivacyPreferenceSubjects(database.pool,database.namespace),[defaults.subject]);
-  assert.deepEqual(await listPrivacyPreferenceSubjects(database.pool,database.namespace,defaults.subject),[]);
-  assert.equal(await countPrivacyPreferences(database.pool,database.namespace),1);
-  assert.equal(await countPrivacyPreferences(database.pool,outside),0);
   const escaped={enabled:true,rules:'nul\0 and lone \ud800',revision:'old\udcffrevision'};
   assert.equal(await repo.replace(defaults.subject,winner.revision,escaped),true);
   assert.deepEqual(await repo.read(defaults.subject),escaped);

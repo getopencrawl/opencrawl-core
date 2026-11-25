@@ -49,17 +49,3 @@ export function postgresPrivacyPreferenceRepository(db:Reader,namespace:string):
     },
   };
 }
-
-/** Called by a fenced domain cutover. Keyset pagination uses the primary key. */
-export async function listPrivacyPreferenceSubjects(db:Reader,namespace:string,after='') {
-  if(!namespace||after&&!protectedSubject.test(after))throw Error('Invalid privacy preference inventory');
-  const {rows}=await db.query<{subject:string}>(`SELECT subject FROM ${table}
-    WHERE namespace=$1 AND subject>$2 ORDER BY subject LIMIT 256`,[namespace,after]);
-  return rows.map(row=>row.subject);
-}
-
-export async function countPrivacyPreferences(db:Reader,namespace:string) {
-  if(!namespace)throw Error('Privacy preferences require an application namespace');
-  const result=await db.query<{total:string}>(`SELECT count(*) AS total FROM ${table} WHERE namespace=$1`,[namespace]);
-  return Number(result.rows[0]!.total);
-}
