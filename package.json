@@ -52,6 +52,7 @@
     "./web-v2/styles.css": "./web-v2/src/styles.css",
     "./identity/devin": "./dist/src/identity/devin.mjs",
     "./identity/devin-runtime": "./dist/src/identity/devin-runtime.mjs",
+    "./state/replicas": "./dist/src/state/replicas.mjs",
     "./state/devin": "./dist/src/state/devin.mjs",
     "./identity/replicas": "./dist/src/identity/replicas.mjs",
     "./identity/replicas-connections": "./dist/src/identity/replicas-connections.mjs",

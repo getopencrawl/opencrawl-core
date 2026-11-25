@@ -4,6 +4,7 @@ import {measuredCheck,measuredSuggestionEvents} from '../search/check-activity.m
 import type {DevinState} from '../state/devin.mjs';
 import {devinRuntime} from '../identity/devin-runtime.mjs';
 import {isDevinToken} from '../identity/devin.mjs';
+import type {ReplicasRepository} from '../state/replicas.mjs';
 import type {ReplicasIdentityKey} from '../identity/replicas.mjs';
 import type {ReplicasImport} from '../integrations/replicas-import.mjs';
 import type {DevinRecording} from '../integrations/devin-recording.mjs';
@@ -71,6 +72,7 @@ import type {Log} from '../integrations/ports.mjs';
 type Store=ObjectStore;
 export interface SelfhostApplicationOptions {
   usageActivity?:SearchActivity;
+  replicasRepository?:ReplicasRepository;
   replicasImport?:ReplicasImport;
   devinRecording?:DevinRecording;
   log?: Log;
@@ -93,7 +95,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasRepository,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -108,7 +110,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
       const members=await activeMemberships(directory,principal.userId,principal.tenantId);
       return members.length===1 && members[0]!.userId===principal.userId && isAdmin(members[0]!);
   };
-  const replicas = createReplicasConnections({store,prefix,tenantId:settings.organizationId,
+  const replicas = createReplicasConnections({...replicasRepository?{repository:replicasRepository}:{store,prefix},tenantId:settings.organizationId,
     verify:workloadIdentity?.verify ?? createReplicasVerifier({audience:settings.url,key:workloadIdentityKey}),isAdmin:canManageWorkloads});
   const replicasConnect=replicasConnectionHandler(replicas);
   const workloads=workloadIdentity??createReplicasWorkloads({audience:settings.url,key:workloadIdentityKey,bindings:()=>settings.replicasBindings??[],resolveOrganization:async org=>{
