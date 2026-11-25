@@ -1,7 +1,7 @@
 import {prepareTeamGuardAuthority,readTeamGuardAuthority,activeTeamGuardIndex} from './team-guard-authority.mjs';
 import {randomUUID} from 'node:crypto';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
-import type {Principal, StoreVersion} from '../sessions/types.mjs';
+import type {ConditionalStore, Principal, StoreVersion} from '../sessions/types.mjs';
 import type {IdentityDirectory} from './types.mjs';
 import {errorInfo} from '../errors.mjs';
 import {authorizeTeamChange, applyTeamChange, verifyTeamChange, teamChange, rejectChange, type ChangeOutcome, type TeamChange} from './team-change.mjs';
@@ -14,6 +14,8 @@ export interface RemovalCredentials {
 }
 export interface TeamChangeOptions {
   database:ApplicationDatabase; directory:IdentityDirectory;
+  /** Accepted by previously published clients. Native operations use the database guard. */
+  store?:ConditionalStore; prefix?:string;
   credentials:Record<string,RemovalCredentials>; organizationId?:string;
   checkLastAdmin?:(organizationId:string,targetId:string)=>Promise<void>;
 }

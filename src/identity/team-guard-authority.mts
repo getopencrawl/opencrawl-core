@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {ApplicationTransaction as PoolClient,ApplicationDatabase} from '../state/postgres.mjs';
-import type {ConditionalStore} from '../sessions/types.mjs';
+import type {ConditionalStore,ObjectStore} from '../sessions/types.mjs';
 
 const authorityTable='opencrawl_team_guard_authority';
 export const activeTeamGuardIndex='opencrawl_team_operations_active_guard';
@@ -33,9 +33,24 @@ export async function readTeamGuardAuthority(db:Reader,namespace:string,expected
   }
   throw Error('Unrecognized team guard authority receipt');
 }
-function teamGuardLock(namespace:string) {return JSON.stringify(['team-guard-authority',namespace]);}
+export function teamGuardLock(namespace:string) {return JSON.stringify(['team-guard-authority',namespace]);}
 async function exclusive(db:PoolClient,namespace:string) {
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[teamGuardLock(namespace)]);
+}
+export async function pauseLegacyTeamGuards(database:ApplicationDatabase) {
+  await database.transaction(async db=>{
+    await exclusive(db,database.namespace);
+    if (await readTeamGuardAuthority(db,database.namespace)==='postgres') throw Error('PostgreSQL team authority is already active');
+    await db.query(`INSERT INTO ${authorityTable}(namespace,authority) VALUES($1,'paused') ON CONFLICT DO NOTHING`,[database.namespace]);
+  });
+}
+/** Before activation only. Restore legacy writer permissions before resuming role changes. */
+export async function resumeLegacyTeamGuards(database:ApplicationDatabase) {
+  await database.transaction(async db=>{
+    await exclusive(db,database.namespace);
+    if (await readTeamGuardAuthority(db,database.namespace)==='postgres') throw Error('PostgreSQL team authority is already active');
+    await db.query(`DELETE FROM ${authorityTable} WHERE namespace=$1 AND authority='paused'`,[database.namespace]);
+  });
 }
 function classify(data:Buffer|null):'held'|'idle'|'unknown' {
   try {
@@ -47,6 +62,32 @@ function classify(data:Buffer|null):'held'|'idle'|'unknown' {
   } catch { /* Preserve malformed or missing source objects. */ }
   return 'unknown';
 }
+export async function inventoryTeamGuards(store:Pick<ObjectStore,'readVersion'|'listPage'>,prefix:string) {
+  const directory=prefix+'/organization-role-writes/',digest=createHash('sha256'),seen=new Set<string>();
+  const counts={idle:0,held:0,unknown:0};
+  let token:string|null=null,previous='';
+  do {
+    const page=await store.listPage(directory,{continuationToken:token,maxKeys:1000});
+    for(const key of page.keys) {
+      if (!key.startsWith(directory) || previous && Buffer.compare(Buffer.from(previous),Buffer.from(key))>=0) throw Error('Invalid team guard listing order');
+      previous=key;
+      let source;
+      try {source=await store.readVersion(key,{maxBytes:4096});}
+      catch(error){
+        if((error as {code?:string})?.code!=='ObjectReadLimitExceeded' && !(error instanceof Error && error.message==='Object exceeds read limit'))throw error;
+        counts.unknown++;digest.update(JSON.stringify([key,'oversize'])+'\n');continue;
+      }
+      const {version,data}=source;
+      const state=/^org_[a-zA-Z0-9]+\.json$/.test(key.slice(directory.length)) && version!==null?classify(data):'unknown';
+      counts[state]++;
+      digest.update(JSON.stringify([key,version,data?createHash('sha256').update(data).digest('hex'):null])+'\n');
+    }
+    token=page.nextToken;
+    if (token && seen.has(token)) throw Error('Invalid team guard continuation');
+    if (token) seen.add(token);
+  } while(token);
+  return {...counts,digest:digest.digest('hex')};
+}
 async function requireDrained(db:PoolClient,namespace:string) {
   const active=await db.query("SELECT 1 FROM opencrawl_team_operations WHERE namespace=$1 AND phase NOT IN ('queued','done') LIMIT 1",[namespace]);
   if(active.rowCount) throw Error('Active or uncertain team operations require reconciliation');
@@ -55,6 +96,24 @@ async function setPostgres(db:PoolClient,namespace:string,count:number,digest:st
   await db.query(`INSERT INTO ${authorityTable}(namespace,authority,source_count,source_digest) VALUES($1,'postgres',$2,$3)
     ON CONFLICT(namespace) DO UPDATE SET authority='postgres',source_count=excluded.source_count,source_digest=excluded.source_digest`,[namespace,count,digest]);
 }
+/** Operator has fenced the legacy writer roles and drained earlier binaries before calling. */
+export async function activateTeamGuards(database:ApplicationDatabase,store:Pick<ObjectStore,'readVersion'|'listPage'>,prefix:string,expectedDigest:string) {
+  await database.transaction(async db=>{
+    await exclusive(db,database.namespace);
+    const mode=await readTeamGuardAuthority(db,database.namespace);
+    if(mode==='postgres'){
+      const saved=await db.query(`SELECT source_digest FROM ${authorityTable} WHERE namespace=$1`,[database.namespace]);
+      if(saved.rows[0]?.source_digest!==expectedDigest)throw Error('Team guard receipt mismatch');
+      return;
+    }
+    if(mode!=='paused')throw Error('Pause team changes before activating PostgreSQL');
+    await requireDrained(db,database.namespace);
+    const source=await inventoryTeamGuards(store,prefix);
+    if(source.held || source.unknown || source.digest!==expectedDigest)throw Error('Held, unknown or changed team guards require reconciliation');
+    await setPostgres(db,database.namespace,source.idle,source.digest);
+  });
+}
+
 /** Self-host has exactly one configured organization. A permanent CAS marker at its
  * former guard key fences even a restarted old process. Its exact contents bind a
  * retried migration to the same database namespace and organization. */
