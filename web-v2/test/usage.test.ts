@@ -11,7 +11,6 @@ import {SessionsPage, sessionPath} from '../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../src/pages/library-types.ts';
 import {ConsoleDataProvider} from '../src/data.tsx';
 import {copyText} from '../src/onboarding/copy.tsx';
-import type {ValueReport} from '../src/pages/types.ts';
 import {reconcileUsage} from '../src/pages/usage-recovery.ts';
 
 const now = Date.parse('2026-11-07T20:00:00Z');
@@ -116,28 +115,6 @@ test('subagent sessions are reported beside, not inside, the sessions a person s
 test('relative date formatting handles recent and invalid values', () => {
   assert.equal(ago('2026-11-07T20:01:00Z', now), 'just now');
   assert.equal(ago('invalid', now), 'never');
-});
-
-function value(): ValueReport {
-  return {
-    schema: 4, measuredAt: '2026-11-10', window: {from: '2026-11-05', to: '2026-11-10', days: 6},
-    model: {model: 'GPT-6 Astra', input: 10, cacheRead: 1, cacheWrite: 12.5, output: 50, asOf: '2026-11-09', share: 63},
-    work: {sessions: 386, tasks: 368},
-    spend: {input: 10_000_000, cacheRead: 1_000_000_000, cacheWrite: 0, output: 2_000_000},
-    drift: {conflictsAvoided: 35, duplicatesAvoided: 7},
-    usage: {searches: 340, boardMessages: 3690},
-    value: {searchesUsed: 221, fixesReused: 69, found: {teammateWork: 116, whereThingsLive: 65, pastDecisions: 34, pastFixes: 2, other: 4}},
-  };
-}
-
-
-const capture = {tokens: 52_500_000, since: '2026-11-01T00:00:00.000Z'};
-
-test('Usage ignores historical model judgments and renders captured activity', () => {
-  const current = render({...report(), value: null, capture});
-  const legacy = render({...report(), value: value(), capture});
-  assert.equal(legacy, current);
-  assert.doesNotMatch(legacy, /Agent alignment|Drift saves|Answers agents used/);
 });
 
 test('Usage offers the onboarding prompt in its header only when the workspace supplies one', () => {

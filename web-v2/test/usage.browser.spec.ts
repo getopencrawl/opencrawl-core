@@ -19,7 +19,7 @@ const searchRow = (i: number, kind: string) => ({id: `${kind}-${i}`, at: new Dat
 async function serve(page: Page, {sessions = 60}: {sessions?: number} = {}) {
   const requests: Record<string, unknown[]> = {tokens: [], sessions: [], calls: [], history: [], details: []};
   await page.clock.setFixedTime(new Date(today + 12 * 3600000));
-  await page.route('**/api/console/usage/highlights', route => route.fulfill({json: {cacheScope: scope, workspace: 'Example', value: null, capture: null, days: 30, generatedAt: '2026-11-19T12:00:00Z'}}));
+  await page.route('**/api/console/usage/highlights', route => route.fulfill({json: {cacheScope: scope, workspace: 'Example', capture: null, days: 30, generatedAt: '2026-11-19T12:00:00Z'}}));
   await page.route('**/api/console/usage/details', route => {
     const {range} = route.request().postDataJSON() as {range: string};
     requests.details!.push(range);
