@@ -27,7 +27,7 @@ async function repositoryId(dir: string): Promise<string | null> {
 }
 
 // Initialize privately then rename the complete, nonempty directory on the same filesystem.
-async function initialize(root: string, dir: string, limits: Budget, legacy?: Legacy) {
+async function initialize(root: string, dir: string, limits: Budget, legacy?: Legacy, allocatedId?: string) {
   await stageRepository(root, dir, legacy?.bundle.byteLength ?? 0, limits, async (stage, nativeLimit) => {
     await git(stage, [
       'init',
@@ -67,7 +67,7 @@ async function initialize(root: string, dir: string, limits: Budget, legacy?: Le
       await git(stage, ['fsck', '--strict', '--no-progress']);
       await rm(source);
     } else await seedRepository(stage);
-    await writeFile(join(stage, marker), randomUUID(), {mode: 0o600});
+    await writeFile(join(stage, marker), allocatedId ?? randomUUID(), {mode: 0o600});
   });
 }
 
@@ -155,6 +155,19 @@ export async function matchingExistingRepository(
   if (!expectedId || (await repositoryId(dir)) !== expectedId)
     throw new Error('Restore the registered Git volume before serving this network');
   return dir;
+}
+
+/** Materialize an allocated identity. An existing directory must already carry
+ * that UUID, including after a lost acknowledgement or a concurrent initializer. */
+export async function provisionAllocatedRepository(
+  root: string, namespace: string, tenant: string, allocatedId: string, limits: Budget = capacityLimits(process.env)
+) {
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(allocatedId))
+    throw new Error('Invalid allocated Git repository identity');
+  const dir = location(root, namespace, tenant);
+  if ((await repositoryId(dir)) === null) await initialize(root, dir, limits, undefined, allocatedId);
+  await matchingExistingRepository(root, namespace, tenant, allocatedId);
+  return allocatedId;
 }
 
 /** Provision through the same atomic initialization path that first-time Git clients use. */

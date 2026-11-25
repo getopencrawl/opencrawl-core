@@ -3,13 +3,13 @@ import {test} from 'node:test';
 import {execFile, spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {promisify} from 'node:util';
-import {randomBytes,createHash} from 'node:crypto';
+import {randomBytes,createHash,randomUUID} from 'node:crypto';
 import {mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fixtureToken, startFileServer} from './fixtures/shared-files-http.mjs';
 
-import {fileRepositories} from '../dist/src/files/store.mjs';
+import {fileRepositories,matchingExistingRepository,provisionAllocatedRepository,provisionRepository} from '../dist/src/files/store.mjs';
 import {admitPush} from '../dist/src/files/capacity.mjs';
 import {sharedFilesLimits} from '../dist/src/files/git-http.mjs';
 
@@ -319,4 +319,22 @@ test('parallel tenants cannot both reserve the same free disk bytes', async t =>
   } finally {await first.release();}
   const second=await admitPush(root,beta,limits,free);
   try {assert.equal(second.maxPack,first.maxPack);} finally {await second.release();}
+});
+
+test('allocated Git identities survive retries and refuse an unrelated or unmarked disk', async t => {
+  const root=await mkdtemp(join(tmpdir(),'opencrawl-git-allocation-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const store=fileRepositories(root,'isolated'),allocated=randomUUID();
+  await store.ready();
+  const materialize=(tenant,id)=>provisionAllocatedRepository(root,'isolated',tenant,id);
+  assert.deepEqual(await Promise.all([materialize('one',allocated),materialize('one',allocated)]),[allocated,allocated]);
+  const dir=await matchingExistingRepository(root,'isolated','one',allocated);
+  assert.equal(await readFile(join(dir,'opencrawl-repository-id'),'utf8'),allocated);
+  await assert.rejects(materialize('one',randomUUID()),/Restore the registered/);
+  const orphan=await provisionRepository(store,'orphan');
+  await assert.rejects(materialize('orphan',randomUUID()),/Restore the registered/);
+  assert.equal(await provisionRepository(store,'orphan'),orphan);
+  await rm(join(dir,'opencrawl-repository-id'));
+  await assert.rejects(materialize('one',allocated),/Restore the registered/);
+  await assert.rejects(materialize('invalid','bad uuid'),/Invalid allocated/);
 });
