@@ -127,6 +127,7 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
     }
     const repository:CredentialRepository={
       async create(record){
+        checkedCredentialRecord(record,record.id);
         const scope=owner(record.principal);
         await mutate('issue',record.id,scope,r=>r.create(record),async()=>{
           await database.pool.query(`INSERT INTO ${records}(namespace,family,id,owner,expires_at,record)

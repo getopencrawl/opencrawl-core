@@ -20,6 +20,7 @@ function checkImports(source, file, root = sourceRoot) {
     assert.ok(!specifier.includes('\\'), `Escaped dependency needs review: ${specifier}`);
     if (specifier.startsWith('node:') || ['@modelcontextprotocol/server', '@modelcontextprotocol/node', 'zod'].includes(specifier)) continue;
     if (file.href.endsWith('/integrations/replicas-live-api.mts') && specifier === 'eventsource-parser') continue;
+    if (file.href.endsWith('/sessions/s3-list-page.mts') && specifier === 'saxes') continue;
     if (file.href.endsWith('/sessions/token-count.mts') && specifier === 'gpt-tokenizer/encoding/o200k_base') continue;
     if (file.href.endsWith('/sessions/postgres-identities.mts') && specifier === 'pg') continue;
     if ((file.href.includes('/state/') || file.href.endsWith('/integrations/local-registry.mts') || file.href.endsWith('/identity/better-auth.mts')) && specifier === 'pg') continue;
@@ -54,9 +55,10 @@ test('core runtime imports stay inside src, Node builtins, or reviewed portable 
   // PDF/HTML parsing is lazy and isolated; no hosted credentials or external fetches.
   // Better Auth (MIT) is the self-host identity provider, backed by operator PostgreSQL, telemetry off.
   // eventsource-parser (MIT) decodes bounded SSE in the read-only Replicas adapter.
+  // saxes (ISC) parses bounded S3 directory responses locally before authoritative imports.
   // gpt-tokenizer (MIT) counts transcript text locally, without network access.
   // pg (MIT) is confined to explicit operator-owned application state adapters.
-  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@better-auth/oauth-provider', '@modelcontextprotocol/client', '@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'better-auth', 'eventsource-parser', 'gpt-tokenizer', 'jose', 'parse5', 'pdfjs-dist', 'pg', 'zod']);
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@better-auth/oauth-provider', '@modelcontextprotocol/client', '@modelcontextprotocol/node', '@modelcontextprotocol/server', '@trpc/client', '@trpc/server', '@workos-inc/node', 'better-auth', 'eventsource-parser', 'gpt-tokenizer', 'jose', 'parse5', 'pdfjs-dist', 'pg', 'saxes', 'zod']);
   assert.deepEqual(pkg.optionalDependencies || {}, {});
   const temporal = ['@temporalio/activity', '@temporalio/client', '@temporalio/common', '@temporalio/worker', '@temporalio/workflow'];
   const markdown = {'react-markdown':'10.1.0','remark-frontmatter':'5.0.0','remark-gfm':'4.0.1'};

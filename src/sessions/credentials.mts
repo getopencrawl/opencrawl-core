@@ -30,6 +30,8 @@ export function checkedCredentialRecord(value:unknown,id:string){
     ('revokedAt' in r && typeof r.revokedAt!=='string') || ('generation' in r && r.generation!=='' && !credentialDigest(r.generation)) ||
     !p || typeof p!=='object' || Array.isArray(p) || Object.keys(p).some(k=>!['tenantId','userId','name','email'].includes(k)) ||
     [p.name,p.email].some(v=>v!=null && typeof v!=='string'))throw Error('Invalid retained credential record');
+  if([p.name,p.email,r.expiresAt,r.revokedAt].some(text=>typeof text==='string' && (text.includes('\0') || !text.isWellFormed())))
+    throw Error('Retained credential text is not representable in PostgreSQL');
   sessionScope(p);return r;
 }
 

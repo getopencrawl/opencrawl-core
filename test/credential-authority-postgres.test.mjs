@@ -199,3 +199,10 @@ test('retains historical display metadata above 64 KiB byte-for-byte',{skip},asy
  await state.migrate('activate');assert.equal((await service.authenticate(token.token)).name,displayName);
  assert.equal((await state.migrate('verify')).receipt.capture.records,1);
 });
+
+test('plan rejects unrepresentable legacy text without exposing display data or sealing authority',{skip},async t=>{
+ const {store,open}=await fixture(t);
+ await createCaptureCredentials({store,prefix}).issue({...owner,name:'private\0display'});
+ const state=open();await assert.rejects(state.migrate('plan'),e=>e.message==='Retained credential text is not representable in PostgreSQL');
+ assert.equal(await state.active(),false);
+});
