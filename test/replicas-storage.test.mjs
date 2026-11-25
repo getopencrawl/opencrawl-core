@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createReplicasState} from '../dist/src/state/replicas.mjs';
+import {createReplicasState,createPostgresReplicasRepository} from '../dist/src/state/replicas.mjs';
 import {createReplicasConnections} from '../dist/src/identity/replicas-connections.mjs';
 import {replicasOwnerId} from '../dist/src/identity/replicas.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
@@ -34,6 +34,8 @@ test('verified handoff preserves ownership, approvals, confirmed installation, e
   await bridge.claim(setup.code,org);
   const userId=replicasOwnerId(org,env,vm);
   await bridge.confirmInstallation({tenantId:tenant,userId,owner:{kind:'shared',provider:'replicas',organizationId:org,environmentId:env,workspaceId:vm}});
+  const native=createPostgresReplicasRepository(f.db);
+  await assert.rejects(native.repository.readConnection(org),/receipt is required/);
   const before=await bridge.lookupOrganization(org);
   const unused=await bridge.issue(admin(),member());
   assert.equal(await f.state.active(),false);
@@ -46,7 +48,7 @@ test('verified handoff preserves ownership, approvals, confirmed installation, e
   assert.deepEqual(activated.receipt,plan.receipt);
   assert.equal(activated.backend,'postgres');
   assert.equal(await f.state.repository.saveConnection(org,old,before),false);
-  const restarted=f.instantiate(createReplicasState(f.db,f.store,prefix).repository);
+  const restarted=f.instantiate(native.repository);
   assert.deepEqual(await restarted.lookupOrganization(org),before);
   assert.deepEqual(await restarted.sharedInstallations(admin()),before.installations);
   assert.deepEqual(await restarted.list(admin(other)),[]);
