@@ -70,3 +70,16 @@ test('incomplete or wrong-scope inventory rolls back ownership and every staged 
   assert.equal((await source.adopt(store)).count,1);
 });
 
+test('directory inventory skips raw pages, orphan directories and advancing empty filtered pages',{skip:!postgresUrl},async t=>{
+  const {source,store,objects,reads}=await setup(t);
+  const kind='messages-v1',name=location(kind,'saved');
+  objects.set(name,bytes('saved',{cutoff:1}));
+  const listPage=async(prefix,{delimiter,continuationToken})=>{
+    assert.equal(delimiter,'/');
+    if(!prefix.endsWith('/'+kind+'/'))return {keys:[],prefixes:[]};
+    if (!continuationToken)return {keys:[],prefixes:[],nextToken:'next-page'};
+    return {keys:[prefix+'catalog.json'],prefixes:[prefix+'old-page-only/',prefix+'saved/']};
+  };
+  assert.equal((await source.adopt({...store,listPage})).count,1);
+  assert.deepEqual(reads.sort(),[location(kind,'old-page-only'),name].sort());
+});

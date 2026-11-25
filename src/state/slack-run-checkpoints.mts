@@ -118,23 +118,31 @@ export function createSlackRunCheckpoints(database: ApplicationDatabase) {
               const entries = page.prefixes ?? page.keys;
               token = page.nextToken ?? null;
               progress = advanceSourcePagination(progress,{keys:entries,cursor:token});
+              const runIds:string[]=[];
               for (const name of entries) {
                 if (!name.startsWith(prefix) || name <= last) throw new Error('Invalid Slack checkpoint listing');
                 last = name;
                 const suffix = name.slice(prefix.length);
                 const match = directories ? /^([A-Za-z0-9_-]{1,150})\/$/.exec(suffix) : /^([A-Za-z0-9_-]{1,150})\/state\.json$/.exec(suffix);
-                if (!match) continue;
-                const runId = match[1]!;
-                const body = await store.get(prefix+runId+'/state.json',{maxBytes:checkpointLimit(kind)});
-                // An object store may retain pages or a directory marker for a
-                // run with no state. Flat inventories witnessed the exact object.
-                if (!body && directories) continue;
-                if (!body) throw new Error('Retained Slack checkpoint disappeared during import');
-                validateCheckpoint(binding,kind,runId,body);
-                const stored = await db.query(`INSERT INTO ${runs}(namespace,environment,tenant_id,integration_id,kind,run_id,body)
-                  VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING body`,[...args,kind,runId,body]);
-                if (!body.equals(stored.rows[0].body)) throw new Error('Slack checkpoint byte verification failed');
-                hash.update(JSON.stringify([kind,runId,createHash('sha256').update(body).digest('hex')])+'\n');count++;
+                if (match) runIds.push(match[1]!);
+              }
+              // Limit concurrent S3 fetches and worst-case resident checkpoint
+              // bytes. Write in inventory order to give each receipt a stable digest.
+              for (let offset=0;offset<runIds.length;offset+=4) {
+                const batch=await Promise.all(runIds.slice(offset,offset+4).map(async runId=>({
+                  runId,body:await store.get(prefix+runId+'/state.json',{maxBytes:checkpointLimit(kind)})
+                })));
+                for (const {runId,body} of batch) {
+                  // Object stores may retain pages or a directory marker after
+                  // state disappears. Flat inventories witnessed the exact object.
+                  if (!body && directories) continue;
+                  if (!body) throw new Error('Retained Slack checkpoint disappeared during import');
+                  validateCheckpoint(binding,kind,runId,body);
+                  const stored = await db.query(`INSERT INTO ${runs}(namespace,environment,tenant_id,integration_id,kind,run_id,body)
+                    VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING body`,[...args,kind,runId,body]);
+                  if (!body.equals(stored.rows[0].body)) throw new Error('Slack checkpoint byte verification failed');
+                  hash.update(JSON.stringify([kind,runId,createHash('sha256').update(body).digest('hex')])+'\n');count++;
+                }
               }
             } while (token);
           }
