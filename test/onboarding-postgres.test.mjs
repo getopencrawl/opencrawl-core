@@ -28,12 +28,12 @@ test('retained onboarding preserves all six milestones and scoped shared readine
  const installation={tenantId:person.tenantId,userId:'workload_replicas_1',id:'id',name:'Team agent'};
  const other={tenantId:'org_other',userId:person.userId};
  f.seed(owner,human);f.seed(sessionScope(installation),{cli:human.cli,mcpTest:human.mcpTest,session:human.session});
- f.seed(sessionScope(other),{session:{observedAt,harness:'claude'}});
+ f.seed(sessionScope(other),{session:{observedAt,harness:'claude'},mcp:{observedAt}});
  const control=f.open();assert.equal(await control.status(),'object');
  const status=createOnboardingStatus({repository:control.repository,sharedInstallations:()=>[installation],now:()=>new Date(recent)});
  const previous=await status.read(person);
- assert.deepEqual(await control.migrate(),{phase:'postgres',owners:3,receipts:10});
- assert.deepEqual(await f.open().verify(),{phase:'postgres',owners:3,receipts:10});
+ assert.deepEqual(await control.migrate(),{phase:'postgres',owners:3,receipts:11});
+ assert.deepEqual(await f.open().verify(),{phase:'postgres',owners:3,receipts:11});
  f.calls.length=0;
  assert.deepEqual(await status.read(person),previous);
  assert.equal((await status.read(other)).shared,undefined);
@@ -46,12 +46,13 @@ test('retained onboarding preserves all six milestones and scoped shared readine
  assert.equal(updated.cli.observedAt,recent);assert.equal(updated.mcp.client,'Codex');assert.equal(updated.mcpTest.observedAt,recent);
  assert.equal(updated.session.harness,'cursor');assert.deepEqual(updated.completed,human.completed);assert.deepEqual(f.calls,[]);
  // A verified, durable PostgreSQL receipt wins on subsequent migrations.
- assert.deepEqual(await f.open().migrate(),{phase:'postgres',owners:3,receipts:10});
+ assert.deepEqual(await f.open().migrate(),{phase:'postgres',owners:3,receipts:11});
  assert.equal((await status.read(person)).session.harness,'cursor');
  f.entries.delete(base(owner)+'mcp.json');
  await assert.rejects(control.verify(),/differ/);f.seed(owner,{mcp:human.mcp});
- assert.deepEqual(await control.restore(),{phase:'object',owners:3,receipts:10});
+ assert.deepEqual(await control.restore(),{phase:'object',owners:3,receipts:11});
  assert.deepEqual(await status.read(person),updated);
+ assert.deepEqual((await status.read(other)).mcp,{observedAt});
 });
 
 test('an interrupted import adopts live writers once and rescans without replaying the old value',{skip},async t=>{

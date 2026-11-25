@@ -377,5 +377,7 @@ To return to an older receiver, first run
 `node dist/src/state/onboarding-migrate.mjs restore` from the compatible image.
 It pauses receipt writes, copies each current PostgreSQL value back to its original
 key and verifies readback before returning authority to object storage.
-Retry an interrupted restore with the same image. Resume the older release only
+For a restore that lost its response to a PUT, keep PostgreSQL authoritative
+and establish the terminal provider outcome for that export before retrying.
+Use the same image to resume. Start the older release only
 after `status` reports `object`.

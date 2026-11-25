@@ -2,7 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {retainedOwnerScopes} from '../sessions/s3-store.mjs';
 import type {ObjectStore} from '../sessions/types.mjs';
-import {objectOnboardingReceipts, onboardingKinds, validateReceipt, validateReceiptScope,
+import {objectOnboardingReceipts, onboardingReceiptKey, onboardingKinds, validateReceipt, validateReceiptScope,
   type OnboardingRepository, type ReceiptMap} from '../onboarding-receipts.mjs';
 import type {ApplicationDatabase, ApplicationTransaction} from './postgres.mjs';
 
@@ -29,7 +29,6 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
     if(tenantHash && !owner.startsWith('tenants/'+tenantHash+'/users/'))throw Error('Onboarding owner outside configured organization');
   }
   const sourceJson = JSON.stringify(source);
-
 
   function ready() {
     const existing=schemaReady.get(database);
@@ -200,7 +199,10 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
         if(!rows.length)break;
         for(const row of rows) {
           const snapshot=row.receipts as ReceiptMap;
-          for(const kind of onboardingKinds) if(snapshot[kind]) {await objects.write(row.owner,kind,snapshot[kind]);receipts++;}
+          for(const kind of onboardingKinds) if(snapshot[kind]) {
+            await store.put(onboardingReceiptKey(prefix,row.owner,kind),Buffer.from(JSON.stringify(snapshot[kind])),'application/json');
+            receipts++;
+          }
           if(!isDeepStrictEqual(await objects.read(row.owner,onboardingKinds),snapshot))throw Error('Onboarding recovery readback differs');
           after=row.owner;owners++;
         }
