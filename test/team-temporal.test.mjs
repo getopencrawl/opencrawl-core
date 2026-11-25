@@ -8,7 +8,7 @@ import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {roleWriteGuard} from '../dist/src/identity/role-write.mjs';
 import {teamService} from '../dist/src/identity/team.mjs';
 import {admitTeamChange,prepareTeamOperations,teamChangeActivities} from '../dist/src/identity/team-operation.mjs';
-import {inventoryTeamGuards,pauseLegacyTeamGuards,resumeLegacyTeamGuards,activateTeamGuards,activateSelfhostTeamGuard} from '../dist/src/identity/team-guard-authority.mjs';
+import {readTeamGuardAuthority,inventoryTeamGuards,pauseLegacyTeamGuards,resumeLegacyTeamGuards,activateTeamGuards,activateSelfhostTeamGuard} from '../dist/src/identity/team-guard-authority.mjs';
 import {selfhostTeamWrites} from '../dist/src/selfhost/team-writes.mjs';
 import {durableTeamWrites} from '../dist/src/identity/temporal/client.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -265,4 +265,10 @@ test('two admitted administrators cannot demote one another past the last active
   assert.equal((await worker.advanceTeamChange(first)).outcome.ok,true);
   assert.equal((await worker.advanceTeamChange(second)).outcome.status,409);
   assert.equal([...f.members.values()].filter(row=>row.role.slug==='admin').length,1);
+});
+
+test('unrecognized or unverified database authorities cannot bypass an older team guard',async()=>{
+  for(const row of [{authority:'other'},{authority:'postgres',source_count:1,source_digest:'unknown'},{authority:'paused',source_count:0,source_digest:null}]){
+    await assert.rejects(readTeamGuardAuthority({query:async()=>({rows:[row]})},'namespace'),/Unrecognized/);
+  }
 });

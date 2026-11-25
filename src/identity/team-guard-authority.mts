@@ -13,7 +13,7 @@ export async function prepareTeamGuardAuthority(db:PoolClient) {
     namespace text PRIMARY KEY,authority text NOT NULL CHECK(authority IN ('paused','postgres')),
     source_count integer,source_digest text,
     CHECK((authority='paused' AND source_count IS NULL AND source_digest IS NULL) OR
-      (authority='postgres' AND source_count IS NOT NULL AND source_count>=0 AND source_digest IS NOT NULL AND length(source_digest)=64)))`);
+      (authority='postgres' AND source_count IS NOT NULL AND source_count>=0 AND source_digest IS NOT NULL AND source_digest ~ '^[a-f0-9]{64}$')))`);
   const relation=await db.query('SELECT to_regclass($1) AS index',[activeTeamGuardIndex]);
   if (!relation.rows[0].index) await db.query(`CREATE UNIQUE INDEX ${activeTeamGuardIndex} ON opencrawl_team_operations(namespace,organization)
     WHERE phase IN ('guarded','dispatching','applied')`);
@@ -22,8 +22,16 @@ export async function prepareTeamGuardAuthority(db:PoolClient) {
   if (!index?.ready || !/^CREATE UNIQUE INDEX opencrawl_team_operations_active_guard ON \S+\.opencrawl_team_operations USING btree \(namespace, organization\) WHERE \(phase = ANY \(ARRAY\['guarded'::text, 'dispatching'::text, 'applied'::text\]\)\)$/.test(index.sql)) throw Error('Incompatible team guard uniqueness index');
 }
 
-export async function readTeamGuardAuthority(db:Reader,namespace:string):Promise<TeamGuardAuthority> {
-  return (await db.query(`SELECT authority FROM ${authorityTable} WHERE namespace=$1`,[namespace])).rows[0]?.authority??'object';
+export async function readTeamGuardAuthority(db:Reader,namespace:string,expectedDigest?:string):Promise<TeamGuardAuthority> {
+  const {rows}=await db.query(`SELECT authority,source_count,source_digest FROM ${authorityTable} WHERE namespace=$1`,[namespace]);
+  if(!rows.length)return 'object';
+  const row=rows[0];
+  if(rows.length===1 && row.authority==='paused' && row.source_count===null && row.source_digest===null)return 'paused';
+  if(rows.length===1 && row.authority==='postgres' && Number.isInteger(row.source_count) && row.source_count>=0 && /^[a-f0-9]{64}$/.test(row.source_digest)){
+    if(expectedDigest!==undefined && row.source_digest!==expectedDigest)throw Error('Team guard receipt binding changed');
+    return 'postgres';
+  }
+  throw Error('Unrecognized team guard authority receipt');
 }
 export function teamGuardLock(namespace:string) {return JSON.stringify(['team-guard-authority',namespace]);}
 async function exclusive(db:PoolClient,namespace:string) {
@@ -114,19 +122,11 @@ export async function activateSelfhostTeamGuard(database:ApplicationDatabase,sto
   const key=prefix+'/organization-role-writes/'+org+'.json';
   const marker=Buffer.from(JSON.stringify({schemaVersion:1,state:'postgres',namespace:database.namespace,key}));
   const digest=createHash('sha256').update(marker).digest('hex');
-  const current=await database.pool.query(`SELECT authority,source_digest FROM ${authorityTable} WHERE namespace=$1`,[database.namespace]);
-  if(current.rows[0]?.authority==='postgres'){
-    if(current.rows[0].source_digest!==digest)throw Error('Self-hosted team authority binding changed');
-    return;
-  }
+  if(await readTeamGuardAuthority(database.pool,database.namespace,digest)==='postgres')return;
   await database.transaction(async db=>{
     await exclusive(db,database.namespace);
-    const mode=await readTeamGuardAuthority(db,database.namespace);
-    if(mode==='postgres'){
-      const receipt=await db.query(`SELECT source_digest FROM ${authorityTable} WHERE namespace=$1`,[database.namespace]);
-      if(receipt.rows[0]?.source_digest!==digest)throw Error('Self-hosted team authority binding changed');
-      return;
-    }
+    const mode=await readTeamGuardAuthority(db,database.namespace,digest);
+    if(mode==='postgres')return;
     if(mode==='paused')throw Error('Team changes are paused');
     await requireDrained(db,database.namespace);
     const old=await store.readVersion(key,{maxBytes:4096});
