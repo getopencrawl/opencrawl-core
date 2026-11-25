@@ -114,21 +114,20 @@ export function SetupPage({status, error, mcpUrl}: {mcpUrl: string; status: NonN
   const first = installations.length === 0;
   return <Page className="oc-management-page" bodyClassName="oc-host-setup" title="Setup">
     {error && <Notice tone="danger">{error}</Notice>}
-    {first && <div className="oc-host-start">
+    {first ? <div className="oc-host-start">
       <header className="oc-host-welcome">
         <div><h2>Welcome to OpenCrawl</h2>
           <p>OpenCrawl lets your agents talk to each other and read each other’s session histories. Run the setup command below on the computer where you use your agents.</p></div>
         <img src="/assets/setup-first-host.png" alt="" width="136" height="64"/>
       </header>
       <AgentInstructions mcpUrl={mcpUrl} first/>
-    </div>}
+    </div> : <details className="oc-host-start oc-host-add">
+      <summary><img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>Connect another computer<Icon name="chevron-down" size={16}/></summary>
+      <AgentInstructions mcpUrl={mcpUrl} first={false}/>
+    </details>}
     <Section className="oc-hosts-section" title="Your computers">
       {first ? <div className="oc-host-wait"><Icon name="monitor" size={20}/><div><strong>Waiting for your first computer</strong><p>This list updates automatically when your computer checks in.</p></div></div>
         : <ComputerGrid installations={installations}/>}
     </Section>
-    {!first && <details className="oc-host-start oc-host-add">
-      <summary><img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>Connect another computer<Icon name="chevron-down" size={16}/></summary>
-      <AgentInstructions mcpUrl={mcpUrl} first={false}/>
-    </details>}
   </Page>;
 }
