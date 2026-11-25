@@ -9,7 +9,7 @@ export interface CredentialRecord {
 }
 export interface CredentialRepository {
   create(record:CredentialRecord):Promise<void>;
-  lookup(id:string,now:number):Promise<Principal|null>;
+  lookup(id:string,clock:()=>number):Promise<{principal:Principal;expiresAt:string}|null>;
   removalVersion(principal:Principal):Promise<StoreVersion|null>;
   rotate(principal:Principal,version?:StoreVersion|null):Promise<void>;
   revoke(principal:Principal,id:string):Promise<void>;
@@ -17,6 +17,17 @@ export interface CredentialRepository {
 
 export const isCaptureCredential=(token:unknown):token is string=>typeof token==='string' && /^occ1_[a-f0-9]{64}$/.test(token);
 export const credentialDigest=(id:unknown):id is string=>typeof id==='string' && /^[a-f0-9]{64}$/.test(id);
+
+export function checkedCredentialRecord(value:unknown,id:string){
+  if(!value || typeof value!=='object' || Array.isArray(value))throw Error('Invalid retained credential record');
+  const r=value as CredentialRecord,p=r.principal;
+  if(Object.keys(r).some(k=>!['schemaVersion','id','principal','expiresAt','revoked','revokedAt','generation'].includes(k)) ||
+    r.schemaVersion!==1 || r.id!==id || typeof r.revoked!=='boolean' || typeof r.expiresAt!=='string' || !Number.isFinite(Date.parse(r.expiresAt)) ||
+    ('revokedAt' in r && typeof r.revokedAt!=='string') || ('generation' in r && r.generation!=='' && !credentialDigest(r.generation)) ||
+    !p || typeof p!=='object' || Array.isArray(p) || Object.keys(p).some(k=>!['tenantId','userId','name','email'].includes(k)) ||
+    [p.name,p.email].some(v=>v!=null && typeof v!=='string'))throw Error('Invalid retained credential record');
+  sessionScope(p);return r;
+}
 
 /** Bearers are generated and hashed at the service boundary. Storage never receives a bearer. */
 export function credentialService(repository:CredentialRepository,now=Date.now) {
@@ -36,8 +47,8 @@ export function credentialService(repository:CredentialRepository,now=Date.now) 
     },
     async authenticate(token:string){
       if(!isCaptureCredential(token))return null;
-      const principal=await repository.lookup(digest(token),now());
-      return principal ? {...principal,captureAccess:'write'} : null;
+      const found=await repository.lookup(digest(token),now);
+      return found && Date.parse(found.expiresAt)>now() ? {...found.principal,captureAccess:'write'} : null;
     },
     async removalVersion(principal:Principal){manage(principal);return repository.removalVersion(principal);},
     async revokeVersion(principal:Principal,version:StoreVersion|null){
@@ -77,12 +88,12 @@ export function objectCredentialRepository(store:ObjectStore,prefix:string):Cred
       const bytes=Buffer.from(JSON.stringify({...record,generation:await generation(record.principal)}));
       await credentialSource(()=>store.put(key(record.id),bytes,'application/json'));
     },
-    async lookup(id,now){
+    async lookup(id){
       const bytes=await credentialSource(()=>store.get(key(id)));if(!bytes)return null;
       const record=parseJson<CredentialRecord>(bytes);
-      if(record.schemaVersion!==1 || record.id!==id || record.revoked || !Number.isFinite(Date.parse(record.expiresAt)) || Date.parse(record.expiresAt)<=now)return null;
+      if(record.schemaVersion!==1 || record.id!==id || record.revoked || !Number.isFinite(Date.parse(record.expiresAt)))return null;
       sessionScope(record.principal);
-      return (record.generation??'')===await generation(record.principal) ? record.principal : null;
+      return (record.generation??'')===await generation(record.principal) ? {principal:record.principal,expiresAt:record.expiresAt} : null;
     },
     async removalVersion(principal){
       return (await credentialSource(()=>store.readVersion(generationKey(principal),{maxBytes:1024}))).version;

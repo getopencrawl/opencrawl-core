@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {credentialDigest,credentialSource,type CredentialRecord} from '../sessions/credentials.mjs';
+import {credentialDigest,credentialSource,checkedCredentialRecord,type CredentialRecord} from '../sessions/credentials.mjs';
 import {sessionScope,digest} from '../sessions/event-identity.mjs';
 import type {ObjectStore,StoreVersion} from '../sessions/types.mjs';
 
@@ -10,16 +10,6 @@ export type CredentialImportReceipt={capture:{records:number;generations:number}
 type SourceItem={family:CredentialFamily;sourceHash:string;owner:string} & (
   {kind:'record';id:string;record:CredentialRecord} | {kind:'generation';generation:string;version:StoreVersion});
 const ownerPath=/^tenants\/([a-f0-9]{64})\/users\/[a-f0-9]{64}$/;
-function checkedRecord(value:unknown,id:string){
-  if(!value || typeof value!=='object' || Array.isArray(value))throw Error('Invalid retained credential record');
-  const r=value as CredentialRecord,p=r.principal;
-  if(Object.keys(r).some(k=>!['schemaVersion','id','principal','expiresAt','revoked','revokedAt','generation'].includes(k)) ||
-    r.schemaVersion!==1 || r.id!==id || typeof r.revoked!=='boolean' || typeof r.expiresAt!=='string' || !Number.isFinite(Date.parse(r.expiresAt)) ||
-    ('revokedAt' in r && typeof r.revokedAt!=='string') || ('generation' in r && r.generation!=='' && !credentialDigest(r.generation)) ||
-    !p || typeof p!=='object' || Array.isArray(p) || Object.keys(p).some(k=>!['tenantId','userId','name','email'].includes(k)) ||
-    [p.name,p.email].some(v=>v!=null && typeof v!=='string'))throw Error('Invalid retained credential record');
-  sessionScope(p);return r;
-}
 
 export async function credentialInventory(store:ObjectStore,root:string,organizationId:string|null,
   visit:(items:SourceItem[])=>Promise<void>):Promise<CredentialImportReceipt> {
@@ -42,7 +32,7 @@ export async function credentialInventory(store:ObjectStore,root:string,organiza
           let value:unknown;try{value=JSON.parse(data.toString());}catch{throw Error('Invalid retained credential document');}
           const sourceHash=digest(JSON.stringify([version,digest(data)]));
           if(kind==='record'){
-            const record=checkedRecord(value,id);
+            const record=checkedCredentialRecord(value,id);
             if(organizationId && record.principal.tenantId!==organizationId)throw Error('Credential is outside configured organization');
             return {family,kind,id,record,owner:sessionScope(record.principal),sourceHash};
           }

@@ -2,9 +2,10 @@ import {randomBytes,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {ApplicationDatabase,ApplicationTransaction} from './postgres.mjs';
 import type {ObjectStore,Principal,StoreVersion} from '../sessions/types.mjs';
-import {sessionScope} from '../sessions/event-identity.mjs';
-import {credentialService,objectCredentialRepository,type CredentialRepository} from '../sessions/credentials.mjs';
+import {sessionScope,digest} from '../sessions/event-identity.mjs';
+import {credentialService,objectCredentialRepository,checkedCredentialRecord,type CredentialRepository} from '../sessions/credentials.mjs';
 import {credentialFamilies,credentialInventory,credentialPrefix,type CredentialFamily,type CredentialImportReceipt} from './credential-inventory.mjs';
+import {verifyRecoveredCredentialWrite,type CredentialWriteEvidence,type CredentialWriteIntent} from './credential-recovery.mjs';
 import {fail} from '../errors.mjs';
 
 const records='opencrawl_credential_records',markers='opencrawl_credential_generations';
@@ -34,7 +35,17 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
         CREATE TABLE IF NOT EXISTS ${records}(
         namespace text NOT NULL REFERENCES ${authority}(namespace),family text NOT NULL CHECK(family IN ('capture','agent')),
         id text NOT NULL CHECK(id ~ '^[a-f0-9]{64}$'),owner text NOT NULL CHECK(owner ~ '^tenants/[a-f0-9]{64}/users/[a-f0-9]{64}$'),
-        record jsonb NOT NULL,source_hash text,PRIMARY KEY(namespace,family,id),
+        record jsonb NOT NULL,expires_at timestamptz NOT NULL,
+        tenant_id text GENERATED ALWAYS AS (record#>>'{principal,tenantId}') STORED NOT NULL,
+        user_id text GENERATED ALWAYS AS (record#>>'{principal,userId}') STORED NOT NULL,
+        revoked boolean GENERATED ALWAYS AS ((record->>'revoked')::boolean) STORED NOT NULL,
+        generation text GENERATED ALWAYS AS (coalesce(record->>'generation','')) STORED NOT NULL,
+        source_hash text,PRIMARY KEY(namespace,family,id),
+        CHECK ((record->'revoked') IS NOT DISTINCT FROM to_jsonb(revoked)),
+        CHECK ((record->'schemaVersion') IS NOT DISTINCT FROM '1'::jsonb),
+        CHECK (generation='' OR generation ~ '^[a-f0-9]{64}$'),
+        CHECK (owner='tenants/'||encode(sha256(convert_to(tenant_id,'UTF8')),'hex')||
+          '/users/'||encode(sha256(convert_to(user_id,'UTF8')),'hex')),
         CHECK ((record->>'id') IS NOT DISTINCT FROM id));
         CREATE TABLE IF NOT EXISTS ${markers}(
         namespace text NOT NULL REFERENCES ${authority}(namespace),family text NOT NULL CHECK(family IN ('capture','agent')),
@@ -43,7 +54,8 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
         PRIMARY KEY(namespace,family,owner), CHECK(jsonb_typeof(version) IN ('string','number')));
         CREATE TABLE IF NOT EXISTS ${pending}(
         namespace text NOT NULL REFERENCES ${authority}(namespace),operation uuid NOT NULL,family text NOT NULL,
-        kind text NOT NULL,object_id text NOT NULL,started_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(namespace,operation))`);
+        kind text NOT NULL,object_id text NOT NULL,request_owner text NOT NULL,
+        intended_hash text,base_generation text,expected_version jsonb,started_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(namespace,operation))`);
       await db.query(`INSERT INTO ${authority}(namespace,source) VALUES($1,$2) ON CONFLICT DO NOTHING`,[ns,source]);
       await binding(db);
     }).catch(error=>{preparing=undefined;throw error;});
@@ -77,20 +89,34 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
       // An object read that overlapped the handoff cannot ignore a new SQL revocation.
       return await active()?postgres():result;
     }
-    async function mutate(kind:string,key:string,objects:(repository:CredentialRepository)=>Promise<void>,postgres:()=>Promise<void>){
+    async function mutate(kind:string,key:string,requestOwner:string,objects:(repository:CredentialRepository)=>Promise<void>,postgres:()=>Promise<void>){
       if(await active())return postgres();
       const operation=randomUUID();
       const admitted=await database.transaction(async db=>{
         await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[lock]);
         if((await binding(db)).receipt)return false;
-        await db.query(`INSERT INTO ${pending}(namespace,operation,family,kind,object_id) VALUES($1,$2,$3,$4,$5)`,[ns,operation,family,kind,key]);
+        await db.query(`INSERT INTO ${pending}(namespace,operation,family,kind,object_id,request_owner) VALUES($1,$2,$3,$4,$5,$6)`,[ns,operation,family,kind,key,requestOwner]);
         return true;
       });
       if(!admitted){switched=true;return postgres();}
       let dispatched=false,settled=false;
+      async function mark(path:string,body:Uint8Array,expected?:StoreVersion|null){
+        let baseGeneration:string|null=null;
+        if(kind==='rotate'){
+          const prior=await store.readVersion(path,{maxBytes:1024});
+          baseGeneration=prior.data ? JSON.parse(prior.data.toString()).generation : '';
+          if(typeof baseGeneration!=='string' || baseGeneration!=='' && !/^[a-f0-9]{64}$/.test(baseGeneration))throw Error('Invalid credential generation');
+        }
+        // Commit proof before dispatch. A recovered pre-dispatch intent cannot
+        // later send a stale write if its process resumes.
+        const sent=await database.pool.query(`UPDATE ${pending} SET intended_hash=$3,base_generation=$4,expected_version=$5::jsonb
+          WHERE namespace=$1 AND operation=$2 AND intended_hash IS NULL`,[ns,operation,digest(body),baseGeneration,expected===undefined?null:JSON.stringify(expected)]);
+        if(sent.rowCount!==1)throw Error('Credential source intent no longer admitted');
+        dispatched=true;
+      }
       const guarded=objectCredentialRepository({...store,
-        put(...args){dispatched=true;return store.put(...args);},
-        compareAndSet(...args){dispatched=true;return store.compareAndSet(...args);}},base);
+        async put(path,bytes,type){await mark(path,bytes);return store.put(path,bytes,type);},
+        async compareAndSet(path,version,bytes,options){await mark(path,bytes,version);return store.compareAndSet(path,version,bytes,options);}},base);
       try{await objects(guarded);settled=true;}
       catch(error){settled=(error as {writeOutcome?:string})?.writeOutcome==='not-applied';throw error;}
       finally{
@@ -102,24 +128,27 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
     const repository:CredentialRepository={
       async create(record){
         const scope=owner(record.principal);
-        await mutate('issue',record.id,r=>r.create(record),async()=>{
-          await database.pool.query(`INSERT INTO ${records}(namespace,family,id,owner,record)
-            VALUES($1,$2,$3,$4,$5::jsonb || jsonb_build_object('generation',
+        await mutate('issue',record.id,scope,r=>r.create(record),async()=>{
+          await database.pool.query(`INSERT INTO ${records}(namespace,family,id,owner,expires_at,record)
+            VALUES($1,$2,$3,$4,$6::timestamptz,$5::jsonb || jsonb_build_object('generation',
               coalesce((SELECT generation FROM ${markers} WHERE namespace=$1 AND family=$2 AND owner=$4),'')))`,
-            [ns,family,record.id,scope,record]);
+            [ns,family,record.id,scope,record,record.expiresAt]);
         });
       },
-      async lookup(id,at){
-        const principal=await read(()=>legacy.lookup(id,at),async()=>{
-          const {rows:[row]}=await database.pool.query(`SELECT c.record FROM ${records} c
+      async lookup(id,clock){
+        const found=await read(()=>legacy.lookup(id,clock),async()=>{
+          const {rows:[row]}=await database.pool.query(`SELECT c.record,c.owner,c.expires_at FROM ${records} c
             LEFT JOIN ${markers} g ON g.namespace=c.namespace AND g.family=c.family AND g.owner=c.owner
-            WHERE c.namespace=$1 AND c.family=$2 AND c.id=$3 AND c.record->'revoked'='false'::jsonb
-            AND coalesce(c.record->>'generation','')=coalesce(g.generation,'')`,[ns,family,id]);
-          if(!row || !(Date.parse(row.record.expiresAt)>at))return null;
-          return row.record.principal as Principal;
+            WHERE c.namespace=$1 AND c.family=$2 AND c.id=$3 AND NOT c.revoked AND c.expires_at>$4::timestamptz
+            AND c.generation=coalesce(g.generation,'')`,[ns,family,id,new Date(clock()).toISOString()]);
+          if(!row)return null;
+          const record=checkedCredentialRecord(row.record,id);
+          if(record.id!==id || record.schemaVersion!==1 || record.revoked!==false || owner(record.principal)!==row.owner ||
+             Date.parse(record.expiresAt)!==row.expires_at.getTime())throw Error('Credential binding unavailable');
+          return {principal:record.principal as Principal,expiresAt:record.expiresAt as string};
         });
-        if(principal)owner(principal);
-        return principal;
+        if(found)owner(found.principal);
+        return found;
       },
       removalVersion(principal){
         const scope=owner(principal);
@@ -130,7 +159,7 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
       },
       async rotate(principal,version){
         const scope=owner(principal);
-        await mutate('rotate',scope,r=>r.rotate(principal,version),async()=>{
+        await mutate('rotate',scope,scope,r=>r.rotate(principal,version),async()=>{
           const values=[ns,family,scope,randomBytes(32).toString('hex'),JSON.stringify('pg:'+randomUUID())];
           if(version!=null){
             await database.pool.query(`UPDATE ${markers} SET generation=$4,version=$5::jsonb
@@ -144,7 +173,7 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
       },
       async revoke(principal,id){
         const scope=owner(principal);
-        await mutate('revoke',id,r=>r.revoke(principal,id),async()=>{
+        await mutate('revoke',id,scope,r=>r.revoke(principal,id),async()=>{
           await database.transaction(async db=>{
             const {rows:[current]}=await db.query(`SELECT owner FROM ${records} WHERE namespace=$1 AND family=$2 AND id=$3 FOR UPDATE`,[ns,family,id]);
             if(!current)return;
@@ -158,7 +187,7 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
     return credentialService(repository,now);
   }
 
-  async function migrate(mode:Mode,attest?:()=>Promise<void>){
+  async function migrate(mode:Mode,attest?:(receipt:CredentialImportReceipt)=>Promise<void>){
     if(!['plan','activate','verify'].includes(mode))throw Error('Unknown credential migration mode');
     await ready();
     const report=await database.transaction(async db=>{
@@ -181,12 +210,12 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
         for(const item of items){
           if(item.kind==='record'){
             const key=[ns,item.family,item.id];
-            if(copy)await db.query(`INSERT INTO ${records}(namespace,family,id,owner,record,source_hash) VALUES($1,$2,$3,$4,$5,$6)`,
-              [...key,item.owner,item.record,item.sourceHash]);
-            const {rows:[row]}=await db.query(`SELECT owner,record,source_hash FROM ${records} WHERE namespace=$1 AND family=$2 AND id=$3`,key);
+            if(copy)await db.query(`INSERT INTO ${records}(namespace,family,id,owner,record,source_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7::timestamptz)`,
+              [...key,item.owner,item.record,item.sourceHash,new Date(item.record.expiresAt).toISOString()]);
+            const {rows:[row]}=await db.query(`SELECT owner,record,source_hash,expires_at FROM ${records} WHERE namespace=$1 AND family=$2 AND id=$3`,key);
             // The only legitimate mutation on an imported record is false -> true revocation.
             const expected=!copy && row?.record.revoked===true?{...item.record,revoked:true}:item.record;
-            if(row?.owner!==item.owner || row.source_hash!==item.sourceHash || !isDeepStrictEqual(row.record,expected))throw Error('Retained credential verification differs');
+            if(row?.owner!==item.owner || row.source_hash!==item.sourceHash || row.expires_at.getTime()!==Date.parse(item.record.expiresAt) || !isDeepStrictEqual(row.record,expected))throw Error('Retained credential verification differs');
           }else{
             const key=[ns,item.family,item.owner];
             if(copy)await db.query(`INSERT INTO ${markers}(namespace,family,owner,generation,version,source_hash) VALUES($1,$2,$3,$4,$5::jsonb,$6)`,
@@ -201,7 +230,7 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
       const expected=credentialFamilies.reduce((n,family)=>n+receipt[family].records+receipt[family].generations,0);
       if(await totals(true)!==expected || saved && !isDeepStrictEqual(saved,receipt))throw Error('Credential inventory differs');
       if(copy){
-        await attest?.();
+        await attest?.(receipt);
         await db.query(`UPDATE ${authority} SET receipt=$2,activated_at=clock_timestamp() WHERE namespace=$1 AND receipt IS NULL`,[ns,receipt]);
       }
       return {backend:'postgres' as const,receipt};
@@ -209,5 +238,24 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
     if(report.backend==='postgres')switched=true;
     return report;
   }
-  return {credentials,ready,active,status,migrate};
+  /** A single unresolved operation can be released only under the same writer
+   * fence as activation. The operator must independently attest the stopped
+   * producers and the terminal provider outcome. A resume after pre-dispatch
+   * cancellation fails the guarded UPDATE and therefore cannot send a PUT. */
+  async function reconcile(operation:string,attest:()=>Promise<CredentialWriteEvidence>){
+    if(!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(operation) || typeof attest!=='function')throw Error('Exact credential operation and attestation required');
+    await ready();
+    return database.transaction(async db=>{
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[lock]);
+      if((await binding(db)).receipt)throw Error('Credential source recovery is unavailable after activation');
+      const {rows:[intent]}=await db.query(`SELECT family,kind,object_id,request_owner,intended_hash,base_generation,expected_version,
+        expected_version IS NOT NULL AS conditional FROM ${pending} WHERE namespace=$1 AND operation=$2 FOR UPDATE`,[ns,operation]);
+      if(!intent)return {remaining:await pendingCount(db),resolved:false};
+      const evidence=await attest();
+      await verifyRecoveredCredentialWrite(store,prefix,intent as CredentialWriteIntent,evidence);
+      await db.query(`DELETE FROM ${pending} WHERE namespace=$1 AND operation=$2`,[ns,operation]);
+      return {remaining:await pendingCount(db),resolved:true};
+    });
+  }
+  return {credentials,ready,active,status,migrate,reconcile};
 }
