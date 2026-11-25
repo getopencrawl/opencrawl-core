@@ -5,6 +5,7 @@ import {memorySessionStore} from './session-store-fixture.mjs';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {sessionScope,digest} from '../dist/src/sessions/event-identity.mjs';
+import {createPostgresCredentialState} from '../dist/src/state/postgres-credentials.mjs';
 import {createCredentialState} from '../dist/src/state/credentials.mjs';
 
 const skip=!postgresUrl,bucket='credential-test',prefix='sessions/test/v1',owner={tenantId:'org_a',userId:'user_a',name:'Member',email:'fixture@example.test'};
@@ -205,4 +206,34 @@ test('plan rejects unrepresentable legacy text without exposing display data or 
  await createCaptureCredentials({store,prefix}).issue({...owner,name:'private\0display'});
  const state=open();await assert.rejects(state.migrate('plan'),e=>e.message==='Retained credential text is not representable in PostgreSQL');
  assert.equal(await state.active(),false);
+});
+
+test('native credentials require the sealed installation and preserve family-specific removal versions',{skip},async t=>{
+  const {database,open}=await fixture(t,'org_a'),upgrade=open();
+  await upgrade.ready();
+  const native=createPostgresCredentialState(database),capture=native.credentials('capture'),agent=native.credentials('agent');
+  assert.deepEqual(Object.keys(native).sort(),['credentials','ready']);
+  await assert.rejects(native.ready(),/not active/);
+  await assert.rejects(agent.issue(owner),/not active/);
+  const legacy=upgrade.credentials('capture');
+  await legacy.revokeAll(owner);
+  const version=await legacy.removalVersion(owner),retained=await legacy.issue(owner);
+  await upgrade.migrate('activate');
+  const foreign=createPostgresCredentialState({...database,sourceIdentity:{...database.sourceIdentity,prefix:'other'}});
+  await assert.rejects(foreign.credentials('capture').authenticate(retained.token),/not active/);
+  await native.ready();
+  assert.deepEqual(await capture.authenticate(retained.token),{...owner,captureAccess:'write'});
+  assert.equal(await agent.authenticate(retained.token),null);
+  const before=await agent.issue(owner);
+  assert.equal(await agent.removalVersion(owner),null);
+  await Promise.all([agent.revokeVersion(owner,null),capture.revokeVersion(owner,version)]);
+  assert.equal(await capture.authenticate(retained.token),null);
+  assert.equal(await agent.authenticate(before.token),null);
+  const replacement=await capture.issue(owner);
+  await capture.revokeVersion(owner,version);
+  assert.ok(await capture.authenticate(replacement.token));
+  await assert.rejects(capture.revoke(other,replacement.id),{status:403});
+  await assert.rejects(capture.revokeAll(otherTenant),{status:403});
+  await capture.revoke(owner,replacement.id);
+  assert.equal(await capture.authenticate(replacement.token),null);
 });

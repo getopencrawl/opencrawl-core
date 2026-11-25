@@ -3,8 +3,8 @@ import {credentialDigest,credentialReadLimit,credentialSource,checkedCredentialR
 import {sessionScope,digest} from '../sessions/event-identity.mjs';
 import type {ObjectStore,StoreVersion} from '../sessions/types.mjs';
 
-export const credentialFamilies=['capture','agent'] as const;
-export type CredentialFamily=typeof credentialFamilies[number];
+import {credentialFamilies,type CredentialFamily} from './credential-records.mjs';
+export {credentialFamilies,type CredentialFamily} from './credential-records.mjs';
 export function credentialPrefix(root:string,family:CredentialFamily){return family==='capture'?root:root+'/_agent-access';}
 export type CredentialImportReceipt={capture:{records:number;generations:number};agent:{records:number;generations:number};sha256:string};
 type SourceItem={family:CredentialFamily;sourceHash:string;owner:string} & (

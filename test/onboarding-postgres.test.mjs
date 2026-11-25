@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {sessionScope} from '../dist/src/sessions/ingest.mjs';
+import {createPostgresOnboardingRepository} from '../dist/src/state/postgres-onboarding.mjs';
 import {createOnboardingRepository} from '../dist/src/state/onboarding.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 
@@ -103,4 +104,31 @@ test('operator inventory visits existing receipt files only and rejects unknown 
  await control.migrate();f.calls.length=0;
  assert.deepEqual(await control.verify(),{phase:'postgres',owners:1,receipts:1});
  assert.deepEqual(f.calls,[base(owner)+'cli.json']);
+});
+
+test('native onboarding requires the sealed installation, retains completion and refuses writes after offline restore',{skip},async t=>{
+ const f=await fixture(t,'org_one'),upgrade=f.open();
+ await upgrade.ready();
+ f.seed(owner,human);
+ const native=createPostgresOnboardingRepository(f.database),repo=native.repository;
+ assert.deepEqual(Object.keys(native).sort(),['ready','repository']);
+ await assert.rejects(native.ready(),/not active/);
+ await assert.rejects(repo.read(owner,['mcp']),/not active/);
+ await assert.rejects(repo.write(owner,'cli',{observedAt:recent}),/not active/);
+ await upgrade.migrate();await native.ready();
+ const mismatch=createPostgresOnboardingRepository({...f.database,sourceIdentity:{...f.database.sourceIdentity,bucket:'other'}});
+ await assert.rejects(mismatch.repository.read(owner,['mcp']),/not active/);
+ await assert.rejects(mismatch.repository.write(owner,'cli',{observedAt:recent}),/not active/);
+ const foreign=sessionScope({...person,tenantId:'org_other'});
+ await assert.rejects(repo.read(foreign,['cli']),/outside configured/);
+ await assert.rejects(repo.write(foreign,'cli',{observedAt:recent}),/outside configured/);
+ f.calls.length=0;
+ assert.deepEqual(await repo.read(owner,['completed','mcp']),{completed:human.completed,mcp:human.mcp});
+ await Promise.all([repo.write(owner,'mcp',{observedAt:recent}),repo.write(owner,'cli',{observedAt:recent}),repo.write(owner,'completed',{observedAt:recent})]);
+ assert.deepEqual(await repo.read(owner,['mcp','completed','cli']),{
+   mcp:{observedAt:recent,client:'Codex'},completed:human.completed,cli:{observedAt:recent}});
+ assert.deepEqual(f.calls,[]);
+ await upgrade.restore();
+ await assert.rejects(repo.read(owner,['cli']),/not active/);
+ await assert.rejects(repo.write(owner,'cli',{observedAt}),/not active/);
 });

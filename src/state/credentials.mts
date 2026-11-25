@@ -1,12 +1,12 @@
-import {randomBytes,randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {ApplicationDatabase,ApplicationTransaction} from './postgres.mjs';
 import type {ObjectStore,Principal,StoreVersion} from '../sessions/types.mjs';
-import {sessionScope,digest} from '../sessions/event-identity.mjs';
+import {digest} from '../sessions/event-identity.mjs';
 import {credentialService,objectCredentialRepository,checkedCredentialRecord,type CredentialRepository} from '../sessions/credentials.mjs';
 import {credentialFamilies,credentialInventory,credentialPrefix,type CredentialFamily,type CredentialImportReceipt} from './credential-inventory.mjs';
 import {verifyRecoveredCredentialWrite,type CredentialWriteEvidence,type CredentialWriteIntent} from './credential-recovery.mjs';
-import {fail} from '../errors.mjs';
+import {postgresCredentialRepository,credentialOwner} from './credential-records.mjs';
 
 const records='opencrawl_credential_records',markers='opencrawl_credential_generations';
 const authority='opencrawl_credential_authority',pending='opencrawl_credential_source_writes';
@@ -73,14 +73,10 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
     return {backend:row.receipt?'postgres' as const:'objects' as const,activatedAt:row.activated_at?.toISOString()??null,
       receipt:row.receipt,pendingSourceWrites:await pendingCount(database.pool)};
   }
-  function owner(principal:Principal){
-    const scope=sessionScope(principal);
-    if(source!.organizationId && principal.tenantId!==source!.organizationId)fail(403,'Credential owner outside configured organization');
-    return scope;
-  }
+  const owner=(principal:Principal)=>credentialOwner(principal,source.organizationId);
 
   function credentials(family:CredentialFamily,{now=Date.now}:{now?:()=>number}={}){
-    if(!credentialFamilies.includes(family))throw Error('Unknown credential family');
+    const sql=postgresCredentialRepository(database,family);
     const base=credentialPrefix(prefix,family),legacy=objectCredentialRepository(store,base);
     async function read<T>(objects:()=>Promise<T>,postgres:()=>Promise<T>):Promise<T>{
       if(await active())return postgres();
@@ -129,60 +125,24 @@ export function createCredentialState(database:ApplicationDatabase, store:Object
       async create(record){
         checkedCredentialRecord(record,record.id);
         const scope=owner(record.principal);
-        await mutate('issue',record.id,scope,r=>r.create(record),async()=>{
-          await database.pool.query(`INSERT INTO ${records}(namespace,family,id,owner,expires_at,record)
-            VALUES($1,$2,$3,$4,$6::timestamptz,$5::jsonb || jsonb_build_object('generation',
-              coalesce((SELECT generation FROM ${markers} WHERE namespace=$1 AND family=$2 AND owner=$4),'')))`,
-            [ns,family,record.id,scope,record,record.expiresAt]);
-        });
+        await mutate('issue',record.id,scope,r=>r.create(record),()=>sql.create(record));
       },
       async lookup(id,clock){
-        const found=await read(()=>legacy.lookup(id,clock),async()=>{
-          const {rows:[row]}=await database.pool.query(`SELECT c.record,c.owner,c.expires_at FROM ${records} c
-            LEFT JOIN ${markers} g ON g.namespace=c.namespace AND g.family=c.family AND g.owner=c.owner
-            WHERE c.namespace=$1 AND c.family=$2 AND c.id=$3 AND NOT c.revoked AND c.expires_at>$4::timestamptz
-            AND c.generation=coalesce(g.generation,'')`,[ns,family,id,new Date(clock()).toISOString()]);
-          if(!row)return null;
-          const record=checkedCredentialRecord(row.record,id);
-          if(record.id!==id || record.schemaVersion!==1 || record.revoked!==false || owner(record.principal)!==row.owner ||
-             Date.parse(record.expiresAt)!==row.expires_at.getTime())throw Error('Credential binding unavailable');
-          return {principal:record.principal as Principal,expiresAt:record.expiresAt as string};
-        });
+        const found=await read(()=>legacy.lookup(id,clock),()=>sql.lookup(id,clock));
         if(found)owner(found.principal);
         return found;
       },
       removalVersion(principal){
-        const scope=owner(principal);
-        return read(()=>legacy.removalVersion(principal),async()=>{
-          const {rows:[marker]}=await database.pool.query(`SELECT version FROM ${markers} WHERE namespace=$1 AND family=$2 AND owner=$3`,[ns,family,scope]);
-          return marker?.version as StoreVersion|undefined ?? null;
-        });
+        owner(principal);
+        return read(()=>legacy.removalVersion(principal),()=>sql.removalVersion(principal));
       },
       async rotate(principal,version){
         const scope=owner(principal);
-        await mutate('rotate',scope,scope,r=>r.rotate(principal,version),async()=>{
-          const values=[ns,family,scope,randomBytes(32).toString('hex'),JSON.stringify('pg:'+randomUUID())];
-          if(version!=null){
-            await database.pool.query(`UPDATE ${markers} SET generation=$4,version=$5::jsonb
-              WHERE namespace=$1 AND family=$2 AND owner=$3 AND version=$6::jsonb`,[...values,JSON.stringify(version)]);
-            return;
-          }
-          const conflict=version===null?'DO NOTHING':'DO UPDATE SET generation=excluded.generation,version=excluded.version';
-          await database.pool.query(`INSERT INTO ${markers}(namespace,family,owner,generation,version)
-            VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(namespace,family,owner) `+conflict,values);
-        });
+        await mutate('rotate',scope,scope,r=>r.rotate(principal,version),()=>sql.rotate(principal,version));
       },
       async revoke(principal,id){
         const scope=owner(principal);
-        await mutate('revoke',id,scope,r=>r.revoke(principal,id),async()=>{
-          await database.transaction(async db=>{
-            const {rows:[current]}=await db.query(`SELECT owner FROM ${records} WHERE namespace=$1 AND family=$2 AND id=$3 FOR UPDATE`,[ns,family,id]);
-            if(!current)return;
-            if(current.owner!==scope)fail(403,'Credential owner mismatch');
-            await db.query(`UPDATE ${records} SET record=jsonb_set(record,'{revoked}','true')
-              WHERE namespace=$1 AND family=$2 AND id=$3`,[ns,family,id]);
-          });
-        });
+        await mutate('revoke',id,scope,r=>r.revoke(principal,id),()=>sql.revoke(principal,id));
       },
     };
     return credentialService(repository,now);

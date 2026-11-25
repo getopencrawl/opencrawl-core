@@ -27,6 +27,8 @@
     "./setup/http": "./dist/src/setup/http.mjs",
     "./setup/mcp": "./dist/src/setup/mcp.mjs",
     "./state/credentials": "./dist/src/state/credentials.mjs",
+    "./state/postgres-credentials": "./dist/src/state/postgres-credentials.mjs",
+    "./state/postgres-onboarding": "./dist/src/state/postgres-onboarding.mjs",
     "./state/onboarding": "./dist/src/state/onboarding.mjs",
     "./state/setup": "./dist/src/state/setup.mjs",
     "./state/recording": "./dist/src/state/recording.mjs",

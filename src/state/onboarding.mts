@@ -2,7 +2,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {retainedOwnerScopes} from '../sessions/s3-store.mjs';
 import type {ObjectStore} from '../sessions/types.mjs';
-import {objectOnboardingReceipts, onboardingReceiptKey, onboardingKinds, validateReceipt, validateReceiptScope,
+import {objectOnboardingReceipts,onboardingReceiptKey} from '../onboarding-object-receipts.mjs';
+import {onboardingOwnerCheck,selectedReceipts,checkMilestone,writeOnboardingRow} from './onboarding-rows.mjs';
+import {onboardingKinds,
   type OnboardingKind, type OnboardingRepository, type ReceiptMap} from '../onboarding-receipts.mjs';
 import type {ApplicationDatabase, ApplicationTransaction} from './postgres.mjs';
 
@@ -24,10 +26,7 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
     throw Error('Onboarding storage binding differs');
   const objects = objectOnboardingReceipts(store,prefix);
   const tenantHash=source.organizationId ? createHash('sha256').update(source.organizationId).digest('hex') : undefined;
-  function authorizeOwner(owner:string) {
-    validateReceiptScope(owner);
-    if(tenantHash && !owner.startsWith('tenants/'+tenantHash+'/users/'))throw Error('Onboarding owner outside configured organization');
-  }
+  const authorizeOwner=onboardingOwnerCheck(source.organizationId);
   const sourceJson = JSON.stringify(source);
 
   function ready() {
@@ -92,13 +91,10 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
           return current==='importing' ? adopt(db,owner) : (await db.query(ownerQuery,[namespace,owner])).rows[0]?.receipts ?? {};
         });
       }
-      const result:ReceiptMap={};
-      for(const kind of kinds) if(receipts?.[kind]) result[kind]=receipts[kind];
-      return result;
+      return selectedReceipts(receipts,kinds);
     },
     async write(owner,kind,value) {
-      authorizeOwner(owner);validateReceipt(value);await ready();
-      if(!onboardingKinds.includes(kind))throw Error('Invalid onboarding milestone');
+      authorizeOwner(owner);checkMilestone(kind,value);await ready();
       const result=await database.transaction(async db=>{
         const current=await phase(db,'FOR SHARE');
         if(current==='object'){
@@ -108,16 +104,7 @@ export function createOnboardingRepository(database: ApplicationDatabase, store:
           return {operation};
         }
         if(current==='importing')await adopt(db,owner);
-        const missingClient=kind==='mcp' && !('client' in value);
-        const first=missingClient?{...value,client:null}:value;
-        const {rows:[row]}=await db.query(`INSERT INTO opencrawl_onboarding_owners AS owner(namespace,owner,receipts)
-          VALUES($1,$2,jsonb_build_object($3::text,$4::jsonb))
-          ON CONFLICT(namespace,owner) DO UPDATE SET receipts=owner.receipts || jsonb_build_object($3::text,
-            CASE WHEN $3='completed' AND owner.receipts ? 'completed' THEN owner.receipts->'completed'
-                 WHEN $5 THEN $4::jsonb || jsonb_build_object('client',owner.receipts->'mcp'->'client')
-                 ELSE $4::jsonb END)
-          RETURNING receipts->$3::text AS value`,[namespace,owner,kind,JSON.stringify(first),missingClient]);
-        return {receipt:validateReceipt(row.value)};
+        return {receipt:await writeOnboardingRow(db,namespace,sourceJson,current,owner,kind,value)};
       });
       if(result.receipt)return result.receipt;
       // Commit the intent before dispatch. A crash or unknown write outcome

@@ -1,10 +1,11 @@
 import type {Principal, ObjectStore, SessionBatch} from './sessions/types.mjs';
-import {objectOnboardingReceipts,onboardingKinds,type OnboardingReceipt,type OnboardingKind,type OnboardingRepository} from './onboarding-receipts.mjs';
+import {objectOnboardingReceipts} from './onboarding-object-receipts.mjs';
+import {onboardingKinds,type OnboardingReceipt,type OnboardingKind,type OnboardingRepository} from './onboarding-receipts.mjs';
 export type {OnboardingReceipt, OnboardingKind, OnboardingRepository} from './onboarding-receipts.mjs';
 export type OnboardingReceipts = Record<OnboardingKind, OnboardingReceipt | null> & {shared?: OnboardingReceipt & {id: string; name: string; owner: 'shared'}};
 export interface SharedInstallation {id: string; tenantId: string; userId: string; name: string}
 import {deriveOnboarding} from './onboarding-state.mjs';
-import {sessionScope} from './sessions/ingest.mjs';
+import {sessionScope} from './sessions/event-identity.mjs';
 import {isSessionHarness} from './sessions/types.mjs';
 
 /** Durable per-user setup milestones, not a claim that credentials remain valid forever. */
