@@ -1,3 +1,4 @@
+import {prepareTeamGuardAuthority,readTeamGuardAuthority,teamGuardLock,activeTeamGuardIndex} from './team-guard-authority.mjs';
 import {randomUUID} from 'node:crypto';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {ConditionalStore, Principal, StoreVersion} from '../sessions/types.mjs';
@@ -39,6 +40,7 @@ export async function prepareTeamOperations(database:ApplicationDatabase) {
       phase text NOT NULL CHECK(phase IN ('queued','guarded','dispatching','applied','release','done')),
       actor_membership text NOT NULL,membership text NOT NULL,versions jsonb,outcome jsonb,
       PRIMARY KEY(namespace,organization,operation))`);
+    await prepareTeamGuardAuthority(db);
   });
 }
 
@@ -56,6 +58,8 @@ export async function admitTeamChange<T>(database:ApplicationDatabase,change:Tea
   if (!change.actorMembershipId || !change.targetMembershipId) rejectChange(409,'The workspace membership could not be confirmed.');
   const ref={organizationId:change.organizationId,operationId:randomUUID()}, key=binding(database,ref);
   return database.transaction(async db=>{
+    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[teamGuardLock(database.namespace)]);
+    if (await readTeamGuardAuthority(db,database.namespace)==='paused') rejectChange(503,'Team changes are temporarily paused. Please try again shortly.');
     await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[lockKey(key)]);
     await db.query(`INSERT INTO ${table}(namespace,organization,operation,actor,target,role,actor_membership,membership,phase) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued')`,[...key,change.actorId,change.userId,change.role,change.actorMembershipId,change.targetMembershipId]);
     return start(ref);
@@ -72,6 +76,9 @@ export function teamChangeActivities({database,directory,store,prefix,credential
       try {
         // A session lock serializes late activity completions. Each checkpoint below
         // commits independently, before a potentially unfenceable provider call.
+        await db.query('SELECT pg_advisory_lock_shared(hashtextextended($1,0))',[teamGuardLock(database.namespace)]);
+        const authority=await readTeamGuardAuthority(db,database.namespace);
+        if (authority==='paused') throw Error('Team changes paused');
         await db.query('SELECT pg_advisory_lock(hashtextextended($1,0))',[lockKey(key)]);
         const {rows:[row]}=await db.query<Row>(`SELECT actor,target,role,phase,actor_membership,membership,versions,outcome FROM ${table} WHERE ${where}`,key);
         if (!row) return {review:false,outcome:{ok:false,status:409,message:'The team operation was not admitted.'}};
@@ -83,18 +90,21 @@ export function teamChangeActivities({database,directory,store,prefix,credential
           row.phase=next;row.outcome=outcome;
         };
         if (row.phase==='queued') {
-          try {await getGuard(change.organizationId,change.actorId,change.userId,change.role,ref.operationId);}
-          catch (error) {
-            const {status,message,expose}=errorInfo(error);
-            if (status!==409 || !expose) throw error;
-            await done({ok:false,status,message},false);
-          }
-          if (row.phase==='queued') {
+          try {
+            if (authority==='object') await getGuard(change.organizationId,change.actorId,change.userId,change.role,ref.operationId);
             await db.query(`UPDATE ${table} SET phase='guarded' WHERE ${where}`,key);
             row.phase='guarded';
           }
+          catch (error) {
+            const {status,message,expose}=errorInfo(error);
+            const violation=error as {code?:string;constraint?:string};
+            if (authority==='postgres' && violation?.code==='23505' && violation.constraint===activeTeamGuardIndex)
+              await done({ok:false,status:409,message:'Another team change is in progress or awaiting verification.'},false);
+            else if (status===409 && expose) await done({ok:false,status,message},false);
+            else throw error;
+          }
         }
-        if ((row.phase==='guarded' || row.phase==='applied') && !await ownsRoleWrite(store,prefix,change.organizationId,ref.operationId)) return held;
+        if (authority==='object' && (row.phase==='guarded' || row.phase==='applied') && !await ownsRoleWrite(store,prefix,change.organizationId,ref.operationId)) return held;
         if (row.phase==='dispatching') return held;
         if (row.phase==='guarded') {
           let authorized:Awaited<ReturnType<typeof authorizeTeamChange>>|undefined;
@@ -146,7 +156,7 @@ export function teamChangeActivities({database,directory,store,prefix,credential
           await done({ok:true},true);
         }
         if (row.phase==='release') {
-          await releaseRoleWrite(store,prefix,change.organizationId,ref.operationId,true);
+          if (authority==='object') await releaseRoleWrite(store,prefix,change.organizationId,ref.operationId,true);
           await db.query(`UPDATE ${table} SET phase='done' WHERE ${where}`,key);
         }
         if (!row.outcome) throw Error('Team operation has no recorded outcome');

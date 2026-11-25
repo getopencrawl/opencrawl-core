@@ -15,6 +15,8 @@ import {singleOrganizationSessionSource} from './indexing.mjs';
 import {pathToFileURL} from 'node:url';
 import {selfhostSettings} from './settings.mjs';
 import {selfhostServices} from './services.mjs';
+import {selfhostTeamWrites} from './team-writes.mjs';
+import {createCaptureCredentials} from '../sessions/credentials.mjs';
 import {selfhostApplication} from './application.mjs';
 import {createLocalIdentity} from '../identity/better-auth.mjs';
 import {sessionStorage} from '../sessions/storage.mjs';
@@ -36,6 +38,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const eventIdentities=standaloneEventIdentities(store,env);await eventIdentities.ready();
   const identity=await createLocalIdentity({url:settings.url,secret:settings.authSecret,database,organizationId:settings.organizationId});
   await identity.ready();
+  const teamWrites=selfhostTeamWrites({database,directory:identity.directory,store,prefix,organizationId:settings.organizationId,credentials:{capture:createCaptureCredentials({store,prefix})}});
   const services=selfhostServices(settings,store,database,env);
   const temporal=selfhostTemporalSettings(env);
   const source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
@@ -45,7 +48,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
   const devinRecording=devinRecordingRuntime({database,secret:settings.authSecret,audience:settings.url,schedule:indexing.scheduleDevinRecording,
     sessions:{...settings.search,store,prefix,eventIdentities,scheduleIndexing:indexing.schedule,scheduleDeletion:scheduleSessionDeletion}});
-  const {server,shutdown}=createDrainableServer(selfhostApplication({sharedFiles,filesLimits:sharedFilesLimits(env),usageActivity,contextSuggestions,settings,store,devinState,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,devinRecording,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){await stopRetention();services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
+  const {server,shutdown}=createDrainableServer(selfhostApplication({teamWrite:teamWrites.write,sharedFiles,filesLimits:sharedFilesLimits(env),usageActivity,contextSuggestions,settings,store,devinState,boardState,setupState,recording,eventIdentities,prefix,identity,...services,replicasImport,devinRecording,scheduleSessionDeletion,scheduleSessionIndexing:indexing.schedule}),{analytics:{async close(){await stopRetention();services.close();await identity.close();await Promise.all([database.close(),eventIdentities.close(),indexing.close()]);}}});
   const requestTimeout=Number(env.OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS??60000);
   if(!Number.isSafeInteger(requestTimeout)||requestTimeout<0)throw new Error('Invalid OPENCRAWL_HTTP_REQUEST_TIMEOUT_MS');
   server.requestTimeout=requestTimeout;server.headersTimeout=10000;
@@ -54,6 +57,7 @@ export async function startSelfhost(env:NodeJS.ProcessEnv=process.env){
   server.keepAliveTimeout=125000;server.keepAliveTimeoutBuffer=1000;
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(Number(env.PORT||8092),env.HOST||'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});});
   // Recovery has the same durable create fence as an explicit Retry in the UI.
+  teamWrites.recover().catch(()=>console.error(JSON.stringify({event:'team.recovery_required'})));
   services.recover().catch(()=>console.error(JSON.stringify({event:'integration.recovery_failed'})));
   process.once('SIGTERM',()=>{void shutdown();});process.once('SIGINT',()=>{void shutdown();});
   return {server,shutdown};

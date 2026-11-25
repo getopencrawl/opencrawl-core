@@ -139,7 +139,7 @@ Do not reintroduce a second runtime core version or require a whole-application
 migration for ordinary feature delivery. Network shared-file contents and refs live in native bare Git repositories on operator-owned persistent storage. PostgreSQL owns their volume identities and indexes authenticated pushes from the durable Git reflog. Other new application state belongs in PostgreSQL; move
 existing domains individually with their own tested cutover and recovery plan.
 
-Temporal runs session indexing/deletion and connector indexing. Deployments can also bind the shared durable adapter for guarded team role changes and removals. A team workflow loads an authenticated operation reference from PostgreSQL. The existing object-store guard still serializes organization changes and holds unknown provider outcomes for operator reconciliation.
+Temporal runs session indexing/deletion and connector indexing. Deployments can also bind the shared durable adapter for guarded team role changes and removals. A team workflow loads an authenticated operation reference from PostgreSQL. After cutover, a unique active operation in PostgreSQL serializes each organization’s changes. A provider call with an unknown outcome keeps that operation active until reconciliation. Self-host uses the same operations synchronously for local account administration.
 
 Hosted Airbyte provisioning and disconnect commands also run in Temporal. After a verified callback or explicit
 request, PostgreSQL commits the requested connection state and its scoped

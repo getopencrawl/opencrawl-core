@@ -8,6 +8,8 @@ import {createHash,randomBytes} from 'node:crypto';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {selfhostTeamWrites} from '../dist/src/selfhost/team-writes.mjs';
+import {createCaptureCredentials as removalCredentials} from '../dist/src/sessions/credentials.mjs';
 import {selfhostApplication} from '../dist/src/selfhost/application.mjs';
 import {createSetupState} from '../dist/src/state/setup.mjs';
 import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
@@ -30,7 +32,8 @@ async function fixture(t,options={}){
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
   const settings={sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
-  app=selfhostApplication({settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
+  const teamWrite=selfhostTeamWrites({database,store,prefix,organizationId:org,directory:identity.directory,credentials:{capture:removalCredentials({store,prefix})}}).write;
+  app=selfhostApplication({teamWrite,settings,store,boardState,setupState,sharedFiles,prefix,identity,readAsset:async file=>'asset:'+file,...appOptions});
   const jars=new Map();
   const request=async(path,who=null,options={})=>{
     const jar=who?jars.get(who)||new Map():null;

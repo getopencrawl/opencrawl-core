@@ -8,6 +8,8 @@ import {createCaptureCredentials} from '../dist/src/sessions/credentials.mjs';
 import {roleWriteGuard} from '../dist/src/identity/role-write.mjs';
 import {teamService} from '../dist/src/identity/team.mjs';
 import {admitTeamChange,prepareTeamOperations,teamChangeActivities} from '../dist/src/identity/team-operation.mjs';
+import {inventoryTeamGuards,pauseLegacyTeamGuards,resumeLegacyTeamGuards,activateTeamGuards,activateSelfhostTeamGuard} from '../dist/src/identity/team-guard-authority.mjs';
+import {selfhostTeamWrites} from '../dist/src/selfhost/team-writes.mjs';
 import {durableTeamWrites} from '../dist/src/identity/temporal/client.mjs';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -109,6 +111,7 @@ test('unconfirmed provider writes keep the original guard through retries and op
 
 test('Temporal returns the team outcome after committed intake and resumes a reviewed removal',{skip:!postgresUrl||process.env.OPENCRAWL_TEST_TEMPORAL!=='1',timeout:150000},async t=>{
   const f=await fixture(t),queue='team-test-'+randomUUID();
+  await activateNative(f);
   const binary=process.env.OPENCRAWL_TEST_TEMPORAL_BINARY;
   const environment=await TestWorkflowEnvironment.createLocal(binary?{server:{executable:{type:'existing-path',path:binary}}}:{});
   t.after(()=>environment.teardown());
@@ -161,4 +164,85 @@ test('an unavailable Temporal start can occupy only two API database admissions'
     finish.resolve({ok:true});
     await Promise.all([first,second,third]);assert.equal(count,3);
   } finally {allowStarts.resolve();finish.resolve({ok:true});}
+});
+
+async function activateNative(f) {
+  const {database,options:{store,prefix}}=f;
+  await pauseLegacyTeamGuards(database);
+  const {digest}=await inventoryTeamGuards(store,prefix);
+  await activateTeamGuards(database,store,prefix,digest);
+}
+test('SQL authority requires a complete frozen inventory and drained team operations',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t),{store,prefix}=f.options,key=prefix+'/organization-role-writes/org_team.json';
+  const orphan=await roleWriteGuard(store,prefix)(change.organizationId,change.actorId,change.userId,'remove');
+  const ref=await f.ref();
+  await pauseLegacyTeamGuards(f.database);
+  await assert.rejects(f.ref(),{status:503});
+  await assert.rejects(teamChangeActivities(f.options).advanceTeamChange(ref),/temporarily unavailable/);
+  const held=await inventoryTeamGuards(store,prefix);
+  assert.deepEqual([held.held,held.idle,held.unknown],[1,0,0]);
+  await assert.rejects(activateTeamGuards(f.database,store,prefix,held.digest),/reconciliation/);
+  await orphan.release();
+  const idle=await inventoryTeamGuards(store,prefix);
+  assert.deepEqual([idle.held,idle.idle,idle.unknown],[0,1,0]);
+  await assert.rejects(activateTeamGuards(f.database,store,prefix,held.digest),/changed/);
+  const saved=await store.get(key);
+  await store.put(key,Buffer.from('{"schemaVersion":1,"state":"idle"}'));
+  const malformed=await inventoryTeamGuards(store,prefix);
+  assert.equal(malformed.unknown,1);
+  await assert.rejects(activateTeamGuards(f.database,store,prefix,malformed.digest),/reconciliation/);
+  await store.put(key,saved);
+  await resumeLegacyTeamGuards(f.database);
+  const again=await f.ref();
+  await f.database.pool.query("UPDATE opencrawl_team_operations SET phase='dispatching' WHERE namespace=$1 AND operation=$2",[f.database.namespace,again.operationId]);
+  await pauseLegacyTeamGuards(f.database);
+  const source=await inventoryTeamGuards(store,prefix);
+  await assert.rejects(activateTeamGuards(f.database,store,prefix,source.digest),/uncertain/);
+});
+test('SQL guard serializes different operations and retains an uncertain provider outcome across worker restart',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t);
+  await activateNative(f);
+  const store=f.options.store;
+  const forbid=name=>{const original=store[name];store[name]=async(key,...args)=>{assert(!key.includes('/organization-role-writes/'),'native worker used an object guard');return original(key,...args);};};
+  forbid('readVersion');forbid('compareAndSet');
+  const begin=Promise.withResolvers(),finish=Promise.withResolvers(),first=await f.ref(),other=await f.ref();
+  const remove=f.directory.userManagement.deleteOrganizationMembership;
+  let dispatches=0;
+  f.directory.userManagement.deleteOrganizationMembership=async id=>{dispatches++;begin.resolve();await finish.promise;await remove(id);throw Error('lost acknowledgement');};
+  const worker=teamChangeActivities(f.options),running=worker.advanceTeamChange(first);
+  try {
+    await begin.promise;
+    assert.equal((await worker.advanceTeamChange(other)).outcome.status,409);
+  }finally{finish.resolve();}
+  assert.equal((await running).review,true);
+  const restarted=teamChangeActivities(f.options);
+  assert.equal((await restarted.advanceTeamChange(first)).review,true);
+  assert.equal((await restarted.advanceTeamChange(await f.ref())).outcome.status,409);
+  assert.equal(dispatches,1);
+  await assert.rejects(resumeLegacyTeamGuards(f.database),/already active/);
+  await f.database.pool.query("UPDATE opencrawl_team_operations SET phase='applied' WHERE namespace=$1 AND operation=$2 AND phase='dispatching'",[f.database.namespace,first.operationId]);
+  assert.equal((await restarted.advanceTeamChange(first)).outcome.ok,true);
+  assert.equal(dispatches,1);
+});
+test('self-host fence retains a standalone held guard and blocks old binaries after migration',{skip:!postgresUrl},async t=>{
+  const f=await fixture(t),{database,options:{store,prefix,organizationId}}=f;
+  const legacy=roleWriteGuard(store,prefix),orphan=await legacy(organizationId,change.actorId,change.userId,'remove');
+  const local=selfhostTeamWrites(f.options);
+  await assert.rejects(local.write(admitted),{status:503});
+  assert.equal(f.writes(),0);
+  await orphan.release();
+  await activateSelfhostTeamGuard(database,store,prefix,organizationId);
+  await assert.rejects(legacy(organizationId,change.actorId,change.userId,'remove'),{status:409});
+  await assert.rejects(activateSelfhostTeamGuard(database,store,prefix,'org_different'),/binding changed/);
+  const remove=f.directory.userManagement.deleteOrganizationMembership;
+  f.directory.userManagement.deleteOrganizationMembership=async id=>{await remove(id);throw Error('lost acknowledgement');};
+  const owner={tenantId:organizationId,userId:change.userId},issued=await f.credential.issue(owner);
+  await assert.rejects(local.write(admitted),{status:503});
+  const restarted=selfhostTeamWrites(f.options);
+  await assert.rejects(restarted.recover(),{status:503});
+  await database.pool.query("UPDATE opencrawl_team_operations SET phase='applied' WHERE namespace=$1 AND phase='dispatching'",[database.namespace]);
+  await restarted.recover();
+  assert.equal(await f.credential.authenticate(issued.token),null);
+  assert.equal(f.writes(),1);
+  assert.equal((await database.pool.query('SELECT 1 FROM opencrawl_team_operations WHERE namespace=$1',[database.namespace])).rowCount,0);
 });
