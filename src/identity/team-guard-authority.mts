@@ -1,6 +1,5 @@
 import {createHash} from 'node:crypto';
-import type {PoolClient} from 'pg';
-import type {ApplicationDatabase} from '../state/postgres.mjs';
+import type {ApplicationTransaction as PoolClient,ApplicationDatabase} from '../state/postgres.mjs';
 import type {ConditionalStore,ObjectStore} from '../sessions/types.mjs';
 
 const authorityTable='opencrawl_team_guard_authority';
