@@ -82,5 +82,3 @@
 .usage-query-table thead th { font-weight: 500; text-transform: none; letter-spacing: normal; }
 .usage-query-table .usage-query { font-weight: 500; }
 .usage-view-all { display: inline-flex; align-items: center; gap: var(--space-1); }
-
-.oc-file-content { max-width: 100%; overflow-x: auto; }

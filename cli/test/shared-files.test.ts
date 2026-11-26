@@ -31,8 +31,8 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
       OPENCRAWL_API_URL:api, OPENCRAWL_NO_UPDATE:'1', HOME:home, USERPROFILE:home,
       GIT_CEILING_DIRECTORIES:project, TMPDIR:temp, TEMP:temp, TMP:temp, GIT_CONFIG_GLOBAL:gitProfile, GIT_CONFIG_NOSYSTEM:'1', GIT_TERMINAL_PROMPT:'0'};
     const entry = [process.execPath,resolve(import.meta.dir,'../src/cli.ts')];
-    async function run(cmd: string[], options: {cwd?:string; token?:string; input?:string; failure?:boolean; stderr?:boolean} = {}) {
-      const child = Bun.spawn(cmd,{cwd:options.cwd ?? cwd,env:{...env,OPENCRAWL_TOKEN:options.token ?? token},
+    async function run(cmd: string[], options: {token?:string; input?:string; failure?:boolean; stderr?:boolean} = {}) {
+      const child = Bun.spawn(cmd,{cwd,env:{...env,OPENCRAWL_TOKEN:options.token ?? token},
         stdin:new Blob([options.input ?? '']),stdout:'pipe',stderr:'pipe'});
       const [out,err,code] = await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
       if (options.failure) expect(code).not.toBe(0);
@@ -99,15 +99,7 @@ test('shared-file sessions open outside the project, preserve drafts and scope G
     expect(await run(open('alpha'))).toBe(a);
     expect(await readFile(join(a,'unsent.txt'),'utf8')).toBe('uncommitted draft');
     expect(await run(['git','-C',a,'rev-list','--count','origin/main..HEAD'])).toBe('1');
-    const fileLink = [...entry,'files','link','handoff.txt','--api',api];
-    await run(fileLink,{cwd:a,failure:true}); // The commit is still local.
     await run(['git','-C',a,'push']);
-    const revision = await run(['git','-C',a,'rev-parse','HEAD']);
-    const workspace = createHash('sha256').update('opencrawl.workspace-link.v1\0team-a').digest().subarray(0,9).toString('base64url');
-    expect(await run([...fileLink,'--revision',revision],{cwd:a})).toBe(api+'/files/'+workspace+'/'+revision+'/handoff.txt');
-    expect(await run([...entry,'files','link','--api',api],{cwd:a})).toBe(api+'/commits/'+workspace+'/'+revision);
-    await run(fileLink,{cwd:a,token:'fixture-token-other',failure:true});
-    await run(fileLink,{failure:true});
     await run(['git','-C',b,'pull','--ff-only']);
     expect(await readFile(join(b,'handoff.txt'),'utf8')).toBe('agent handoff');
 

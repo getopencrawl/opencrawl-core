@@ -31,7 +31,6 @@ export function selfhostServices(settings:SelfhostSettings,store:ReturnType<type
     const body='External sources are disabled on this instance. Ask your administrator to enable Airbyte. Agent capture, memories, search and the board remain available.';
     const disabled=async():Promise<never>=>{throw Object.assign(new Error(body),{status:503,expose:true});};
     const integrations:Integrations={
-      connection:async ()=>null,
       providers:()=>Object.values(providers),
       async list(principal){
         if(principal.tenantId!==settings.organizationId)throw Object.assign(new Error('Workspace scope denied'),{status:403});

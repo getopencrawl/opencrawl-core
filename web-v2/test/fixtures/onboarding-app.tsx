@@ -1,6 +1,4 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
-import {ConnectionPage} from '../../src/application/connection.tsx';
-import {connectionPage} from '../../../src/application/connection-links.mjs';
 import {OpenCrawlApp} from '../../src/application/app.tsx';
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -14,7 +12,6 @@ import {DocumentFrame,ProductDocument} from '../../src/application/documents.tsx
 import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
-import {filePage} from '../../../src/application/file-links.mjs';
 import {UsagePage} from '../../src/pages/usage.tsx';
 import {usagePaths} from '../../../src/application/usage-paths.mjs';
 import {DailyBarChart, PageHeader} from '../../src/design/components.tsx';
@@ -56,7 +53,6 @@ const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost'
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
 const sourcesAdapter: SourcesAdapter = {
-  connection: (path,signal) => request('/api/console/sources/connection', signal ?? never, {path}),
   replicasHistory:(input,signal)=>request('/api/integrations/replicas/history',signal??never,input),
   devinRecording:(input,signal)=>request('/api/integrations/devin/recording',signal??never,input),
   sources: signal => request('/api/console/sources', signal ?? never),
@@ -66,7 +62,6 @@ const sourcesAdapter: SourcesAdapter = {
 };
 const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: (email,signal) => request('/api/console/team/invite',signal ?? never,{email}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
 const fullApi: ProductApi = {
-  fileView:(path,signal)=>request('/api/console/files/view',signal,{path}),
   replicasSetup:signal=>request('/api/console/replicas/setup',signal,{}),
   ...sourcesAdapter,...teamAdapter,...diagnosticsAdapter,library:libraryAdapter,
   bootstrap:signal=>request<Bootstrap>('/api/console/bootstrap',signal??never),
@@ -88,13 +83,12 @@ function Fixture() {
       {date:'2026-11-19',value:null},{date:'2026-11-20',value:9,segments:[8,1,0]}]}
     series={[{label:'Sessions'},{label:'Documents'},{label:'Memories'}]} unit={n=>n+' items'}/>;
   if (location.pathname.startsWith('/board/') || location.pathname === '/messages' || location.pathname === '/search') {
-    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', alternatePaths:['/board/:workspace/:kind/:value'], label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} workspace={boardFixtureWorkspace} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
+    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', alternatePaths:['/board/:workspace/channels/:value','/board/:workspace/posts/:value','/board/:workspace/threads/:value'], label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} workspace={boardFixtureWorkspace} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
   }
   if (location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')) return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>},
     {path:'/sessions/:permalinkId',navigation:false,label:'Session',element:<SessionsPage adapter={libraryAdapter}/>},
   ]}/></ConsoleDataProvider>;
-  if (connectionPage(location.pathname)) return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><ConnectionPage adapter={sourcesAdapter}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:location.search.includes('decorated')
       ? <div className="stack"><div className="stack"><SourcesPage adapter={sourcesAdapter} canConfigure/><p><a href="#connector-terms" id="connector-terms">Connector terms</a></p></div></div>
       : <SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;
@@ -131,6 +125,5 @@ function Fixture() {
 }
 const mount = document.getElementById('root');
 if (!mount) throw new Error('Fixture mount is missing');
-const fullApp = new URLSearchParams(window.location.search).has('full-app')
-  || window.location.pathname === '/files' || Boolean(filePage(window.location.pathname));
+const fullApp = new URLSearchParams(window.location.search).has('full-app');
 createRoot(mount).render(fullApp ? <OpenCrawlApp api={fullApi}/> : <AppRouter><Fixture /></AppRouter>);

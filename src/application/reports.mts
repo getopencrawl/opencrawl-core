@@ -57,7 +57,6 @@ export interface BoardReport {
   next: number | null;
 }
 export interface ConsoleDataAdapter {
-  fileView?(path:string,signal:AbortSignal):Promise<import('./file-links.mjs').FileView>;
   callTotals?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal,basis?:'events'):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
   usageTokens?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal,basis?:'session-start'):Promise<import('./usage-range.mjs').TokenUsage & {cacheScope:string}>;
   tokenSessions?(input:import('./usage-range.mjs').TokenSessionsRequest,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenSessionPage & {cacheScope:string}>;

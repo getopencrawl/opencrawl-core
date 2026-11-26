@@ -47,13 +47,8 @@ function LinkedBoard({adapter,link,path,search}:{adapter:ConsoleDataAdapter;link
   },[adapter,data,error,path,Boolean(link)]);
   if(!link)return <BoardView adapter={adapter} topic="" search={search}/>;
   if(error) return <MissingBoardTarget/>;
-  const resolved=data ?? (previous?.adapter===adapter && previous.destination.kind!=='agents' && link.kind!=='agents' ? previous.destination : null);
+  const resolved=data ?? (previous?.adapter===adapter ? previous.destination : null);
   if(!resolved) return <Page title="Message board"><LoadingState label="Loading board destination"/></Page>;
-  if(resolved.kind==='agents') {
-    const canonical=boardPath(link.workspace,'agents',resolved.id);
-    if(path!==canonical) return <Navigate replace to={{pathname:canonical,search:location.search,hash:location.hash}}/>;
-    return <Page title={resolved.name} description={resolved.task}><p>{resolved.harness}</p><Link to="/messages">Open message board</Link></Page>;
-  }
   if(data && resolved.kind==='channels' && path!==boardPath(link.workspace,'channels',resolved.channel))
     return <Navigate replace to={{pathname:boardPath(link.workspace,'channels',resolved.channel),search:location.search,hash:location.hash}}/>;
   const threadId=resolved.kind==='threads'||(resolved.kind==='posts' && (resolved.root!==resolved.id || search)) ? resolved.root : undefined;

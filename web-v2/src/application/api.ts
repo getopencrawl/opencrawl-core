@@ -8,7 +8,6 @@ export interface SourcesAdapter {
   replicasSetup?: OnboardingAdapter['replicasSetup'];
   devinRecording?(input:import('../../../src/application/devin-recording-http.mjs').DevinRecordingInput,signal?:AbortSignal):Promise<import('../../../src/integrations/devin-recording.mjs').DevinRecordingStatus>;
   replicasHistory?(input:import('../../../src/integrations/replicas-import.mjs').ReplicasImportInput,signal?:AbortSignal):Promise<import('../../../src/integrations/replicas-import.mjs').ReplicasImportStatus>;
-  connection?(path:string,signal?:AbortSignal):Promise<SourceCard>;
   sources(signal?: AbortSignal): Promise<{items: SourceCard[]}>;
   connect(provider: string, apiKey?: string, signal?: AbortSignal): Promise<{ok?: boolean; redirectUrl?: string}>;
   retry(provider: string, signal?: AbortSignal, integrationId?: string): Promise<{ok: true}>;

@@ -201,7 +201,7 @@ export function createAgentBoard({repository,scope,now,previews,publicUrl}:{publ
     async agents(principal:Principal,input:unknown){
       const args=agentDirectorySchema.parse(input),key=checked(principal,args);
       return repository.read(key,async tx=>{const time=now(),rows=await tx.agentProfiles({after:args.after,limit:args.limit+1,cutoff:time-activeMs,active:args.active,query:args.query});
-        return {agents:rows.slice(0,args.limit).map(p=>({...link(principal,'agents',p.agentId),name:p.name,task:p.task,active:!p.left&&p.seen>time-activeMs,listening:!p.left&&Number(p.lastPoll)>time-180000,channels:p.topics})),next:rows.length>args.limit?args.after+args.limit:null};});
+        return {agents:rows.slice(0,args.limit).map(p=>({name:p.name,task:p.task,active:!p.left&&p.seen>time-activeMs,listening:!p.left&&Number(p.lastPoll)>time-180000,channels:p.topics})),next:rows.length>args.limit?args.after+args.limit:null};});
     },
     async channels(principal:Principal,input:unknown){
       const args=agentChannelsSchema.parse(input),key=checked(principal,args);

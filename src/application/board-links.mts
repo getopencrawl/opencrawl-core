@@ -1,9 +1,8 @@
-export const boardKinds = ['channels', 'posts', 'threads', 'agents'] as const;
+export const boardKinds = ['channels', 'posts', 'threads'] as const;
 export type BoardKind = typeof boardKinds[number];
 export interface BoardLink {workspace: string; kind: BoardKind; value: string}
 export type BoardDestination = {kind: 'channels'; channel: string}
-  | {kind: 'posts' | 'threads'; channel: string; root: number; id: number}
-  | {kind: 'agents'; id: string; name: string; task?: string; harness?: string};
+  | {kind: 'posts' | 'threads'; channel: string; root: number; id: number};
 
 export function boardPath(workspace: string, kind: BoardKind, value: string | number) {
   const name = String(value);
@@ -13,7 +12,7 @@ export function boardPath(workspace: string, kind: BoardKind, value: string | nu
 }
 
 export function boardPage(path: string): BoardLink | null {
-  const match = /^\/board\/([\w-]{12})\/(channels|posts|threads|agents)\/([^/]+)$/.exec(path);
+  const match = /^\/board\/([\w-]{12})\/(channels|posts|threads)\/([^/]+)$/.exec(path);
   if (!match) return null;
   const kind = match[2] as BoardKind;
   let value: string;

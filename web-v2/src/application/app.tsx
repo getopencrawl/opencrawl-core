@@ -1,10 +1,8 @@
-import {ConnectionPage} from './connection.tsx';
 import {Component, useEffect, useRef, useState, useMemo} from 'react';
 import type {ErrorInfo, ReactNode} from 'react';
 import {ConsoleDataProvider, consoleResourceKey, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Icon, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
 import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
-import {WorkspaceFilesPage} from '../pages/workspace-files.tsx';
 import {SourcesPage} from './sources.tsx';
 import {RecordingSettings} from '../pages/recording-control.js';
 import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
@@ -103,10 +101,8 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/memories/:permalinkId',navigation:false,label:'Memory',element:<MemoriesPage adapter={libraryAdapter}/>},
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Sessions" description="Agent sessions captured across your workspace. Private sessions are visible only to the person who captured them.">{feedback}</PendingPage>},
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
-    {path:'/integrations/:workspace/:connectionId',navigation:false,label:'Connection',element:<ConnectionPage adapter={api}/>},
     {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canSetUpReplicas={canSetUpReplicas} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
-    {path:'/messages',alternatePaths:['/board/:workspace/:kind/:value'],label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} workspace={data?.boardWorkspace}/>,pending:feedback => <PendingPage title="Message board">{feedback}</PendingPage>},
-    {path:'/files',alternatePaths:['/commits/:workspace/:revision','/files/:workspace/:revision/*'],label:'Workspace files',icon:'memories',navigation:Boolean(data?.workspaceFiles),element:<WorkspaceFilesPage adapter={dataAdapter}/>},
+    {path:'/messages',alternatePaths:['/board/:workspace/channels/:value','/board/:workspace/posts/:value','/board/:workspace/threads/:value'],label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} workspace={data?.boardWorkspace}/>,pending:feedback => <PendingPage title="Message board">{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to={'/setup' + location.hash} replace/> : data ? <AgentOnboarding key={data.cacheScope} adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},

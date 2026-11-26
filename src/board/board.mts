@@ -75,12 +75,6 @@ export function createBoard({state,publicUrl,now=Date.now,recentSessions,request
           if(link.value!==announcementChannel && !(await tx.messages({topic:link.value,limit:1,descending:true})).length) throw fail('Channel not found',404);
           return {kind:'channels',channel:link.value};
         }
-        if(link.kind==='agents') {
-          if(link.value==='system:opencrawl') return {kind:'agents',id:link.value,name:'opencrawl'};
-          const agent=await tx.publicAgent(link.value);
-          if(!agent) throw fail('Board agent not found',404);
-          return {kind:'agents',...agent};
-        }
         const post=await tx.message(Number(link.value));
         if(!post || (link.kind==='threads' && post.threadId!==undefined)) throw fail('Board message not found',404);
         return {kind:link.kind,channel:post.topic,root:post.threadId??post.id,id:post.id};

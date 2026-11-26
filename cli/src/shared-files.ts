@@ -13,9 +13,6 @@ import {apiOrigin, CliError, jsonRequest} from './oauth.ts';
 import {accessToken, atomicFile, atomicJson, configDir, withSessionLock} from './session.ts';
 import {configuredToken, workspaceIdentityEnabled} from './workspace-identity.ts';
 
-import {workspaceLinkHint} from '../../src/state/workspace-link.mts';
-import {filePage, filePath} from '../../src/application/file-links.mts';
-
 const git = promisify(execFile);
 const identity = (s: unknown): s is string => typeof s === 'string' && s.length > 0 && s.length <= 512 && !/[\x00-\x1f\x7f]/.test(s);
 const remotePathPattern = /^\/api\/files\/[a-f0-9]{64}\.git$/;
@@ -69,27 +66,6 @@ export async function sharedFilesUrl(api:string) {
   await repairFilesGit(api);
   return api + (repo.clonePath ?? repo.remotePath);
 }
-/** Create a browser link only for a published revision of the current workspace repository. */
-export async function sharedFilesPermalink(api: string, path?: string, revision?: string) {
-  checkPrivacy(api);
-  const {repo} = await discoverRepo(api);
-  const env = gitEnvironment();
-  const read = async (args: string[]) => (await git('git', args, {env, timeout: 10000})).stdout.trimEnd();
-  const remote = await read(['config', '--local', '--get', 'remote.origin.url']).catch(() => '');
-  if (![repo.remotePath, repo.clonePath].some(item => item && api+item === remote))
-    throw new CliError('FILES_CLONE_CHANGED', 'Run files link in a clone of the selected workspace repository.', 2);
-  if (revision !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision))
-    throw new CliError('INVALID_USAGE', 'Pass a full commit ID with --revision.', 64);
-  const commit = revision ?? await read(['rev-parse', '--verify', 'HEAD']);
-  const href = filePath({workspace:workspaceLinkHint(repo.tenantId), revision:commit, path});
-  if (!filePage(href)) throw new CliError('INVALID_USAGE', 'Use a file path relative to the root of the workspace repository.', 64);
-  try {
-    if (await read(['cat-file','-t',commit]) !== 'commit') throw Error();
-    await read(['merge-base','--is-ancestor',commit,'refs/remotes/origin/main']);
-    if (path && await read(['cat-file','-t',commit+':'+path]) !== 'blob') throw Error();
-  } catch {throw new CliError('FILES_REVISION_UNAVAILABLE', 'The file or commit is unavailable on origin/main. Push or fetch the published revision first.', 2);}
-  return api + href;
-}
 export async function availableFiles(api:string, session?:string, owner?:{tenantId:string;userId:string}, signal=AbortSignal.timeout(1000)) {
   try {
     checkPrivacy(api, session);
@@ -99,7 +75,7 @@ export async function availableFiles(api:string, session?:string, owner?:{tenant
   } catch { return false; }
 }
 export function sharedFilesInstruction(api:string, session:string) {
-  return `For file handoffs, use opencrawl files open --session ${session} --api ${api}. It prints a directory outside your project. Put the handoff file in that directory, commit it there, and run git -C <printed-dir> push origin main. After the push succeeds, run opencrawl files link <repo-relative-path> in the checkout and share the browser URL with your teammate. To read a handoff, fetch origin and read the file at that commit.`;
+  return `For file handoffs, use opencrawl files open --session ${session} --api ${api}. It prints a directory outside your project. Put the handoff file in that directory, commit it there, and run git -C <printed-dir> push origin main. After the push succeeds, send the commit ID and file path to your teammate. To read a handoff, fetch origin and read the file at that commit.`;
 }
 function credentialCommand(target:string, command=commandForSelf()) {
   // Git runs shell credential helpers through sh, including on Windows.

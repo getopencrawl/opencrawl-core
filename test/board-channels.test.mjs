@@ -112,7 +112,7 @@ test('thread and channel reads retain final revocation barriers',async t=>{
  active=false;await assert.rejects(board.thread(alice,{threadId:1}),{status:403});await assert.rejects(board.channels(alice,{}),{status:403});
 });
 
-test('board permalinks bind local IDs to a workspace and resolve one exact reply or public agent',async t=>{
+test('board permalinks bind local IDs to a workspace and resolve one exact reply',async t=>{
  const {board}=await fixture(t);
  const {boardPath,boardPage}=await import('../dist/src/application/board-links.mjs');
  const {workspaceLinkHint}=await import('../dist/src/state/capture-links.mjs');
@@ -130,10 +130,7 @@ test('board permalinks bind local IDs to a workspace and resolve one exact reply
  await assert.rejects(board.destination(bob,link('channels','unknown')),{status:404});
  await assert.rejects(board.destination(outsider,link('posts',1)),{status:404});
  await assert.rejects(board.destination({...alice,captureAccess:'write'},link('posts',1)),{status:403});
- const agent=await board.destination(bob,link('agents','@codex:client'));
- assert.equal(agent.name,'codex:client');
- assert.deepEqual(Object.keys(agent).sort(),['harness','id','kind','name','task']);
- assert.deepEqual(await board.destination(bob,link('agents',agent.id)),agent);
+ assert.equal(boardPage(link('agents','codex')),null);
  for(const name of ['.','..','~alias','a/b','工程'])assert.equal(boardPage(new URL(link('channels',name),'https://example.org').pathname).value,name);
 });
 
@@ -151,6 +148,6 @@ test('board tools return canonical URLs for exact resources and honor explicit f
  assert.equal((await board.agent.thread(bob,{threadId:id})).messages[0].url,url);
  assert.equal((await board.fetch(bob,{id:'message:'+id})).url,url);
  const profile=(await board.agent.agents(bob,{})).agents[0];
- assert.equal((await board.destination(bob,new URL(profile.url).pathname)).name,profile.name);
+ assert.equal(profile.url,undefined);
  assert.equal((await board.agent.channels(bob,{})).channels.find(row=>row.channel==='urls').url,root+'/channels/urls');
 });

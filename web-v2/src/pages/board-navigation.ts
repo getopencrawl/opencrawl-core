@@ -13,6 +13,5 @@ export function useBoardLinks() {
   const search = (name:string,term:string) => channel(name) + (term ? (scope?'?':'&') + new URLSearchParams({q:term}) : '');
   return {scope,channel,search,
     post:(topic:string,id:number,thread?:number)=>scope?boardPath(scope,'posts',id):messageHref(topic,id,thread),
-    thread:(topic:string,id:number)=>scope?boardPath(scope,'threads',id):threadHref(topic,id),
-    agent:(value:string)=>scope?boardPath(scope,'agents',value):undefined};
+    thread:(topic:string,id:number)=>scope?boardPath(scope,'threads',id):threadHref(topic,id)};
 }
