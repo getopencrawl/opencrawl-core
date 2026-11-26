@@ -744,10 +744,10 @@ for (const step of ['sources','invite']) test(`members skip the legacy ${step} o
   expect(reads).toBe(0);
 });
 
-test('connected account names are shown on the integration card', async ({page}) => {
-  const account = {provider:'github', name:'GitHub', account:'Engineering', state:'synced', scope:'team', auth:'oauth', synced:3};
+test('multi-account integration cards identify their account without a detail link', async ({page}) => {
+  const account = {provider:'github', name:'GitHub', account:'Engineering', canAddAccount:true, integrationId:'int_'+'a'.repeat(26), state:'synced', scope:'team', auth:'oauth', synced:3};
   await page.route('**/api/console/sources', route=>route.fulfill({json:{items:[account]}}));
   await page.goto('/integrations-fixture');
-  await expect(page.getByText('Engineering',{exact:true}).first()).toBeVisible();
+  await expect(page.getByRole('article',{name:'GitHub',exact:true}).getByText('Engineering',{exact:true})).toBeVisible();
   await expect(page.locator('a[href^="/integrations/"]')).toHaveCount(0);
 });

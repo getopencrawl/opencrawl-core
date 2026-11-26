@@ -49,6 +49,6 @@ export function ConnectorCard({source, action, actionLink, pending = false, busy
     metricsLabel={`${source.name} imported data`}
     note={showProgress ? <SourceProgress source={source}/> : undefined}
     emptyMessage={showProgress || source.state === 'syncing' ? undefined : source.synced === undefined ? 'Updating imported counts…' : 'No imported data yet.'}
-    metadata={<>{source.account && <span>{source.account}</span>}<span title={source.statusUnavailable && source.statusUpdatedAt ? `Last measured ${relativeTime(source.statusUpdatedAt)}` : undefined}>{!source.statusUnavailable && source.state === 'synced' && lastSynced ? `Synced ${relativeTime(lastSynced)}` : status.label}</span></>}
+    metadata={<>{source.canAddAccount && source.account && <span>{source.account}</span>}<span title={source.statusUnavailable && source.statusUpdatedAt ? `Last measured ${relativeTime(source.statusUpdatedAt)}` : undefined}>{!source.statusUnavailable && source.state === 'synced' && lastSynced ? `Synced ${relativeTime(lastSynced)}` : status.label}</span></>}
     action={actionLink ?? (action && <Button variant={action === 'Connect' ? 'primary' : 'secondary'} disabled={pending} busy={busy} onClick={onAction} aria-label={`${action} ${source.name}`}>{busy ? 'Connecting…' : action}{!compact && source.state !== 'error' && <Icon name="chevron-right" size={14}/>}</Button>)}/>;
 }
