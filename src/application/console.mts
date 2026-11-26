@@ -1,3 +1,5 @@
+import {connectionPage,connectionPath,integrationIdPattern} from './connection-links.mjs';
+import {workspaceLinkHint} from '../state/capture-links.mjs';
 import {boardIdentity} from '../board/identity.mjs';
 import {filePage,type FileView} from './file-links.mjs';
 import {capturePage} from './capture-links.mjs';
@@ -51,6 +53,7 @@ export interface ConsoleServices {
   removeMember: (user: User, id: string, userId: string) => Promise<{ok:true;userId:string}>;
   renameOrganization: (user: User, id: string, name: string) => Promise<{ok:true;name:string}>;
   fileView?: (principal:Principal,path:string)=>Promise<FileView>;
+  connection?: (principal:Principal,id:string)=>Promise<SourceCard|null>;
   sources: (principal: Principal) => Promise<SourceCard[]>;
   usage: (principal: Principal) => Promise<unknown>;
   progress: (principal: Principal) => Promise<Progress | null>;
@@ -62,11 +65,12 @@ export interface ConsoleServices {
 const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|(?:privacy|recording)\/(?:status|change))$/;
 export const consolePages = new Set(['/', '/files', '/setup', ...usagePaths, '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
+  if(connectionPage(path))return {name:'/sources',...(method==='GET'?{}:{status:405})};
   if(filePage(path)) return {name:'/files',...(method==='GET'?{}:{status:405})};
   const capture = capturePage(path);
   if (capture) return {name:'/'+capture.collection,...(method === 'GET' ? {} : {status:405})};
   if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/usage/highlights','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
-  if (['/api/console/files/view','/api/console/usage/details','/api/console/usage/calls','/api/console/usage/tokens','/api/console/usage/token-sessions','/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
+  if (['/api/console/files/view','/api/console/sources/connection','/api/console/usage/details','/api/console/usage/calls','/api/console/usage/tokens','/api/console/usage/token-sessions','/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   if (['/files','/setup','/sources','/data','/messages', '/diagnostics','/settings', '/settings/team', '/settings/privacy', '/agent-setup','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
@@ -177,7 +181,16 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       } else if (path === '/api/console/sources') {
         const items=await services.sources(principal);
         if (services.captureLinks) await attachCaptureLinks(services.captureLinks,principal.tenantId,'sessions',items.flatMap(item=>item.devinRecording?.latestSession?[item.devinRecording.latestSession]:[]));
-        body = {items};
+        const hint=workspaceLinkHint(principal.tenantId);
+        body = {items:items.map(item=>services.connection && item.integrationId && integrationIdPattern.test(item.integrationId)
+          ? {...item,connectionPath:connectionPath(hint,item.integrationId)} : item)};
+      } else if (path === '/api/console/sources/connection') {
+        const parsed=z.strictObject({path:z.string().max(100)}).safeParse(await input(req));
+        const target=parsed.success && connectionPage(parsed.data.path);
+        if(!target || target.workspace!==workspaceLinkHint(principal.tenantId) || !services.connection)throw consoleFailure(404,'Connection unavailable.');
+        const card=await services.connection(principal,target.integrationId);
+        if(!card)throw consoleFailure(404,'Connection unavailable.');
+        body=card;
       } else if (path === '/api/console/team') {
         const [organization,members,extension,invitations] = await Promise.all([workspace(),services.members(principal.tenantId),extensions.team?.(context),admin(member) ? services.invitations(user,principal.tenantId,member) : []]);
         const users = await Promise.all(members.map(async membership => {

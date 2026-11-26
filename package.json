@@ -77,6 +77,7 @@
     "./identity/types": "./dist/src/identity/types.mjs",
     "./identity/workos": "./dist/src/identity/workos.mjs",
     "./application/types": "./dist/src/application/types.mjs",
+    "./application/connection-links": "./dist/src/application/connection-links.mjs",
     "./application/console": "./dist/src/application/console.mjs",
     "./application/rpc": "./dist/src/application/rpc.mjs",
     "./web-v2/application/*": "./web-v2/src/application/*.ts",
