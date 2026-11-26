@@ -326,7 +326,7 @@ test('board search finds a reply and returns to its results after opening the th
 });
 
 test('an old post bookmark opens its exact canonical target and survives reload',async({page})=>{
-  const path='/board/fixtureboard1/posts/4';
+  const path='/board/fixtureboard/posts/4';
   await page.route('**/api/console/board-target?*',route=>{
     const target=new URL(route.request().url()).searchParams.get('path');
     return target===path ? route.fulfill({json:{kind:'posts',channel:topic,id:4,root:4}}) : route.fulfill({status:404,json:{error:'Missing target'}});
