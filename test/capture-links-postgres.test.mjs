@@ -48,6 +48,7 @@ test('old capture keys and canonical IDs resolve with the same current scope and
   const browse={source:'sessions',sessionId:'/sessions/'+id,includeCurrentSession:true};
   const visible=await search.browse(owner,browse);
   assert.equal(visible.results[0].provenance.permalinkId,id);
+  assert.equal(visible.results[0].url,'/sessions/'+id+'#event=event');
   assert.equal(requests[0].sessionId,key.name);
   assert.deepEqual(requests[0].filters,{authors:[key.userId],harnesses:[key.harness]});
   assert.deepEqual((await search.browse({...owner,tenantId:'beta'},browse)).results,[]);
