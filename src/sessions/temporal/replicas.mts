@@ -1,7 +1,7 @@
 import {ReplicasProviderError} from '../../integrations/replicas-api.mjs';
 import {ApplicationFailure} from '@temporalio/common';
 import {activityInfo,Context} from '@temporalio/activity';
-import {ReplicasRepairScopeUnavailable,type ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
+import type {ReplicasRepairJob} from '../../integrations/replicas-live.mjs';
 import type {ReplicasImport,ReplicasJob} from '../../integrations/replicas-import.mjs';
 
 export function replicasActivities(imports:Pick<ReplicasImport,'runStep'|'repairLiveCapture'>){
@@ -20,9 +20,6 @@ export function replicasActivities(imports:Pick<ReplicasImport,'runStep'|'repair
     async repairReplicasLivePage(job:ReplicasRepairJob){
       try{return await imports.repairLiveCapture(job,Context.current().cancellationSignal);}
       catch(error){
-        if(error instanceof ReplicasRepairScopeUnavailable){
-          throw ApplicationFailure.create({message:'No local collector for this Replicas scope',type:'ReplicasRepairScopeUnavailable',nextRetryDelay:'1 minute'});
-        }
         if(error instanceof ReplicasProviderError&&error.status===429){
           throw ApplicationFailure.create({message:'Replicas live repair rate limited',type:'ReplicasRateLimited',nextRetryDelay:Math.max(30000,error.retryAfterMs??0)});
         }

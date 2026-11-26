@@ -51,7 +51,6 @@ export interface SettingsData {
   workspace: {name: string; userName: string; email: string; role: WorkspaceRole; avatarUrl?: string | null};
   mcpUrl: string;
   setupPrompt: string;
-  replicasSetupPrompt?: string;
   canInstallReplicas?: boolean;
 }
 

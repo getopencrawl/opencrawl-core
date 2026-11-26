@@ -162,7 +162,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
     if(!result)throw Object.assign(new Error('Membership required'),{status:403});
     return result;
   }
-  const workspace=createWorkspaceSearch({links:captureLinks,publicUrl:settings.url,sessions:search,connectors,capturePairs:replicasImport?.capturePairs});
+  const workspace=createWorkspaceSearch({links:captureLinks,publicUrl:settings.url,sessions:search,connectors,currentCapture:replicasImport?.currentCapture,capturePairs:replicasImport?.capturePairs});
   const authorizedSearch={
     async browse(p:Principal,input:unknown){await authorize(p);const result=await workspace.browse(p,input);await authorize(p);return result;},
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},

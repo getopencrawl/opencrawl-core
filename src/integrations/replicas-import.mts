@@ -1,4 +1,4 @@
-import {createReplicasLiveCapture,type ReplicasRepairJob} from './replicas-live.mjs';
+import {createReplicasLiveCapture,prepareReplicasLive,type ReplicasRepairJob} from './replicas-live.mjs';
 import {selectCatalogRows} from './replicas-catalog.mjs';
 import {prepareReplicasThreads,saveReplicasThread,visibleCapturePairs,currentReplicasCapture,type CurrentCaptureLookup,type CaptureLookup} from './replicas-threads.mjs';
 import {backfillReplicasEvidence} from './replicas-archive-evidence.mjs';
@@ -43,7 +43,7 @@ export type ReplicasImport=ReturnType<typeof createReplicasImport>;
 /** One explicit step reads one complete API page. Checkpoint only after the
  * original response and every projected record reach durable ingest/indexing.
  * Missing access and unknown pagination fail closed; no conversation is skipped. */
-export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasJob|ReplicasRepairJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number}){
+export function createReplicasImport({database,key,ingest,schedule,archive,request=fetch,now=Date.now,tenantId}:{database:ApplicationDatabase;archive?:{store:ObjectStore;prefix:string};key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasJob|ReplicasRepairJob)=>Promise<unknown>;request?:typeof fetch;now?:()=>number;tenantId?:string}){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
   let prepared:Promise<void>|undefined;
   const ready=()=>prepared??=database.transaction(async client=>{
@@ -52,12 +52,12 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
     // Inspect the same relations and additive columns the upgrade below prepares.
     const schema=await client.query<{current:boolean}>(`SELECT
       NOT EXISTS (SELECT 1 FROM unnest(ARRAY[
-        'imports','deferred','workspace_inventories','snapshots','threads','catalog_records',
+        'live_workspaces','live_tails','live_repair_markers','imports','deferred','workspace_inventories','snapshots','threads','catalog_records',
         'deferred_continuation','deferred_unconfirmed','deferred_chat','pending_evidence','threads_native'
       ]) AS required(name) WHERE to_regclass('opencrawl_replicas_'||name) IS NULL)
       AND to_regclass('opencrawl_replicas_deferred_active') IS NULL
       AND NOT EXISTS (SELECT 1 FROM (VALUES
-        ('workspace_inventories','export_check'),('workspace_inventories','chat_versions'),
+        ('live_workspaces','gap_position'),('live_workspaces','gap_step'),('workspace_inventories','export_check'),('workspace_inventories','chat_versions'),
         ('snapshots','evidence_complete'),('snapshots','evidence_cursor'),('snapshots','evidence_thread'),('snapshots','evidence_retry_at')
       ) AS required(relation,column_name) WHERE NOT EXISTS (SELECT 1 FROM pg_attribute
         WHERE attrelid=to_regclass('opencrawl_replicas_'||relation) AND attname=column_name AND NOT attisdropped)) AS current`);
@@ -78,6 +78,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
       namespace text NOT NULL,tenant text NOT NULL,import_id text NOT NULL,workspace text NOT NULL,checked_at timestamptz NOT NULL,
       chat_ids text[],result text NOT NULL,PRIMARY KEY(namespace,tenant,import_id,workspace))`);
     await client.query("ALTER TABLE opencrawl_replicas_workspace_inventories ADD COLUMN IF NOT EXISTS export_check jsonb, ADD COLUMN IF NOT EXISTS chat_versions jsonb NOT NULL DEFAULT '{}'::jsonb");
+    await prepareReplicasLive(client);
     await prepareSnapshots(client);
     await prepareReplicasThreads(client);
     await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_replicas_catalog_records(
@@ -518,7 +519,7 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
     const history=await status(principal,false);
     const phase=history?.phase;
     const state=phase==='complete'?'synced':phase==='importing'?'syncing':phase==='failed'?'error':'disconnected';
-    return {provider:'replicas',name:'Replicas',description:'Import session history from your Replicas organization.',auth:'api-key',scope:'team',state,
+    return {provider:'replicas',name:'Replicas',description:'Sync chat history and live events from your Replicas organization.',auth:'api-key',scope:'team',state,
       account:history?.organization.name,synced:history?.imported,units:['session','sessions'],
       message:phase==='failed'?history?.error:undefined,
       lastSyncedAt:phase==='complete'?history?.updatedAt:undefined,
@@ -526,9 +527,12 @@ export function createReplicasImport({database,key,ingest,schedule,archive,reque
         ...(history.unavailable?[{label:'Unavailable history entries',count:history.unavailable,done:true}]:[])]:[],history:history??undefined};
   }
   const capturePairs:CaptureLookup=async(tenant,visible)=>{await ready();return visibleCapturePairs(database.pool,namespace,tenant,visible);};
-  const currentCapture:CurrentCaptureLookup=async(principal,current)=>{await ready();return currentReplicasCapture(database.pool,namespace,principal,current);};
+  const currentCapture:CurrentCaptureLookup=async(principal,current)=>{
+    if(principal.owner?.provider!=='replicas')return;
+    await ready();return currentReplicasCapture(database.pool,namespace,principal,current);
+  };
   return {status,source,capturePairs,currentCapture,
-    ...createReplicasLiveCapture({database,ready,key,ingest,schedule,request}),
+    ...createReplicasLiveCapture({database,ready,key,ingest,schedule,request,tenantId}),
     async action(principal:Principal,input:ReplicasImportInput){
       let result;
       try{result=await operate(principal,input);}

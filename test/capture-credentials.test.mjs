@@ -1,4 +1,3 @@
-import {pluginRelease,replicasPolicy} from '../dist/src/sessions/plugin-release.mjs';
 import {document} from '../dist/src/application/presentation.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -98,21 +97,10 @@ test('owner revocation permanently invalidates old delegations without affecting
  await credentials.revokeAll(owner);assert.equal(await credentials.authenticate(fresh.token),null);
 });
 
-test('dedicated Replicas prompt keeps shared setup independent from personal login',()=>{
+test('Replicas setup points agents to the admin dialog and agent guide',()=>{
  const prompt=replicasSetupPrompt('https://selfhost.example');
- // Replicas is a cloud environment: npm first, the native installer as the alternative.
- assert.ok(prompt.indexOf('npm install -g @getopencrawl/cli')>=0&&prompt.indexOf('npm install -g @getopencrawl/cli')<prompt.indexOf('install.sh'));
- for(const expected of ['install.sh','export PATH=', 'opencrawl update','workspace_identity','https://selfhost.example/mcp','https://selfhost.example/onboarding','automatically records the connected organization as ready','warm-hooks save-test','start-hooks test','validate warm preparation and runtime start together','do not reinstall or replace the CLI during every start','existing VMs retain their original start-hook snapshot','without preventing unrelated project startup','stored and searchable','never write user hook trust','unknown authors','one shared installation verification']) assert.ok(prompt.includes(expected),expected);
- assert.ok(!prompt.includes('https://app.getopencrawl.com'));
- assert.ok(!prompt.includes('opencrawl token create'));
-});
-
-test('fresh Replicas setup pins the two standalone plugins and binds them to the signed workspace',()=>{
- const api='https://selfhost.example',prompt=replicasSetupPrompt(api);
- const pins=['claude-code','codex'].map(harness=>pluginRelease.packages.find(item=>item.harness===harness).archives['linux-x64']);
- const downloads=prompt.split('\n').filter(line=>/^[a-f0-9]{64}  https:/.test(line));
- assert.deepEqual(downloads,[...pins,replicasPolicy].map(pin=>pin.sha256+'  '+pin.url));
- assert.match(prompt,/omit the oc-incognito/);
- for(const expected of [api+'/api/sessions/identity','data.principal.tenantId','data.principal.userId','captureMode "hook"','/etc/codex/hooks.json','Incognito is unavailable','Integrations → Replicas → Connect'])assert.ok(prompt.includes(expected),expected);
- assert.doesNotMatch(prompt,/opencrawl (collect install|skills install|login|token create)/);
+ assert.ok(prompt.includes('https://selfhost.example/sources#replicas-capture'));
+ assert.ok(prompt.includes('https://docs.getopencrawl.com/agents/replicas-capture/index.md'));
+ assert.ok(prompt.includes('organization API key'));
+ assert.doesNotMatch(prompt,/opencrawl (collect install|login|token create)|warm-hooks|hooks.json/);
 });

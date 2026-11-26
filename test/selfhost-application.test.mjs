@@ -501,8 +501,8 @@ test('shared installation admits real local members without personal setup or ho
  assert.deepEqual(boot.onboarding,{completed:true,next:'/'});
  assert.equal(boot.replicasSetupPrompt,undefined);
  const adminBoot=await(await f.request('/api/console/bootstrap','admin')).json();
- assert.match(adminBoot.replicasSetupPrompt,/Install OpenCrawl in this Replicas environment/);
- assert.ok(adminBoot.replicasSetupPrompt.includes(adminBoot.mcpUrl));
+ assert.equal(adminBoot.canInstallReplicas,true);
+ assert.equal(adminBoot.replicasSetupPrompt,undefined);
  assert.equal((await f.request('/','member')).status,200);
  const {data:setup}=await(await f.request('/api/onboarding','member')).json();
  assert.equal(setup.shared.owner,'shared');assert.equal(setup.cli,null);assert.equal(setup.completed,null);

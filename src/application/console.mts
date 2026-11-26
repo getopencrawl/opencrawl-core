@@ -10,7 +10,7 @@ import {tokenRangeInput,usageRange,tokenSessionsRequest} from './usage-range.mjs
 import {z} from 'zod';
 const rangeOnly=z.strictObject({range:usageRange.optional()});
 import {hasCompletedOnboarding} from '../onboarding-state.mjs';
-import {replicasSetupPrompt, replicasEnrollmentPrompt} from '../sessions/cloud-setup.mjs';
+import {replicasEnrollmentPrompt} from '../sessions/cloud-setup.mjs';
 import type {IncomingMessage} from 'node:http';
 import type {SourceCard, TeamReport, InvitationPolicy} from './types.mjs';
 import {errorInfo} from '../errors.mjs';
@@ -126,7 +126,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       } else if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([workspace(), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = hasCompletedOnboarding(progress);
-        body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,boardWorkspace:workspaceLinkHint(principal.tenantId),workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
+        body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,boardWorkspace:workspaceLinkHint(principal.tenantId),workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if(path==='/api/console/usage/calls'||path==='/api/console/usage/search-history'){
         if(!services.usageActivity)throw consoleFailure(503,'Search activity unavailable.');
         if(path.endsWith('/calls')){

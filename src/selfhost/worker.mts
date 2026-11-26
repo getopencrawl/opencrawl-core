@@ -51,7 +51,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   const scheduling=await connectorClient(config),source=singleOrganizationSessionSource(settings,store,prefix,eventIdentities);
   const connectors=services.connectors?await createConnectorWorker({...config,taskQueue,bundlePath:bundleRoot+'/connectors.cjs',resolve:services.connectors.resolve}):undefined;
   const indexing=sessionIndexingScheduler({...config,taskQueue:sessionQueue,sourceId:source.sourceId,generation:source.generation,mode:'workflow'});
-  const replicasImport=createReplicasImport({database,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),
+  const replicasImport=createReplicasImport({database,tenantId:settings.organizationId,archive:{store,prefix},schedule:indexing.scheduleReplicasImport,key:Buffer.from(hkdfSync('sha256',settings.authSecret,database.namespace,'replicas-history-credentials-v1',32)),
     ingest:createSessionIngest({store,eventIdentities,prefix,scheduleIndexing:indexing.schedule}).putBatch});
   const devinRecording=devinRecordingRuntime({database,secret:settings.authSecret,audience:settings.url,schedule:indexing.scheduleDevinRecording,
     sessions:{...settings.search,store,prefix,eventIdentities,scheduleIndexing:indexing.schedule,
@@ -90,8 +90,7 @@ export async function runSelfhostWorker(env:NodeJS.ProcessEnv=process.env){
   };
   await unlink(readiness).catch(()=>{});const timer=setInterval(tick,30000);
   const liveStop=new AbortController();
-  const live=env.OPENCRAWL_REPLICAS_LIVE_ORGANIZATION_ID
-    ?replicasImport.runLiveCapture({tenantId:settings.organizationId,organizationId:env.OPENCRAWL_REPLICAS_LIVE_ORGANIZATION_ID},liveStop.signal):undefined;
+  const live=replicasImport.runConnectedLiveCapture(liveStop.signal);
   const stop=()=>{liveStop.abort();stopping=true;clearInterval(timer);for(const x of workers)if(x.worker.getState()==='RUNNING')x.worker.shutdown();};
   process.once('SIGTERM',stop);process.once('SIGINT',stop);
   const runs=workers.map(x=>x.worker.run());tick();
