@@ -1,6 +1,6 @@
 import {useEffect, useId, useRef, useState} from 'react';
 import type {KeyboardEvent, ReactNode} from 'react';
-import {NavLink, Route, Routes, useLocation} from './router.tsx';
+import {Link, NavLink, Route, Routes, useLocation} from './router.tsx';
 import type {NavigationItem, WorkspaceIdentity} from './contracts.ts';
 import {Avatar, Brand, Button, EmptyState, ExternalLink, LinkButton, Page} from './design/components.tsx';
 import {Icon} from './design/icons.tsx';
@@ -36,7 +36,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
   const toggle = useRef<HTMLButtonElement>(null);
   const restoreNavigationFocus = useRef(false);
   const previousPath = useRef(location.pathname);
-  const current = routes.find(route => route.path === location.pathname) ?? routes.find(route => route.path !== '/' && location.pathname.startsWith(route.path + '/'));
+  const current = routes.find(route => route.path === location.pathname || route.alternatePaths?.includes(location.pathname)) ?? routes.find(route => route.path !== '/' && location.pathname.startsWith(route.path + '/'));
   useEffect(() => {
     const query = matchMedia('(max-width: 800px)');
     const update = () => {setCompact(query.matches); accountPanel.current?.hidePopover(); setAccountOpen(false); if (!query.matches) setMenuOpen(false);};
@@ -45,10 +45,12 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
   useEffect(() => {
     document.title = `OpenCrawl: ${current?.group === 'settings' ? 'Settings / ' : ''}${current?.label ?? 'Workspace'}`;
     if (previousPath.current === location.pathname) return;
+    const withinSection = current?.alternatePaths && [current.path, ...current.alternatePaths].includes(previousPath.current);
     previousPath.current = location.pathname;
     setMenuOpen(false);
     accountPanel.current?.hidePopover();
     setAccountOpen(false);
+    if (withinSection) return;
     const frame = requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-page-heading]')?.focus());
     return () => cancelAnimationFrame(frame);
   }, [location.pathname, current?.label, current?.group]);
@@ -81,7 +83,12 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
     <aside ref={navigationPanel} className="oc-sidebar" aria-label="Workspace" hidden={compact && !menuOpen} onKeyDown={trapMenu}>
       <div className="oc-nav-brand"><Brand/>{compact && <Button variant="quiet" className="oc-icon-button" aria-label="Close workspace navigation" onClick={closeMenu}><Icon name="close"/></Button>}</div>
 
-      <nav id="workspace-navigation" aria-label={navigationLabel ?? 'Workspace navigation'}>{navigation ? navigation(() => {if (compact) closeMenu();}) : (['workspace', 'manage'] as const).map(group => <div className="oc-nav-group" key={group}>{routes.filter(route => route.navigation !== false && (route.group ?? 'workspace') === group).map(route => <NavLink key={route.path} to={route.path} onClick={() => {if (compact) closeMenu();}} end={route.end ?? route.path === '/'} className={({isActive}) => `oc-nav-link${isActive ? ' oc-nav-active' : ''}`}><Icon name={route.icon ?? 'overview'}/><span>{route.label}</span>{route.badge}</NavLink>)}</div>)}</nav>
+      <nav id="workspace-navigation" aria-label={navigationLabel ?? 'Workspace navigation'}>{navigation ? navigation(() => {if (compact) closeMenu();}) : (['workspace', 'manage'] as const).map(group => <div className="oc-nav-group" key={group}>{routes.filter(route => route.navigation !== false && (route.group ?? 'workspace') === group).map(route => {
+        const content = <><Icon name={route.icon ?? 'overview'}/><span>{route.label}</span>{route.badge}</>;
+        const close = () => {if (compact) closeMenu();};
+        if (route.alternatePaths?.includes(location.pathname)) return <Link key={route.path} to={route.path} onClick={close} className="oc-nav-link oc-nav-active" aria-current="page">{content}</Link>;
+        return <NavLink key={route.path} to={route.path} onClick={close} end={route.end ?? route.path === '/'} className={({isActive}) => `oc-nav-link${isActive ? ' oc-nav-active' : ''}`}>{content}</NavLink>;
+      })}</div>)}</nav>
 
       <footer className="oc-account-zone" onKeyDown={event => {if (event.key === 'Escape' && accountPanel.current?.matches(':popover-open')) {event.preventDefault(); event.stopPropagation(); closeAccount();}}}>
         {hasAccountDetails ? <>
@@ -99,7 +106,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
     </aside>
     <main id="workspace-content" className="oc-main" tabIndex={-1} inert={compact && menuOpen}>
       {workspaceNotice && <div className="oc-workspace-notice">{workspaceNotice}</div>}
-      <div className="oc-content">{children ? current?.group === 'settings' ? <SettingsFrame routes={settingsRoutes}>{children}</SettingsFrame> : children : <Routes>{routes.map(route => <Route key={route.path} path={route.path} element={route.group === 'settings' ? <SettingsFrame routes={settingsRoutes}>{route.element}</SettingsFrame> : route.element}/>)}<Route path="*" element={<EmptyState title="Page not found" description="This page may have moved. Open the workspace home to continue." action={<LinkButton to="/">Open workspace</LinkButton>}/>}/></Routes>}</div>
+      <div className="oc-content">{children ? current?.group === 'settings' ? <SettingsFrame routes={settingsRoutes}>{children}</SettingsFrame> : children : <Routes>{routes.flatMap(route => [route.path, ...route.alternatePaths ?? []].map(path => <Route key={path} path={path} element={route.group === 'settings' ? <SettingsFrame routes={settingsRoutes}>{route.element}</SettingsFrame> : route.element}/>))}<Route path="*" element={<EmptyState title="Page not found" description="This page may have moved. Open the workspace home to continue." action={<LinkButton to="/">Open workspace</LinkButton>}/>}/></Routes>}</div>
     </main>
   </div>;
 }

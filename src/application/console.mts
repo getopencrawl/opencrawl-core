@@ -1,6 +1,7 @@
 import {boardIdentity} from '../board/identity.mjs';
 import {capturePage} from './capture-links.mjs';
 import {attachCaptureLinks,type CaptureLinks} from '../state/capture-links.mjs';
+import {usagePaths} from './usage-paths.mjs';
 import {digest} from '../sessions/event-identity.mjs';
 import type {BoardRepository} from '../state/board.mjs';
 import {activityRequest,historyRead} from './search-activity.mjs';
@@ -57,7 +58,7 @@ export interface ConsoleServices {
   libraryFailure: (error: unknown) => {status: number; message: string};
 }
 const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|(?:privacy|recording)\/(?:status|change))$/;
-export const consolePages = new Set(['/', '/setup', '/usage', '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
+export const consolePages = new Set(['/', '/setup', ...usagePaths, '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
   const capture = capturePage(path);
   if (capture) return {name:'/'+capture.collection,...(method === 'GET' ? {} : {status:405})};

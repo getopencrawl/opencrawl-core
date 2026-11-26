@@ -14,6 +14,8 @@ export type IconName = 'cloud' | 'sign-out' | 'monitor' | 'terminal' | 'overview
 /** One route registry drives routing, page titles and the only workspace navigation. */
 export interface NavigationItem {
   path: string;
+  /** Other addresses that open the same section and share its sidebar entry. */
+  alternatePaths?: readonly string[];
   label: string;
   icon?: IconName;
   element: ReactNode;
