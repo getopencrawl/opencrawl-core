@@ -1,8 +1,8 @@
-import {useMemo} from 'react';
+import {useEffect,useMemo,useState} from 'react';
 import {EmptyState, LoadingState, Page} from '../design/components.js';
 import {Link, Navigate, useLocation} from '../router.js';
 import {consoleResourceKey,useConsoleResource} from '../data.tsx';
-import {boardPage,boardPath,type BoardLink} from '../../../src/application/board-links.mjs';
+import {boardPage,boardPath,type BoardDestination,type BoardLink} from '../../../src/application/board-links.mjs';
 import {BoardWorkspaceKey} from './board-navigation.ts';
 import type {ConsoleDataAdapter} from './types.js';
 import {BoardRail} from './board-search.js';
@@ -17,17 +17,17 @@ export function DiagnosticsPage({adapter,workspace}: {adapter: ConsoleDataAdapte
   const link=boardPage(location.pathname);
   const scoped=useMemo(()=>workspace?{...adapter,board:(input:Parameters<ConsoleDataAdapter['board']>[0],signal:AbortSignal)=>adapter.board({...input,workspaceKey:workspace},signal)}:adapter,[adapter,workspace]);
   if(link && (link.workspace!==workspace || !adapter.boardDestination)) return <MissingBoardTarget/>;
-  if(link) return <BoardWorkspaceKey.Provider value={workspace}><LinkedBoard key={location.pathname} adapter={scoped} link={link} path={location.pathname} search={query.get('q')??''}/></BoardWorkspaceKey.Provider>;
-  if (query.get('view') === 'search') return <Navigate to="/search" replace/>;
+  if (!link && query.get('view') === 'search') return <Navigate to="/search" replace/>;
   const topic = query.get('view') === 'stream' ? '' : (query.get('channel')??query.get('topic'))?.trim() || '';
   const id = query.get('message') || '', parsed = /^\d+$/.test(id) ? Number(id) : NaN;
   const message = Number.isSafeInteger(parsed) && parsed > 0 && parsed < Number.MAX_SAFE_INTEGER ? parsed : undefined;
   const thread=Number(query.get('thread')),threadId=Number.isSafeInteger(thread)&&thread>0?thread:undefined;
   const search=query.get('q') ?? '';
-  if(workspace && (message || threadId || topic)) {
+  if(!link && workspace && (message || threadId || topic)) {
     const path=message?boardPath(workspace,'posts',message):threadId?boardPath(workspace,'threads',threadId):boardPath(workspace,'channels',topic);
     return <Navigate replace to={{pathname:path,search:search?new URLSearchParams({q:search}).toString():'',hash:location.hash}}/>;
   }
+  if(workspace) return <BoardWorkspaceKey.Provider value={workspace}><LinkedBoard key={workspace} adapter={scoped} link={link} path={location.pathname} search={search}/></BoardWorkspaceKey.Provider>;
   return <BoardWorkspaceKey.Provider value={workspace}><BoardView adapter={scoped} topic={topic} search={search} message={message} threadId={threadId}/></BoardWorkspaceKey.Provider>;
 }
 
@@ -35,18 +35,30 @@ function MissingBoardTarget() {
   return <Page title="Message board"><EmptyState title="Board destination unavailable" description="This link could not be opened in this workspace." action={<Link to="/messages">Open message board</Link>}/></Page>;
 }
 
-function LinkedBoard({adapter,link,path,search}:{adapter:ConsoleDataAdapter;link:BoardLink;path:string;search:string}) {
+function LinkedBoard({adapter,link,path,search}:{adapter:ConsoleDataAdapter;link:BoardLink|null;path:string;search:string}) {
   const location=useLocation();
-  const {data,error}=useConsoleResource([...consoleResourceKey(adapter,'board-destination'),path],signal=>adapter.boardDestination!(path,signal));
+  const {data,error}=useConsoleResource([...consoleResourceKey(adapter,'board-destination'),path],
+    signal=>adapter.boardDestination!(path,signal),{enabled:Boolean(link && adapter.boardDestination)});
+  const [previous,setPrevious]=useState<{adapter:ConsoleDataAdapter;destination:BoardDestination}|null>(null);
+  useEffect(()=>{
+    if(error || !link) setPrevious(null);
+    else if(data) setPrevious({adapter,destination:data});
+  },[adapter,data,error,path,Boolean(link)]);
+  if(!link)return <BoardView adapter={adapter} topic="" search={search}/>;
   if(error) return <MissingBoardTarget/>;
-  if(!data) return <Page title="Message board"><LoadingState label="Loading board destination"/></Page>;
-  if(data.kind==='agents') {
-    const canonical=boardPath(link.workspace,'agents',data.id);
+  const resolved=data ?? (previous?.adapter===adapter && previous.destination.kind!=='agents' && link.kind!=='agents' ? previous.destination : null);
+  if(!resolved) return <Page title="Message board"><LoadingState label="Loading board destination"/></Page>;
+  if(resolved.kind==='agents') {
+    const canonical=boardPath(link.workspace,'agents',resolved.id);
     if(path!==canonical) return <Navigate replace to={{pathname:canonical,search:location.search,hash:location.hash}}/>;
-    return <Page title={data.name} description={data.task}><p>{data.harness}</p><Link to="/messages">Open message board</Link></Page>;
+    return <Page title={resolved.name} description={resolved.task}><p>{resolved.harness}</p><Link to="/messages">Open message board</Link></Page>;
   }
-  const threadId=data.kind==='threads'||(data.kind==='posts' && (data.root!==data.id || search)) ? data.root : undefined;
-  return <BoardView adapter={adapter} topic={data.channel} search={search} message={data.kind==='posts'?data.id:undefined} threadId={threadId}/>;
+  if(data && resolved.kind==='channels' && path!==boardPath(link.workspace,'channels',resolved.channel))
+    return <Navigate replace to={{pathname:boardPath(link.workspace,'channels',resolved.channel),search:location.search,hash:location.hash}}/>;
+  const threadId=resolved.kind==='threads'||(resolved.kind==='posts' && (resolved.root!==resolved.id || search)) ? resolved.root : undefined;
+  const from=new URLSearchParams(location.search).get('from') ?? location.state?.boardChannel;
+  const topic=threadId!==undefined && typeof from==='string' && from.length<=80 ? from : resolved.channel;
+  return <BoardView adapter={adapter} topic={topic} search={search} message={resolved.kind==='posts'?resolved.id:undefined} threadId={threadId}/>;
 }
 
 function BoardView({adapter,topic,search,message,threadId}:{adapter:ConsoleDataAdapter;topic:string;search:string;message?:number;threadId?:number}) {

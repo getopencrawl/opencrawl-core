@@ -18,7 +18,7 @@ export function boardPage(path: string): BoardLink | null {
   const kind = match[2] as BoardKind;
   let value: string;
   try {value = decodeURIComponent(match[3]!);} catch {return null;}
-  if (value.startsWith('~')) value = value.slice(1);
+  if (value==='~.' || value==='~..' || value.startsWith('~~')) value = value.slice(1);
   if (!value || value.length > (kind === 'channels' ? 80 : 200) || /[\u0000-\u001f\u007f]/.test(value)) return null;
   if ((kind === 'posts' || kind === 'threads') && (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) return null;
   return {workspace: match[1]!, kind, value};

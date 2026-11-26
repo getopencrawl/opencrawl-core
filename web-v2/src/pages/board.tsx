@@ -75,8 +75,8 @@ function DaySeparator({timestamp,dates,prefix}:{timestamp:number;dates:[string,n
 
 export function BoardContent({report, stream, message, inThread=false, channel='', selectedThread}: {report: BoardReport; stream: boolean; message?: number; inThread?:boolean; channel?:string; selectedThread?:number}) {
   const prefix=useId();
-  if (!report.messages.length) return <EmptyState title={inThread ? 'No replies yet' : stream ? 'No workspace messages yet' : 'No messages in this channel yet'}/>;
   const {thread:threadHref,post:messageHref,channel:topicHref,agent}=useBoardLinks();
+  if (!report.messages.length) return <EmptyState title={inThread ? 'No replies yet' : stream ? 'No workspace messages yet' : 'No messages in this channel yet'}/>;
   const groups = messageGroups(report.messages, message);
   const dates = [...new Map(groups.map(([first])=>[day(first!.timestamp),first!.timestamp])).entries()];
   return <>{groups.map((group, index) => {
@@ -91,15 +91,15 @@ export function BoardContent({report, stream, message, inThread=false, channel='
             <h3 className={agentIdentity(author).colorClass}>{agent(first.agent) ? <Link to={agent(first.agent)!}>{author}</Link> : author}</h3>
             {first.system && <span>System</span>}
             {inThread ? <time dateTime={new Date(first.timestamp).toISOString()}>{new Date(first.timestamp).toLocaleDateString(undefined,{month:'short',day:'numeric'})} at {time(first.timestamp)}</time> :
-              <Link className="oc-board-time" to={threadHref(channel,first.id)} aria-label={'Show thread for message #'+first.id}><time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></Link>}
+              <Link className="oc-board-time" state={{boardChannel:channel}} to={threadHref(channel,first.id)} aria-label={'Show thread for message #'+first.id}><time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></Link>}
             {stream && <Link className="oc-board-message-topic" to={topicHref(first.topic)}>#{first.topic}</Link>}
           </div>
         </header>
         {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id || selectedThread === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${authorName(post)}, ${time(post.timestamp)}`}>
-          {offset>0 && !inThread && <Link className="oc-board-time" to={threadHref(channel,post.id)} aria-label={'Show thread for message #'+post.id}>{time(post.timestamp)}</Link>}
+          {offset>0 && !inThread && <Link className="oc-board-time" state={{boardChannel:channel}} to={threadHref(channel,post.id)} aria-label={'Show thread for message #'+post.id}>{time(post.timestamp)}</Link>}
           <Link className="oc-board-post-id" to={messageHref(post.topic, post.id, post.threadId)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>
           <p className="oc-board-post-body"><MessageText post={post} messages={report.messages}/></p>
-          {!inThread && Boolean(post.replyCount) && <Link className="oc-board-replies" to={threadHref(channel,post.id)} aria-controls="board-thread" aria-expanded={selectedThread===post.id}>{post.replyNames?.length ? <span className="oc-board-reply-faces">{post.replyNames.map(name=><AgentAvatar key={name} name={name}/>)}</span> : <Icon name="diagnostics"/>}<span>{post.replyCount} {post.replyCount===1?'reply':'replies'}</span></Link>}
+          {!inThread && Boolean(post.replyCount) && <Link className="oc-board-replies" state={{boardChannel:channel}} to={threadHref(channel,post.id)} aria-controls="board-thread" aria-expanded={selectedThread===post.id}>{post.replyNames?.length ? <span className="oc-board-reply-faces">{post.replyNames.map(name=><AgentAvatar key={name} name={name}/>)}</span> : <Icon name="diagnostics"/>}<span>{post.replyCount} {post.replyCount===1?'reply':'replies'}</span></Link>}
         </article>)}
       </div>
     </Fragment>;

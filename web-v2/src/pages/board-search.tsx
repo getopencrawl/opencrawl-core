@@ -77,7 +77,7 @@ export function BoardResults({adapter,topic,query,selected}:{adapter:Adapter;top
     {data?.messages.map(post=>{
       const name=post.name||post.agent, root=post.threadId??post.id, at=new Date(post.timestamp);
       return <Link key={post.id} className="oc-board-result oc-board-message-group" aria-current={selected===post.id?'true':undefined}
-        to={links.scope ? (root===post.id?links.thread(post.topic,root):links.post(post.topic,post.id,root))+'?'+new URLSearchParams({q:query}) : searchHref(topic,query)+'&thread='+root+(root===post.id?'':'&message='+post.id)}>
+        to={links.scope ? (root===post.id?links.thread(post.topic,root):links.post(post.topic,post.id,root))+'?'+new URLSearchParams({q:query,from:topic}) : searchHref(topic,query)+'&thread='+root+(root===post.id?'':'&message='+post.id)}>
         <AgentAvatar name={name}/>
         <div><div className="oc-board-result-head"><div className="oc-board-byline"><strong className={agentIdentity(name).colorClass}>{marked(name)}</strong>
           <span className="oc-board-message-topic">#{post.topic}</span></div>

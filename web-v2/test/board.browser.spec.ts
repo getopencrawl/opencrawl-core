@@ -342,3 +342,24 @@ test('an old post bookmark opens its exact canonical target and survives reload'
   await expect(page.getByText('Board destination unavailable',{exact:true})).toBeVisible();
   await expect(selected).toHaveCount(0);
 });
+
+test('opening and closing a canonical thread preserves the channel reader and keyboard focus', async ({page})=>{
+  const channelPath='/board/fixtureboard/channels/'+encodeURIComponent(topic),threadPath='/board/fixtureboard/threads/48';
+  await page.route('**/api/console/board-target?*',route=>{
+    const path=new URL(route.request().url()).searchParams.get('path');
+    return route.fulfill({json:path===threadPath?{kind:'threads',root:48,id:48,channel:topic}:{kind:'channels',channel:topic}});
+  });
+  await page.goto(channelPath);
+  const stream=page.getByLabel('Messages',{exact:true});
+  const trigger=stream.getByRole('link',{name:'Show thread for message #48',exact:true});
+  await trigger.focus();
+  const before=await stream.evaluate(el=>el.scrollTop),reader=await stream.elementHandle();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(url=>url.pathname===threadPath);
+  await expect(page.getByRole('button',{name:'Close thread'})).toBeFocused();
+  expect(await reader!.evaluate(el=>el.isConnected)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(url=>url.pathname===channelPath);
+  await expect(trigger).toBeFocused();
+  expect(await stream.evaluate(el=>el.scrollTop)).toBeCloseTo(before,0);
+});
