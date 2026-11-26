@@ -10,10 +10,11 @@ export interface Principal {
   captureAccess?: string;
   /** Authenticated installation ownership; message authors remain independent. */
   owner?: {kind: 'shared'; provider: 'replicas'; organizationId: string; environmentId: string; workspaceId: string}
-    | {kind: 'shared'; provider: 'devin'; organizationId: string; sessionId: string};
+    | {kind: 'shared'; provider: 'devin'; organizationId: string; sessionId: string}
+    | {kind: 'shared'; provider: 'machine'; name: string};
 }
 export function isWorkloadUserId(userId:string) {
-  return userId.startsWith('workload_replicas_') || userId.startsWith('workload_devin_');
+  return userId.startsWith('workload_machine_') || userId.startsWith('workload_replicas_') || userId.startsWith('workload_devin_');
 }
 
 export type TenantPrincipal = Pick<Principal, 'tenantId' | 'captureAccess'>;

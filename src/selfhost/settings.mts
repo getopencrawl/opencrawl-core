@@ -3,6 +3,7 @@ import type {IdentitySettings} from '../identity/types.mjs';
 import {CLI_CLIENT_ID} from '../identity/better-auth.mjs';
 import {sqlitePath} from '../search/sqlite.mjs';
 export interface SelfhostSettings extends IdentitySettings {
+  machineKeys?: string;
   sharedFilesAccess?:'off'|'read-only'|'read-write';
   replicasBindings?:ReplicasBinding[];
   organizationId:string; authSecret:string; setupToken:string; revision?:string;
@@ -35,7 +36,7 @@ export function selfhostSettings(env:NodeJS.ProcessEnv=process.env):SelfhostSett
   const sharedFilesAccess=env.OPENCRAWL_FILES_ACCESS??'read-write';
   if(sharedFilesAccess!=='off'&&sharedFilesAccess!=='read-only'&&sharedFilesAccess!=='read-write')
     throw new Error('OPENCRAWL_FILES_ACCESS must be off, read-only or read-write');
-  return {sharedFilesAccess,replicasBindings:replicasBindings(env.OPENCRAWL_REPLICAS_BINDINGS,organizationId),url,authOrigin:url+'/api/auth',clientId:CLI_CLIENT_ID,organizationId,authSecret,revision:env.REVISION,
+  return {machineKeys:env.OPENCRAWL_MACHINE_KEYS,sharedFilesAccess,replicasBindings:replicasBindings(env.OPENCRAWL_REPLICAS_BINDINGS,organizationId),url,authOrigin:url+'/api/auth',clientId:CLI_CLIENT_ID,organizationId,authSecret,revision:env.REVISION,
     setupToken:required('OPENCRAWL_SETUP_TOKEN'),
     registryPath:env.OPENCRAWL_REGISTRY_PATH||'/data/integrations.sqlite',
     search:{endpoint,username,password,environment:'selfhost',tenantId:organizationId}};

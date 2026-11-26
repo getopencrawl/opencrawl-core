@@ -68,7 +68,7 @@ those values: restrict access to Secrets and enable cluster encryption at rest.
 
 Retrieve the initial setup token from `<release>-runtime-credentials`, key
 `OPENCRAWL_SETUP_TOKEN`, through your secret-management process and open the configured
-URL to create the first administrator. Credentials are never printed by these tools.
+URL at `/auth/signup?setup=<token>` to create the first administrator. Credentials are never printed by these tools.
 For localhost trials, use `http://localhost:8092` and a scoped `kubectl port-forward`
 to the application Service. A remote installation needs your HTTPS ingress.
 
@@ -177,6 +177,16 @@ For infrastructure failures inspect Pods, Events, PVCs and the named release.
 For app-state failures inspect `<release>-migrate-<revision>` and `app-state-ready`.
 The installer supports `--through infrastructure` or `--through airbyte` to stop at
 an intermediate stage. Rerun the same command/configuration to resume.
+
+## Machine authentication
+
+For a custom support harness, run `node machine-key.mjs SERVICE-NAME HTTPS-ORIGIN NEW-ENV-FILE`
+from the unpacked kit. It writes the service credential to a new private file
+and prints its verifier. Set `application.runtime.env.OPENCRAWL_MACHINE_KEYS`
+to the comma-separated verifiers, apply the installer configuration and wait for
+the app rollout. Set `airbyte.mode` to `disabled` for a session-only pilot.
+See the [operator and Claude Code walkthrough](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/self-host.md#unattended-claude-code-agents)
+for agent enrollment, rotation and a two-ticket test.
 
 ## Versions, backup and removal
 
