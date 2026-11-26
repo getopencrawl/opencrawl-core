@@ -19,7 +19,7 @@ import {postgresSharedFiles} from '../dist/src/files/store.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,replicasBindings,cliSetup,files,publicOrigin,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,machineKeys,cliSetup,files,publicOrigin,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   const bucket='selfhost-fixture',store={...createLocalSessionStore(dir),bucket},prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
@@ -29,7 +29,7 @@ async function fixture(t,options={}){
   const setupState=cliSetup?createSetupState(database):undefined;await setupState?.ready();
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const settings={machineKeys,sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
   const credentialState=createCredentialState(database,store,prefix),captureCredentials=credentialState.credentials('capture');
   await credentialState.ready();
@@ -626,4 +626,27 @@ test('self-host keeps provisioned Git endpoints hidden when access is disabled',
  const f=await fixture(t,{files:'off'});
  for(const path of ['/api/files','/git/'+org+'/files.git/info/refs?service=git-upload-pack'])
    assert.equal((await f.request(path)).status,404);
+});
+
+test('self-host machine keys reach the board and capture as a service and cannot authorize human actions', async t => {
+  const key = 'oca1_' + randomBytes(32).toString('hex');
+  const verifier = createHash('sha256').update(key).digest('hex');
+  const f = await fixture(t, {machineKeys: 'support:' + verifier, cliSetup: true, files: true});
+  const headers = {authorization: 'Bearer ' + key, 'content-type': 'application/json'};
+  const request = (path, body) => f.request(path, null, {headers, ...(body && {method:'POST', body:JSON.stringify(body)})});
+  const identity = await request('/api/cli/me');
+  assert.equal(identity.status, 200);
+  const user = (await identity.json()).data.user;
+  assert.match(user.id, /^workload_machine_[0-9a-f]{64}$/);
+  assert.equal(user.email, null);
+  assert.equal((await f.request('/api/cli/me', null, {headers:{authorization:'Bearer oca1_' + '0'.repeat(64)}})).status, 401);
+  const capture = (await (await request('/api/sessions/identity')).json()).data.principal;
+  assert.equal(capture.userId, user.id);
+  assert.equal(capture.captureAccess, 'write');
+  assert.equal((await request('/api/sessions/credentials', {})).status, 403);
+  assert.equal((await request('/api/setup/invitations')).status, 401);
+  assert.equal((await request('/api/console/bootstrap')).status, 401);
+  assert.equal((await request('/api/files')).status, 403);
+  assert.equal((await request('/api/board/register', {session:'mock-ticket',name:'triage',task:'mock ticket',harness:'claude-code'})).status, 200);
+  assert.equal((await request('/api/board/fetch', {workspace:'org_other',id:'message:1'})).status, 403);
 });

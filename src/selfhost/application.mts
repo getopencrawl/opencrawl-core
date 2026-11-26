@@ -22,6 +22,7 @@ import type {Integrations} from '../integrations/service.mjs';
 import type {ProviderCatalog} from '../integrations/types.mjs';
 import type {createConnectorResolver} from '../integrations/resolver.mjs';
 import type {LocalIdentity} from '../identity/better-auth.mjs';
+import {machineIdentities} from './machine-identity.mjs';
 import {localAuth} from './local-auth.mjs';
 import {Readable} from 'node:stream';
 import {readFile} from 'node:fs/promises';
@@ -106,6 +107,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
 }:SelfhostApplicationOptions) {
   const reloadCache = createConsoleReloadCache();
   const directory=identity.directory;
+  const machines=machineIdentities(settings.organizationId,settings.machineKeys);
   const canManageWorkloads=async (principal:Principal)=>{
       if(principal.tenantId!==settings.organizationId)return false;
       const current=await currentVerifiedUser(directory,principal.userId);
@@ -141,16 +143,18 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       return {principal:result.principal,member:members[0]!};
     }});
   function identifyWorkload(token:string|undefined){
+    if(token?.startsWith('oca1_'))return Promise.resolve(machines.identify(token));
     if(devin && isDevinToken(token))return devin.workloads.identify(token);
     if(isReplicasToken(token))return workloads.identify(token);
     return null;
   }
   const onboarding=createOnboardingStatus({...(onboardingRepository?{repository:onboardingRepository}:{store,prefix}),
-    onSharedReady:async p=>{if(p.owner?.provider==='devin')await devin?.connections.confirmInstallation(p);else await replicas.confirmInstallation(p);},
-    sharedInstallations:async p=>(await Promise.all([replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
+    onSharedReady:async p=>{if(p.owner?.provider==='devin')await devin?.connections.confirmInstallation(p);else if(p.owner?.provider==='replicas')await replicas.confirmInstallation(p);},
+    sharedInstallations:async p=>(await Promise.all([machines.sharedInstallations,replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
+    if(principal.owner?.provider==='machine')return machines.authorize(principal);
     if(principal.owner?.provider==='devin' && devin)return devin.workloads.revalidate(principal,requested);
     if(isWorkloadPrincipal(principal))return workloads.revalidate(principal,requested);
     const current=await currentVerifiedUser(directory,principal.userId);
@@ -255,6 +259,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
           if(identity.status===401)res.setHeader('WWW-Authenticate','Basic realm="OpenCrawl shared files"');
           return respond(identity.status,'Shared files authentication required');
         }
+        if(identity.principal.owner?.provider==='machine')return respond(403,'Machine keys do not grant Git access');
         await authorize(identity.principal);
         const writing=url.pathname.endsWith('/git-receive-pack')||url.searchParams.get('service')==='git-receive-pack';
         if(writing&&settings.sharedFilesAccess!=='read-write')return respond(403,'Workspace Git is read-only');

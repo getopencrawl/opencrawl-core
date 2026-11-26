@@ -26,7 +26,7 @@ mkdirSync(out,{recursive:true});
 const scratch=mkdtempSync(join(tmpdir(),'opencrawl-kit-'));
 const run=(command:string,args:string[])=>{const r=spawnSync(command,args,{encoding:'utf8'});if(r.status!==0)throw Error(`${command} packaging failed: ${r.stderr}`);return r.stdout;};
 try{
-  for(const file of ['install.mts','verify.mts','runtime','opencrawl','airbyte-wrapper','examples'])cpSync(join(root,file),join(scratch,file),{recursive:true});
+  for(const file of ['install.mts','verify.mts','machine-key.mjs','runtime','opencrawl','airbyte-wrapper','examples'])cpSync(join(root,file),join(scratch,file),{recursive:true});
   writeFileSync(join(scratch,'opencrawl/Chart.yaml'),packagedChart);
   const helm=process.env.HELM||'helm';
   run(helm,['package',join(scratch,'opencrawl'),'--destination',out]);
