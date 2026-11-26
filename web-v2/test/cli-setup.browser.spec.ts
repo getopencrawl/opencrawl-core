@@ -347,13 +347,26 @@ test('self-host API keys share the Add a computer panel and fit desktop and mobi
   const create=page.getByRole('button',{name:'Create API key'});
   await field.fill(name);
   await expect(create).toBeEnabled();
-  const box=async(locator:typeof field)=>(await locator.boundingBox())!;
   for(const width of [1280,390,320]){
     await page.setViewportSize({width,height:850});
-    const input=await box(field),button=await box(create);
-    if(width===1280)expect(Math.abs(input.y+input.height-button.y-button.height)).toBeLessThan(2);
-    else {expect(button.height).toBeGreaterThanOrEqual(44);expect(Math.abs(input.x-button.x)).toBeLessThan(2);expect(button.y).toBeGreaterThanOrEqual(input.y+input.height);}
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await expect(async()=>{
+      const {input,button,pageWidth}=await field.evaluate(element=>{
+        const submit=element.closest('form')!.querySelector('button[type="submit"]')!;
+        return {
+          input:element.getBoundingClientRect().toJSON(),
+          button:submit.getBoundingClientRect().toJSON(),
+          pageWidth:document.documentElement.scrollWidth,
+        };
+      });
+      if(width===1280){
+        expect(Math.abs(input.bottom-button.bottom)).toBeLessThan(2);
+      }else{
+        expect(button.height).toBeGreaterThanOrEqual(44);
+        expect(Math.abs(input.left-button.left)).toBeLessThan(2);
+        expect(button.top).toBeGreaterThanOrEqual(input.bottom);
+      }
+      expect(pageWidth).toBeLessThanOrEqual(width);
+    }).toPass({timeout:3000});
   }
   await create.click();
   await expect(page.getByRole('dialog',{name:'Copy your API key'})).toBeVisible();
