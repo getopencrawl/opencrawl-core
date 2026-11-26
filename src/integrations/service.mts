@@ -809,6 +809,18 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       return resume(current, providers[current.provider]);
     },
 
+    async connection(principal: Principal, id:string):Promise<SourceCard|null> {
+      if (!INTEGRATION.test(id) || principal.captureAccess !== undefined) return null;
+      const matches=(await registry.listTenant(principal.tenantId)).filter(record=>record.environment===environment && record.tenantId===principal.tenantId && record.integrationId===id);
+      if(matches.length!==1)return null;
+      const record=matches[0]!, provider=providers[record.provider];
+      const allowed=(row:IntegrationRecord)=>row.environment===environment && row.tenantId===principal.tenantId && row.integrationId===id &&
+        visible(principal,provider,row) && (row.status!=='connecting' || row.userId===principal.userId);
+      if(!provider || !allowed(record))return null;
+      const card=await view(principal,record,provider);
+      const fresh=await registry.get(principal.tenantId,record.userId,id);
+      return fresh && allowed(fresh) ? card : null;
+    },
     async list(principal: Principal): Promise<Array<SourceCard & {integrationId?: string; connectedById?: string}>> {
       const records = await registry.listTenant(principal.tenantId);
       let bucket: Promise<string|null> | undefined;

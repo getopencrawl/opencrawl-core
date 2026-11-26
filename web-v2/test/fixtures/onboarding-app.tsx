@@ -1,4 +1,6 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
+import {ConnectionPage} from '../../src/application/connection.tsx';
+import {connectionPage} from '../../../src/application/connection-links.mjs';
 import {OpenCrawlApp} from '../../src/application/app.tsx';
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -53,6 +55,7 @@ const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost'
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
 const sourcesAdapter: SourcesAdapter = {
+  connection: (path,signal) => request('/api/console/sources/connection', signal ?? never, {path}),
   replicasHistory:(input,signal)=>request('/api/integrations/replicas/history',signal??never,input),
   devinRecording:(input,signal)=>request('/api/integrations/devin/recording',signal??never,input),
   sources: signal => request('/api/console/sources', signal ?? never),
@@ -87,6 +90,7 @@ function Fixture() {
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>},
     {path:'/sessions/:permalinkId',navigation:false,label:'Session',element:<SessionsPage adapter={libraryAdapter}/>},
   ]}/></ConsoleDataProvider>;
+  if (connectionPage(location.pathname)) return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><ConnectionPage adapter={sourcesAdapter}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:location.search.includes('decorated')
       ? <div className="stack"><div className="stack"><SourcesPage adapter={sourcesAdapter} canConfigure/><p><a href="#connector-terms" id="connector-terms">Connector terms</a></p></div></div>
       : <SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;

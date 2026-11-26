@@ -32,6 +32,7 @@ return {
   tokenSessions:(input:import('../../../src/application/usage-range.mjs').TokenSessionsRequest,signal?:AbortSignal)=>read(()=>webRpc.console.tokenSessions.query(input,{signal}),signal),
   searchHistory:(input:import('../../../src/application/search-activity.mjs').HistoryRequest & {basis?:'events'},signal?:AbortSignal)=>read(()=>webRpc.console.searchHistory.query(input,{signal}),signal),
   usageDetails:(signal?:AbortSignal,range:UsageRange='30d')=>read(()=>webRpc.console.usageDetails.query({range},{signal}),signal),
+  connection:(path:string,signal?:AbortSignal)=>read(()=>webRpc.console.connection.query({path},{signal}),signal),
   sources:(signal?:AbortSignal)=>read(()=>webRpc.console.sources.query(undefined,{signal}),signal),
   team:(signal?:AbortSignal)=>read(()=>webRpc.console.team.query(undefined,{signal}),signal),
   search:(query:string,signal?:AbortSignal,page=1)=>read(()=>webRpc.diagnostics.search.query({query,page},{signal}),signal),

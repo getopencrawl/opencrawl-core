@@ -11,6 +11,8 @@ export interface SourceCard {
   /** Catalog-selected headline statistic; unknown connectors use their highest count. */
   primaryMetric?: string;
   units?: [string, string];
+  integrationId?: string;
+  connectionPath?: string;
   account?: string | null;
   state: 'disconnected' | 'disconnecting' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
   setup?: SourceSetup;
