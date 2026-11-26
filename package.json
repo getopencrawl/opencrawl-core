@@ -191,7 +191,7 @@
     "eventsource-parser": "3.1.1",
     "gpt-tokenizer": "4.1.0",
     "jose": "6.2.15",
-    "parse5": "8.1.0",
+    "parse5": "8.1.1",
     "pdfjs-dist": "6.5.438",
     "pg": "8.23.1",
     "saxes": "6.0.0",
