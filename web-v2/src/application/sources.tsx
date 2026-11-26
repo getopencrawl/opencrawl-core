@@ -83,7 +83,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   function replicasActions(source:SourceCard){
     const history=source.history;
     if (needsReplicasKey(source)) return undefined;
-    const setup = captureSetup && <LinkButton to={replicasCapturePath}>Set up capture</LinkButton>;
+    const setup = captureSetup && <LinkButton to={replicasCapturePath}>Set up agents</LinkButton>;
     if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup || undefined;
     return <div className="actions">{setup}
       <Button disabled={pending!==null} onClick={()=>void run(source.provider,async request=>{
@@ -192,7 +192,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </>}
-    {data && captureSetup && !(replicas && adapter.replicasHistory) && <LinkButton to={replicasCapturePath}>Set up Replicas capture</LinkButton>}
+    {data && captureSetup && !(replicas && adapter.replicasHistory) && <LinkButton to={replicasCapturePath}>Set up Replicas agents</LinkButton>}
     {data && (replicasOpen || captureLinkOpen) && (history || captureSetup) && <ReplicasConnectDialog
       history={history} issue={captureSetup} onClose={closeReplicas} onConnected={result => {
         closeReplicas();

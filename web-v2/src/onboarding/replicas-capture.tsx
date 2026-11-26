@@ -29,10 +29,9 @@ export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdap
   }, [issue, attempt]);
 
   return <div className="stack-sm">
-    <p>To record new chats, paste this prompt into a chat in your Replicas environment within 30 minutes.</p>
-    {prompt ? <CommandSnippet label="Copy capture setup prompt" text={prompt}/>
+    <p>For <ExternalLink href={replicasCaptureGuide}>agent setup</ExternalLink>, paste this prompt into a Replicas chat within 30 minutes.</p>
+    {prompt ? <CommandSnippet label="Copy agent setup prompt" text={prompt}/>
       : error ? <Notice tone="danger" actions={<Button onClick={() => setAttempt(attempt + 1)}>Get a new prompt</Button>}>{error}</Notice>
-      : <LoadingState label="Preparing capture prompt"/>}
-    <ExternalLink href={replicasCaptureGuide}>Replicas capture guide</ExternalLink>
+      : <LoadingState label="Preparing agent setup prompt"/>}
   </div>;
 }

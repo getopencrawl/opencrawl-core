@@ -195,7 +195,7 @@ test('Setup and Integrations keep their sidebar positions before bootstrap and t
   } finally {release();}
 });
 
-test('a completed Replicas import leads to workspace capture setup',async({page})=>{
+test('a completed Replicas import leads to agent setup',async({page})=>{
   let issued=0;
   await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',state:'synced',auth:'api-key',scope:'team',total:1,synced:1}]}}));
@@ -205,13 +205,13 @@ test('a completed Replicas import leads to workspace capture setup',async({page}
   });
   await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Clipboard denied');}}}));
   await page.goto('/sources?full-app');
-  await page.getByRole('article',{name:'Replicas'}).getByRole('link',{name:'Set up capture'}).click();
+  await page.getByRole('article',{name:'Replicas'}).getByRole('link',{name:'Set up agents'}).click();
   await expect(page).toHaveURL(/\/sources#replicas-capture$/);
-  const dialog = page.getByRole('dialog', {name:'Set up Replicas capture'});
-  const snippet = dialog.getByRole('button', {name:'Copy capture setup prompt'});
+  const dialog = page.getByRole('dialog', {name:'Set up Replicas agents'});
+  const snippet = dialog.getByRole('button', {name:'Copy agent setup prompt'});
   await expect(snippet.locator('code')).toHaveText('One-time fixture prompt for Replicas');
   await expect(dialog.getByLabel('Organization API key')).toHaveCount(0);
-  await expect(dialog.getByRole('link', {name:'Replicas capture guide'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
+  await expect(dialog.getByRole('link', {name:'agent setup'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
   await snippet.click();
   await expect(dialog.getByText('Copy the selected text with your keyboard or selection menu.')).toBeVisible();
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('One-time fixture prompt for Replicas');
@@ -220,11 +220,11 @@ test('a completed Replicas import leads to workspace capture setup',async({page}
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('an admin can start capture before importing history and from published setup links',async({page})=>{
+test('an admin can set up agents from Connect and published setup links',async({page})=>{
   await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',state:'disconnected',auth:'api-key',scope:'team'}]}}));
   let issued = 0;
-  const prompt = 'One-time Replicas fixture prompt. '.repeat(60) + 'End of setup.';
+  const prompt = 'Follow the Replicas agent setup guide for https://example.test.\n\nOne-time approval code: ' + 'a'.repeat(64);
   await page.route('**/api/console/replicas/setup',route => {
     issued++;
     return route.fulfill({json:{prompt,expiresAt:new Date(Date.now()+1800000).toISOString()}});
@@ -235,16 +235,15 @@ test('an admin can start capture before importing history and from published set
   await expect(page.getByText(/Replicas/)).toHaveCount(0);
   await page.getByRole('navigation',{name:'Workspace navigation'}).getByRole('link',{name:'Integrations'}).click();
   const card = page.getByRole('article',{name:'Replicas'});
-  await expect(card.getByRole('link',{name:'Set up capture'})).toHaveCount(0);
+  await expect(card.getByRole('link',{name:'Set up agents'})).toHaveCount(0);
   expect(issued).toBe(0);
   await card.getByRole('button',{name:'Connect Replicas'}).click();
   const dialog = page.getByRole('dialog',{name:'Connect Replicas'});
   const key = dialog.getByLabel('Organization API key');
   await expect(key).toBeEmpty();
-  const snippet = dialog.getByRole('button',{name:'Copy capture setup prompt'});
+  const snippet = dialog.getByRole('button',{name:'Copy agent setup prompt'});
   const code = snippet.locator('code');
   await expect(code).toHaveText(prompt);
-  expect(await code.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
   await expect(dialog.getByRole('button',{name:'Connect',exact:true})).toBeDisabled();
   await snippet.click();
   await expect(page).toHaveTitle(prompt);
@@ -264,7 +263,7 @@ test('an admin can start capture before importing history and from published set
   expect(issued).toBe(beforeMember);
 });
 
-test('retrying and renewing the capture prompt preserves the history key', async ({page}) => {
+test('retrying and renewing the agent setup prompt preserves the history key', async ({page}) => {
   const now = new Date('2026-11-01T12:00:00Z');
   await page.clock.install({time:now});
   await page.route('**/api/console/bootstrap', route => route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
@@ -282,7 +281,7 @@ test('retrying and renewing the capture prompt preserves the history key', async
   await key.fill('fixture-key');
   await expect(dialog.getByRole('button',{name:'Connect',exact:true})).toBeEnabled();
   await dialog.getByRole('button',{name:'Get a new prompt'}).click();
-  const prompt = dialog.getByRole('button',{name:'Copy capture setup prompt'}).locator('code');
+  const prompt = dialog.getByRole('button',{name:'Copy agent setup prompt'}).locator('code');
   await expect(prompt).toHaveText('Fixture 2');
   await page.clock.fastForward(1800001);
   await expect(prompt).toHaveCount(0);

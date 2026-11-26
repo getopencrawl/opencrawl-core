@@ -1,8 +1,8 @@
 # Replicas organization connections
 
 In **Integrations**, a workspace admin opens **Connect** on the Replicas card,
-copies the capture setup prompt, and pastes it into a chat in the intended
-Replicas environment. If history is already connected, choose **Set up capture**. The prompt
+copies the agent setup prompt, and pastes it into a chat in the intended
+Replicas environment. If history is already connected, choose **Set up agents**. The prompt
 contains a one-time setup capability valid for 30 minutes. OpenCrawl stores only
 its hash. Enrollment also requires a signed Replicas workspace token minted for
 this OpenCrawl origin. The request cannot supply a destination tenant or a
@@ -16,14 +16,9 @@ is required for new connections. A Replicas organization cannot be connected to
 two OpenCrawl organizations. An environment ID still contributes to the stable
 workspace owner ID; migration never rewrites existing owners or captured data.
 
-The prompt configures the supported persistent Replicas environment hooks and
-native MCP identity authentication. Fresh Linux x86_64 workspaces use the
-[released Linux x64 plugins](https://github.com/getopencrawl/opencrawl-plugins/releases/tag/v0.3.0).
-Claude Code loads its packaged callbacks directly. Headless Codex runs its packaged
-callbacks through administrator-managed system hooks. Each package uploads user
-and assistant messages and tool inputs and outputs using signed workspace identity.
-Incognito is unavailable. The setup prompt pins the archives and writes private
-per-workspace bindings after the VM starts. One workspace must produce actual CLI,
+The admin prompt points to the [agent setup guide](https://docs.getopencrawl.com/agents/replicas-capture/) and supplies the server origin and a one-time approval code. The guide configures the CLI, OpenCrawl skill and native MCP authentication. The [Replicas API integration](replicas-history-import.md) uses a separate organization API key for retained history and, when enabled, live events. Existing installations may also use native recorder plugins.
+
+One workspace must produce actual CLI,
 MCP test, and fresh-session receipts before OpenCrawl reports the team setup as
 ready. Imported history and a successful enrollment cannot satisfy that check.
 The receipt writer records the verified shared installation automatically; no
@@ -157,8 +152,8 @@ is descriptive and grants no authentication or resource access.
 ## Shared installation onboarding
 
 Administrators can open Replicas in **Integrations** to copy a dedicated
-setup prompt into a Replicas chat. It covers the persistent environment, workload
-authentication and fresh-session verification. The administrator approves the
+setup prompt into a Replicas chat. It covers persistent agent tools, workload
+authentication and verification in a fresh workspace. The administrator approves the
 organization once; developers do not repeat setup or provide personal credentials
 for shared CLI, MCP or capture access.
 

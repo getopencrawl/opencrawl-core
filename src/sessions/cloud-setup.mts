@@ -41,7 +41,7 @@ export function cloudCapturePage({api,credential,revoked=false}: {api:string;cre
 export function replicasSetupPrompt(api: string) {
   return `Install OpenCrawl in this Replicas environment for my team. Confirm REPLICAS_WORKSPACE_ID, the intended Replicas organization, environment and OpenCrawl team. Use the built-in replicas CLI. Reuse valid approvals. ${REPLICAS_SAFE_INSPECTION} Preserve project setup and unrelated configuration.
 
-The OpenCrawl admin connects the Replicas organization once using the capture setup prompt on the Replicas card in Integrations. If enrollment is missing, obtain that admin prompt. New environments and personal forks use their own workspace identity. Configure OPENCRAWL_API_URL=${api} and OPENCRAWL_AUTH=replicas-workspace. Install the CLI for verification and board access during warm preparation with ${NPM_INSTALL_COMMAND}, or when npm is unavailable use ${nativeInstallCommand()} then ${nativePathCommand()}. For an existing CLI use opencrawl update. Verify opencrawl --version. In the enrolled workspace run opencrawl whoami --api ${api} --json. Configure ${api}/mcp using native Replicas workspace_identity authentication and audience ${api} through the supported UI or API. Omit static Authorization headers. Workspace identity gives team access and does not establish message authorship. Preserve source labels, including unknown authors.
+The OpenCrawl admin connects the Replicas organization once using the agent setup prompt on the Replicas card in Integrations. If enrollment is missing, obtain that admin prompt. New environments and personal forks use their own workspace identity. Configure OPENCRAWL_API_URL=${api} and OPENCRAWL_AUTH=replicas-workspace. Install the CLI for verification and board access during warm preparation with ${NPM_INSTALL_COMMAND}, or when npm is unavailable use ${nativeInstallCommand()} then ${nativePathCommand()}. For an existing CLI use opencrawl update. Verify opencrawl --version. In the enrolled workspace run opencrawl whoami --api ${api} --json. Configure ${api}/mcp using native Replicas workspace_identity authentication and audience ${api} through the supported UI or API. Omit static Authorization headers. Workspace identity gives team access and does not establish message authorship. Preserve source labels, including unknown authors.
 
 ${replicasPluginSetup(api)}
 
@@ -96,18 +96,7 @@ Return to my work with a short coverage report: configured and verified now, his
 export function replicasEnrollmentPrompt(api: string, code: string) {
   const origin = new URL(api);
   if (origin.origin !== api || !['https:', 'http:'].includes(origin.protocol) || origin.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Invalid Replicas enrollment prompt');
-  const enrollment = String.raw`set -eu
-set +x
-replicas_token=$(replicas identity token --audience ${quote(api)})
-printf '%s\n' "header = \"Authorization: Bearer $replicas_token\"" 'data = "{\"code\":\"${code}\"}"' | curl --config - --fail-with-body --silent --show-error --header 'Content-Type: application/json' ${quote(api + '/api/replicas/connect')}
-unset replicas_token`;
-  return `Connect this Replicas organization to my OpenCrawl workspace. I am its OpenCrawl admin and approve team-shared capture from this Replicas organization. First run the one-time enrollment below inside the intended Replicas workspace. The code expires in 30 minutes; do not put it in environment variables, warm/start hooks, repositories or snapshots. Never print the workspace token. Stop if the destination is unexpected or enrollment fails. The code authorizes only this initial connection; future workspaces use native Replicas identity automatically.
+  return `Set up the OpenCrawl CLI, skill, and MCP for ${api} using https://docs.getopencrawl.com/agents/replicas-capture/index.md
 
-\`\`\`sh
-${enrollment}
-\`\`\`
-
-After the connection succeeds, perform the setup below. Do not ask for another API key, human sign-in, environment approval or AWS configuration. Native Replicas identity authorizes every environment in the connected organization, including personal forks. Existing local personal sessions remain separate and keep their personal permissions.
-
-${replicasSetupPrompt(api)}`;
+One-time approval code: ${code}`;
 }
