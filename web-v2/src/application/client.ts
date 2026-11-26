@@ -28,6 +28,7 @@ return {
   usage:(signal?:AbortSignal)=>read(()=>webRpc.console.usage.query(undefined,{signal}),signal),
   usageHighlights:(signal?:AbortSignal)=>read(()=>webRpc.console.usageHighlights.query(undefined,{signal}),signal),
   callTotals:(range:UsageRange,signal?:AbortSignal,basis?:'events')=>read(()=>webRpc.console.callTotals.query({range,basis},{signal}),signal),
+  fileView:(path:string,signal:AbortSignal)=>read(()=>webRpc.console.fileView.query({path},{signal}),signal),
   usageTokens:(range:UsageRange,signal?:AbortSignal,basis?:'session-start')=>read(()=>webRpc.console.usageTokens.query({range,basis},{signal}),signal),
   tokenSessions:(input:import('../../../src/application/usage-range.mjs').TokenSessionsRequest,signal?:AbortSignal)=>read(()=>webRpc.console.tokenSessions.query(input,{signal}),signal),
   searchHistory:(input:import('../../../src/application/search-activity.mjs').HistoryRequest & {basis?:'events'},signal?:AbortSignal)=>read(()=>webRpc.console.searchHistory.query(input,{signal}),signal),
