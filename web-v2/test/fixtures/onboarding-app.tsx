@@ -14,7 +14,7 @@ import {DocumentFrame,ProductDocument} from '../../src/application/documents.tsx
 import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
-import {WorkspaceFilesPage} from '../../src/pages/workspace-files.tsx';
+import {filePage} from '../../../src/application/file-links.mjs';
 import {UsagePage} from '../../src/pages/usage.tsx';
 import {usagePaths} from '../../../src/application/usage-paths.mjs';
 import {DailyBarChart, PageHeader} from '../../src/design/components.tsx';
@@ -65,8 +65,8 @@ const sourcesAdapter: SourcesAdapter = {
   saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal ?? never, {value}),
 };
 const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: (email,signal) => request('/api/console/team/invite',signal ?? never,{email}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
-const fileFixture: ConsoleDataAdapter = {...usageAdapter, fileView:(path,signal)=>request('/api/console/files/view',signal,{path})};
 const fullApi: ProductApi = {
+  fileView:(path,signal)=>request('/api/console/files/view',signal,{path}),
   replicasSetup:signal=>request('/api/console/replicas/setup',signal,{}),
   ...sourcesAdapter,...teamAdapter,...diagnosticsAdapter,library:libraryAdapter,
   bootstrap:signal=>request<Bootstrap>('/api/console/bootstrap',signal??never),
@@ -83,7 +83,6 @@ function Fixture() {
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
   if (usagePaths.includes(location.pathname) || (location.pathname === '/' && new URLSearchParams(location.search).has('tab'))) return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', alternatePaths:['/', ...usagePaths.filter(path => path !== '/usage')], label: 'Usage', icon: 'usage', element: <UsagePage showActivity={new URLSearchParams(location.search).has('activity')?'usage-fixture':undefined} adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
-  if (location.pathname === '/files' || location.pathname.startsWith('/commits/') || location.pathname.startsWith('/files/')) return <ConsoleDataProvider scopeKey="files-fixture" onAccessFailure={()=>{}}><WorkspaceFilesPage adapter={fileFixture}/></ConsoleDataProvider>;
   if (location.pathname === '/stacked-usage-fixture') return <DailyBarChart label="Items per day" xAxisLabel="Date (UTC)" yAxisLabel="Items"
     days={[{date:'2026-11-17',value:10,segments:[2,3,5]},{date:'2026-11-18',value:0,segments:[0,0,0]},
       {date:'2026-11-19',value:null},{date:'2026-11-20',value:9,segments:[8,1,0]}]}
@@ -132,4 +131,6 @@ function Fixture() {
 }
 const mount = document.getElementById('root');
 if (!mount) throw new Error('Fixture mount is missing');
-createRoot(mount).render(new URLSearchParams(window.location.search).has('full-app') ? <OpenCrawlApp api={fullApi}/> : <AppRouter><Fixture /></AppRouter>);
+const fullApp = new URLSearchParams(window.location.search).has('full-app')
+  || window.location.pathname === '/files' || Boolean(filePage(window.location.pathname));
+createRoot(mount).render(fullApp ? <OpenCrawlApp api={fullApi}/> : <AppRouter><Fixture /></AppRouter>);

@@ -5,6 +5,10 @@ test('open the published revision, copy a file link, reload it, and recheck acce
   const workspace='fixturefiles', revision='ab'.repeat(20), path='notes/launch #1.md';
   const commitLink=filePath({workspace,revision}), fileLink=filePath({workspace,revision,path});
   const shared={workspace,commit:revision,parents:[],title:'Handoff',time:'2026-11-24T00:00:00Z',author:'Engineer'};
+  await page.route('**/api/console/bootstrap', route=>route.fulfill({json:{
+    cacheScope:workspace, workspace:{name:'Example workspace',userName:'Alex',role:'member'},
+    onboarding:{completed:true,next:'/'}, mcpUrl:'/mcp', setupPrompt:'', canInvite:false, workspaceFiles:true,
+  }}));
   let allowed=true;
   await page.route('**/api/console/files/view', route=>{
     const {path: viewed}=route.request().postDataJSON();
