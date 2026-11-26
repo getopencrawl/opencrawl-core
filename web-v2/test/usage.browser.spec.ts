@@ -166,7 +166,8 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await page.getByRole('button',{name:'Cumulative',exact:true}).click();
   await expect(page.getByRole('img',{name:'Cumulative indexed session tokens'}).locator('polyline')).toBeVisible();
   await page.getByRole('button', {name: 'View all searches'}).click();
-  await expect(page.getByLabel('Date range')).toHaveValue('7d');
+  await expect(page).toHaveURL(url=>url.pathname==='/usage/searches' && url.searchParams.get('range')==='7d');
+  await expect(page.getByRole('combobox',{name:'Date range'})).toHaveValue('7d');
   expect(receipts.tokens).toEqual(['all']);
   expect(history).toContainEqual({kind:'agent',range:'30d',basis:'events',withQuery:true,before:page2});
 });
@@ -182,6 +183,10 @@ test('Searches shows observed query history, and Proactive suggestions keeps its
   await expect(page.locator('.report-bar-chart')).toHaveCount(0);
   await page.getByLabel('Date range').selectOption('7d');
   await expect.poll(() => requests.history).toContainEqual({kind: 'agent', range: '7d', basis: 'events', withQuery: true});
+  await expect(page).toHaveURL(/\/usage\/searches\?.*range=7d/);
+  await page.reload();
+  await expect(tab(page, 'Searches')).toHaveAttribute('aria-selected','true');
+  await expect(page.getByLabel('Date range')).toHaveValue('7d');
   await tab(page, 'Proactive suggestions').click();
   await page.getByLabel('Date range').selectOption('all');
   await expect(chartTotal(page, 'Proactive context edits')).toHaveText('1,540');
