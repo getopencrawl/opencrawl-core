@@ -207,14 +207,15 @@ test('a completed Replicas import leads to workspace capture setup',async({page}
   await page.goto('/sources?full-app');
   await page.getByRole('article',{name:'Replicas'}).getByRole('link',{name:'Set up capture'}).click();
   await expect(page).toHaveURL(/\/sources#replicas-capture$/);
-  await expect(page.getByRole('dialog',{name:'Record new Replicas chats'})).toBeVisible();
-  await expect(page.getByRole('link',{name:'Replicas capture guide'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
-  expect(issued).toBe(0);
-  await page.getByRole('button',{name:'Install on Replicas'}).click();
-  await expect(page.getByRole('textbox',{name:'Prompt to copy'})).toHaveValue('One-time fixture prompt for Replicas');
+  const dialog = page.getByRole('dialog', {name:'Set up Replicas capture'});
+  const prompt = dialog.getByLabel('Capture setup prompt', {exact:true});
+  await expect(prompt).toHaveValue('One-time fixture prompt for Replicas');
+  await expect(dialog.getByLabel('Organization API key')).toHaveCount(0);
+  await expect(dialog.getByRole('link', {name:'Replicas capture guide'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
+  await dialog.getByRole('button', {name:'Copy Capture setup prompt'}).click();
+  await expect(prompt).toBeFocused();
+  expect(await prompt.evaluate((field: HTMLTextAreaElement) => field.value.slice(field.selectionStart, field.selectionEnd))).toBe('One-time fixture prompt for Replicas');
   expect(issued).toBe(1);
-  await page.getByRole('button',{name:'I’ve copied it'}).click();
-  await expect(page.getByRole('button',{name:'Copied',exact:true})).toBeFocused();
   await page.getByRole('button',{name:'Close dialog'}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
@@ -222,23 +223,70 @@ test('a completed Replicas import leads to workspace capture setup',async({page}
 test('an admin can start capture before importing history and from published setup links',async({page})=>{
   await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
   await page.route('**/api/console/sources',route=>route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',state:'disconnected',auth:'api-key',scope:'team'}]}}));
+  let issued = 0;
+  const prompt = 'One-time Replicas fixture prompt';
+  await page.route('**/api/console/replicas/setup',route => {
+    issued++;
+    return route.fulfill({json:{prompt,expiresAt:new Date(Date.now()+1800000).toISOString()}});
+  });
+  await page.addInitScript(() => Object.defineProperty(navigator,'clipboard',{value:{writeText:async (value: string) => {document.title = value;}}}));
   await page.goto('/setup?full-app');
   await expect(page.getByRole('button',{name:copyLabel})).toBeVisible();
   await expect(page.getByText(/Replicas/)).toHaveCount(0);
   await page.getByRole('navigation',{name:'Workspace navigation'}).getByRole('link',{name:'Integrations'}).click();
-  const card=page.getByRole('article',{name:'Replicas'});
-  await expect(card.getByRole('button',{name:'Connect Replicas'})).toBeVisible();
-  await card.getByRole('link',{name:'Set up capture'}).click();
-  await expect(page.getByRole('button',{name:'Install on Replicas'})).toBeVisible();
+  const card = page.getByRole('article',{name:'Replicas'});
+  await expect(card.getByRole('link',{name:'Set up capture'})).toHaveCount(0);
+  expect(issued).toBe(0);
+  await card.getByRole('button',{name:'Connect Replicas'}).click();
+  const dialog = page.getByRole('dialog',{name:'Connect Replicas'});
+  const key = dialog.getByLabel('Organization API key');
+  await expect(key).toBeEmpty();
+  await expect(dialog.getByLabel('Capture setup prompt',{exact:true})).toHaveValue(prompt);
+  await expect(dialog.getByRole('button',{name:'Connect',exact:true})).toBeDisabled();
+  await dialog.getByRole('button',{name:'Copy Capture setup prompt'}).click();
+  await expect(page).toHaveTitle(prompt);
+  await expect(dialog.getByRole('status')).toHaveText('Copied to clipboard.');
+  expect(issued).toBe(1);
   for (const path of ['/setup','/agent-setup']) {
     await page.goto(path+'?full-app#replicas-capture');
     await expect(page).toHaveURL(/\/sources#replicas-capture$/);
-    await expect(page.getByRole('dialog',{name:'Record new Replicas chats'})).toBeVisible();
+    await expect(dialog.getByLabel('Capture setup prompt',{exact:true})).toHaveValue(prompt);
+    await expect(key).toBeVisible();
   }
+  const beforeMember = issued;
   await page.route('**/api/console/bootstrap',route=>route.fulfill({json:{...bootstrap,workspace:{...bootstrap.workspace,role:'member'}}}));
   await page.goto('/sources?full-app#replicas-capture');
   await expect(page.getByRole('heading',{name:'Usage',exact:true})).toBeVisible();
-  await expect(page.getByRole('button',{name:'Install on Replicas'})).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(issued).toBe(beforeMember);
+});
+
+test('retrying and renewing the capture prompt preserves the history key', async ({page}) => {
+  const now = new Date('2026-11-01T12:00:00Z');
+  await page.clock.install({time:now});
+  await page.route('**/api/console/bootstrap', route => route.fulfill({json:{...bootstrap,canInstallReplicas:true}}));
+  await page.route('**/api/console/sources', route => route.fulfill({json:{items:[{provider:'replicas',name:'Replicas',state:'synced',history:{requiresReconnect:true},auth:'api-key',scope:'team'}]}}));
+  let issued = 0;
+  await page.route('**/api/console/replicas/setup', route => {
+    issued++;
+    return issued === 1 ? route.fulfill({status:503,json:{error:'Unavailable'}})
+      : route.fulfill({json:{prompt:'Fixture '+issued,expiresAt:new Date(now.getTime() + (issued-1)*1800000).toISOString()}});
+  });
+  await page.goto('/sources?full-app');
+  await page.getByRole('button',{name:'Connect Replicas'}).click();
+  const dialog = page.getByRole('dialog',{name:'Connect Replicas'});
+  const key = dialog.getByLabel('Organization API key');
+  await key.fill('fixture-key');
+  await expect(dialog.getByRole('button',{name:'Connect',exact:true})).toBeEnabled();
+  await dialog.getByRole('button',{name:'Get a new prompt'}).click();
+  const prompt = dialog.getByLabel('Capture setup prompt',{exact:true});
+  await expect(prompt).toHaveValue('Fixture 2');
+  await page.clock.fastForward(1800001);
+  await expect(prompt).toHaveCount(0);
+  await expect(dialog.getByText('This setup prompt has expired.')).toBeVisible();
+  await dialog.getByRole('button',{name:'Get a new prompt'}).click();
+  await expect(prompt).toHaveValue('Fixture 3');
+  await expect(key).toHaveValue('fixture-key');
 });
 
 test('the welcome becomes a host report and verifies capture separately for each agent',async({page})=>{
