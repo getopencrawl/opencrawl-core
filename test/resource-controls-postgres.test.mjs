@@ -30,7 +30,7 @@ async function fixture(t,organizationId=null){
  };
  return {database,store,raw,state,seed};
 }
-const manifest=entries=>createHash('sha256').update(entries.sort((a,b)=>Buffer.compare(Buffer.from(a.slice(0,4).join('/')),Buffer.from(b.slice(0,4).join('/')))).map(row=>JSON.stringify(row)+'\n').join('')).digest('hex');
+const manifest=entries=>createHash('sha256').update(entries.sort((a,b)=>{for(let i=0;i<4;i++){const order=Buffer.compare(Buffer.from(a[i]),Buffer.from(b[i]));if(order)return order;}return 0;}).map(row=>JSON.stringify(row)+'\n').join('')).digest('hex');
 const source=(who,harness,id)=>({tenantHash:digest(who.tenantId),userHash:digest(who.userId),harness,sessionHash:digest(id)});
 const failSource=store=>{for(const m of ['readVersion','listPage','compareAndSet','put','get'])store[m]=()=>{throw Error('source fenced');};};
 const privateChange=current=>({visibility:'private',visibilitySource:'manual',deletedAt:current?.deletedAt??null});
@@ -163,4 +163,15 @@ test('a memory cutoff must cover the deleted version and preserve privacy of fut
  assert.equal(await service.reconcile(row.operation,proof),true);
  await service.activate(quiet);
  await assert.rejects(service.controls.update(...k,()=>({...base,deletedAt:at})),/cannot be reversed/);
+});
+
+test('manifest keysets span pages and sort each identity component by bytes',{skip},async t=>{
+ const {state,seed}=await fixture(t),service=state(),entries=[];
+ for(let i=0;i<525;i++){
+   const kind=i<330?'sessions':'memories',harness=['agent','agent-b','agent_z'][i%3];
+   entries.push(await seed(p,kind,harness,'record-'+i,base));
+ }
+ const expected={sessions:330,memories:195,sha256:manifest(entries)};
+ assert.deepEqual(await service.activate(async candidate=>{if(candidate)assert.deepEqual(candidate,expected);}),expected);
+ assert.deepEqual(await service.verify(),expected);
 });
