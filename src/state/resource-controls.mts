@@ -28,7 +28,7 @@ export function createResourceControlState(database:ApplicationDatabase,store:Ob
     }).catch(error=>{preparing=undefined;throw error;});
     return preparing;
   }
-  async function active(){await ready();if(!switched)switched=Boolean(await seal(database.pool));return switched;}
+  async function active(){await ready();if(!switched && await seal(database.pool))switched=true;return switched;}
   async function pending(db:Query) {
     return Number((await db.query('SELECT count(*) FROM '+writesTable+' WHERE namespace=$1 AND NOT settled',[ns])).rows[0].count);
   }
