@@ -36,6 +36,8 @@ test('connection links select the exact account and recheck its current visibili
   const base={tenantId:'org_team',userId:'owner',environment:'selfhost',provider:'github',scope:'team',status:'active'};
   const records=['first account','second account','personal','removed','foreign'].map((account,i)=>({...base,account,integrationId:'int_'+String(i).repeat(26)}));
   records[2].provider='notes';records[2].scope='user';records[3].status='deleted';records[4].tenantId='org_other';
+  records.push({...base,integrationId:'int_'+'5'.repeat(26),environment:'production',account:'other environment'},
+    {...base,integrationId:'int_'+'6'.repeat(26),status:'connecting',account:'unfinished sign-in'});
   let revoke=false,reads=0;
   const registry={listTenant:async()=>records,get:async(tenant,user,id)=>{
     reads++;return revoke?null:records.find(r=>r.tenantId===tenant&&r.userId===user&&r.integrationId===id);
@@ -44,7 +46,9 @@ test('connection links select the exact account and recheck its current visibili
   const service=createIntegrations({environment:'selfhost',appUrl:'https://self.example',registry,providers,workspaceId:async()=>'workspace',destination:{},oauth:{},airbyte:{},buckets:{}});
   const href=connectionPath(workspaceLinkHint(principal.tenantId),records[0].integrationId);
   assert.equal(connectionPage(href).integrationId,records[0].integrationId);assert.equal(connectionPage('/integrations/github/callback'),null);
-  assert.equal((await service.connection(principal,records[0].integrationId)).account,'first account');
+  const first=await service.connection(principal,records[0].integrationId);
+  assert.equal(first.account,'first account');
+  assert.deepEqual(first.otherConnections,[{account:'second account',path:connectionPath(workspaceLinkHint(principal.tenantId),records[1].integrationId)}]);
   assert.equal((await service.connection(principal,records[1].integrationId)).account,'second account');
   for(const entry of records.slice(2))assert.equal(await service.connection(principal,entry.integrationId),null);
   assert.equal(await service.connection({...principal,captureAccess:'write'},records[0].integrationId),null);

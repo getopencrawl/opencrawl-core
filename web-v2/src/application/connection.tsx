@@ -1,5 +1,5 @@
 import {EmptyState, LinkButton, LoadingState, Page, Section} from '../design/components.tsx';
-import {useLocation} from '../router.tsx';
+import {Link,useLocation} from '../router.tsx';
 import {consoleResourceKey,useConsoleResource} from '../data.tsx';
 import {SourceProgress, SourceStats} from './connector-card.tsx';
 import type {SourcesAdapter} from './api.ts';
@@ -17,5 +17,8 @@ export function ConnectionPage({adapter}:{adapter:SourcesAdapter}) {
       <SourceProgress source={data}/>
       {Boolean(data.rows?.length) && <SourceStats source={data}/>}
     </Section>
+    {Boolean(data.otherConnections?.length) && <Section title={`Other ${data.name} connections`}>
+      <ul>{data.otherConnections?.map(item=><li key={item.path}><Link to={item.path}>{item.account}</Link></li>)}</ul>
+    </Section>}
   </Page>;
 }

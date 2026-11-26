@@ -746,11 +746,14 @@ for (const step of ['sources','invite']) test(`members skip the legacy ${step} o
 
 test('an integration card opens the exact account and rechecks its availability on reload', async ({page}) => {
   const path = '/integrations/fixtureboard/int_' + 'a'.repeat(26);
-  const account = {provider:'github', name:'GitHub', account:'Engineering', state:'synced', scope:'team', auth:'oauth', synced:3, connectionPath:path};
+  const otherPath = '/integrations/fixtureboard/int_' + 'b'.repeat(26);
+  const account = {provider:'github', name:'GitHub', account:'Engineering', state:'synced', scope:'team', auth:'oauth', synced:3, connectionPath:path,otherConnections:[{account:'Design',path:otherPath}]};
   await page.route('**/api/console/sources', route => route.fulfill({json:{items:[account]}}));
   let available = true;
   await page.route('**/api/console/sources/connection', route => {
-    expect(route.request().postDataJSON()).toEqual({path});
+    const requested=route.request().postDataJSON().path;
+    if(requested===otherPath)return route.fulfill({json:{...account,account:'Design',otherConnections:[]}});
+    expect(requested).toBe(path);
     return available ? route.fulfill({json:account}) : route.fulfill({status:404,json:{error:'Unavailable'}});
   });
   await page.goto('/integrations-fixture');
@@ -758,6 +761,10 @@ test('an integration card opens the exact account and rechecks its availability 
   await expect(link).toHaveAttribute('href',path);
   await link.click();
   await expect(page.getByRole('heading',{name:'Engineering'})).toBeVisible();
+  await page.getByRole('link',{name:'Design'}).click();
+  await expect(page.getByRole('heading',{name:'Design'})).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(otherPath+'$'));
+  await page.goBack();
   await page.reload();
   await expect(page.getByRole('heading',{name:'Engineering'})).toBeVisible();
   available = false;

@@ -13,6 +13,7 @@ export interface SourceCard {
   units?: [string, string];
   integrationId?: string;
   connectionPath?: string;
+  otherConnections?: Array<{account: string; path: string}>;
   account?: string | null;
   state: 'disconnected' | 'disconnecting' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
   setup?: SourceSetup;
