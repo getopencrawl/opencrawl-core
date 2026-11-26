@@ -35,7 +35,7 @@ export type TranscriptEntry =
   | {type: 'tool_call'; name: string; input: string; truncated: boolean}
   | {type: 'tool_result'; text: string; truncated: boolean}
   | {type: 'note'; label: string; text: string; truncated: boolean};
-export interface TranscriptEvent {eventId: string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:CapturedActor;raw?:unknown}
+export interface TranscriptEvent {eventId: string; installationId?:string; kind: string; timestamp: string | null; entries: TranscriptEntry[];actor?:CapturedActor;raw?:unknown}
 
 const identity = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value);
 const f = (field: string) => realmField('session', field);
@@ -561,18 +561,25 @@ export function createSessionLibrary({store, prefix, controls = createControls({
     },
 
     /** Index order and paging; content comes from the verified original batch. */
-    async read(principal: Principal, input: Partial<SessionKey> & {cursor?: unknown; limit?: unknown; direction?: 'forward' | 'backward'}) {
+    async read(principal: Principal, input: Partial<SessionKey> & {cursor?: unknown; limit?: unknown; direction?: 'forward' | 'backward'; event?: {eventId:string; installationId?:string}}) {
       const key = checkKey(input), after = decodeCursor(input.cursor), limit = input.limit ?? 100;
       if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 200) fail(400, 'Invalid page size');
       const collection = reader(principal);
       if (!(await access(principal, key)).readable) fail(404, 'Session not found');
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
+      const target = input.event;
+      if (target) {
+        if (after) fail(400, 'An event citation cannot be paged');
+        filter.push({term: {[f('eventId')]: target.eventId}});
+        if (target.installationId) filter.push({term: {[f('installationId')]: target.installationId}});
+      }
       const backward = input.direction === 'backward', order = backward ? 'desc' : 'asc';
-      const pageSize = Number(limit);
+      const pageSize = target ? 1 : Number(limit);
       const page = await collection.search(principal, {size: pageSize + 1, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
         aggs: {host: hostTerms},
         sort: [{timestamp: {order, missing: backward ? '_last' : '_first'}}, {[f('sequence')]: order}, {[f('eventId')]: order}, {[f('installationId')]: order}, {id: order}],
         ...(after ? {search_after: after} : {})});
+      if (target && page.hits.hits.length !== 1) fail(404, 'Transcript event unavailable');
       if (!after && !page.hits.hits.length) fail(404, 'Session not found');
       const selected = page.hits.hits.slice(0, pageSize);
       const next = page.hits.hits.length > pageSize ? encodeCursor(selected.at(-1)!.sort) : null;
@@ -580,6 +587,7 @@ export function createSessionLibrary({store, prefix, controls = createControls({
       const hits = (selected as IndexHit[]).map(hit => {
         const d = hit._source;
         if (d?.tenantId !== principal.tenantId || d.userId !== key.userId || d.harness !== key.harness || d.sessionId !== key.sessionId || typeof d.eventId !== 'string' || typeof d.installationId !== 'string') throw new Error('Invalid session read response');
+        if (target && (target.eventId !== d.eventId || (target.installationId && target.installationId !== d.installationId))) throw new Error('Invalid transcript event response');
         const source = sourceBatchIdentity(prefix, d.sourceKey ?? '');
         if (!source || source.tenantHash !== digest(principal.tenantId) || source.userHash !== digest(key.userId) || source.harness !== key.harness || source.installationHash !== digest(d.installationId) || source.sessionHash !== digest(key.sessionId)) throw new Error('Invalid session source');
         return {eventId: d.eventId, kind: d.kind, sourceKey: d.sourceKey!, installationId: d.installationId, batchId: source.batchId};
@@ -590,8 +598,9 @@ export function createSessionLibrary({store, prefix, controls = createControls({
       const events: TranscriptEvent[] = [];
       for (const hit of hits) {
         const event = loaded.get(hit.sourceKey)?.get(hit.eventId); // Missing: raw capture removed after indexing (for example, mid-delete).
-        if (event && event.kind === hit.kind) events.push(event);
+        if (event && event.kind === hit.kind) events.push({...event, installationId: hit.installationId});
       }
+      if (target && !events.length) fail(404, 'Transcript event unavailable');
       const first = selected[0]?._source;
       const names = await titles(principal, [key]);
       const current = await access(principal, key);
