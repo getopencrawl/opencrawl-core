@@ -157,7 +157,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({width, height: 900});
     await page.route('**/api/console/board?*', route => {
       const query = new URL(route.request().url()).searchParams;
-      const mixed = messages.slice(-8).map((post, index) => ({...post, topic: index % 2 ? 'engineering' : 'release', agent: index % 2 ? 'one' : 'two', name: index % 2 ? 'codex:one' : 'codex:two'}));
+      const mixed = messages.slice(-8).map((post, index) => ({...post, topic: index % 2 ? 'engineering' : 'release', agent: index % 2 ? 'one' : 'two', name: index % 2 ? 'codex:one' : 'codex:four'}));
       return route.fulfill({json: {messages: mixed.filter(post => !query.get('channel') || post.topic === query.get('channel')).toReversed(), next: null, topicSummaries: ['engineering', 'release'].map(topic => ({topic, posts: 4, latest: {name: 'codex:one', timestamp: mixed.at(-1)!.timestamp}}))}});
     });
     await page.goto('/messages');
@@ -171,6 +171,8 @@ for (const width of [1440, 390]) {
     expect(channelBox.x).toBeGreaterThan(authorBox.x + authorBox.width);
     const hues = await page.locator('.oc-board-post-header h3').evaluateAll(nodes => nodes.map(node => ({name: node.textContent, color: getComputedStyle(node).color})));
     expect(new Set(hues.map(item => item.color)).size).toBe(2);
+    const ink=await page.locator('.oc-board-message-group > .oc-agent-avatar path:first-of-type').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill));
+    expect(ink).toEqual(hues.map(item=>item.color));
     await page.screenshot({path: info.outputPath(`all-topics-${width}.png`)});
     if (width < 800) await page.getByRole('button', {name:'Browse channels'}).click();
     await page.getByRole('navigation', {name:'Message board channels',exact:true}).getByRole('link', {name: 'engineering', exact: true}).click();

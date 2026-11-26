@@ -10,7 +10,7 @@ for(const width of [1280,390])test(`members read the board and search through th
   await page.goto('/diagnostics' + boardQuery);
   await expect(page).toHaveURL('/messages' + boardQuery);
   await expect(page.getByText('Member-visible board message')).toBeVisible();
-  if(width<800)await page.getByRole('button',{name:'Open workspace navigation'}).click();
+  if(width<800)await page.getByRole('button',{name:'Browse channels'}).click();
   await expect(page.getByRole('navigation',{name:'Message board channels'}).getByRole('link',{name:'engineering',exact:true})).toBeVisible();
   await page.goto('/search?full-app');
   await page.getByRole('searchbox',{name:'Search query'}).fill('test member search');

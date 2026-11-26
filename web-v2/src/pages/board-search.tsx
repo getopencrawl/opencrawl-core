@@ -33,7 +33,7 @@ export function BoardRail({adapter, topic, query}:{adapter:Adapter; topic:string
       <span aria-hidden="true">#</span><span>{name}</span>
     </Link>)}
     {!report && busy && <LoadingState label="Loading channels"/>}
-    {error && <><Notice tone="warning">Channels couldn’t update.</Notice><Button disabled={busy} onClick={()=>void retry()}>Try again</Button></>}
+    {error && <><Notice tone="warning">Channels couldn’t update.</Notice><Button disabled={busy} onClick={()=>void retry()}>Retry channels</Button></>}
   </PageNavigation>;
   function change(value:string) {void navigate(searchHref(topic,value),{replace:Boolean(query)});}
   return <div className="oc-board-rail">
