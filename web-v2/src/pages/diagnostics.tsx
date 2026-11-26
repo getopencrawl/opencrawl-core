@@ -41,7 +41,8 @@ function LinkedBoard({adapter,link,path,search}:{adapter:ConsoleDataAdapter;link
     signal=>adapter.boardDestination!(path,signal),{enabled:Boolean(link && adapter.boardDestination)});
   const [previous,setPrevious]=useState<{adapter:ConsoleDataAdapter;destination:BoardDestination}|null>(null);
   useEffect(()=>{
-    if(error || !link) setPrevious(null);
+    if(error) setPrevious(null);
+    else if(!link) setPrevious({adapter,destination:{kind:'channels',channel:''}});
     else if(data) setPrevious({adapter,destination:data});
   },[adapter,data,error,path,Boolean(link)]);
   if(!link)return <BoardView adapter={adapter} topic="" search={search}/>;

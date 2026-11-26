@@ -306,13 +306,14 @@ for(const width of [1440,390])test(`system announcement thread navigation and re
 test('board search finds a reply and returns to its results after opening the thread',async({page})=>{
   const root={...messages[0]!,topic:'release',threadId:1,text:'Release planning'};
   const reply={...root,id:75,text:'The rollback is ready'};
+  await page.route('**/api/console/board-target?*',route=>route.fulfill({json:{kind:'posts',channel:'release',id:75,root:1}}));
   await page.route('**/api/console/board?*',route=>{
     const q=new URL(route.request().url()).searchParams;
     if(q.has('query'))return route.fulfill({json:{messages:[reply],topicSummaries:[],next:null,searchPage:{total:1,cursor:null}}});
     if(q.has('threadId'))return route.fulfill({json:{threadRoot:root,messages:[reply],topicSummaries:[],next:null}});
     return route.fallback();
   });
-  await page.goto('/messages');
+  await page.goto('/messages?links');
   const search=page.getByRole('searchbox',{name:'Search channels and messages'});
   await search.fill('rollback');
   const results=page.getByRole('region',{name:'Matching messages'});
@@ -322,7 +323,7 @@ test('board search finds a reply and returns to its results after opening the th
   await expect(page.getByRole('complementary',{name:'Thread'}).locator('[data-board-anchor="post:75"]')).toBeFocused();
   await page.getByRole('button',{name:'Close thread'}).click();
   await expect(search).toHaveValue('rollback');
-  await expect(results.getByRole('link')).toBeVisible();
+  await expect(results.getByRole('link')).toBeFocused();
 });
 
 test('an old post bookmark opens its exact canonical target and survives reload',async({page})=>{
