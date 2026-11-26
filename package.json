@@ -127,6 +127,7 @@
     "./sessions/identity-migration": "./dist/src/sessions/identity-migration.mjs",
     "./files/git-http": "./dist/src/files/git-http.mjs",
     "./files/store": "./dist/src/files/store.mjs",
+    "./files/view": "./dist/src/files/view.mjs",
     "./state/types": "./dist/src/state/types.mjs",
     "./state/privacy-preferences": "./dist/src/state/privacy-preferences.mjs",
     "./state/postgres": "./dist/src/state/postgres.mjs",

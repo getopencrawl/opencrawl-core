@@ -119,11 +119,29 @@ export async function admitPush(root: string, dir: string, limits: Budget, readF
       throw failure(507, 'This network has reached its shared Git storage quota');
     const allocated = await reserve(root, limits.repositoryBytes - baseBytes, limits, readFree);
     reservation = allocated.reservation;
-    // RLIMIT_FSIZE also applies to the existing append-only reflog. Refuse
+    // RLIMIT_FSIZE also applies to the existing append-only reflogs. Refuse
     // before Git starts if even its smallest platform limit cannot fit one
     // more authenticated entry and the explicit Git identity.
-    const reflog = await lstat(join(dir, 'logs', 'refs', 'heads', 'main'));
-    if (reflog.size + 32768 > allocated.maxPack + metadataReserve)
+    let maxReflogSize = (await lstat(join(dir, 'logs', 'refs', 'heads', 'main'))).size;
+    const scanReflogs = async (logDir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(logDir, {withFileTypes: true});
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const entry of entries) {
+        const path = join(logDir, entry.name);
+        if (entry.isDirectory()) await scanReflogs(path);
+        else if (entry.isFile()) {
+          const info = await lstat(path);
+          if (info.size > maxReflogSize) maxReflogSize = info.size;
+        }
+      }
+    };
+    await scanReflogs(join(dir, 'logs', 'refs', 'heads'));
+    if (maxReflogSize + 32768 > allocated.maxPack + metadataReserve)
       throw failure(507, 'The shared Git storage budget cannot fit the next reflog entry');
     const check = async () => {
       let staging = 0;

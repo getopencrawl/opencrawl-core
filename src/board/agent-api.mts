@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {boardPath,type BoardKind} from '../application/board-links.mjs';
 import {workspaceLinkHint} from '../state/capture-links.mjs';
@@ -23,8 +24,9 @@ export const agentListSchema=z.strictObject({workspace,...pagination,channels:z.
   order:z.enum(['oldest','newest','relevance']).default('newest'),cursor:short.optional(),facets:z.array(z.enum(['channel','agent','day'])).max(3).default([])});
 export const agentThreadSchema=z.strictObject({workspace,threadId:messageId,...pagination,after:z.number().int().nonnegative().optional(),before:messageId.optional(),order:z.enum(['oldest','newest']).default('oldest'),cursor:short.optional()});
 export const agentSearchSchema=agentListSchema.extend({order:z.enum(['oldest','newest','relevance']).default('relevance')});
-export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,channels:z.array(channelSchema).optional(),after:z.number().int().nonnegative().optional()});
-export const agentInboxSchema=z.strictObject({workspace,...identity,acknowledge:z.string().regex(/^[a-f0-9]{64}$/, 'must be the full cursor returned by the board inbox').optional(),noticeOnly:z.boolean().default(false)});
+const delivery = z.enum(['direct','routine']);
+export const agentSyncSchema=z.strictObject({workspace,...identity,...pagination,delivery:delivery.optional(),through:z.number().int().nonnegative().optional(),waitMs:z.number().int().min(0).max(20000).optional(),channels:z.array(channelSchema).optional(),after:z.number().int().nonnegative().optional()});
+export const agentInboxSchema=z.strictObject({workspace,...identity,delivery:delivery.optional(),readId:z.uuid().optional().describe('Use the read ID supplied by a lifecycle notification.'),after:z.number().int().nonnegative().optional(),through:z.number().int().nonnegative().optional(),acknowledge:z.string().regex(/^[a-f0-9]{64}$/, 'must be the full cursor returned by the board inbox').optional(),noticeOnly:z.boolean().default(false)});
 export const agentPostSchema=z.strictObject({workspace,...identity,full:z.boolean().optional().describe('Return complete published messages instead of compact receipts.'),posts:z.array(z.strictObject({id:z.string().trim().min(1).max(80),channel:channelSchema.optional(),
   text:z.string().min(1),replyTo:messageId.optional(),threadId:messageId.optional().describe('Compatibility alias for replyTo.'),mentions:z.array(short).max(32).default([]),follow:z.boolean().default(true)})).min(1).max(20)});
 export const agentFollowSchema=z.strictObject({workspace,...identity,threadId:messageId,following:z.boolean().default(true)});
@@ -57,9 +59,9 @@ async function findIdentity(tx:BoardReader,userId:string,input:Identity){
   return {agent,name:participant.name,userId,registered:true,participant};
 }
 
-async function resolveIdentity(tx:BoardReader,userId:string,input:Identity){
+async function resolveIdentity(tx:BoardReader,userId:string,input:Identity,requireName=true){
   const identity=await findIdentity(tx,userId,input);
-  if(identity?.name)return identity;
+  if(identity&&(identity.name||!requireName))return identity;
   if(identity)throw fail('Set this session name and task with board profile',409);
   if(input.currentSession||input.session)throw fail('Register the current session before using the board',409);
   if(input.agent)throw fail('Agent is not registered to this account; use board_presence with session, name and task',409);
@@ -92,6 +94,67 @@ export function createAgentBoard({repository,scope,now,previews,publicUrl}:{publ
     return {messages:result.messages.map(m=>linked(principal,m,args.select)),next:result.next,
       ...result.facets?{facets:Object.fromEntries(Object.entries(result.facets).map(([key,value])=>[key==='topic'?'channel':key,value]))}:{}};
   }
+  async function sync(principal:Principal,input:unknown){
+    const args=agentSyncSchema.parse(input),key=checked(principal,args);
+    if(args.waitMs && (args.delivery!=='direct' || args.through!==undefined))throw fail('A bounded wait requires an open direct feed');
+    const deadline=Date.now()+(args.waitMs??0);
+    const read=(startAfter:number|undefined)=>{
+      const preview=previews(principal,key);
+      return preview.finish(repository.read(key,async tx=>{
+        const identity=args.delivery ? await resolveIdentity(tx,principal.userId,args,false) : await findIdentity(tx,principal.userId,args);
+        if(args.delivery && args.currentSession && identity?.participant.harness!==args.currentSession.harness)
+          throw fail('Session harness does not match its registration',409);
+        const {head:latest}=await tx.metadata();
+        if(args.through!==undefined && args.through>latest)throw fail('Upper bound exceeds board history');
+        const head=args.through??latest;
+        if(args.delivery && identity?.participant.left)return {messages:[],next:head,more:false,left:true};
+        let after=startAfter;
+        if(after===undefined){
+          if(!identity)after=await tx.headBefore(now()-onlineWindow);
+          else if(identity.participant.left)after=head;
+          else after=identity.participant.inboxAfter??await tx.headBefore(identity.participant.registeredAt);
+        }
+        if(after>head)throw fail('Cursor exceeds board history');
+        const window={after,through:head,limit:args.limit+1};
+        const rows=identity
+          ? await tx.unread({...window,delivery:args.delivery,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name})
+          : await tx.sharedUpdates({...window,channels:args.channels});
+        const names=await namesFor(tx,rows);
+        const messages=messagePage(rows.map(m=>({...linked(principal,selectMessage(agentMessage(m,names),args.select),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
+        const more=messages.length<rows.length;
+        messages.forEach((message,i)=>{
+          // A routine introduction already carries the handle and declared task.
+          if(args.delivery!=='routine' || !rows[i].onlineAudience)preview.message(message,rows[i]);
+        });
+        const receipt=args.delivery && rows[0] && identity ? createHash('sha256')
+          .update(JSON.stringify([key,identity.agent,args.delivery,rows[0].id,rows[0].requestId])).digest('hex') : undefined;
+        return {messages,next:more?messages.at(-1)!.id:head,more,...(receipt?{notificationReceipt:receipt}:{}),...(!identity?{scope:'workspace',
+          guidance:'Showing shared board posts. To receive personal updates, pass the native currentSession from startup or a registered agent handle.'}:{})};
+      }));
+    };
+    const first=await read(args.after);
+    if(!args.waitMs || first.messages.length || 'left' in first || !repository.watchDirect)return first;
+    // Listen before rechecking the durable log, covering a commit between the
+    // first empty read and LISTEN. Late or coalesced signals are harmless.
+    let watch=await repository.watchDirect(key).catch(()=>undefined);
+    // The idle hook rechecks the durable feed on its next bounded request.
+    if(!watch)return first;
+    try {
+      let pending=await read(first.next);
+      let retried=false;
+      while(watch && !pending.messages.length && !('left' in pending) && Date.now()<deadline){
+        if(!await watch.wait(Math.max(0,deadline-Date.now()))){
+          // Restore LISTEN before checking the log to cover posts during reconnection.
+          // One retry per request bounds the work during a sustained database outage.
+          watch.close();
+          watch=!retried && Date.now()<deadline ? await repository.watchDirect(key).catch(()=>undefined) : undefined;
+          retried=true;
+        }
+        pending=await read(pending.next);
+      }
+      return pending;
+    } finally { watch?.close(); }
+  }
   return {
     list,search:(principal:Principal,input:unknown)=>list(principal,agentSearchSchema.parse(input)),
     async read(principal:Principal,input:unknown){
@@ -112,6 +175,27 @@ export function createAgentBoard({repository,scope,now,previews,publicUrl}:{publ
     },
     async inbox(principal:Principal,input:unknown){
       const args=agentInboxSchema.parse(input),key=checked(principal,args);
+      if(args.readId && (!args.delivery || !args.currentSession))throw fail('A tracked page requires a native session and delivery type');
+      if(args.delivery){
+        const {delivery,after,through,readId,currentSession}=args;
+        if(args.acknowledge || after===undefined || through===undefined || args.noticeOnly && !readId)throw fail('Use the supplied after and through bounds to read a notification');
+        if(args.noticeOnly)return repository.read(key,async tx=>{
+          const {participant}=await resolveIdentity(tx,principal.userId,args,false);
+          const page=participant.servedInbox?.[delivery];
+          if(participant.left || participant.harness!==currentSession?.harness || page?.readId!==readId || page?.after!==after || page?.through!==through)return {served:null};
+          return {served:page};
+        });
+        const page=await sync(principal,{workspace:args.workspace,currentSession,agent:args.agent,session:args.session,delivery,after,through});
+        const first=page.messages[0]?.id,proof='notificationReceipt' in page ? page.notificationReceipt : undefined;
+        if(readId && typeof first==='number' && typeof proof==='string')await repository.transaction(key,async tx=>{
+          const {agent,participant}=await resolveIdentity(tx,principal.userId,args,false);
+          if(participant.left || participant.harness!==currentSession?.harness)throw fail('Session registration changed',409);
+          participant.servedInbox={...participant.servedInbox,[delivery]:{readId,after,through,first,next:page.next,proof}};
+          await tx.putParticipant(agent,participant);
+        });
+        return page;
+      }
+      if(args.after!==undefined || args.through!==undefined)throw fail('Bounds require a notification delivery type');
       if(args.noticeOnly&&args.acknowledge)throw fail('A notification cannot acknowledge messages');
       const preview=previews(principal,key);
       return preview.finish(repository.transaction(key,async tx=>{
@@ -123,31 +207,7 @@ export function createAgentBoard({repository,scope,now,previews,publicUrl}:{publ
         return {...state,messages:rows.map(row=>preview.message({...linked(principal,agentMessage(row,names)),...replyNotification(row.threadId)},row))};
       }));
     },
-    async sync(principal:Principal,input:unknown){
-      const args=agentSyncSchema.parse(input),key=checked(principal,args);
-      const preview=previews(principal,key);
-      return preview.finish(repository.read(key,async tx=>{
-        const identity=await findIdentity(tx,principal.userId,args);
-        const {head}=await tx.metadata();
-        let after=args.after;
-        if(after===undefined){
-          if(!identity)after=await tx.headBefore(now()-onlineWindow);
-          else if(identity.participant.left)after=head;
-          else after=identity.participant.inboxAfter??await tx.headBefore(identity.participant.registeredAt);
-        }
-        if(after>head)throw fail('Cursor exceeds board history');
-        const window={after,through:head,limit:args.limit+1};
-        const rows=identity
-          ? await tx.unread({...window,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name})
-          : await tx.sharedUpdates({...window,channels:args.channels});
-        const names=await namesFor(tx,rows);
-        const messages=messagePage(rows.map(m=>({...linked(principal,selectMessage(agentMessage(m,names),args.select),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
-        const more=messages.length<rows.length;
-        messages.forEach((message,i)=>preview.message(message,rows[i]));
-        return {messages,next:more?messages.at(-1)!.id:head,more,...(!identity?{scope:'workspace',
-          guidance:'Showing shared board posts. To receive personal updates, pass the native currentSession from startup or a registered agent handle.'}:{})};
-      }));
-    },
+    sync,
     async post(principal:Principal,input:unknown){
       const args=agentPostSchema.parse(input),key=checked(principal,args);
       return repository.transaction(key,async tx=>{const identity=await resolveIdentity(tx,principal.userId,args);if(identity.participant.left){await requireBoardParticipation(tx,identity.agent);throw fail('Session has left; resume its presence before posting',409);}

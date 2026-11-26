@@ -19,6 +19,15 @@ function fixture(archive=bytes,patch:Record<string,unknown>={}){
  return {archive,metadata,pin,entry,release};
 }
 const fetcher=(run:(url:string,options?:RequestInit)=>Response|Promise<Response>)=>Object.assign((url:RequestInfo|URL,options?:RequestInit)=>run(String(url),options),{preconnect:()=>{}}) as typeof fetch;
+test('board runtime source is optional for older pins and cannot admit extra files',async()=>{
+ const f=fixture(),data=JSON.parse(f.metadata.toString());
+ expect(validateArtifact(data,f.entry,'darwin-arm64',f.pin).allowed.has('runtime/board.mjs')).toBe(false);
+ const current={...data,source:[...data.source,'runtime/privacy.mjs','runtime/board.mjs']};
+ expect(validateArtifact(current,f.entry,'darwin-arm64',f.pin).allowed.has('runtime/board.mjs')).toBe(true);
+ expect(()=>validateArtifact({...current,source:[...current.source,'runtime/extra.mjs']},f.entry,'darwin-arm64',f.pin)).toThrow();
+ const metadata=Buffer.from(JSON.stringify(current));
+ await expect(readPluginArchive(bytes,metadata,f.entry,'darwin-arm64',{...f.pin,metadataSha256:fileHash(metadata)})).rejects.toMatchObject({code:'PLUGIN_PACKAGE_INVALID'});
+});
 test('Codex archive uses only its own native manifest and cannot accept a Claude ZIP',async()=>{
  const f=fixture(),entry:PackageRelease={...f.entry,harness:'codex',name:'opencrawl-local-codex',path:'local/codex'};
  const data={...JSON.parse(f.metadata.toString()),harness:'codex',name:entry.name,filename:'opencrawl-local-codex-0.1.0-darwin-arm64.zip'};

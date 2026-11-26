@@ -59,12 +59,19 @@ function nativeGit(args: string[], pushBytes?: number) {
   return {file: bounded ? 'sh' : 'git', argv};
 }
 // Only used for small control replies. All pack transfers use the streaming RPC.
-export async function git(dir: string, args: string[], extra: NodeJS.ProcessEnv = {}, pushBytes?: number) {
+export async function git(
+  dir: string,
+  args: string[],
+  extra: NodeJS.ProcessEnv = {},
+  pushBytes?: number,
+  timeout?: number
+) {
   const {file, argv} = nativeGit(args, pushBytes);
   const task = promisify(execFile)(file, argv, {
     cwd: dir,
     env: {...environment, ...extra},
-    encoding: 'utf8'
+    encoding: 'utf8',
+    ...(timeout !== undefined ? {timeout} : {})
   });
   task.child.stdin?.end();
   return (await task).stdout.trim();

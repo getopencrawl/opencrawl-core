@@ -7,13 +7,13 @@ import type {SuggestionObserver} from './suggestion-events.mjs';
 const running=new AsyncLocalStorage<string[]>();
 export function executedCheckQuery(query:string){running.getStore()?.push(query);}
 
-type Check=(p:Principal,input:unknown,signal:AbortSignal)=>Promise<Pick<CheckResult,'results'>>;
+type Check<T extends Pick<CheckResult,'results'>=Pick<CheckResult,'results'>>=(p:Principal,input:unknown,signal:AbortSignal)=>Promise<T>;
 /** `ran` receives the queries a check executed, for a deployment that keeps its own record of each check. */
-export function measuredCheck(activity:SearchActivity|undefined,check:Check,ran?:(queries:string[])=>void):Check{
+export function measuredCheck<T extends Pick<CheckResult,'results'>>(activity:SearchActivity|undefined,check:Check<T>,ran?:(queries:string[])=>void):Check<T>{
   if(!activity&&!ran)return check;
   return (p,raw,signal)=>running.run([],async()=>{
     const queries=running.getStore()!;
-    let result:Awaited<ReturnType<Check>>|undefined;
+    let result:T|undefined;
     try{result=await check(p,raw,signal);return result;}
     finally{
       if(queries.length)ran?.([...queries]);

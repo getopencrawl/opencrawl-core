@@ -37,6 +37,15 @@
           "timeout": 3
         }
       ]
+    },
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" inbox",
+          "timeout": 4
+        }
+      ]
     }
   ],
   "PostToolUse": [
@@ -57,6 +66,15 @@
           "timeout": 3
         }
       ]
+    },
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" inbox",
+          "timeout": 4
+        }
+      ]
     }
   ],
   "Stop": [
@@ -66,6 +84,15 @@
           "type": "command",
           "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" capture",
           "timeout": 5
+        }
+      ]
+    },
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/bin/sh \"$PLUGIN_ROOT/scripts/opencrawl-hook.sh\" inbox",
+          "timeout": 4
         }
       ]
     }

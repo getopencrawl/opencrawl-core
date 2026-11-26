@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createContextCheck,lexicalCheckJudgment,CHECK_LIMITS,tokenPrefix} from '../dist/src/search/check.mjs';
+import {measuredCheck} from '../dist/src/search/check-activity.mjs';
 const principal={tenantId:'tenant-a',userId:'alice'},input={eventId:'turn-1',currentSession:{harness:'codex',sessionId:'current'},message:'Diagnose queue timeout regression',timestamp:'2026-11-17T12:00:00Z'};
 const hit=(n,overrides={})=>({id:'sessions:'+n,source:'sessions',title:'Queue diagnostic',text:'Queue timeout occurs when retry state is reused. '+n,provenance:{sessionId:'prior-'+n,role:'assistant',timestamp:'2026-11-16T12:00:00Z'},...overrides});
 function fixture(overrides={}){
@@ -46,4 +47,37 @@ test('an unavailable candidate search cannot masquerade as a successful empty ch
 });
 test('quote windows retain exact Unicode text within token limits',()=>{
   const text='😀中文 Queue '.repeat(300),prefix=tokenPrefix(text,200);assert.ok(text.startsWith(prefix));assert.ok(!/[\uD800-\uDBFF]$/.test(prefix));assert.ok(prefix.length<text.length);
+});
+test('optional reflexes pass validation, obey final authorization, and do not bill proactive search when queries are empty',async()=>{
+  const reflex={id:'rfx-1',title:'Check queue idempotency',kind:'intent',severity:'warning',intentId:'intent-42',text:'Ensure retries remain idempotent.',url:'https://app.example.test/changes/repo/1'};
+  const f=fixture({judge:()=>({...lexicalCheckJudgment(),async plan(){return [];},async reflexes(){return [reflex];}})});
+  let searchCalls=0;
+  const metered=measuredCheck({search:async()=>{searchCalls++;},handoffs:async()=>{}},f.run);
+  const result=await metered(principal,input);
+  assert.deepEqual(result.results,[]);
+  assert.deepEqual(result.reflexes,[reflex]);
+  assert.equal(result.outputTokens,1);
+  assert.equal(searchCalls,0);
+  assert.equal(f.counts().searches,0);
+  assert.equal(f.counts().authorizations,2);
+
+  for(const bad of [
+    Array.from({length:6},(_,i)=>({id:'r'+i,text:'x'})),
+    [{id:'',text:'missing id'}],
+    [{id:'r1',text:''}],
+    [{id:'r1',text:'bad scheme',url:'javascript:alert(1)'}],
+    [{id:'r1',text:'crlf url',url:'https://app.example.test/path\r\nInjected: 1'}],
+    [{id:'r1',text:'nul url',url:'https://app.example.test/path\x00'}],
+    [{id:'r1',text:'extra field',unknown:true}],
+  ]){
+    const invalid=fixture({judge:()=>({...lexicalCheckJudgment(),async plan(){return [];},async reflexes(){return bad;}})});
+    await assert.rejects(invalid.run(principal,input));
+  }
+
+  let checks=0;
+  const revoked=fixture({
+    judge:()=>({...lexicalCheckJudgment(),async plan(){return [];},async reflexes(){return [reflex];}}),
+    authorize:async()=>{if(++checks===2)throw Object.assign(Error('revoked'),{status:403});},
+  });
+  await assert.rejects(revoked.run(principal,input),/revoked/);
 });

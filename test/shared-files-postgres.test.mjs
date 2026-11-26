@@ -103,3 +103,71 @@ test('verified legacy history migrates once; native ref and authenticated push a
     await assert.rejects(newProcess.open(tenant));
   } finally {await rename(offline,recovered);}
 });
+
+test('non-main amendment branch reflogs audit independently without disturbing main audit_offset', {skip:!postgresUrl}, async t => {
+  const db = await applicationDatabaseFixture(t);
+  const root = await mkdtemp(join(tmpdir(),'opencrawl-files-amend-audit-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const client = join(root,'client'), storage = join(root,'repositories');
+  await Promise.all([mkdir(client),mkdir(storage)]);
+  const store = postgresSharedFiles(db,storage);
+  await store.ready();
+  const tenant = 'amendment-tenant';
+  const dir = await store.open(tenant);
+  const baseMain = await git(dir,['rev-parse','refs/heads/main']);
+
+  await git(root,['clone','--quiet',dir,client]);
+  async function commit(file,contents) {
+    await writeFile(join(client,file),contents);
+    await git(client,['add',file]);
+    await git(client,['commit','--quiet','-m',contents]);
+    return git(client,['rev-parse','HEAD']);
+  }
+  const amendA1 = await commit('a.md','amend a1');
+  const amendA2 = await commit('a.md','amend a2');
+  const userA = 'user-amend-a';
+  await git(dir,['fetch','--no-tags','--no-write-fetch-head',client,amendA2]);
+  await git(dir,['update-ref','-m','push','refs/heads/intents/amendments/amend-a',amendA1,'0'.repeat(40)],
+    {GIT_COMMITTER_NAME:'OpenCrawl',GIT_COMMITTER_EMAIL:Buffer.from(userA).toString('base64url')+'@opencrawl.invalid'});
+  await git(dir,['update-ref','-m','push','refs/heads/intents/amendments/amend-a',amendA2,amendA1],
+    {GIT_COMMITTER_NAME:'OpenCrawl',GIT_COMMITTER_EMAIL:Buffer.from(userA).toString('base64url')+'@opencrawl.invalid'});
+
+  const clientB = join(root,'client-b');
+  await git(root,['clone','--quiet',dir,clientB]);
+  await writeFile(join(clientB,'b.md'),'amend b1');
+  await git(clientB,['add','b.md']);
+  await git(clientB,['commit','--quiet','-m','amend b1']);
+  const amendB1 = await git(clientB,['rev-parse','HEAD']);
+  const userB = 'user-amend-b';
+  await git(dir,['fetch','--no-tags','--no-write-fetch-head',clientB,amendB1]);
+  await git(dir,['update-ref','-m','push','refs/heads/intents/amendments/amend-b',amendB1,'0'.repeat(40)],
+    {GIT_COMMITTER_NAME:'OpenCrawl',GIT_COMMITTER_EMAIL:Buffer.from(userB).toString('base64url')+'@opencrawl.invalid'});
+
+  const beforeMain = (await db.pool.query('SELECT audit_offset FROM opencrawl_git_repositories WHERE namespace=$1 AND tenant_id=$2',[db.namespace,tenant])).rows[0].audit_offset;
+  await store.syncAudit(tenant,dir);
+  await store.syncAudit(tenant,dir);
+  const afterMain = (await db.pool.query('SELECT audit_offset FROM opencrawl_git_repositories WHERE namespace=$1 AND tenant_id=$2',[db.namespace,tenant])).rows[0].audit_offset;
+  assert.equal(afterMain, beforeMain);
+
+  const pushes = await db.pool.query(
+    'SELECT head, previous_head, user_id FROM opencrawl_shared_file_pushes WHERE namespace=$1 AND tenant_id=$2 ORDER BY head',
+    [db.namespace,tenant]
+  );
+  assert.deepEqual(pushes.rows, [
+    {head:amendA1,previous_head:'0'.repeat(40),user_id:userA},
+    {head:amendA2,previous_head:amendA1,user_id:userA},
+    {head:amendB1,previous_head:'0'.repeat(40),user_id:userB},
+  ].sort((a,b)=>a.head.localeCompare(b.head)));
+
+  const audits = await db.pool.query(
+    'SELECT ref_name, audit_offset FROM opencrawl_git_ref_audits WHERE namespace=$1 AND tenant_id=$2 ORDER BY ref_name',
+    [db.namespace,tenant]
+  );
+  assert.deepEqual(audits.rows.map(r=>r.ref_name), [
+    'refs/heads/intents/amendments/amend-a',
+    'refs/heads/intents/amendments/amend-b',
+  ]);
+  for (const row of audits.rows) assert.ok(Number(row.audit_offset) > 0);
+  assert.equal(await git(dir,['rev-parse','refs/heads/main']), baseMain);
+  await git(dir,['fsck','--full','--strict','--no-dangling','--no-progress']);
+});
