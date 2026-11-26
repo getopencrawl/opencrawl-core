@@ -259,6 +259,8 @@ img { max-width: 100%; }
 .oc-table-container th:first-child, .oc-table-container td:first-child { padding-left: 0; }
 .oc-table-container th:last-child, .oc-table-container td:last-child { padding-right: 0; }
 .oc-table-container tr:last-child td { border-bottom: none; }
+.oc-table-container tbody tr:has(.oc-button) > :is(th, td) { vertical-align: baseline; overflow-wrap: anywhere; }
+.oc-table-container td:last-child:has(> .oc-button) { text-align: end; width: 1%; }
 .oc-table-hint { margin-top: var(--space-2); color: var(--quiet); font-size: var(--text-xs); }
 .oc-dialog { width: min(var(--console-dialog-width), calc(100vw - var(--space-8))); max-height: calc(100dvh - var(--space-8)); padding: var(--space-6); border: 0; border-radius: var(--radius-panel); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-dialog); }
 .oc-dialog::backdrop { background: var(--backdrop); }
@@ -1101,26 +1103,6 @@ img { max-width: 100%; }
 .oc-host-install > .oc-install-instructions { margin-inline: var(--install-inset); }
 .oc-host-install h2, .oc-hosts-section h2 { font-size: 1.25rem; letter-spacing: -.025em; }
 .oc-host-install .oc-section-heading p { max-width: none; }
-.oc-host-add-keys { --key-panel-inset: var(--space-6); }
-.oc-host-add-keys > summary { padding-inline: var(--key-panel-inset); }
-.oc-host-add-keys > summary img { margin-inline-start: auto; }
-.oc-host-add-keys > summary .oc-icon { margin-inline-start: 0; }
-.oc-host-add-keys .oc-host-install { --install-inset: var(--key-panel-inset); padding-block-start: var(--space-3); }
-.oc-host-add-keys .oc-tabs { margin-bottom: var(--space-5); }
-.oc-key-setup .oc-management-form { grid-template-columns: minmax(0, 1fr) max-content; }
-.oc-key-roster { list-style: none; margin: 0; padding: 0; }
-.oc-key-roster li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(max-content, .5fr) auto; align-items: baseline; column-gap: var(--space-4); padding-block: var(--space-3); border-top: 1px solid var(--line); }
-.oc-key-roster li:last-child { padding-bottom: 0; }
-.oc-key-date { color: var(--muted); font-size: var(--text-ui); }
-@container (max-width: 36rem) {
-  .oc-key-roster li { grid-template-columns: minmax(0, 1fr) auto; }
-  .oc-key-roster .oc-key-date { grid-column: 1; grid-row: 2; font-size: var(--text-sm); }
-  .oc-key-roster .oc-button { grid-column: 2; grid-row: 1; }
-}
-@container (max-width: 400px) {
-  .oc-key-setup .oc-management-form { grid-template-columns: minmax(0, 1fr); }
-  .oc-host-add-keys .oc-tabs > .oc-button { padding-inline: var(--space-2); }
-}
 .oc-hosts-section { padding: 0; border: 0; }
 .oc-hosts-section .oc-section-heading { margin-bottom: var(--space-4); }
 .oc-host-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-8); padding: var(--space-5) var(--install-inset) 0; margin: var(--space-6) 0 0; border-top: 1px solid var(--line); list-style: decimal; }
@@ -1153,7 +1135,6 @@ img { max-width: 100%; }
 .oc-host-no-agents { margin: 0; padding: 0 var(--space-5) var(--space-4); color: var(--muted); }
 @container (max-width: 700px) {
   .oc-host-welcome { padding: var(--space-5); }
-  .oc-host-add-keys { --key-panel-inset: var(--space-4); }
   .oc-host-install { --install-inset: var(--space-5); padding-block-start: var(--install-inset); }
   .oc-host-welcome img { width: min(20cqi, 152px); margin-inline: 0; }
   .oc-host-guide { grid-template-columns: 1fr; gap: var(--space-4); }

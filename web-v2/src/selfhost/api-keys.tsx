@@ -3,7 +3,7 @@ import type {ConsoleExtensions} from '../application/app.tsx';
 import type {Bootstrap} from '../application/api.ts';
 import {useResource} from '../application/resource.ts';
 import {machineKeyApi, type MachineKey} from '../application/transport.ts';
-import {Button, CopyField, Dialog, Field, Input, LinkButton, LoadingState, Notice, Section} from '../design/components.tsx';
+import {Button, CopyField, Dialog, Field, Input, LinkButton, LoadingState, Notice, Section, Table} from '../design/components.tsx';
 import {Link} from '../router.tsx';
 
 const settingsPath = '/settings/api-keys';
@@ -48,7 +48,7 @@ function CreateApiKey() {
     setSecret('');
     requestAnimationFrame(() => nameInput.current?.focus());
   }
-  return <div className="oc-key-setup stack">
+  return <div className="stack">
     <form className="field-inline oc-management-form oc-form-measure" onSubmit={event => {event.preventDefault(); if (name.trim()) void mutation.run(create);}}>
       <Field label="Key name"><Input ref={nameInput} value={name} onChange={event => setName(event.target.value)} maxLength={64} disabled={mutation.busy} required autoComplete="off" placeholder="e.g. Claude Code service"/></Field>
       <Button type="submit" variant="primary" busy={mutation.busy} disabled={!name.trim()}>Create API key</Button>
@@ -72,7 +72,7 @@ function ApiKeySettings() {
     updateData(current => ({keys: (current?.keys ?? []).filter(item => item.id !== key.id)}));
     setSelected(null);
     requestAnimationFrame(() => {
-      (section.current?.querySelector<HTMLButtonElement>('li button') ?? section.current?.querySelector<HTMLAnchorElement>('a'))?.focus();
+      (section.current?.querySelector<HTMLButtonElement>('tbody button') ?? section.current?.querySelector<HTMLAnchorElement>('a'))?.focus();
     });
     void reload();
   }
@@ -81,12 +81,15 @@ function ApiKeySettings() {
     <Section className="oc-management-panel" title="API keys" actions={createLink}>
       {loading && !data && <LoadingState label="Loading API keys"/>}
       {error && <Notice tone="danger" actions={<Button onClick={() => void reload()}>Retry</Button>}>{error}</Notice>}
-      {data && (data.keys.length ? <ul className="oc-key-roster" aria-label="Active API keys">{data.keys.map(key =>
-        <li key={key.id}>
-          <span className="oc-member-name">{key.name}</span>
-          <span className="oc-key-date">Created <time dateTime={key.createdAt}>{new Date(key.createdAt).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})}</time></span>
-          <Button variant="danger-quiet" aria-label={'Revoke ' + key.name} onClick={() => {mutation.clearError(); setSelected(key);}}>Revoke</Button>
-        </li>)}</ul> : <p className="muted">No active API keys.</p>)}
+      {data && (data.keys.length ? <Table label="Active API keys">
+        <thead><tr><th scope="col">Name</th><th scope="col">Created</th><th scope="col" aria-label="Actions"/></tr></thead>
+        <tbody>{data.keys.map(key =>
+          <tr key={key.id}>
+            <td>{key.name}</td>
+            <td className="muted"><time dateTime={key.createdAt}>{new Date(key.createdAt).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})}</time></td>
+            <td><Button variant="danger-quiet" aria-label={'Revoke ' + key.name} onClick={() => {mutation.clearError(); setSelected(key);}}>Revoke</Button></td>
+          </tr>)}</tbody>
+      </Table> : <p className="muted">No active API keys.</p>)}
     </Section>
     {selected && <Dialog open title={'Revoke ' + selected.name + '?'} description="Agents using this key will lose access immediately." onClose={() => {if (!mutation.busy) setSelected(null);}} actions={<>
       <Button disabled={mutation.busy} onClick={() => setSelected(null)}>Cancel</Button>
