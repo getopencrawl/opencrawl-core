@@ -34,12 +34,15 @@ fi
 
 umask 077
 sqlite=false
+headless=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --headless) headless=true; sqlite=true; export OPENCRAWL_AIRBYTE_ENABLED=false; shift ;;
     --sqlite) sqlite=true; shift ;;
     --no-airbyte) export OPENCRAWL_AIRBYTE_ENABLED=false; shift ;;
     --help|-h)
-      echo 'Usage: ./deploy/up.sh [--sqlite] [--no-airbyte] [Compose up arguments...]'
+      echo 'Usage: ./deploy/up.sh [--headless] [--sqlite] [--no-airbyte] [Compose up arguments...]'
+      echo 'Use --headless for a single-host workspace and verified first-admin login in JSON.'
       echo 'Use --sqlite on the first run for SQLite FTS5. The choice is saved in deploy/.env.'
       exit 0 ;;
     *) break ;;
@@ -61,7 +64,12 @@ command -v docker >/dev/null 2>&1 || { echo "Install Docker with the Compose plu
 secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
 if [ ! -f .env ]; then
   key() { dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr -d '\n'; }
-  sed -e "s/^OPENCRAWL_AUTH_SECRET=$/OPENCRAWL_AUTH_SECRET=$(secret)/" \
+  origin=
+  enable_airbyte=true
+  if [ "$headless" = true ]; then origin=http://localhost:8092; enable_airbyte=false; fi
+  sed -e "s|^OPENCRAWL_URL=$|OPENCRAWL_URL=$origin|" \
+      -e "s/^OPENCRAWL_AIRBYTE_ENABLED=true$/OPENCRAWL_AIRBYTE_ENABLED=$enable_airbyte/" \
+      -e "s/^OPENCRAWL_AUTH_SECRET=$/OPENCRAWL_AUTH_SECRET=$(secret)/" \
       -e "s/^OPENCRAWL_ORGANIZATION_ID=$/OPENCRAWL_ORGANIZATION_ID=org_$(secret)/" \
       -e "s/^OPENCRAWL_SETUP_TOKEN=$/OPENCRAWL_SETUP_TOKEN=$(secret)/" \
       -e "s|^OPENCRAWL_CONNECTOR_KEY=$|OPENCRAWL_CONNECTOR_KEY=$(key)|" \
@@ -71,8 +79,10 @@ if [ ! -f .env ]; then
       -e "s/^OPENCRAWL_TEMPORAL_PASSWORD=$/OPENCRAWL_TEMPORAL_PASSWORD=$(secret)/" .env.example > .env
   if [ "$sqlite" = true ]; then printf '\nCOMPOSE_FILE=%s\n' "$sqlite_files" >> .env; fi
   chmod 600 .env
-  echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."
-  exit 0
+  if [ "$headless" != true ]; then
+    echo "Created deploy/.env with local secrets. Set OPENCRAWL_URL, configure Airbyte if enabled, then rerun this command."
+    exit 0
+  fi
 fi
 # Runtime services share one image tag. Build it once instead of asking parallel
 # Compose targets to export the same tag into the containerd image store.
@@ -111,14 +121,26 @@ fi
 compose_build_flag=--build=false
 if [ "$compose_build" = true ]; then
   source_revision=$(git -C .. rev-parse HEAD)
-  docker compose build --build-arg "OPENCRAWL_SOURCE_REVISION=$source_revision" app
+  docker compose build --build-arg "OPENCRAWL_SOURCE_REVISION=$source_revision" app >&2
   compose_build_flag=--no-build
 elif [ "$compose_no_build" = true ]; then
   compose_build_flag=--no-build
 fi
 OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW=$(fresh_credential_volume)
 export OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW
-docker compose up -d "$compose_build_flag" --wait --wait-timeout 600 "$@"
+docker compose up -d "$compose_build_flag" --wait --wait-timeout 600 "$@" >&2
+if [ "$headless" = true ]; then
+  mkdir -p -m 700 .state
+  password_file=.state/first-admin-password
+  if [ ! -f "$password_file" ]; then
+    staging=$(mktemp .state/first-admin.XXXXXX)
+    trap 'rm -f "$staging"' EXIT
+    secret > "$staging"
+    ln "$staging" "$password_file" || test -f "$password_file"
+  fi
+  docker compose exec -T app node deploy/first-admin.mjs < "$password_file"
+  exit 0
+fi
 echo "OpenCrawl is running at the OPENCRAWL_URL configured in deploy/.env."
 # The bootstrap grant is consumed once. Keep this URL private.
 docker compose exec -T app node -e "console.log('Private first-run setup link: '+process.env.OPENCRAWL_URL+'/auth/signup?setup='+encodeURIComponent(process.env.OPENCRAWL_SETUP_TOKEN))"

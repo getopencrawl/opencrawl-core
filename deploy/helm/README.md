@@ -180,13 +180,7 @@ an intermediate stage. Rerun the same command/configuration to resume.
 
 ## Machine authentication
 
-For a custom support harness, run `node machine-key.mjs SERVICE-NAME HTTPS-ORIGIN NEW-ENV-FILE`
-from the unpacked kit. It writes the service credential to a new private file
-and prints its verifier. Set `application.runtime.env.OPENCRAWL_MACHINE_KEYS`
-to the comma-separated verifiers, apply the installer configuration and wait for
-the app rollout. Set `airbyte.mode` to `disabled` for a session-only pilot.
-See the [operator and Claude Code walkthrough](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/self-host.md#unattended-claude-code-agents)
-for agent enrollment, rotation and a two-ticket test.
+Administrators create, copy and revoke keys in **Settings → Machine keys** in the web app. Use the [agent setup instructions](../../docs/self-host.md#unattended-claude-code-agents) to connect a service.
 
 ## Versions, backup and removal
 

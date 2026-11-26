@@ -1,4 +1,5 @@
 import type {PoolClient} from 'pg';
+import {machineKeys} from './machine-keys.mjs';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {randomBytes} from 'node:crypto';
 import {betterAuth,type BetterAuthOptions} from 'better-auth';
@@ -64,6 +65,10 @@ export async function ensureIdentitySchema(options:LocalIdentityOptions){
     await (await getMigrations(config)).runMigrations();
     await database.identityPool.query(`CREATE TABLE IF NOT EXISTS "opencrawlIdentityBinding" (singleton integer PRIMARY KEY CHECK(singleton=1), "organizationId" text NOT NULL);
       CREATE TABLE IF NOT EXISTS "opencrawlIdentityState" ("organizationId" text PRIMARY KEY, initialized integer NOT NULL CHECK(initialized IN (0,1)));
+      CREATE TABLE IF NOT EXISTS opencrawl_machine_keys (
+        organization text NOT NULL, id uuid NOT NULL, name text NOT NULL, verifier text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(organization,id),
+        UNIQUE(organization,verifier), UNIQUE(organization,name));
       CREATE TABLE IF NOT EXISTS "opencrawlAccountEpoch" ("userId" text PRIMARY KEY, "notBefore" bigint NOT NULL)`);
   });
   return config;
@@ -238,6 +243,6 @@ export async function createLocalIdentity(input:LocalIdentityOptions){
     if(!keys||Date.now()-keys.at>300_000)keys={set:createLocalJWKSet(await auth.api.getJwks() as JSONWebKeySet),at:Date.now()};
     try{return await keys.set(header,token);}catch{keys={set:createLocalJWKSet(await auth.api.getJwks() as JSONWebKeySet),at:Date.now()};return keys.set(header,token);}
   };
-  return {auth,directory,close:()=>{},ready,setupRequired,pendingInvitation,admitAccount,invitationLinks,renameOrganization,recoverPassword,tokenCurrent,keyResolver,resource,issuer:url+'/api/auth'};
+  return {auth,directory,machines:machineKeys(database.identityPool,organizationId),close:()=>{},ready,setupRequired,pendingInvitation,admitAccount,invitationLinks,renameOrganization,recoverPassword,tokenCurrent,keyResolver,resource,issuer:url+'/api/auth'};
 }
 export type LocalIdentity=Awaited<ReturnType<typeof createLocalIdentity>>;
