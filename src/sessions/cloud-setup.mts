@@ -96,7 +96,7 @@ Return to my work with a short coverage report: configured and verified now, his
 export function replicasEnrollmentPrompt(api: string, code: string) {
   const origin = new URL(api);
   if (origin.origin !== api || !['https:', 'http:'].includes(origin.protocol) || origin.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Invalid Replicas enrollment prompt');
-  return `Set up the OpenCrawl CLI, skill, and MCP for ${api} using https://docs.getopencrawl.com/agents/replicas-capture/index.md
-
-One-time approval code: ${code}`;
+  return `Follow https://docs.getopencrawl.com/agents/replicas-capture/index.md
+Server: ${api}
+Approval code: ${code}`;
 }

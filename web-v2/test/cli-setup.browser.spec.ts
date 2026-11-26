@@ -211,7 +211,7 @@ test('a completed Replicas import leads to agent setup',async({page})=>{
   const snippet = dialog.getByRole('button', {name:'Copy agent setup prompt'});
   await expect(snippet.locator('code')).toHaveText('One-time fixture prompt for Replicas');
   await expect(dialog.getByLabel('Organization API key')).toHaveCount(0);
-  await expect(dialog.getByRole('link', {name:'agent setup'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
+  await expect(dialog.getByRole('link', {name:'CLI, skill, and MCP'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
   await snippet.click();
   await expect(dialog.getByText('Copy the selected text with your keyboard or selection menu.')).toBeVisible();
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('One-time fixture prompt for Replicas');
