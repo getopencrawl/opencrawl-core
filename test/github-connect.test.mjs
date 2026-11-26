@@ -179,10 +179,14 @@ test('GitHub adapter mints scoped installation tokens and validates inputs',asyn
   for(const call of [
     ()=>app.installationToken('0'),
     ()=>app.installationToken('../evil'),
+    ()=>app.installationToken('42',null),
+    ()=>app.installationToken('42',[]),
     ()=>app.installationToken('42',{repositories:['org/repo']}),
     ()=>app.installationToken('42',{repositories:[]}),
     ()=>app.installationToken('42',{repositoryIds:[0]}),
     ()=>app.installationToken('42',{repositories:['repo'],repositoryIds:[7]}),
+    ()=>app.installationToken('42',{permissions:null}),
+    ()=>app.installationToken('42',{permissions:[]}),
     ()=>app.installationToken('42',{permissions:{contents:'superadmin'}}),
-  ])await assert.rejects(call,{status:400});
+  ])await assert.rejects(call,err=>!(err instanceof TypeError)&&err.status===400);
 });

@@ -104,6 +104,9 @@ export function createGitHubApp({appId, slug, clientId, clientSecret, privateKey
     },
     async installationToken(installationId: string, options?: GitHubInstallationTokenOptions): Promise<GitHubInstallationToken> {
       if (!/^[1-9]\d{0,19}$/.test(installationId)) throw Object.assign(new Error('Invalid GitHub installation ID'), {status: 400});
+      if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options))) {
+        throw Object.assign(new Error('Invalid GitHub token options'), {status: 400});
+      }
       const body: Record<string, unknown> = {};
       if (options?.repositories !== undefined && options?.repositoryIds !== undefined) {
         throw Object.assign(new Error('Specify either repositories or repositoryIds, not both'), {status: 400});
@@ -121,8 +124,7 @@ export function createGitHubApp({appId, slug, clientId, clientSecret, privateKey
         body.repository_ids = options.repositoryIds;
       }
       if (options?.permissions !== undefined) {
-        const entries = Object.entries(options.permissions);
-        if (!options.permissions || typeof options.permissions !== 'object' || Array.isArray(options.permissions) || entries.some(([k, v]) => !/^[a-z][a-z0-9_]{0,63}$/.test(k) || !['read', 'write', 'admin'].includes(v))) {
+        if (!options.permissions || typeof options.permissions !== 'object' || Array.isArray(options.permissions) || Object.entries(options.permissions).some(([k, v]) => !/^[a-z][a-z0-9_]{0,63}$/.test(k) || !['read', 'write', 'admin'].includes(v))) {
           throw Object.assign(new Error('Invalid GitHub token permissions'), {status: 400});
         }
         body.permissions = options.permissions;
