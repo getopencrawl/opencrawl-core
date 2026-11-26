@@ -310,7 +310,35 @@ test('self-host API keys share the Add a computer panel and fit desktop and mobi
   await page.getByRole('button',{name:'Done'}).click();
   await expect(field).toBeFocused();
   const revoke=page.getByRole('button',{name:'Revoke '+name});
+  await expect(revoke).toHaveCount(0);
+  await page.getByRole('link',{name:'Manage API keys'}).click();
+  await expect(page.getByRole('navigation',{name:'Settings'}).getByRole('link',{name:'API keys'})).toHaveAttribute('aria-current','page');
+  await expect(page.getByRole('region',{name:'Active API keys'}).getByRole('table')).toContainText(name);
+  for(const width of [1280,390,320]){
+    await page.setViewportSize({width,height:850});
+    await expect(revoke).toBeInViewport();
+    const textTops=await revoke.evaluate(button=>{
+      const row=button.closest('tr')!;
+      function firstTextTop(node:Element){
+        const range=document.createRange();
+        const firstText=document.createTreeWalker(node,NodeFilter.SHOW_TEXT).nextNode()!;
+        range.selectNodeContents(firstText);
+        return range.getClientRects()[0].top;
+      }
+      return {name:firstTextTop(row.children[0]),date:firstTextTop(row.children[1]),action:firstTextTop(button)};
+    });
+    expect(Math.abs(textTops.name-textTops.action)).toBeLessThan(1);
+    expect(Math.abs(textTops.name-textTops.date)).toBeLessThan(1);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
+  await revoke.click();
+  await page.getByRole('button',{name:'Cancel'}).click();
+  await expect(revoke).toBeFocused();
   await revoke.click();
   await page.getByRole('button',{name:'Revoke key',exact:true}).click();
-  await expect(revoke).toHaveCount(0);
+  await expect(page.getByText('No active API keys.')).toBeVisible();
+  const newKey=page.getByRole('link',{name:'Create API key'});
+  await expect(newKey).toBeFocused();
+  await newKey.click();
+  await expect(field).toBeVisible();
 });

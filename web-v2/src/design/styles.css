@@ -259,6 +259,8 @@ img { max-width: 100%; }
 .oc-table-container th:first-child, .oc-table-container td:first-child { padding-left: 0; }
 .oc-table-container th:last-child, .oc-table-container td:last-child { padding-right: 0; }
 .oc-table-container tr:last-child td { border-bottom: none; }
+.oc-table-container tbody tr:has(.oc-button) > :is(th, td) { vertical-align: baseline; overflow-wrap: anywhere; }
+.oc-table-container td:last-child:has(> .oc-button) { text-align: end; width: 1%; }
 .oc-table-hint { margin-top: var(--space-2); color: var(--quiet); font-size: var(--text-xs); }
 .oc-dialog { width: min(var(--console-dialog-width), calc(100vw - var(--space-8))); max-height: calc(100dvh - var(--space-8)); padding: var(--space-6); border: 0; border-radius: var(--radius-panel); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-dialog); }
 .oc-dialog::backdrop { background: var(--backdrop); }
@@ -1101,23 +1103,6 @@ img { max-width: 100%; }
 .oc-host-install > .oc-install-instructions { margin-inline: var(--install-inset); }
 .oc-host-install h2, .oc-hosts-section h2 { font-size: 1.25rem; letter-spacing: -.025em; }
 .oc-host-install .oc-section-heading p { max-width: none; }
-.oc-host-add-keys > summary { padding-inline: var(--space-8); }
-.oc-api-keys { display: grid; gap: var(--space-4); max-inline-size: 42rem; min-inline-size: 0; }
-.oc-api-key-hint { margin: 0; color: var(--muted); }
-.oc-api-key-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: end; }
-.oc-api-key-form .oc-button { min-height: var(--control-height); }
-.oc-api-key-list { margin-top: var(--space-2); }
-.oc-api-key-list table { width: 100%; }
-.oc-api-key-list :is(th, td):first-child { padding-inline-start: 0; overflow-wrap: anywhere; }
-.oc-api-key-list :is(th, td):last-child { padding-inline-end: 0; text-align: end; width: 1%; }
-.oc-api-key-list time { white-space: nowrap; color: var(--muted); }
-@container (max-width: 32rem) {
-  .oc-api-key-form { grid-template-columns: minmax(0, 1fr); }
-  .oc-api-key-form .oc-button { justify-self: start; }
-  .oc-api-keys .oc-button { min-block-size: 2.75rem; }
-  .oc-api-key-list :is(th, td):nth-child(2) { display: none; }
-  .oc-host-add-keys .oc-tabs > .oc-button { padding-inline: var(--space-2); }
-}
 .oc-hosts-section { padding: 0; border: 0; }
 .oc-hosts-section .oc-section-heading { margin-bottom: var(--space-4); }
 .oc-host-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-8); padding: var(--space-5) var(--install-inset) 0; margin: var(--space-6) 0 0; border-top: 1px solid var(--line); list-style: decimal; }
@@ -1150,7 +1135,6 @@ img { max-width: 100%; }
 .oc-host-no-agents { margin: 0; padding: 0 var(--space-5) var(--space-4); color: var(--muted); }
 @container (max-width: 700px) {
   .oc-host-welcome { padding: var(--space-5); }
-  .oc-host-add-keys > summary { padding-inline: var(--space-5); }
   .oc-host-install { --install-inset: var(--space-5); padding-block-start: var(--install-inset); }
   .oc-host-welcome img { width: min(20cqi, 152px); margin-inline: 0; }
   .oc-host-guide { grid-template-columns: 1fr; gap: var(--space-4); }

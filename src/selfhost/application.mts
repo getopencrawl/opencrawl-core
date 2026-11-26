@@ -293,7 +293,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       if(req.method==='GET'&&url.pathname==='/signed-out')return message(200,'You’re signed out','You have signed out of OpenCrawl.');
       if(await accounts.route(req,res,url))return;
       const oauthCallback=url.pathname==='/oauth/connectors/slack/callback'&&req.method==='GET';
-      const keyPage=url.pathname==='/settings/machine-keys';
+      const keyPage=url.pathname==='/settings/api-keys'||url.pathname==='/settings/machine-keys';
       const keyApi=['/api/keys','/api/keys/revoke','/api/settings/machine-keys','/api/settings/machine-keys/revoke'].includes(url.pathname);
       const route=keyPage||keyApi?{name:url.pathname}:oauthCallback?{name:'connector-oauth-callback'}:productRoute(req.method||'',url.pathname);
       if(!route)return respond(404,'Not found');
@@ -307,7 +307,10 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       if(keyPage || keyApi){
         res.setHeader('Cache-Control','no-store');
         if(!isAdmin(member))return json(403,{error:'Workspace administrator access required.'});
-        if(keyPage)return req.method==='GET'?redirect('/setup#api-key'):respond(405,'Method not allowed');
+        if(keyPage&&req.method!=='GET')return respond(405,'Method not allowed');
+        if(url.pathname==='/settings/machine-keys')return redirect('/settings/api-keys');
+      }
+      if(keyApi){
         try {
           const revoke=url.pathname.endsWith('/revoke');
           if(req.method==='GET'&&!revoke)return json(200,{keys:await machines.list()});
@@ -332,7 +335,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
           if(!setup&&!['/api/console/bootstrap','/api/console/replicas/setup'].includes(selected.name)&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
           const result=await consoleApi(request,selected.name,{principal,user,member,cacheScope,admitted:true,revalidate:rpc?async()=>true:revalidate});return reply(result.status,JSON.stringify(result.body),'application/json');
         }
-        if(request.method==='GET'&&(consolePages.has(target.pathname)||consolePages.has(selected.name))){
+        if(request.method==='GET'&&(target.pathname==='/settings/api-keys'||consolePages.has(target.pathname)||consolePages.has(selected.name))){
           const progress=await guided.progress(principal);
           if(!setup&&!target.pathname.startsWith('/onboarding')&&!hasCompletedOnboarding(progress))return redirect(await guided.next(principal));
           // An admin can invite teammates while connecting their own agent. Other setup and workspace gates remain receipt-based.

@@ -124,30 +124,9 @@ for navigation, but do not expect old tokens to authorize the new issuer.
 
 ## Unattended Claude Code agents
 
-Give each support service its own machine identity. It can search team-visible
-sessions, post to the board and upload its own sessions. A person creates the
-first administrator using the private setup link. API keys do not require a
-browser login and have no console, team administration or shared Git access.
+Follow the [Claude Code service guide](https://docs.getopencrawl.com/self-hosting/claude-code-service/) to create an API key in **Setup → Add a computer**, enable capture on the Claude host, and connect MCP. Each key has its own recording identity. Revoke it in **Settings → API keys** to disconnect the service on its next request.
 
-In the web app, open **Setup → Add a computer → API key** as an administrator. Enter a
-service name, select **Create API key**, and copy the key into the agent's secret
-store. Set these variables for the CLI, agent and capture worker:
-
-| Variable | Value |
-| --- | --- |
-| `OPENCRAWL_API_URL` | The workspace URL reachable from the agent |
-| `OPENCRAWL_TOKEN` | The copied API key |
-| `OPENCRAWL_SESSIONS_TOKEN` | The same API key |
-
-Install the [CLI](../cli/README.md#install). To record new Claude Code sessions,
-run `opencrawl collect install --yes --harness claude-code --backfill skip`.
-For Codex, use `--harness codex`. Start a new chat and look for it in **Sessions**.
-To let Claude Code search through MCP, run
-`claude mcp add --scope user selfhost -- opencrawl mcp --api "$OPENCRAWL_API_URL"`.
-
-To disconnect a service, select **Revoke** next to its name in **API key**.
-Revocation takes effect on the next request. Each newly created key has its own
-recording identity.
+For a Codex host, select `--harness codex` when installing capture.
 
 ### Reverse proxy connections
 
