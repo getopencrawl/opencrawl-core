@@ -113,8 +113,9 @@ isolatedTest('the daemon discovers four selected native chats without hooks and 
   const harnesses=['codex','claude-code','antigravity','cursor'] as const;
   await installCapture(f.api,{home:f.dir,command:[],harnesses:[...harnesses],selectionMode:'replace',hookOwnership:'plugin',daemon:true,daemonService:false});
   const c=readCaptureConfig()!,id=randomUUID();
+  const today=new Date().toISOString().slice(0,10);
   const paths={
-    codex:join(c.roots.codex,'sessions','2026','11','24','rollout-2026-11-24T12-00-00-'+id+'.jsonl'),
+    codex:join(c.roots.codex,'sessions',...today.split('-'),'rollout-'+today+'T12-00-00-'+id+'.jsonl'),
     'claude-code':join(c.roots['claude-code'],'projects','project',id+'.jsonl'),
     antigravity:join(c.roots.antigravity!,'antigravity-cli','brain',id,'.system_generated','logs','transcript_full.jsonl'),
     cursor:join(c.roots.cursor!,'projects','project','agent-transcripts',id,id+'.jsonl')
