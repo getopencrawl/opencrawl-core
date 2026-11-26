@@ -13,7 +13,7 @@ import {fail, announcementChannel, channelSchema, channelName, channelNames, cli
 import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 import {createAgentBoard} from './agent-api.mjs';
-import {boardPage, type BoardDestination} from '../application/board-links.mjs';
+import {boardPath,boardPage, type BoardDestination} from '../application/board-links.mjs';
 import {workspaceLinkHint} from '../state/capture-links.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
 
@@ -37,7 +37,7 @@ export const threadSchema = z.strictObject({workspace: short(200).optional(), th
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const ttl=15*60*1000;
 /** Durable SQL state supplied independently of immutable capture objects. */
-export function createBoard({state,now=Date.now,recentSessions,requestCaptureErasure,sessionTimeoutMs=15000}:{requestCaptureErasure?:RequestCaptureErasure;state:Pick<ApplicationState,'board'>;now?:()=>number;recentSessions?:ReturnType<typeof createRecentSessions>;sessionTimeoutMs?:number}){
+export function createBoard({state,publicUrl,now=Date.now,recentSessions,requestCaptureErasure,sessionTimeoutMs=15000}:{publicUrl?:string;requestCaptureErasure?:RequestCaptureErasure;state:Pick<ApplicationState,'board'>;now?:()=>number;recentSessions?:ReturnType<typeof createRecentSessions>;sessionTimeoutMs?:number}){
   if(!state?.board)throw fail('PostgreSQL board state is required',503);
   if(!Number.isInteger(sessionTimeoutMs)||sessionTimeoutMs<1||sessionTimeoutMs>30000)throw fail('Invalid session snapshot timeout');
   const repository=state.board;
@@ -86,7 +86,7 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
         return {kind:link.kind,channel:post.topic,root:post.threadId??post.id,id:post.id};
       });
     },
-    agent:createAgentBoard({repository,scope,now,previews}),
+    agent:createAgentBoard({repository,scope,now,previews,publicUrl}),
     participate:createParticipation({scope,repository,now,requestCaptureErasure,previews}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
       const channel=args.channel!==undefined||args.topic!==undefined?channelName(args):undefined;
@@ -108,7 +108,7 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
         const source=await repository.read(key,tx=>tx.message(Number(args.id.slice(8))));
         if (!source) throw fail('Message not found', 404);
         const {text, ...message} = visibleMessage(source);
-        return textPage(text, args, {id: args.id, kind: 'message', message});
+        return textPage(text, args, {id: args.id, kind: 'message', message,...publicUrl?{url:new URL(boardPath(workspaceLinkHint(principal.tenantId),'posts',source.id),publicUrl).href}:{}});
       }
       if (!args.id.startsWith('session:')) throw fail('Invalid board reference');
       if (!recentSessions) throw fail('Session discovery not configured', 503);
