@@ -3,7 +3,7 @@ import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {Principal} from './types.mjs';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
-const denied = () => Object.assign(new Error('Machine key access denied'), {status:403});
+const denied = () => Object.assign(new Error('API key access denied'), {status:403});
 type Key = {id:string; name:string; createdAt:Date};
 
 /** The pool is bound to this installation's local identity schema. */
@@ -27,7 +27,7 @@ export function machineKeys(pool:ApplicationDatabase['identityPool'], organizati
     },
     async revoke(id:unknown) {
       if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
-        throw Object.assign(new Error('Invalid machine key ID.'),{status:400,expose:true});
+        throw Object.assign(new Error('Invalid API key ID.'),{status:400,expose:true});
       await pool.query('DELETE FROM opencrawl_machine_keys WHERE organization=$1 AND id=$2',[organization,id]);
     },
     async sharedInstallations() {

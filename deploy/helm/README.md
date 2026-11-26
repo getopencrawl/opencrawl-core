@@ -180,7 +180,7 @@ an intermediate stage. Rerun the same command/configuration to resume.
 
 ## Machine authentication
 
-Administrators create, copy and revoke keys in **Settings → Machine keys** in the web app. Use the [agent setup instructions](../../docs/self-host.md#unattended-claude-code-agents) to connect a service.
+Administrators create, copy and revoke keys in **Setup → Add a computer → API key** in the web app. Use the [agent setup instructions](../../docs/self-host.md#unattended-claude-code-agents) to connect a service.
 
 ## Versions, backup and removal
 

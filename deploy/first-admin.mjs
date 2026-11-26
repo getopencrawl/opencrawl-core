@@ -18,6 +18,6 @@ if (signup.status !== 303 && signup.status !== 403 && signup.status !== 409)
 const login = await post('/auth/login', {email, password});
 if (login.status !== 303) throw new Error('First-admin login failed. Existing accounts were preserved.');
 const cookie = login.headers.getSetCookie().map(value => value.split(';', 1)[0]).join('; ');
-const access = await fetch(local + '/api/settings/machine-keys', {headers: {cookie}, redirect: 'manual'});
+const access = await fetch(local + '/api/keys', {headers: {cookie}, redirect: 'manual'});
 if (!access.ok) throw new Error('Could not verify administrator access.');
 console.log(JSON.stringify({url: origin + '/auth/login', email, password}));

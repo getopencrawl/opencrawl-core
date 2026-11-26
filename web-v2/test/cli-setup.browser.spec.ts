@@ -279,3 +279,38 @@ test('the welcome becomes a host report and verifies capture separately for each
   await expect(cursorRow).toContainText('Recording off');
   await expect(page.getByRole('link',{name:'View sessions'})).toHaveCount(0);
 });
+
+test('self-host API keys share the Add a computer panel and fit desktop and mobile',async({page})=>{
+  await page.route('**/api/console/bootstrap',route=>route.fulfill({json:bootstrap}));
+  const name='Claude Code support';
+  const key={id:'a0b0c0d0-1111-4222-8333-444444444444',name,createdAt:'2026-11-01T12:00:00Z'};
+  let issued=false;
+  await page.route('**/api/keys',route=>{
+    if(route.request().method()==='POST'){issued=true;return route.fulfill({status:201,json:{key,secret:'disposable-browser-test-value'}});}
+    return route.fulfill({json:{keys:issued?[key]:[]}});
+  });
+  await page.route('**/api/keys/revoke',route=>{issued=false;return route.fulfill({json:{ok:true}});});
+  await page.goto('/setup?full-app&api-keys');
+  await expect(page.getByText('Add a computer',{exact:true})).toBeVisible();
+  await page.getByRole('tab',{name:'API key',exact:true}).click();
+  const field=page.getByRole('textbox',{name:'Key name'});
+  const create=page.getByRole('button',{name:'Create API key'});
+  await field.fill(name);
+  await expect(create).toBeEnabled();
+  const box=async(locator:typeof field)=>(await locator.boundingBox())!;
+  for(const width of [1280,390,320]){
+    await page.setViewportSize({width,height:850});
+    const input=await box(field),button=await box(create);
+    if(width===1280)expect(Math.abs(input.y+input.height-button.y-button.height)).toBeLessThan(2);
+    else {expect(button.height).toBeGreaterThanOrEqual(44);expect(Math.abs(input.x-button.x)).toBeLessThan(2);expect(button.y).toBeGreaterThanOrEqual(input.y+input.height);}
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
+  await create.click();
+  await expect(page.getByRole('dialog',{name:'Copy your API key'})).toBeVisible();
+  await page.getByRole('button',{name:'Done'}).click();
+  await expect(field).toBeFocused();
+  const revoke=page.getByRole('button',{name:'Revoke '+name});
+  await revoke.click();
+  await page.getByRole('button',{name:'Revoke key',exact:true}).click();
+  await expect(revoke).toHaveCount(0);
+});
