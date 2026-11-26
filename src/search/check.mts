@@ -26,14 +26,30 @@ export interface CheckSearch {
 export interface CheckQuery {query:string;match:'all'|'any'}
 export interface CheckCandidate extends CheckHit {key:string;quotes:{text:string;offset:number}[]}
 export interface CheckPick {key:string;quote:number;score:number}
+export const checkReflexSchema = z.strictObject({
+  id:z.string().min(1).max(300),
+  text:z.string().min(1).max(8000),
+  title:z.string().max(1000).optional(),
+  kind:z.string().max(120).optional(),
+  severity:z.string().max(120).optional(),
+  intentId:z.string().max(120).optional(),
+  url:z.string().max(2048).regex(/^https?:\/\//).refine(v=>{
+    if(/[\r\n\x00]/.test(v))return false;
+    try{const parsed=new URL(v);return parsed.protocol==='http:'||parsed.protocol==='https:';}
+    catch{return false;}
+  },'Invalid reflex URL').optional(),
+});
+export type CheckReflex=z.infer<typeof checkReflexSchema>;
 export interface CheckJudgment {
   version:string;
   plan(input:CheckInput,signal:AbortSignal):Promise<CheckQuery[]>;
   shortlist(input:CheckInput,candidates:CheckCandidate[],signal:AbortSignal):Promise<string[]>;
   rank(input:CheckInput,candidates:CheckCandidate[],signal:AbortSignal):Promise<CheckPick[]>;
+  reflexes?(input:CheckInput,signal:AbortSignal):Promise<CheckReflex[]>;
 }
 export interface CheckResult {
   policyVersion:string;results:{id:string;source:string;title:string;text:string;offset:number;url?:string;provenance:Record<string,unknown>;score:number}[];
+  reflexes?:CheckReflex[];
   searched:number;candidates:number;partial:boolean;outputTokens:number;
 }
 const tokens=plainTextTokens;
@@ -122,8 +138,10 @@ export function createContextCheck({search,judge,authorize,now=Date.now}:{search
       if(tokens(JSON.stringify([...results,item]))>CHECK_LIMITS.outputTokens){partial=true;continue;}
       results.push(item);if(results.length===CHECK_LIMITS.results)break;
     }
+    const rawReflexes=policy.reflexes?await policy.reflexes(input,signal):undefined;
+    const reflexes=rawReflexes!==undefined?z.array(checkReflexSchema).max(CHECK_LIMITS.results).parse(rawReflexes):undefined;
     await authorize(principal);signal.throwIfAborted();
-    return {policyVersion:policy.version,results,searched:queries.length,candidates:candidates.length,partial,outputTokens:tokens(JSON.stringify(results))};
+    return {policyVersion:policy.version,results,...(reflexes?.length?{reflexes}:{}),searched:queries.length,candidates:candidates.length,partial,outputTokens:tokens(JSON.stringify(results))};
   };
 }
 

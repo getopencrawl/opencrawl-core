@@ -4,6 +4,7 @@ import {isAbsolute, join} from 'node:path';
 import type {ApplicationDatabase} from '../state/postgres.mjs';
 import {capacityLimits, stageRepository, type Budget} from './capacity.mjs';
 import {git, seedRepository} from './git.mjs';
+import {collectAllowedReflogs, mainBranchRef, reflogPathForRef} from './refs.mjs';
 
 export interface SharedFilesStore {
   readonly storageRoot: string;
@@ -13,7 +14,7 @@ export interface SharedFilesStore {
 }
 const digest = (s: string) => createHash('sha256').update(s).digest('hex');
 const marker = 'opencrawl-repository-id';
-const logPath = (dir: string) => join(dir, 'logs', 'refs', 'heads', 'main');
+const logPath = (dir: string) => reflogPathForRef(dir, mainBranchRef);
 type Legacy = {head: string; bundle: Buffer};
 async function repositoryId(dir: string): Promise<string | null> {
   try {
@@ -82,10 +83,10 @@ interface AuditEntry {
 async function catchUp(
   client: Pick<ApplicationDatabase['pool'], 'query'>,
   scope: string[],
-  dir: string,
+  filePath: string,
   start: number
-) {
-  const file = await open(logPath(dir), 'r');
+): Promise<number> {
+  const file = await open(filePath, 'r');
   try {
     const end = (await file.stat()).size;
     if (start > end) throw new Error('Git audit log is behind its database checkpoint');
@@ -129,10 +130,7 @@ async function catchUp(
         );
       start += cut;
     }
-    await client.query(
-      'UPDATE opencrawl_git_repositories SET audit_offset=$3 WHERE namespace=$1 AND tenant_id=$2',
-      [...scope, start]
-    );
+    return start;
   } finally {
     await file.close();
   }
@@ -191,19 +189,54 @@ export function fileRepositories(
     if (!database) return;
     if (dir !== directory(tenant)) throw new Error('Git audit scope mismatch');
     const scope = [namespace, tenant];
-    const size = (await stat(logPath(dir))).size;
+    const reflogs = await collectAllowedReflogs(dir);
+    const mainLog = reflogs.find((entry) => entry.ref === mainBranchRef)!;
+    const amendmentLogs = reflogs.filter((entry) => entry.ref !== mainBranchRef);
     const state = await database.pool.query(
       'SELECT audit_offset FROM opencrawl_git_repositories WHERE namespace=$1 AND tenant_id=$2',
       scope
     );
     if (!state.rowCount) throw new Error('Unregistered Git volume');
-    if (Number(state.rows[0].audit_offset) === size) return;
+    let dirty = Number(state.rows[0].audit_offset) !== mainLog.size;
+    if (!dirty && amendmentLogs.length) {
+      const existing = await database.pool.query<{ref_name: string; audit_offset: string | number}>(
+        'SELECT ref_name, audit_offset FROM opencrawl_git_ref_audits WHERE namespace=$1 AND tenant_id=$2 AND ref_name=ANY($3::text[])',
+        [...scope, amendmentLogs.map((entry) => entry.ref)]
+      );
+      const offsets = new Map(existing.rows.map((row) => [row.ref_name, Number(row.audit_offset)]));
+      dirty = amendmentLogs.some((entry) => (offsets.get(entry.ref) ?? 0) !== entry.size);
+    }
+    if (!dirty) return;
     await database.transaction(async (client) => {
       const locked = await client.query(
         'SELECT audit_offset FROM opencrawl_git_repositories WHERE namespace=$1 AND tenant_id=$2 FOR UPDATE',
         scope
       );
-      await catchUp(client, scope, dir, Number(locked.rows[0].audit_offset));
+      const mainOffset = Number(locked.rows[0].audit_offset);
+      const nextMainOffset = await catchUp(client, scope, mainLog.path, mainOffset);
+      if (nextMainOffset !== mainOffset) {
+        await client.query(
+          'UPDATE opencrawl_git_repositories SET audit_offset=$3 WHERE namespace=$1 AND tenant_id=$2',
+          [...scope, nextMainOffset]
+        );
+      }
+      const currentLogs = (await collectAllowedReflogs(dir)).filter((entry) => entry.ref !== mainBranchRef);
+      for (const entry of currentLogs) {
+        const existing = await client.query(
+          'SELECT audit_offset FROM opencrawl_git_ref_audits WHERE namespace=$1 AND tenant_id=$2 AND ref_name=$3 FOR UPDATE',
+          [...scope, entry.ref]
+        );
+        const currentOffset = existing.rowCount ? Number(existing.rows[0].audit_offset) : 0;
+        const nextOffset = await catchUp(client, scope, entry.path, currentOffset);
+        if (!existing.rowCount || nextOffset !== currentOffset) {
+          await client.query(
+            `INSERT INTO opencrawl_git_ref_audits(namespace,tenant_id,ref_name,audit_offset)
+             VALUES($1,$2,$3,$4)
+             ON CONFLICT(namespace,tenant_id,ref_name) DO UPDATE SET audit_offset=EXCLUDED.audit_offset`,
+            [...scope, entry.ref, nextOffset]
+          );
+        }
+      }
     });
   }
   return {
@@ -219,6 +252,8 @@ export function fileRepositories(
           repository_id uuid NOT NULL,audit_offset bigint NOT NULL DEFAULT 0,PRIMARY KEY(namespace,tenant_id))`);
           await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_shared_file_pushes(namespace text NOT NULL,tenant_id text NOT NULL,
           head text NOT NULL,previous_head text,user_id text NOT NULL,pushed_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(namespace,tenant_id,head))`);
+          await client.query(`CREATE TABLE IF NOT EXISTS opencrawl_git_ref_audits(namespace text NOT NULL,tenant_id text NOT NULL,
+          ref_name text NOT NULL,audit_offset bigint NOT NULL DEFAULT 0,PRIMARY KEY(namespace,tenant_id,ref_name))`);
         });
     },
     async open(tenant) {

@@ -32,6 +32,7 @@ export function pluginInvocation(args:string[]):string[]{
   if(action==='capture')return ['collect','hook',...scope];
   if(client==='antigravity'&&/^capture-(SessionStart|PostToolUse|PostInvocation|Stop)$/.test(action))return ['collect','hook',...scope,'--event',action.slice(8)];
   if(client==='devin'&&action==='workload')return ['workload','start','--api',api];
+  if(client==='devin'&&action==='inbox')return ['workload','inbox','--api',api];
   if(client==='devin'&&action==='mcp')return ['mcp','--api',api];
   throw Error('Unsupported plugin action');
 }

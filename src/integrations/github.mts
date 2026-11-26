@@ -1,6 +1,19 @@
 import type {Fetch} from './ports.mjs';
 import type {GithubInstallation, GithubRepository} from './types.mjs';
-interface GitHubSettings {appId: string | number; slug: string; clientId: string; clientSecret: string; privateKey: string}
+export interface GitHubSettings {appId: string | number; slug: string; clientId: string; clientSecret: string; privateKey: string}
+export type GitHubTokenPermissionLevel = 'read' | 'write' | 'admin';
+export type GitHubTokenPermissions = Record<string, GitHubTokenPermissionLevel>;
+export interface GitHubInstallationTokenOptions {
+  repositories?: string[];
+  repositoryIds?: number[];
+  permissions?: GitHubTokenPermissions;
+}
+export interface GitHubInstallationToken {
+  token: string;
+  expiresAt: string;
+  permissions?: Record<string, string>;
+  repositorySelection?: 'all' | 'selected';
+}
 // An operator-owned GitHub App with repository selection and read-only access.
 //
 // Authorize first so an existing installation can be reused without reinstalling.
@@ -88,6 +101,45 @@ export function createGitHubApp({appId, slug, clientId, clientSecret, privateKey
       const res = await call<GithubInstallation>(`/app/installations/${encodeURIComponent(installationId)}`, {token: await appToken()});
       if (res.status !== 200) throw fail('installation', res);
       return res.data;
+    },
+    async installationToken(installationId: string, options?: GitHubInstallationTokenOptions): Promise<GitHubInstallationToken> {
+      if (!/^[1-9]\d{0,19}$/.test(installationId)) throw Object.assign(new Error('Invalid GitHub installation ID'), {status: 400});
+      const body: Record<string, unknown> = {};
+      if (options?.repositories !== undefined && options?.repositoryIds !== undefined) {
+        throw Object.assign(new Error('Specify either repositories or repositoryIds, not both'), {status: 400});
+      }
+      if (options?.repositories !== undefined) {
+        if (!Array.isArray(options.repositories) || !options.repositories.length || options.repositories.some(name => typeof name !== 'string' || !/^[A-Za-z0-9._-]+$/.test(name) || name === '.' || name === '..' || name.length > 100)) {
+          throw Object.assign(new Error('Invalid GitHub repository selection'), {status: 400});
+        }
+        body.repositories = options.repositories;
+      }
+      if (options?.repositoryIds !== undefined) {
+        if (!Array.isArray(options.repositoryIds) || !options.repositoryIds.length || options.repositoryIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+          throw Object.assign(new Error('Invalid GitHub repository ID selection'), {status: 400});
+        }
+        body.repository_ids = options.repositoryIds;
+      }
+      if (options?.permissions !== undefined) {
+        const entries = Object.entries(options.permissions);
+        if (!options.permissions || typeof options.permissions !== 'object' || Array.isArray(options.permissions) || entries.some(([k, v]) => !/^[a-z][a-z0-9_]{0,63}$/.test(k) || !['read', 'write', 'admin'].includes(v))) {
+          throw Object.assign(new Error('Invalid GitHub token permissions'), {status: 400});
+        }
+        body.permissions = options.permissions;
+      }
+      const created = await call<{token?: string; expires_at?: string; permissions?: Record<string, string>; repository_selection?: 'all' | 'selected'}>(
+        `/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
+        {method: 'POST', token: await appToken(), body},
+      );
+      if (created.status !== 201 || typeof created.data?.token !== 'string' || !created.data.token || typeof created.data?.expires_at !== 'string' || !created.data.expires_at) {
+        throw fail('installation token', created);
+      }
+      return {
+        token: created.data.token,
+        expiresAt: created.data.expires_at,
+        ...(created.data.permissions ? {permissions: created.data.permissions} : {}),
+        ...(created.data.repository_selection ? {repositorySelection: created.data.repository_selection} : {}),
+      };
     },
     /** Repositories the installation was granted (the owner's choice at install). */
     async repositories(installationId: string) {

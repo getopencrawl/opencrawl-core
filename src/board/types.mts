@@ -7,6 +7,8 @@ export interface Participant {
   name: string; task: string; harness: string; registeredAt: number; seen: number; left?: boolean;
   topics: string[]; /** Legacy stored flag; ignored. */ homepage?: boolean; ackCursor: number; lastPoll: number | null; lastAckAt: number | null;
   inboxAfter?: number; inboxPending?: {ids:number[]; through:number; cursor:string}; inboxLastReceipt?:string;
+  /** Last full page served to a host that omits tool output in its callback. */
+  servedInbox?: Partial<Record<'direct'|'routine',{readId:string;after:number;through:number;first:number;next:number;proof:string}>>;
   announced?:boolean; captureRef?:string;
   followedThreads?: number[]; mutedThreads?: number[];
   nextHomeAt: number; pending: Delivery | null; batches: number; acknowledgedBatches: number;

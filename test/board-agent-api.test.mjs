@@ -140,6 +140,9 @@ test('online introductions show the visible opening prompt on the first delivery
  const metadata=await api.sync(bob,{...user(bob),after:0,select:['metadata']});
  assert.equal(metadata.messages.length,1);assert.equal('text' in metadata.messages[0],false);
  assert.equal(reads,1);
+ const digest=await api.inbox(bob,{currentSession:{harness:'codex',sessionId:'bob'},delivery:'routine',after:0,through:1});
+ assert.deepEqual(digest.messages.map(message=>message.text),['codex:alice is online (codex). A short task']);
+ assert.equal(reads,1,'A routine digest must not retrieve a peer’s opening prompt');
  const first=await api.inbox(bob,user(bob)), native=await board.participate(bob,'inbox',user(bob));
  const text='codex:alice is online (codex). A short task\n\nOpening user prompt\nThe first request for alice';
  assert.equal(first.messages.length,1);assert.equal(first.messages[0].text,text);
@@ -254,4 +257,178 @@ test('channels, subscriptions and filters work beyond former count limits',async
  assert.deepEqual(new Set(current.channels),new Set([...channels,...left,...right]));
  const removed=await api.presence(bob,{...user(bob),channelMode:'remove',channels:right,announce:false});
  assert.deepEqual(new Set(removed.channels),new Set([...channels,...left]));
+});
+
+test('direct sync bypasses a pending ordinary page and wakes on a committed mention or followed reply', {timeout:12000}, async t=>{
+  const {api,make}=await fixture(t);
+  const reader={...user(alice),delivery:'direct'};
+  await api.presence(alice,{...user(alice),channels:['chatter'],announce:false});
+  const routine=await post(api,bob,'routine','Background channel update',{channel:'chatter'});
+  const pending=await api.inbox(alice,user(alice));
+  assert.deepEqual(pending.messages.map(m=>m.id),[routine.messages[0].id]);
+  const root=(await post(api,alice,'root','Follow this thread',{channel:'work'})).messages[0];
+  const unrelated=(await post(api,bob,'other','Other thread',{channel:'chatter'})).messages[0];
+  const idle=await api.sync(alice,reader);
+  assert.deepEqual(idle.messages,[]);
+  // Use another board instance for notifications to exercise PostgreSQL,
+  // including the subscribe/recheck window across independent connections.
+  const sender=make().agent;
+  const live=api.sync(alice,{...reader,after:idle.next,waitMs:4500});
+  await sender.post(bob,{...user(bob),posts:[{id:'unrelated',replyTo:unrelated.id,text:'Ordinary reply'}]});
+  const urgent=(await post(sender,bob,'mention','Need attention',{channel:'work',mentions:['codex:alice']})).messages[0];
+  const first=await live;
+  assert.deepEqual(first.messages.map(m=>m.id),[urgent.id]);
+  const next=api.sync(alice,{...reader,after:first.next,waitMs:4500});
+  // Wait for a real LISTEN session to be established before posting.
+  await new Promise(resolve=>setTimeout(resolve,150));
+  const reply=(await post(sender,bob,'reply','Followed reply',{replyTo:root.id})).messages[0];
+  assert.deepEqual((await next).messages.map(m=>m.id),[reply.id]);
+  assert.deepEqual(await api.inbox(alice,user(alice)),{...pending,more:true});
+  await api.follow(alice,{...user(alice),threadId:root.id,following:false});
+  await post(sender,bob,'muted','Muted reply',{replyTo:root.id});
+  const mentioned=(await post(sender,bob,'override','Explicit mention',{replyTo:root.id,mentions:['codex:alice']})).messages[0];
+  assert.deepEqual((await api.sync(alice,{...reader,after:reply.id})).messages.map(m=>m.id),[mentioned.id]);
+  assert.deepEqual((await api.sync(other,{...reader,after:0})).messages,[]);
+  await assert.rejects(api.sync(alice,{session:'unregistered',delivery:'direct'}),{status:409});
+  await assert.rejects(api.sync(alice,{...reader,workspace:'team-b'}),{status:403});
+  await api.presence(alice,{...user(alice),leave:true});
+  assert.deepEqual((await api.sync(alice,{...reader,after:0})).messages,[]);
+});
+
+test('routine notification batches exclude direct mail and the inbox can replay the exact bounded read',async t=>{
+  const {api}=await fixture(t),target=user(alice);
+  await api.presence(alice,{...target,channels:['digest'],announce:false});
+  const postTo=async(id,extra={})=>(await post(api,bob,id,id,{channel:'digest',...extra})).messages[0].id;
+  const first=await postTo('routine-a'), direct=await postTo('direct',{mentions:['codex:alice']}), last=await postTo('routine-b');
+  const preview=await api.sync(alice,{...target,delivery:'routine',after:0,select:['id']});
+  assert.deepEqual(preview.messages,[{id:first},{id:last}]);
+  await postTo('later');
+  const args={...target,delivery:'routine',after:0,through:last};
+  const page=await api.inbox(alice,args);
+  assert.deepEqual(page.messages.map(m=>m.id),[first,last]);
+  assert.equal(page.notificationReceipt,preview.notificationReceipt);
+  assert.deepEqual(await api.inbox(alice,args),page);
+  const urgent=await api.inbox(alice,{...args,delivery:'direct'});
+  assert.deepEqual(urgent.messages.map(m=>m.id),[direct]);
+  assert.notEqual(urgent.notificationReceipt,page.notificationReceipt);
+  await assert.rejects(api.inbox(alice,{...args,acknowledge:'f'.repeat(64)}),{status:400});
+  await assert.rejects(api.sync(alice,{...target,delivery:'routine',waitMs:1}),{status:400});
+});
+
+test('an unavailable PostgreSQL listener leaves direct mail readable at the next check', async t => {
+  const {api,repository}=await fixture(t);
+  repository.watchDirect=async()=>{throw Error('Listener unavailable');};
+  const args={...user(alice),delivery:'direct',waitMs:200};
+  const empty=await api.sync(alice,args);
+  const urgent=await post(api,bob,'direct-after-outage','Please review',{channel:'work',mentions:['codex:alice']});
+  assert.deepEqual((await api.sync(alice,{...args,after:empty.next})).messages.map(m=>m.id),[urgent.messages[0].id]);
+});
+
+test('a disconnected direct wait resubscribes before rechecking mail and caps repeated failures', async t=>{
+  const {api,repository}=await fixture(t);
+  const args={...user(alice),delivery:'direct',waitMs:2000};
+  let subscribed=0,closed=0;
+  repository.watchDirect=async()=>{
+    subscribed++;
+    if(subscribed===2)await post(api,bob,'during-reconnect','Direct mail',{channel:'work',mentions:['codex:alice']});
+    return {wait:async()=>false,close:()=>{closed++;}};
+  };
+  const page=await api.sync(alice,args);
+  assert.deepEqual(page.messages.map(m=>m.text),['Direct mail']);
+  assert.deepEqual([subscribed,closed],[2,2]);
+  const empty=await api.sync(alice,{...args,after:page.next});
+  assert.deepEqual(empty.messages,[]);
+  assert.deepEqual([subscribed,closed],[4,4]);
+});
+
+test('a tracked read confirms only the full records returned to that native session and lane',async t=>{
+  const {api}=await fixture(t);
+  const currentSession={harness:'antigravity',sessionId:'native-track'};
+  await api.presence(alice,{currentSession,name:'tracked-agent',task:'Verify delivery',announce:false});
+  const mention={channel:'work',mentions:['tracked-agent']};
+  const first=(await post(api,bob,'tracked-1','x'.repeat(15500),mention)).messages[0].id;
+  const last=(await post(api,bob,'tracked-2','y'.repeat(8000),mention)).messages[0].id;
+  const args={currentSession,after:first-1,through:last,delivery:'direct',readId:'c4a16c5d-1c5d-42b7-962b-6e3c81e41a32'};
+  const check=extra=>api.inbox(alice,{...args,noticeOnly:true,...extra});
+  assert.deepEqual(await check({}),{served:null});
+  const page=await api.inbox(alice,args);
+  assert.deepEqual(page.messages.map(m=>m.id),[first]);
+  assert.deepEqual((await check({})).served,{readId:args.readId,after:first-1,through:last,first,next:first,proof:page.notificationReceipt});
+  for(const extra of [{through:first},{delivery:'routine'},{readId:'917bc879-5cc9-4a8b-9825-caa77c318810'}])assert.deepEqual(await check(extra),{served:null});
+  await assert.rejects(check({workspace:other.tenantId}),{status:403});
+  const next=await api.inbox(alice,{...args,after:first});
+  assert.deepEqual(next.messages.map(m=>m.id),[last]);
+  assert.deepEqual(await check({}),{served:null});
+  await api.presence(alice,{currentSession,leave:true});
+  assert.deepEqual(await check({after:first}),{served:null});
+});
+
+test('an urgent mention bypasses a pending ordinary page and 260 subscribed posts',async t=>{
+  const {api}=await fixture(t),target=user(alice);
+  await api.presence(alice,{...target,channels:['busy-board'],announce:false});
+  for(let offset=0;offset<260;offset+=20){
+    await api.post(bob,{...user(bob),posts:Array.from({length:20},(_,i)=>({
+      id:'backlog-'+(offset+i),text:'Ordinary '+(offset+i),channel:'busy-board',follow:false
+    }))});
+  }
+  const pending=await api.inbox(alice,target);
+  const urgent=(await post(api,bob,'after-backlog','Urgent',{channel:'busy-board',mentions:['codex:alice']})).messages[0].id;
+  const page=await api.sync(alice,{...target,delivery:'direct',select:['id']});
+  assert.deepEqual(page.messages,[{id:urgent}]);
+  assert.deepEqual((await api.inbox(alice,target)).cursor,pending.cursor);
+});
+
+test('unnamed bootstrapped sessions can use lifecycle delivery sync and inbox while keeping 409 guards elsewhere', {timeout:12000}, async t=>{
+  const {api,board,repository,make}=await fixture(t);
+  const currentSession={harness:'cursor',sessionId:'unnamed-bootstrapped'};
+  const boot=await board.participate(alice,'bootstrap',{session:currentSession.sessionId,harness:currentSession.harness});
+  assert.equal(boot.name,null);
+  assert.equal(boot.boardDirect,true);
+  assert.equal(boot.boardReadReceipt,true);
+
+  const emptyDirect=await api.sync(alice,{currentSession,delivery:'direct',after:0});
+  assert.deepEqual(emptyDirect,{messages:[],next:0,more:false});
+  const emptyRoutine=await api.sync(alice,{currentSession,delivery:'routine',after:0});
+  assert.deepEqual(emptyRoutine,{messages:[],next:0,more:false});
+
+  // Unnamed bootstrapped session wakes on a direct mention by agent ID and confirms readId receipt.
+  const writer=make();
+  const live=api.sync(alice,{currentSession,delivery:'direct',after:0,waitMs:4500});
+  await new Promise(resolve=>setTimeout(resolve,150));
+  const appended=await repository.transaction(boardTenant(alice.tenantId),tx=>tx.append({
+    timestamp:Date.now(),
+    agent:'system',
+    author:'system',
+    name:'OpenCrawl',
+    topic:'work',
+    text:'Verifier finding for unnamed session',
+    requestId:'unnamed-direct-1',
+    mentions:[boot.agent],
+  }));
+  assert.ok(writer);
+  const woke=await live;
+  assert.deepEqual(woke.messages.map(m=>m.id),[appended.id]);
+  assert.match(woke.notificationReceipt,/^[a-f0-9]{64}$/);
+
+  const readId='a9d22c14-9e42-4c23-891b-6d5d6e4c7f11';
+  const tracked={currentSession,delivery:'direct',after:0,through:appended.id,readId};
+  assert.deepEqual(await api.inbox(alice,{...tracked,noticeOnly:true}),{served:null});
+  const served=await api.inbox(alice,tracked);
+  assert.deepEqual(served.messages.map(m=>m.id),[appended.id]);
+  assert.equal(served.notificationReceipt,woke.notificationReceipt);
+  assert.deepEqual((await api.inbox(alice,{...tracked,noticeOnly:true})).served,{
+    readId,
+    after:0,
+    through:appended.id,
+    first:appended.id,
+    next:appended.id,
+    proof:woke.notificationReceipt,
+  });
+
+  // Unregistered sessions and named-only operations still reject with 409.
+  await assert.rejects(api.sync(alice,{session:'never-bootstrapped',delivery:'direct'}),{status:409});
+  await assert.rejects(api.post(alice,{currentSession,posts:[{id:'no-name',channel:'work',text:'Blocked'}]}),{status:409});
+  await assert.rejects(api.follow(alice,{currentSession,threadId:appended.id,following:true}),{status:409});
+  await assert.rejects(api.inbox(alice,{currentSession}),{status:409});
+  await assert.rejects(board.participate(alice,'publish',{session:currentSession.sessionId,id:'no-name-pub',channel:'work',text:'Blocked'}),{status:409});
 });

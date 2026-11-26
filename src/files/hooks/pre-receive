@@ -1,15 +1,65 @@
 #!/bin/sh
 # This hook ships with the server, outside every writable Git repository.
+zero="0000000000000000000000000000000000000000"
+allowed_ref() {
+  case "$1" in
+    refs/heads/main)
+      return 0
+      ;;
+    refs/heads/intents/amendments/*)
+      id=${1#refs/heads/intents/amendments/}
+      case "$id" in
+        ""|*/*|*..*|*.lock)
+          return 1
+          ;;
+      esac
+      LC_ALL=C printf '%s\n' "$id" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' || return 1
+      git check-ref-format "$1" >/dev/null 2>&1 || return 1
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 while read -r old new ref; do
-  if [ "$ref" != refs/heads/main ] || [ "$new" = 0000000000000000000000000000000000000000 ]; then
-    echo "Shared files accepts updates to main only." >&2
+  if [ "$new" = "$zero" ] || ! allowed_ref "$ref"; then
+    echo "Shared files accepts updates to main and validated intent amendment branches only." >&2
     exit 1
   fi
   # Reject stale and non-fast-forward updates while objects are still in
   # quarantine. A rejected ref must not leave unreferenced data in the store.
-  if [ "$old" != "$(git rev-parse --verify refs/heads/main)" ] || ! git merge-base --is-ancestor "$old" "$new"; then
-    echo "Shared main has changed. Fetch and integrate before retrying." >&2
-    exit 1
+  if [ "$old" = "$zero" ]; then
+    if [ "$ref" = refs/heads/main ]; then
+      echo "Shared main cannot be recreated." >&2
+      exit 1
+    fi
+    if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+      echo "Branch already exists. Fetch and integrate before retrying." >&2
+      exit 1
+    fi
+    if [ "$(git cat-file -t "$new" 2>/dev/null)" != commit ]; then
+      echo "Amendment branch must point to a commit." >&2
+      exit 1
+    fi
+    main_head=$(git rev-parse --verify refs/heads/main 2>/dev/null) || {
+      echo "Shared main is missing." >&2
+      exit 1
+    }
+    if ! git merge-base "$main_head" "$new" >/dev/null 2>&1; then
+      echo "Amendment branch must share history with main." >&2
+      exit 1
+    fi
+  else
+    current=$(git rev-parse --verify --quiet "$ref" 2>/dev/null) || {
+      echo "Target branch does not exist." >&2
+      exit 1
+    }
+    if [ "$old" != "$current" ] || ! git merge-base --is-ancestor "$old" "$new"; then
+      echo "Shared branch has changed. Fetch and integrate before retrying." >&2
+      exit 1
+    fi
   fi
 done
 exec "$OPENCRAWL_GIT_NODE" "$OPENCRAWL_GIT_HELPER"

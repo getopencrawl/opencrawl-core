@@ -92,7 +92,7 @@ export async function connectWorkload(api:string,code:string,{fetcher=fetch,mint
 export async function workloadCommand(args:string[],input:Readable=process.stdin){
   if(args[0]==='events')return (await import('./workload-events.ts')).workloadEventCommand(args.slice(1),input);
   if(args[0]==='approve')return (await import('./workload-approval.ts')).workloadApprovalCommand(args);
-  if(args[0]==='bundle'||args[0]==='start')return (await import('./workload-plugin-command.ts')).workloadPluginCommand(args,input);
+  if(args[0]==='bundle'||args[0]==='start'||args[0]==='inbox')return (await import('./workload-plugin-command.ts')).workloadPluginCommand(args,input);
   const json=args.includes('--json');
   try{
     const {positionals,values}=parseArgs({args,allowPositionals:true,options:{'code-stdin':{type:'boolean'},api:{type:'string'},json:{type:'boolean'},help:{type:'boolean',short:'h'}}});

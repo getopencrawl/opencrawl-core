@@ -146,3 +146,43 @@ test('pending callback renders an escaped React handoff, returns 200, and does n
   });
   assert.equal(response.status,200);assert.ok(response.body.includes('integration-callback'));
 });
+
+test('GitHub adapter mints scoped installation tokens and validates inputs',async()=>{
+  const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+  const requests=[];
+  const app=createGitHubApp({appId:'1',slug:'owned',clientId:'Iv1.owned',clientSecret:'test',privateKey:privateKey.export({type:'pkcs1',format:'pem'})},{fetch:async(input,init)=>{
+    const url=new URL(input);
+    requests.push({url:url.pathname,method:init.method,body:init.body?JSON.parse(init.body):undefined,redirect:init.redirect,auth:init.headers.Authorization});
+    if(url.pathname==='/app/installations/42/access_tokens')return Response.json({token:'ghs_secret_token',expires_at:'2026-11-26T10:00:00Z',permissions:{pull_requests:'read',checks:'read'},repository_selection:'selected'},{status:201});
+    if(url.pathname==='/app/installations/43/access_tokens')return Response.json({message:'bad'},{status:403});
+    return Response.json({repositories:[{id:7,full_name:'org/repo'}],total_count:1});
+  }});
+  const scoped=await app.installationToken('42',{repositoryIds:[7],permissions:{pull_requests:'read',checks:'read'}});
+  assert.deepEqual(scoped,{token:'ghs_secret_token',expiresAt:'2026-11-26T10:00:00Z',permissions:{pull_requests:'read',checks:'read'},repositorySelection:'selected'});
+  assert.deepEqual(requests[0].body,{repository_ids:[7],permissions:{pull_requests:'read',checks:'read'}});
+  assert.equal(requests[0].redirect,'error');
+  assert.match(requests[0].auth,/^Bearer /);
+
+  const byName=await app.installationToken('42',{repositories:['OpenCrawl'],permissions:{contents:'read'}});
+  assert.equal(byName.token,'ghs_secret_token');
+  assert.deepEqual(requests[1].body,{repositories:['OpenCrawl'],permissions:{contents:'read'}});
+
+  const bare=await app.installationToken('42');
+  assert.equal(bare.token,'ghs_secret_token');
+  assert.deepEqual(requests[2].body,{});
+
+  const repos=await app.repositories('42');
+  assert.equal(repos.length,1);
+  assert.deepEqual(requests[3].body,{permissions:{metadata:'read'}});
+
+  await assert.rejects(app.installationToken('43'),err=>!String(err).includes('ghs_secret_token')&&err.status===502);
+  for(const call of [
+    ()=>app.installationToken('0'),
+    ()=>app.installationToken('../evil'),
+    ()=>app.installationToken('42',{repositories:['org/repo']}),
+    ()=>app.installationToken('42',{repositories:[]}),
+    ()=>app.installationToken('42',{repositoryIds:[0]}),
+    ()=>app.installationToken('42',{repositories:['repo'],repositoryIds:[7]}),
+    ()=>app.installationToken('42',{permissions:{contents:'superadmin'}}),
+  ])await assert.rejects(call,{status:400});
+});

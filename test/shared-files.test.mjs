@@ -12,6 +12,7 @@ import {fixtureToken, startFileServer} from './fixtures/shared-files-http.mjs';
 import {fileRepositories,matchingExistingRepository,provisionAllocatedRepository,provisionRepository} from '../dist/src/files/store.mjs';
 import {admitPush} from '../dist/src/files/capacity.mjs';
 import {sharedFilesLimits} from '../dist/src/files/git-http.mjs';
+import {listAmendmentBranches,readFileView} from '../dist/src/files/view.mjs';
 
 const exec = promisify(execFile);
 const MiB = 1024 * 1024;
@@ -337,4 +338,87 @@ test('allocated Git identities survive retries and refuse an unrelated or unmark
   await rm(join(dir,'opencrawl-repository-id'));
   await assert.rejects(materialize('one',allocated),/Restore the registered/);
   await assert.rejects(materialize('invalid','bad uuid'),/Invalid allocated/);
+});
+
+test('validated intent amendment branches allow fast-forward updates, block deletions/force/malformed refs, and support branch-aware views', async t => {
+  const f = await fixture(t);
+  const alice = await f.clone('alice', 'amend-a');
+  const bob = await f.clone('bob', 'amend-b');
+  await mkdir(join(alice.dir, 'intents'), {recursive: true});
+  await mkdir(join(bob.dir, 'intents'), {recursive: true});
+  const mainCommit = await edit(alice, 'intents/root.md', 'Root intent');
+  await alice.git('push', 'origin', 'main');
+  await bob.git('pull', '--ff-only', 'origin', 'main');
+
+  // Valid amendment branch creation and fast-forward update.
+  await alice.git('checkout', '-b', 'intents/amendments/auth-1.0_fix');
+  const firstAmend = await edit(alice, 'intents/auth.md', 'Draft v1');
+  await alice.git('push', 'origin', 'HEAD:refs/heads/intents/amendments/auth-1.0_fix');
+  const secondAmend = await edit(alice, 'intents/auth.md', 'Draft v2');
+  await alice.git('push', 'origin', 'HEAD:refs/heads/intents/amendments/auth-1.0_fix');
+
+  // Second valid amendment branch from main.
+  await bob.git('checkout', '-b', 'intents/amendments/billing-2');
+  const otherAmend = await edit(bob, 'intents/billing.md', 'Billing draft');
+  await bob.git('push', 'origin', 'HEAD:refs/heads/intents/amendments/billing-2');
+
+  // Reject force-push, non-fast-forward, deletion, arbitrary branches, malformed amendment IDs, and orphan history.
+  await alice.git('reset', '--hard', firstAmend);
+  const diverged = await edit(alice, 'intents/auth.md', 'Diverged');
+  await assert.rejects(alice.git('push', 'origin', 'HEAD:refs/heads/intents/amendments/auth-1.0_fix'));
+  await assert.rejects(alice.git('push', '--force', 'origin', 'HEAD:refs/heads/intents/amendments/auth-1.0_fix'));
+  assert.notEqual(diverged, secondAmend);
+  for (const ref of [
+    ':refs/heads/intents/amendments/auth-1.0_fix',
+    'HEAD:refs/heads/second',
+    'HEAD:refs/heads/intents/other',
+    'HEAD:refs/heads/intents/amendments/nested/slash',
+    'HEAD:refs/heads/intents/amendments/bad..dot',
+    'HEAD:refs/heads/intents/amendments/bad.lock',
+    'HEAD:refs/heads/intents/amendments/.leading-dot',
+    'HEAD:refs/heads/intents/amendments/' + 'x'.repeat(129),
+  ]) {
+    await assert.rejects(alice.git('push', 'origin', ref), undefined, ref);
+  }
+  await bob.git('checkout', '--orphan', 'orphan-amend');
+  await bob.git('rm', '-rf', '.');
+  await edit(bob, 'orphan.txt', 'No common history');
+  await assert.rejects(bob.git('push', 'origin', 'HEAD:refs/heads/intents/amendments/orphan-1'));
+
+  const repo = await f.store.open('team-a');
+  await f.git('alice', repo, 'fsck', '--full', '--strict', '--no-dangling', '--no-progress');
+
+  const principal = {tenantId: 'team-a', userId: 'alice'};
+  const branches = await listAmendmentBranches(f.store, principal);
+  assert.deepEqual(branches, [
+    {id: 'auth-1.0_fix', ref: 'refs/heads/intents/amendments/auth-1.0_fix', head: secondAmend},
+    {id: 'billing-2', ref: 'refs/heads/intents/amendments/billing-2', head: otherAmend},
+  ]);
+
+  const mainTree = await readFileView(f.store, principal);
+  assert.equal(mainTree.kind, 'commit');
+  assert.equal(mainTree.commit, mainCommit);
+  assert.deepEqual(mainTree.files, ['intents/root.md']);
+
+  const amendTree = await readFileView(f.store, principal, {ref: 'refs/heads/intents/amendments/auth-1.0_fix'});
+  assert.equal(amendTree.kind, 'commit');
+  assert.equal(amendTree.commit, secondAmend);
+  assert.deepEqual(amendTree.files, ['intents/auth.md', 'intents/root.md']);
+
+  const amendFile = await readFileView(f.store, principal, {
+    ref: 'refs/heads/intents/amendments/auth-1.0_fix',
+    revision: firstAmend,
+    path: 'intents/auth.md',
+  });
+  assert.equal(amendFile.kind, 'file');
+  assert.equal(amendFile.text, 'Draft v1');
+
+  // Cross-branch isolation and strict ref/principal guards.
+  await assert.rejects(readFileView(f.store, principal, {ref: 'refs/heads/main', revision: secondAmend}), {status: 404});
+  await assert.rejects(readFileView(f.store, principal, {
+    ref: 'refs/heads/intents/amendments/billing-2',
+    revision: secondAmend,
+  }), {status: 404});
+  await assert.rejects(readFileView(f.store, principal, {ref: 'refs/heads/side'}), {status: 400});
+  await assert.rejects(readFileView(f.store, {tenantId: 'team-a'}), {status: 403});
 });
