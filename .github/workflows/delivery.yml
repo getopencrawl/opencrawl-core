@@ -52,6 +52,7 @@ jobs:
           if npm view "@getopencrawl/opencrawl-core@$VERSION" --json > metadata.json 2> registry-error.txt; then
             node tools/package-provenance.mts metadata.json "$VERSION" "$SOURCE_REVISION"
             echo 'published=true' >> "$GITHUB_OUTPUT"
+            node --input-type=commonjs -e 'console.log("current=" + (require("./metadata.json")["dist-tags"]?.continuous === process.env.VERSION))' >> "$GITHUB_OUTPUT"
           else
             grep -q E404 registry-error.txt
             echo 'published=false' >> "$GITHUB_OUTPUT"
@@ -68,7 +69,7 @@ jobs:
           set -euo pipefail
           npm publish --access restricted --tag continuous-pending
       - name: Retain the published artifact and registry integrity
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && steps.existing.outputs.current != 'true'
         env:
           VERSION: ${{ steps.package.outputs.version }}
         run: |
@@ -77,13 +78,13 @@ jobs:
           npm view "@getopencrawl/opencrawl-core@$VERSION" version dist --json > published-artifact/package-metadata.json
           npm pack "@getopencrawl/opencrawl-core@$VERSION" --ignore-scripts --json --pack-destination published-artifact > published-artifact/package-artifact.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && steps.existing.outputs.current != 'true'
         with:
           name: core-package-${{ env.SOURCE_REVISION }}
           path: published-artifact/
           retention-days: 14
       - name: Recheck main before advancing the continuous channel
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && steps.existing.outputs.current != 'true'
         id: promote
         run: node tools/delivery.mts gate
       - name: Promote tested package for hosted consumption
@@ -92,7 +93,7 @@ jobs:
           VERSION: ${{ steps.package.outputs.version }}
         run: |
           npm dist-tag add "@getopencrawl/opencrawl-core@$VERSION" continuous
-          printf 'Published `%s` from `%s`; hosted CD consumes the integrity-verified continuous channel.\n' "$VERSION" "$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Advanced the continuous channel to %s from %s.\n' "$VERSION" "$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"
       - name: Create a cloud-scoped release notification token
         if: steps.promote.outputs.ready == 'true' && github.repository == 'getopencrawl/opencrawl-core'
         id: cloud-dispatch
@@ -109,5 +110,9 @@ jobs:
           GH_TOKEN: ${{ steps.cloud-dispatch.outputs.token }}
           VERSION: ${{ steps.package.outputs.version }}
         run: |
-          gh workflow run core-delivery.yml --repo getopencrawl/OpenCrawl --ref main \
-            --field core_version="$VERSION" --field core_revision="$SOURCE_REVISION"
+          jq -n --arg version "$VERSION" --arg revision "$SOURCE_REVISION" \
+            '{ref:"main", inputs:{core_version:$version, core_revision:$revision}}' > notification.json
+          curl --silent --show-error --fail-with-body --max-time 30 --retry 3 --retry-connrefused \
+            --header "Authorization: Bearer $GH_TOKEN" --header 'Content-Type: application/json' \
+            --data-binary @notification.json \
+            https://api.github.com/repos/getopencrawl/OpenCrawl/actions/workflows/core-delivery.yml/dispatches
