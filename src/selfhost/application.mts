@@ -50,6 +50,7 @@ import type {SetupState} from '../state/setup.mjs';
 import {createSetupStatus} from '../setup/status.mjs';
 import {createSetupHandler} from '../setup/http.mjs';
 import {registerSetupTools} from '../setup/mcp.mjs';
+import {readFileView} from '../files/view.mjs';
 import {createSharedFilesHandler, sharedFilesAuthorization} from '../files/git-http.mjs';
 import type {SharedFilesStore} from '../files/store.mjs';
 import {createBoardHandler} from '../board/http.mjs';
@@ -166,7 +167,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
   const sessions=createSessionLibrary({capturePairs:replicasImport?.capturePairs,forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
-  const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
+  const board=authorizedBoard({publicUrl:settings.url,state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage,authorization=req.headers.authorization)=>{const token=/^Bearer (.+)$/i.exec(authorization||'')?.[1];return identifyWorkload(token)??identifyCli(authorization,{capture:true});};
   const filesHandler=settings.sharedFilesAccess && settings.sharedFilesAccess!=='off' && sharedFiles && createSharedFilesHandler({store:sharedFiles,limits:filesLimits});
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
@@ -302,7 +303,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[],
         ...devinRecording?[await devinRecording.source(p,key=>sessions.read(p,{...key,limit:1}))]:[]];
-      const consoleApi=createConsoleApi({captureLinks,connection:integrations?.connection,activityBoard:boardState.board,usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({captureLinks,connection:integrations?.connection,...filesHandler&&sharedFiles?{fileView:(principal,path)=>readFileView(sharedFiles,principal,path)}:{},activityBoard:boardState.board,usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         ...usageServices(principal => ({principal,directory,integrations,search,connectors,onboarding,log,visible:sessions.visibleActivity})),progress:guided.progress,next:guided.next,library,libraryFailure},setup?{bootstrap:async context=>({setup:await setup.read(context.principal)})}:{});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{

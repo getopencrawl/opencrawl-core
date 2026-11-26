@@ -1,12 +1,11 @@
 import {createHash} from 'node:crypto';
 import {captureIdPattern,type CaptureCollection} from '../application/capture-links.mjs';
 import type {ApplicationDatabase} from './postgres.mjs';
+export {boardPage} from '../application/board-links.mjs';
 export {capturePage} from '../application/capture-links.mjs';
 
-/** A routing hint lets a host compare a link to the viewer's known memberships without inspecting another tenant's data. */
-export function workspaceLinkHint(tenantId:string) {
-  return createHash('sha256').update('opencrawl.workspace-link.v1\0'+tenantId).digest().subarray(0,9).toString('base64url');
-}
+export {workspaceLinkHint} from './workspace-link.mjs';
+import {workspaceLinkHint} from './workspace-link.mjs';
 
 export function captureLinkMatchesWorkspace(id:string,tenantId:string) {
   return captureIdPattern.test(id) && id.slice(3,15)===workspaceLinkHint(tenantId);

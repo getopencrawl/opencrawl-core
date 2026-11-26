@@ -4,6 +4,7 @@ import type {ErrorInfo, ReactNode} from 'react';
 import {ConsoleDataProvider, consoleResourceKey, useConsoleQueryClient, AppRouter, AppShell, FocusedFrame, AgentOnboarding, SourcesOnboarding, InviteOnboarding, UsagePage, SessionsPage, MemoriesPage, DiagnosticsPage, Button, LoadingState, Notice, Page, LinkButton, Icon, Navigate, Routes, Route, useLocation, useNavigate} from '../index.ts';
 import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../index.ts';
 import type {Bootstrap, ProductApi} from './api.ts';
+import {WorkspaceFilesPage} from '../pages/workspace-files.tsx';
 import {SourcesPage} from './sources.tsx';
 import {RecordingSettings} from '../pages/recording-control.js';
 import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
@@ -52,7 +53,8 @@ class ErrorBoundary extends Component<{children: ReactNode}, {failed: boolean}> 
   render() {return this.state.failed ? <FocusedFrame footer={<SignOut/>}><Notice tone="danger" title="This page couldn’t load">Reload your workspace to try again.</Notice><LinkButton to="/" reloadDocument>Reload workspace</LinkButton></FocusedFrame> : this.props.children;}
 }
 function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>; extensions?: ConsoleExtensions<B>}) {
-  const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({callTotals:api.callTotals,searchHistory:api.searchHistory,usageTokens:api.usageTokens,tokenSessions:api.tokenSessions,usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board}), [api]);
+  const dataAdapter = useMemo<ConsoleDataAdapter>(() => ({callTotals:api.callTotals,searchHistory:api.searchHistory,usageTokens:api.usageTokens,tokenSessions:api.tokenSessions,usage: api.usage, usageHighlights: api.usageHighlights, usageDetails: api.usageDetails, search: api.search, board: api.board, boardDestination:api.boardDestination}), [api]);
+
   const libraryAdapter = api.library;
   const onboardingAdapter = useMemo<OnboardingAdapter>(() => ({
     status: async signal => (await api.onboardingStatus(signal)).data,
@@ -103,7 +105,8 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
     {path:'/integrations/:workspace/:connectionId',navigation:false,label:'Connection',element:<ConnectionPage adapter={api}/>},
     {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canSetUpReplicas={canSetUpReplicas} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
-    {path:'/messages',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Message board">{feedback}</PendingPage>},
+    {path:'/messages',alternatePaths:['/board/:workspace/:kind/:value'],label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter} workspace={data?.boardWorkspace}/>,pending:feedback => <PendingPage title="Message board">{feedback}</PendingPage>},
+    {path:'/files',alternatePaths:['/commits/:workspace/:revision','/files/:workspace/:revision/*'],label:'Workspace files',icon:'memories',navigation:Boolean(data?.workspaceFiles),element:<WorkspaceFilesPage adapter={dataAdapter}/>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to={'/setup' + location.hash} replace/> : data ? <AgentOnboarding key={data.cacheScope} adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},

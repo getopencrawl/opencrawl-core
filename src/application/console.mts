@@ -1,8 +1,9 @@
 import {connectionPage,connectionPath,integrationIdPattern} from './connection-links.mjs';
-import {workspaceLinkHint} from '../state/capture-links.mjs';
 import {boardIdentity} from '../board/identity.mjs';
+import {filePage,type FileView} from './file-links.mjs';
+import {boardPage} from './board-links.mjs';
 import {capturePage} from './capture-links.mjs';
-import {attachCaptureLinks,type CaptureLinks} from '../state/capture-links.mjs';
+import {attachCaptureLinks,workspaceLinkHint,type CaptureLinks} from '../state/capture-links.mjs';
 import {usagePaths} from './usage-paths.mjs';
 import {digest} from '../sessions/event-identity.mjs';
 import type {BoardRepository} from '../state/board.mjs';
@@ -51,6 +52,7 @@ export interface ConsoleServices {
   changeRole: (user: User, id: string, userId: string, role: 'admin' | 'member') => Promise<{ok:true; userId:string; role:'admin' | 'member'}>;
   removeMember: (user: User, id: string, userId: string) => Promise<{ok:true;userId:string}>;
   renameOrganization: (user: User, id: string, name: string) => Promise<{ok:true;name:string}>;
+  fileView?: (principal:Principal,path:string)=>Promise<FileView>;
   connection?: (principal:Principal,id:string)=>Promise<SourceCard|null>;
   sources: (principal: Principal) => Promise<SourceCard[]>;
   usage: (principal: Principal) => Promise<unknown>;
@@ -61,14 +63,16 @@ export interface ConsoleServices {
   libraryFailure: (error: unknown) => {status: number; message: string};
 }
 const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|(?:privacy|recording)\/(?:status|change))$/;
-export const consolePages = new Set(['/', '/setup', ...usagePaths, '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
+export const consolePages = new Set(['/', '/files', '/setup', ...usagePaths, '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
+  if(boardPage(path)) return {name:'/messages', ...(method==='GET'?{}:{status:405})};
   if(connectionPage(path))return {name:'/sources',...(method==='GET'?{}:{status:405})};
+  if(filePage(path)) return {name:'/files',...(method==='GET'?{}:{status:405})};
   const capture = capturePage(path);
   if (capture) return {name:'/'+capture.collection,...(method === 'GET' ? {} : {status:405})};
   if (['/api/console/bootstrap','/api/console/sources','/api/console/usage','/api/console/usage/highlights','/api/console/team'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
-  if (['/api/console/sources/connection','/api/console/usage/details','/api/console/usage/calls','/api/console/usage/tokens','/api/console/usage/token-sessions','/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
-  if (['/setup','/sources','/data','/messages', '/diagnostics','/settings', '/settings/team', '/settings/privacy', '/agent-setup','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
+  if (['/api/console/files/view','/api/console/sources/connection','/api/console/usage/details','/api/console/usage/calls','/api/console/usage/tokens','/api/console/usage/token-sessions','/api/console/usage/search-history','/api/console/replicas/setup','/api/console/team/invite','/api/console/team/role','/api/console/team/remove','/api/console/team/organization'].includes(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
+  if (['/files','/setup','/sources','/data','/messages', '/diagnostics','/settings', '/settings/team', '/settings/privacy', '/agent-setup','/sessions','/memories'].includes(path)) return {name:path, ...(method === 'GET' ? {} : {status:405})};
   if (LIBRARY.test(path)) return {name:path, ...(method === 'POST' ? {} : {status:405})};
   return null;
 }
@@ -128,7 +132,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       } else if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([workspace(), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = hasCompletedOnboarding(progress);
-        body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
+        body = {...extension,...(services.fileView?{workspaceFiles:true as const}:{}),...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,boardWorkspace:workspaceLinkHint(principal.tenantId),workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if(path==='/api/console/usage/calls'||path==='/api/console/usage/search-history'){
         if(!services.usageActivity)throw consoleFailure(503,'Search activity unavailable.');
         if(path.endsWith('/calls')){
@@ -170,6 +174,11 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
           if (!parsed.success) throw consoleFailure(400, 'Invalid session page.');
           body = {...await services.usageTokens.sessions(principal, parsed.data), cacheScope};
         }
+      } else if (path === '/api/console/files/view') {
+        if(!services.fileView) throw consoleFailure(404,'Workspace files unavailable.');
+        const parsed=z.strictObject({path:z.string().min(1).max(8192)}).safeParse(await input(req));
+        if(!parsed.success)throw consoleFailure(400,'Invalid workspace file link.');
+        body=await services.fileView(principal,parsed.data.path);
       } else if (path === '/api/console/sources') {
         const items=await services.sources(principal);
         if (services.captureLinks) await attachCaptureLinks(services.captureLinks,principal.tenantId,'sessions',items.flatMap(item=>item.devinRecording?.latestSession?[item.devinRecording.latestSession]:[]));

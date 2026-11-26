@@ -14,6 +14,7 @@ import {DocumentFrame,ProductDocument} from '../../src/application/documents.tsx
 import {CallbackChoices, readContinuation} from '../../src/application/callback-view.tsx';
 import {SessionsPage} from '../../src/pages/sessions.tsx';
 import type {LibraryAdapter} from '../../src/pages/library-types.ts';
+import {WorkspaceFilesPage} from '../../src/pages/workspace-files.tsx';
 import {UsagePage} from '../../src/pages/usage.tsx';
 import {usagePaths} from '../../../src/application/usage-paths.mjs';
 import {DailyBarChart, PageHeader} from '../../src/design/components.tsx';
@@ -50,7 +51,7 @@ const progressiveUsageAdapter: ConsoleDataAdapter = {...usageAdapter,
   usageHighlights: signal => request('/api/console/usage/highlights', signal),
   usageDetails: (signal, range = '30d') => request('/api/console/usage/details', signal, {range}),
 };
-const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, search:(query,signal,page)=>request('/api/debug/search',signal,{query,page}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
+const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, boardDestination:(path,signal)=>request('/api/console/board-target?'+new URLSearchParams({path}),signal), search:(query,signal,page)=>request('/api/debug/search',signal,{query,page}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
 const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
@@ -64,6 +65,7 @@ const sourcesAdapter: SourcesAdapter = {
   saveCredential: (id, value, signal) => request(`/api/integrations/credentials/${encodeURIComponent(id)}`, signal ?? never, {value}),
 };
 const teamAdapter: TeamAdapter = {team: signal => request('/api/console/team', signal ?? never), invite: (email,signal) => request('/api/console/team/invite',signal ?? never,{email}), changeRole: async (userId,role) => ({ok:true,userId,role}), renameOrganization: async name => ({ok:true,name}), removeMember: (userId,signal) => request('/api/console/team/remove',signal ?? never,{userId})};
+const fileFixture: ConsoleDataAdapter = {...usageAdapter, fileView:(path,signal)=>request('/api/console/files/view',signal,{path})};
 const fullApi: ProductApi = {
   replicasSetup:signal=>request('/api/console/replicas/setup',signal,{}),
   ...sourcesAdapter,...teamAdapter,...diagnosticsAdapter,library:libraryAdapter,
@@ -79,12 +81,13 @@ function Fixture() {
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
   if (usagePaths.includes(location.pathname) || (location.pathname === '/' && new URLSearchParams(location.search).has('tab'))) return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', alternatePaths:['/', ...usagePaths.filter(path => path !== '/usage')], label: 'Usage', icon: 'usage', element: <UsagePage showActivity={new URLSearchParams(location.search).has('activity')?'usage-fixture':undefined} adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/files' || location.pathname.startsWith('/commits/') || location.pathname.startsWith('/files/')) return <ConsoleDataProvider scopeKey="files-fixture" onAccessFailure={()=>{}}><WorkspaceFilesPage adapter={fileFixture}/></ConsoleDataProvider>;
   if (location.pathname === '/stacked-usage-fixture') return <DailyBarChart label="Items per day" xAxisLabel="Date (UTC)" yAxisLabel="Items"
     days={[{date:'2026-11-17',value:10,segments:[2,3,5]},{date:'2026-11-18',value:0,segments:[0,0,0]},
       {date:'2026-11-19',value:null},{date:'2026-11-20',value:9,segments:[8,1,0]}]}
     series={[{label:'Sessions'},{label:'Documents'},{label:'Memories'}]} unit={n=>n+' items'}/>;
-  if (location.pathname === '/messages' || location.pathname === '/search') {
-    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
+  if (location.pathname.startsWith('/board/') || location.pathname === '/messages' || location.pathname === '/search') {
+    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', alternatePaths:['/board/:workspace/:kind/:value'], label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} workspace={location.pathname.startsWith('/board/') || new URLSearchParams(location.search).has('links') ? 'fixtureboard' : undefined} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
   }
   if (location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')) return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>},

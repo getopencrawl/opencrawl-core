@@ -6,6 +6,7 @@ Exit 0 green, 2 human action, 3 agent action, 75 retry, 1 blocked.
 In JSON mode read status and nextAction at the top level.
 `+common;
   if(command==='files')return `Usage: opencrawl files url [--api URL]
+       opencrawl files link [REPO_RELATIVE_PATH] [--revision FULL_COMMIT_ID] [--api URL]
        opencrawl files setup-git [--api URL]
        opencrawl files open [--session NATIVE_ID] [--api URL] [--json]
 
@@ -14,7 +15,8 @@ opencrawl setup configures Git to use your OpenCrawl sign-in. Run files setup-gi
 For an agent session, open prints the absolute path of a private scratch clone.
 Use the same session ID on resume. The checkout lives outside your working project.
 Edit and commit chosen files there, then git push origin main. Fetch or pull to
-see new handoffs. Share the path within the repo and commit ID with the recipient.
+see new handoffs. Run files link in that clone to share the published commit,
+or files link <path> to share one file at that revision in the browser.
 After a rejected push, fetch, rebase your local changes, resolve conflicts, and retry.
 `+common;
   if(command==='history')return `Usage: opencrawl history list --limit N [--project DIR] [--harness all|claude-code|codex|antigravity] --json
