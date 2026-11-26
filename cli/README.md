@@ -43,10 +43,13 @@ agents appear disabled below the recording choices. **⚠ Needs reinstall** flag
 requires a separate confirmation. Admins can invite teammates or press Esc to
 skip. Open the selected agent when prompted to finish its native connection.
 
-Agents can plan with `opencrawl setup --json`, apply with `setup apply`, resume with
-`setup --yes --json`, and read `setup status --local --json`. For bounded imports,
-see `opencrawl history --help`. After choosing recording agents, review automatic plugin updates
-in the next step. The checkbox starts checked on new installations. Check for updates now with `opencrawl setup updates`.
+Plan with `opencrawl setup --json`, apply with `setup apply`, and resume with
+`setup --yes --json`. Add `--api <workspace-url>` for self-hosted plans and
+workspace status. Use `setup status --local --json` for saved capture settings,
+or `opencrawl doctor --json` after a fresh recording opt-out.
+
+See `opencrawl history --help` for bounded imports. Plugin updates start checked
+for new recording agents. Check now with `opencrawl setup updates`.
 
 See the [onboarding guide](https://github.com/getopencrawl/opencrawl-core/blob/main/docs/onboarding.md)
 for native agent requirements, installation, and verification.
