@@ -302,7 +302,7 @@ test('self-host API keys share the Add a computer panel and fit desktop and mobi
     await page.setViewportSize({width,height:850});
     const input=await box(field),button=await box(create);
     if(width===1280)expect(Math.abs(input.y+input.height-button.y-button.height)).toBeLessThan(2);
-    else {expect(Math.abs(input.x-button.x)).toBeLessThan(2);expect(button.y).toBeGreaterThanOrEqual(input.y+input.height);}
+    else {expect(button.height).toBeGreaterThanOrEqual(44);expect(Math.abs(input.x-button.x)).toBeLessThan(2);expect(button.y).toBeGreaterThanOrEqual(input.y+input.height);}
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   }
   await create.click();
