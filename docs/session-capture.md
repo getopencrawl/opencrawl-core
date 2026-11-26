@@ -6,6 +6,10 @@ The CLI installs capture for local Claude Code, Codex and [Antigravity](#antigra
 
 Capture uses command hooks and incremental reads of native JSONL transcripts. The harness supervises asynchronous hooks. Each hook durably saves its event, then attempts a nonblocking uploader lock; the winner uploads in that same process, and competing hooks exit. Unix dispatch uses exec to preserve the harness-owned PID. Capture never starts detached children. Each uploader has a 90-second process deadline and exits on detected parent loss (checked every second), including while waiting for locks or network responses. Durable unacknowledged bytes remain for the next hook. Foreground flush/backfill is unaffected. If the harness itself dies, reaping adopted children remains the host’s responsibility. The same mechanism runs on macOS, Linux and Windows without an init service. Legacy OpenCrawl LaunchAgents/user timers are removed during installation. The installer preserves existing hook groups, backs up changed files, and rolls back configuration writes if installation fails. It uses absolute executable paths so desktop launch environments do not need the interactive shell's PATH.
 
+## Cloud machine keys
+
+Set `OPENCRAWL_TOKEN` to the organization machine key in the service’s secret store. The CLI and enrolled session capture use the same key and default to OpenCrawl Cloud. A recorder can use `OPENCRAWL_SESSIONS_TOKEN` when it needs a separate upload-only credential. [Create a machine key](https://app.getopencrawl.com/setup#api-key).
+
 ## Sending capture from another client
 
 An authenticated recorder can post a schema-version-1 batch to

@@ -132,6 +132,10 @@ Remove shared OPENCRAWL_TOKEN and OPENCRAWL_SESSIONS_TOKEN from that environment
 The CLI renews workspace identity in memory; configure native workspace_identity
 for the Replicas MCP separately. Workloads read shared team data, not human private data.
 
+Cloud organization machine keys:
+  Set OPENCRAWL_TOKEN to the key from Setup → Add a computer → API key.
+  CLI, MCP and session capture use it. Cloud is the default API.
+
 Other machines created per task (use a personal environment):
   token create [--env-file PATH]     One-year token for search, the board, MCP and uploads
   token revoke ID                    End a token; needs your own sign-in, like create

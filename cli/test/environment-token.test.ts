@@ -47,7 +47,10 @@ test('environment tokens default to cloud and reject a different deployment befo
   }
 });
 
-test('deferred cloud capture authenticates and uploads with only the sessions token',async()=>{
+test.each([
+  {name:'OPENCRAWL_SESSIONS_TOKEN', token:'fixture-upload-only'},
+  {name:'OPENCRAWL_TOKEN', token:'ocm1_fixture-machine-key'},
+])('deferred cloud capture authenticates and uploads with only $name',async({name,token})=>{
   const saved={...process.env},directory=mkdtempSync(join(tmpdir(),'cloud-token-capture-'));
   const priorFetch=globalThis.fetch,api='https://app.getopencrawl.com';
   const owner={tenantId:'fixture-team',userId:'fixture-user'},batches:any[]=[];
@@ -61,7 +64,7 @@ test('deferred cloud capture authenticates and uploads with only the sessions to
       const url=new URL(String(input));paths.push(url.pathname);
       expect(url.origin).toBe(api);
       expect(init.redirect).toBe('error');
-      expect(init.headers.authorization).toBe('Bearer fixture-upload-only');
+      expect(init.headers.authorization).toBe('Bearer '+token);
       if(url.pathname==='/api/sessions/identity')return Response.json({data:{principal:owner}});
       if(url.pathname==='/api/sessions/batches'){
         batches.push(JSON.parse(init.body));
@@ -73,7 +76,7 @@ test('deferred cloud capture authenticates and uploads with only the sessions to
     expect(paths).toEqual([]);
     expect(readCaptureConfig()!.authPending).toBe(true);
     // Secrets arrive after image preparation; the harness invokes hooks without --api.
-    process.env.OPENCRAWL_SESSIONS_TOKEN='fixture-upload-only';
+    process.env[name]=token;
     const path=join(directory,'claude','projects','fixture','session.jsonl');
     mkdirSync(join(path,'..'),{recursive:true});
     writeFileSync(path,JSON.stringify({type:'user',uuid:'fixture-message',sessionId:'cloud-session',message:{role:'user',content:'synthetic cloud capture'}})+'\n');
@@ -86,7 +89,7 @@ test('deferred cloud capture authenticates and uploads with only the sessions to
     expect(JSON.stringify(batches)).toContain('synthetic cloud capture');
     expect(readCaptureConfig()!.authPending).toBeFalsy();
     expect(captureStatus()).toMatchObject({queued:0,lastUpload:{stored:true}});
-    delete process.env.OPENCRAWL_SESSIONS_TOKEN;
+    delete process.env[name];
     const previousRequests=paths.length;
     await expect(request(api,'/api/sessions/identity')).rejects.toMatchObject({code:'AUTH_REQUIRED'});
     expect(paths).toHaveLength(previousRequests);
@@ -94,5 +97,25 @@ test('deferred cloud capture authenticates and uploads with only the sessions to
     globalThis.fetch=priorFetch;
     for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];
     Object.assign(process.env,saved);rmSync(directory,{recursive:true,force:true});
+  }
+});
+
+test('an explicit upload credential wins over the machine key and other credentials keep their scope',()=>{
+  const saved={...process.env},cloud='https://app.getopencrawl.com';
+  try {
+    delete process.env.OPENCRAWL_API_URL;
+    process.env.OPENCRAWL_TOKEN='ocm1_fixture-machine-key';
+    process.env.OPENCRAWL_SESSIONS_TOKEN='fixture-upload-only';
+    expect(environmentToken('OPENCRAWL_SESSIONS_TOKEN',cloud)).toBe('fixture-upload-only');
+    delete process.env.OPENCRAWL_SESSIONS_TOKEN;
+    expect(()=>environmentToken('OPENCRAWL_SESSIONS_TOKEN','https://saved.example')).toThrow();
+    process.env.OPENCRAWL_TOKEN='fixture-workspace-token';
+    expect(environmentToken('OPENCRAWL_SESSIONS_TOKEN',cloud)).toBeUndefined();
+    delete process.env.OPENCRAWL_TOKEN;
+    process.env.OPENCRAWL_SESSIONS_TOKEN='fixture-upload-only';
+    expect(environmentToken('OPENCRAWL_TOKEN',cloud)).toBeUndefined();
+  }finally{
+    for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];
+    Object.assign(process.env,saved);
   }
 });

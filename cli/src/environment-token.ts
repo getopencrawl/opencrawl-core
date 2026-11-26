@@ -10,7 +10,12 @@ export function withEnvironmentTokenOrigin<T>(origin: string | undefined, operat
 }
 
 export function environmentToken(name: 'OPENCRAWL_TOKEN' | 'OPENCRAWL_SESSIONS_TOKEN', api: string): string | undefined {
-  const token = process.env[name];
+  let token = process.env[name];
+  // Organization machine keys cover both workspace tools and capture. A dedicated
+  // upload credential takes precedence when the recorder has its own identity.
+  if (!token && name === 'OPENCRAWL_SESSIONS_TOKEN' && process.env.OPENCRAWL_TOKEN?.startsWith('ocm1_')) {
+    token = process.env.OPENCRAWL_TOKEN;
+  }
   if (!token) return undefined;
   assertTokenDestination(api);
   return token;
