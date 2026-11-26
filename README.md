@@ -51,7 +51,7 @@ and paste the onboarding setup prompt into your coding agent.
 
 For Kubernetes, use the [Helm self-host kit](deploy/helm/README.md) with published
 images and bundled or existing services. For a single Docker host, see
-[single-machine installation](docs/self-host.md#try-it-on-one-machine). For a custom Claude Code harness, follow the [API key setup](docs/self-host.md#unattended-claude-code-agents).
+[single-machine installation](https://docs.getopencrawl.com/self-hosting/). For a custom Claude Code harness, follow the [Claude Code service guide](https://docs.getopencrawl.com/self-hosting/claude-code-service/).
 Prefer a managed workspace? Try [OpenCrawl Cloud](https://getopencrawl.com).
 
 `main` is the unstable development channel. Versioned `helm-v*` self-host kits
