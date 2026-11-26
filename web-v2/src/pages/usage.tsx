@@ -4,7 +4,7 @@ import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
 import {BarList, Button, DailyBarChart, DailyLineChart, EmptyState, IntegrationCard, LoadingState, MetricGrid, Notice, Page, Section, Select, Table, Tabs} from '../design/components.js';
-import {Link, useLocation, useNavigate} from '../router.js';
+import {Link, Navigate, useLocation, useNavigate} from '../router.js';
 import {usagePath, usageTabs, type UsageTab as Tab} from '../../../src/application/usage-paths.mjs';
 import {CopyPromptButton} from '../onboarding/copy.tsx';
 import type {ConsoleDataAdapter, UsageReport} from './types.js';
@@ -180,7 +180,24 @@ function usePrefetchedRanges(ready: boolean, current: UsageRange, reads: Readonl
   }, [ready, client, current]);
 }
 
-export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: PageProps) {
+export function UsagePage(props: PageProps) {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const legacyTab = params.get('tab');
+  if (legacyTab && (location.pathname === '/' || location.pathname === '/usage')) {
+    const report = usageTabs.find(tab => tab === legacyTab);
+    if (report) {
+      params.delete('tab');
+      const oldRange = params.get('range');
+      if (oldRange === '30' || oldRange === '30d') params.delete('range');
+      else if (oldRange === '7' || oldRange === '90') params.set('range', oldRange + 'd');
+      return <Navigate replace to={{pathname: usagePath(report), search: params.toString(), hash: location.hash}}/>;
+    }
+  }
+  return <UsageReportPage {...props}/>;
+}
+
+function UsageReportPage({adapter, setupPrompt, reportScope, showActivity}: PageProps) {
   const location = useLocation(), navigate = useNavigate();
   const tab = usageTabs.find(item => usagePath(item) === location.pathname) ?? 'overview';
   const params = new URLSearchParams(location.search);
@@ -189,6 +206,7 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
   const period: OverviewPeriod = selectedRange === '90d' ? '90d' : range;
   function openReport(report: Tab, nextRange: OverviewPeriod, focusTab=false) {
     const next = new URLSearchParams(params);
+    next.delete('tab');
     if (nextRange === '30d') next.delete('range');
     else next.set('range', nextRange);
     void navigate({pathname: usagePath(report), search:next.toString()},{state:{focusUsageTab:focusTab}});
