@@ -61,6 +61,9 @@ test('imports both owner/resource families, exact physical version and original 
  assert.deepEqual(await c.pendingDeletions(p),[{harness:'new-harness',sessionId:'gone'}]);
  await c.update(p,'sessions','new-harness','gone',v=>({...v,deletion:{sessionId:'gone',state:'complete'}}));
  assert.deepEqual(await c.pendingDeletions(p),[]);
+ await assert.rejects(c.update(p,'sessions','new-harness','gone',current=>{
+   current.deletedAt=null;current.deletion=undefined;return current;
+ }),/cannot be reversed/);
  await assert.rejects(c.update(p,'sessions','new-harness','gone',()=>({...base,deletion:undefined})),/cannot be reversed/);
  await assert.rejects(async()=>c.readSource(source({...p,tenantId:'other'},'codex','same')),/scope denied/);
  const wrong=createResourceControlState({...database,sourceIdentity:{...database.sourceIdentity,organizationId:null}},store,prefix);

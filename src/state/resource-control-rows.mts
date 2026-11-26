@@ -112,7 +112,7 @@ export function postgresControlRows(database:ApplicationDatabase,ids:ReturnType<
         requireActive(guard.rowCount);
         const {rows:[row]}=await db.query('SELECT control FROM '+controlsTable+' WHERE '+match,params);
         const current:ResourceControl|null=row?.control??null;
-        const next=checkedControl(Buffer.from(JSON.stringify({...current,schemaVersion:1,...change(current),updatedAt:new Date().toISOString()})),key);
+        const next=checkedControl(Buffer.from(JSON.stringify({...current,schemaVersion:1,...change(current && structuredClone(current)),updatedAt:new Date().toISOString()})),key);
         if(row && !keepsDeletion(kind,row.control,next))throw Error('A resource deletion cannot be reversed');
         await db.query(`INSERT INTO ${controlsTable} AS c(namespace,owner,kind,harness,name_hash,control,revision) VALUES($1,$2,$3,$4,$5,$6,1)
           ON CONFLICT(namespace,owner,kind,harness,name_hash) DO UPDATE SET control=excluded.control,revision=c.revision+1`,[...params,next]);
