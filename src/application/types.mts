@@ -56,7 +56,7 @@ export interface SettingsData {
 }
 
 export interface InvitationPolicy {delivery: 'email' | 'link'; beforeAgentSetup: boolean}
-export interface Bootstrap extends SettingsData {workspaceFiles?:true; sessionPrivacy?:true; splitUsage?: true; searchActivity?: true; cacheScope: string; canInvite: boolean; invitationPolicy?: InvitationPolicy; onboarding: {completed: boolean; next: string}; setup?: import('../setup/types.mjs').SetupStatus}
+export interface Bootstrap extends SettingsData {workspaceFiles?:true; boardWorkspace?:string; sessionPrivacy?:true; splitUsage?: true; searchActivity?: true; cacheScope: string; canInvite: boolean; invitationPolicy?: InvitationPolicy; onboarding: {completed: boolean; next: string}; setup?: import('../setup/types.mjs').SetupStatus}
 
 export type * from './reports.mjs';
 export type * from './library-types.mjs';

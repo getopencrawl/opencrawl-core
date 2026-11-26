@@ -8,6 +8,7 @@ import {diagnosticPage, MAX_SEARCH_PAGE, SEARCH_PAGE_SIZE, SOURCE_WINDOW} from '
 import {Link, useSearchParams} from '../router.js';
 import {memoryHarness, memoryPath} from './memories.js';
 import {sessionHarness, sessionPath} from './sessions.js';
+import {boardPage} from '../../../src/application/board-links.mjs';
 import {transcriptFragment} from '../../../src/application/transcript-links.mjs';
 import {messageHref} from './board.js';
 import {SearchReader} from './search-reader.js';
@@ -41,6 +42,8 @@ function sourcePath(hit: DiagnosticHit, source: SearchSource) {
   const {userId, harness, sessionId, path, channel, messageId, threadId,permalinkId,eventId,installationId} = hit._source ?? {};
   const fragment=source==='sessions' && typeof eventId==='string' ? transcriptFragment({eventId,installationId:typeof installationId==='string'?installationId:undefined}) : '';
   if ((source==='sessions'||source==='memories') && typeof permalinkId==='string') return '/'+source+'/'+encodeURIComponent(permalinkId)+fragment;
+  const permalink=hit._source?.permalink;
+  if(source==='board' && typeof permalink==='string' && boardPage(permalink)?.kind==='posts') return permalink;
   if (source === 'board' && typeof channel === 'string' && channel && typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0 &&
       typeof threadId === 'number' && Number.isSafeInteger(threadId) && threadId > 0) return messageHref(channel, messageId, threadId);
   if (typeof userId !== 'string' || !userId || typeof harness !== 'string') return;

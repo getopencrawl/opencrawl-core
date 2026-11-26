@@ -111,3 +111,46 @@ test('thread and channel reads retain final revocation barriers',async t=>{
  const board=authorizedBoard({state:f.state,admit:async p=>p,authorize:async p=>{if(!active)throw Object.assign(Error('revoked'),{status:403});return p;}});
  active=false;await assert.rejects(board.thread(alice,{threadId:1}),{status:403});await assert.rejects(board.channels(alice,{}),{status:403});
 });
+
+test('board permalinks bind local IDs to a workspace and resolve one exact reply or public agent',async t=>{
+ const {board}=await fixture(t);
+ const {boardPath,boardPage}=await import('../dist/src/application/board-links.mjs');
+ const {workspaceLinkHint}=await import('../dist/src/state/capture-links.mjs');
+ const link=(kind,id)=>boardPath(workspaceLinkHint(alice.tenantId),kind,id);
+ await register(board);
+ await register(board,outsider,'foreign','other-agent');
+ const post=(p,name,id,channel,threadId)=>board.post(p,{agent:name,posts:[{id,channel,text:id,...threadId?{threadId}:{}}]});
+ await post(alice,'codex:client','first','a/b');
+ await post(alice,'codex:client','answer','a/b',1);
+ await post(outsider,'other-agent','different','private');
+ assert.deepEqual(await board.destination(bob,link('posts',2)),{kind:'posts',id:2,root:1,channel:'a/b'});
+ assert.deepEqual(await board.destination(bob,link('threads',1)),{kind:'threads',id:1,root:1,channel:'a/b'});
+ await assert.rejects(board.destination(bob,link('threads',2)),{status:404});
+ assert.deepEqual(await board.destination(bob,link('channels','a/b')),{kind:'channels',channel:'a/b'});
+ await assert.rejects(board.destination(bob,link('channels','unknown')),{status:404});
+ await assert.rejects(board.destination(outsider,link('posts',1)),{status:404});
+ await assert.rejects(board.destination({...alice,captureAccess:'write'},link('posts',1)),{status:403});
+ const agent=await board.destination(bob,link('agents','@codex:client'));
+ assert.equal(agent.name,'codex:client');
+ assert.deepEqual(Object.keys(agent).sort(),['harness','id','kind','name','task']);
+ assert.deepEqual(await board.destination(bob,link('agents',agent.id)),agent);
+ for(const name of ['.','..','~alias','a/b','工程'])assert.equal(boardPage(new URL(link('channels',name),'https://example.org').pathname).value,name);
+});
+
+test('board tools return canonical URLs for exact resources and honor explicit field selections',async t=>{
+ const {make}=await fixture(t),board=make({publicUrl:'https://console.example'});
+ const {workspaceLinkHint}=await import('../dist/src/state/capture-links.mjs');
+ const root='https://console.example/board/'+workspaceLinkHint(alice.tenantId);
+ await register(board);
+ const posted=await board.agent.post(alice,{agent:'codex:client',posts:[{id:'id1',channel:'urls',text:'A public reference'}]});
+ const id=posted.messages[0].id, url=root+'/posts/'+id;
+ assert.equal(posted.messages[0].url,url);
+ assert.deepEqual((await board.agent.read(bob,{ids:[id],select:['url']})).messages,[{id,url}]);
+ assert.deepEqual((await board.agent.list(bob,{select:['text']})).messages,[{id,text:'A public reference'}]);
+ assert.equal((await board.agent.list(bob,{})).messages[0].url,url);
+ assert.equal((await board.agent.thread(bob,{threadId:id})).messages[0].url,url);
+ assert.equal((await board.fetch(bob,{id:'message:'+id})).url,url);
+ const profile=(await board.agent.agents(bob,{})).agents[0];
+ assert.equal((await board.destination(bob,new URL(profile.url).pathname)).name,profile.name);
+ assert.equal((await board.agent.channels(bob,{})).channels.find(row=>row.channel==='urls').url,root+'/channels/urls');
+});

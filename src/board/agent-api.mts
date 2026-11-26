@@ -1,4 +1,6 @@
 import {z} from 'zod';
+import {boardPath,type BoardKind} from '../application/board-links.mjs';
+import {workspaceLinkHint} from '../state/capture-links.mjs';
 import {announceOnline,onlineWindow,profileRetentionMs,readInbox} from './inbox.mjs';
 import {bindPresenceSession,type PreviewFactory} from './presence-prompts.mjs';
 import type {Principal} from '../sessions/types.mjs';
@@ -74,7 +76,11 @@ async function followThread(tx:BoardTransaction,id:string,thread:number,followin
 
 /** One agent contract shared by MCP and /api/board/v2. Legacy HTTP/UI adapters
  * remain separate so already-running clients can finish during a rolling release. */
-export function createAgentBoard({repository,scope,now,previews}:{repository:BoardRepository;scope(p:Principal):string;now():number;previews:PreviewFactory}){
+export function createAgentBoard({repository,scope,now,previews,publicUrl}:{publicUrl?:string;repository:BoardRepository;scope(p:Principal):string;now():number;previews:PreviewFactory}){
+  const link=(p:Principal,kind:BoardKind,value:string|number)=>publicUrl
+    ? {url:new URL(boardPath(workspaceLinkHint(p.tenantId),kind,value),publicUrl).href} : {};
+  const linked=<T extends {id:number}>(p:Principal,m:T,select?:string[])=>select && !select.includes('url')
+    ? m : {...m,...link(p,'posts',m.id)};
   const checked=(p:Principal,input:{workspace?:string})=>{const key=scope(p);if(input.workspace!==undefined&&input.workspace!==p.tenantId)throw fail('Workspace scope mismatch',403);return key;};
   async function list(principal:Principal,input:unknown){
     const args=agentListSchema.parse(input),key=checked(principal,args);
@@ -83,7 +89,7 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
     const result=await repository.searchAgentMessages(key,principal.userId,{query:args.query,topics:args.channels,agents:args.from,authors:[],sort:args.order,
       after:args.after,before:args.before,thread,rootsOnly:args.rootsOnly,since:args.since,until:args.until,limit:args.limit,
       facets:args.facets.map(field=>field==='channel'?'topic':field),facetSize:5,cursor:args.cursor},now(),args.select);
-    return {messages:result.messages,next:result.next,
+    return {messages:result.messages.map(m=>linked(principal,m,args.select)),next:result.next,
       ...result.facets?{facets:Object.fromEntries(Object.entries(result.facets).map(([key,value])=>[key==='topic'?'channel':key,value]))}:{}};
   }
   return {
@@ -96,7 +102,7 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
         return {messages:args.ids.map(id=>{
           const message=byId.get(id);
           if(!message)throw fail(`Message ${id} not found`,404);
-          return message;
+          return linked(principal,message,args.select);
         })};
       });
     },
@@ -114,7 +120,7 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
         const {rows,ids,...state}=await readInbox(tx,key,identity.agent,principal.userId,identity.participant,args.acknowledge,args.noticeOnly,now(),bound);
         if(args.noticeOnly)return {ids,more:state.more,...state.left?{left:true}:{}};
         const names=await namesFor(tx,rows);
-        return {...state,messages:rows.map(row=>preview.message({...agentMessage(row,names),...replyNotification(row.threadId)},row))};
+        return {...state,messages:rows.map(row=>preview.message({...linked(principal,agentMessage(row,names)),...replyNotification(row.threadId)},row))};
       }));
     },
     async sync(principal:Principal,input:unknown){
@@ -135,7 +141,7 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
           ? await tx.unread({...window,topics:args.channels??identity.participant.topics,mention:identity.agent,userId:principal.userId,agent:identity.agent,name:identity.name})
           : await tx.sharedUpdates({...window,channels:args.channels});
         const names=await namesFor(tx,rows);
-        const messages=messagePage(rows.map(m=>({...selectMessage(agentMessage(m,names),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
+        const messages=messagePage(rows.map(m=>({...linked(principal,selectMessage(agentMessage(m,names),args.select),args.select),...(!args.select?replyNotification(m.threadId):{})})),args.limit);
         const more=messages.length<rows.length;
         messages.forEach((message,i)=>preview.message(message,rows[i]));
         return {messages,next:more?messages.at(-1)!.id:head,more,...(!identity?{scope:'workspace',
@@ -153,7 +159,7 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
           if(thread&&thread.root.topic!==channel)throw fail('Reply target belongs to another channel',404);
           const message=await publishMessage(tx,identity,{id:post.id,channel,text:post.text,threadId:thread?.root.id,replyTo:target,mentions:post.mentions.map(name=>name.replace(/^@/,''))},now());
           if(post.follow&&!identity.participant.mutedThreads?.includes(message.threadId??message.id))await followThread(tx,identity.agent,message.threadId??message.id,true);
-          messages.push(args.full?agentMessage(message):{id:message.id,thread:message.threadId??message.id});unresolved.push(...message.publication?.unresolvedMentions??[]);
+          messages.push(linked(principal,args.full?agentMessage(message):{id:message.id,thread:message.threadId??message.id}));unresolved.push(...message.publication?.unresolvedMentions??[]);
         }
         const participant=(await tx.participant(identity.agent))!;participant.seen=now();await tx.putParticipant(identity.agent,participant);
         return {messages,...mentionWarning(unresolved)};
@@ -195,11 +201,11 @@ export function createAgentBoard({repository,scope,now,previews}:{repository:Boa
     async agents(principal:Principal,input:unknown){
       const args=agentDirectorySchema.parse(input),key=checked(principal,args);
       return repository.read(key,async tx=>{const time=now(),rows=await tx.agentProfiles({after:args.after,limit:args.limit+1,cutoff:time-activeMs,active:args.active,query:args.query});
-        return {agents:rows.slice(0,args.limit).map(p=>({name:p.name,task:p.task,active:!p.left&&p.seen>time-activeMs,listening:!p.left&&Number(p.lastPoll)>time-180000,channels:p.topics})),next:rows.length>args.limit?args.after+args.limit:null};});
+        return {agents:rows.slice(0,args.limit).map(p=>({...link(principal,'agents',p.agentId),name:p.name,task:p.task,active:!p.left&&p.seen>time-activeMs,listening:!p.left&&Number(p.lastPoll)>time-180000,channels:p.topics})),next:rows.length>args.limit?args.after+args.limit:null};});
     },
     async channels(principal:Principal,input:unknown){
       const args=agentChannelsSchema.parse(input),key=checked(principal,args);
-      return repository.read(key,async tx=>{const topics=await tx.topics(),rows=[{channel:'opencrawl',latest:topics.find(t=>t.topic==='opencrawl')?.latest.id??null,posting:'replies' as const},...topics.filter(t=>t.topic!=='opencrawl').sort((a,b)=>b.latest.id-a.latest.id).map(t=>({channel:t.topic,latest:t.latest.id,posting:'threads-and-replies' as const}))];return {channels:rows.slice(args.after,args.after+args.limit),next:args.after+args.limit<rows.length?args.after+args.limit:null};});
+      return repository.read(key,async tx=>{const topics=await tx.topics(),rows=[{channel:'opencrawl',latest:topics.find(t=>t.topic==='opencrawl')?.latest.id??null,posting:'replies' as const},...topics.filter(t=>t.topic!=='opencrawl').sort((a,b)=>b.latest.id-a.latest.id).map(t=>({channel:t.topic,latest:t.latest.id,posting:'threads-and-replies' as const}))];return {channels:rows.slice(args.after,args.after+args.limit).map(row=>({...row,...link(principal,'channels',row.channel)})),next:args.after+args.limit<rows.length?args.after+args.limit:null};});
     },
   };
 }

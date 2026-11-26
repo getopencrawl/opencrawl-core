@@ -167,7 +167,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
     async fetch(p:Principal,input:unknown){await authorize(p);const result=await workspace.fetch(p,input);await authorize(p);return result;},
   };
   const sessions=createSessionLibrary({capturePairs:replicasImport?.capturePairs,forgetSearches:usageActivity?.forget,store,eventIdentities,prefix,...settings.search,scheduleDeletion:scheduleSessionDeletion});
-  const board=authorizedBoard({state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
+  const board=authorizedBoard({publicUrl:settings.url,state:boardState,authorize,requestCaptureErasure:(principal,session)=>sessions.requestDeletion(principal,session,{beforeFirstCapture:true}),recentSessions:createRecentSessions({store,prefix,...settings.search})});
   const identifyAgent=async(req:IncomingMessage,authorization=req.headers.authorization)=>{const token=/^Bearer (.+)$/i.exec(authorization||'')?.[1];return identifyWorkload(token)??identifyCli(authorization,{capture:true});};
   const filesHandler=settings.sharedFilesAccess && settings.sharedFilesAccess!=='off' && sharedFiles && createSharedFilesHandler({store:sharedFiles,limits:filesLimits});
   const authenticate=async(req:IncomingMessage)=>{const identity=await identifyAgent(req);if(identity.status!==200)throw Object.assign(new Error('Sign in required'),{status:identity.status});admitActivity(identity.principal);return identity.principal;};
