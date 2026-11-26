@@ -63,6 +63,7 @@
     "./identity/devin-runtime": "./dist/src/identity/devin-runtime.mjs",
     "./state/replicas": "./dist/src/state/replicas.mjs",
     "./state/devin": "./dist/src/state/devin.mjs",
+    "./identity/machine-keys": "./dist/src/identity/machine-keys.mjs",
     "./identity/replicas": "./dist/src/identity/replicas.mjs",
     "./identity/replicas-connections": "./dist/src/identity/replicas-connections.mjs",
     "./identity/replicas-http": "./dist/src/identity/replicas-http.mjs",

@@ -23,3 +23,4 @@ export * from './application/team.tsx';
 export * from './application/source-model.ts';
 export * from './application/client.ts';
 export * from './application/transport.ts';
+export {apiKeyExtensions} from './application/api-keys.tsx';
