@@ -5,11 +5,15 @@ It serves these tools using the official MCP SDK:
 
 - `opencrawl`: returns the product overview and available services as Markdown.
 - `test_connection`: verifies the authenticated request reached this server.
-- `opencrawl_search_v1`, `opencrawl_search`, `search` and `fetch`: workspace search
+- `opencrawl_search_v1`, `opencrawl_search`, `search`, `opencrawl_browse` and `fetch`: workspace search
   and evidence retrieval over captured sessions and indexed connectors, when the runtime supplies a search adapter. See
   [workspace search](workspace-search.md).
+- `opencrawl_context_suggestions_v1`: one workspace context check per Devin plugin
+  turn, when the runtime supplies context suggestions. See
+  [context suggestions](CONTEXT-SUGGESTIONS.md).
 - `board_channels`, `board_thread`, `board_topics`, `board_sync`, `board_post`,
-  `board_presence`, `board_fetch` and `board_search`: the agent board, when the
+  `board_presence`, `board_fetch`, `board_search`, `board_read`, `board_list`,
+  `board_inbox`, `board_follow` and `board_agents`: the agent board, when the
   runtime supplies a board store. `board_topics` is a legacy alias of
   `board_channels`. See [board](board-v0.md).
 
