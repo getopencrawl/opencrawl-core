@@ -258,7 +258,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
           if(identity.status===401)res.setHeader('WWW-Authenticate','Basic realm="OpenCrawl shared files"');
           return respond(identity.status,'Shared files authentication required');
         }
-        if(identity.principal.owner?.provider==='machine')return respond(403,'Machine keys do not grant Git access');
+        if(identity.principal.owner?.provider==='machine')return respond(403,'API keys do not grant Git access');
         await authorize(identity.principal);
         const writing=url.pathname.endsWith('/git-receive-pack')||url.searchParams.get('service')==='git-receive-pack';
         if(writing&&settings.sharedFilesAccess!=='read-write')return respond(403,'Workspace Git is read-only');
@@ -294,7 +294,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       if(await accounts.route(req,res,url))return;
       const oauthCallback=url.pathname==='/oauth/connectors/slack/callback'&&req.method==='GET';
       const keyPage=url.pathname==='/settings/machine-keys';
-      const keyApi=url.pathname==='/api/settings/machine-keys' || url.pathname==='/api/settings/machine-keys/revoke';
+      const keyApi=['/api/keys','/api/keys/revoke','/api/settings/machine-keys','/api/settings/machine-keys/revoke'].includes(url.pathname);
       const route=keyPage||keyApi?{name:url.pathname}:oauthCallback?{name:'connector-oauth-callback'}:productRoute(req.method||'',url.pathname);
       if(!route)return respond(404,'Not found');
       if(route.status)return respond(route.status,'Method not allowed');
@@ -307,7 +307,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       if(keyPage || keyApi){
         res.setHeader('Cache-Control','no-store');
         if(!isAdmin(member))return json(403,{error:'Workspace administrator access required.'});
-        if(keyPage)return req.method==='GET'?respond(200,consoleDocument(undefined,{machineSetup:Boolean(setup),showIntegrations:true}),'text/html; charset=utf-8'):respond(405,'Method not allowed');
+        if(keyPage)return req.method==='GET'?redirect('/setup#api-key'):respond(405,'Method not allowed');
         try {
           const revoke=url.pathname.endsWith('/revoke');
           if(req.method==='GET'&&!revoke)return json(200,{keys:await machines.list()});
@@ -317,7 +317,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
           return json(201,await machines.create(input.name));
         } catch(error) {
           const info=errorInfo(error);
-          return info.expose?json(info.status??400,{error:info.message}):json(503,{error:'Machine keys are temporarily unavailable.'});
+          return info.expose?json(info.status??400,{error:info.message}):json(503,{error:'API keys are temporarily unavailable.'});
         }
       }
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');

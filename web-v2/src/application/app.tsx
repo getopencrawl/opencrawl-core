@@ -32,6 +32,7 @@ export interface ConsoleExtensions<B extends Bootstrap> {
   decorateRoute?: (route: ConsoleRoute, data: B) => ConsoleRoute;
   workspaceNotice?: (data: B) => ReactNode;
   teamFooter?: ReactNode;
+  computerApiKeys?: ReactNode;
   reloadKeys?: Record<string, readonly unknown[]>;
 }
 function WorkspaceInvalidation() {
@@ -92,7 +93,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
       badge:data?.setup?.installations.length === 0
         ? <span className="oc-nav-alert" role="img" aria-label="Needs attention. No computers connected." title="Connect your first computer">!</span>
         : undefined,
-      element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error}/> : null,
+      element:data?.setup ? <SetupPage key={data.cacheScope} mcpUrl={data.mcpUrl} status={data.setup} error={error} apiKeys={data.workspace.role === 'admin' ? extensions?.computerApiKeys : undefined}/> : null,
       pending:(feedback?:ReactNode)=><PendingPage title="Setup">{feedback}</PendingPage>,
     }] : []),
     {path:'/',alternatePaths:usagePaths,label:'Usage',icon:'usage',element:<UsagePage showActivity={data?.searchActivity?data.cacheScope:undefined} adapter={dataAdapter} reportScope={data?.splitUsage ? data.cacheScope : undefined} setupPrompt={data?.setup ? undefined : data?.setupPrompt}/>,pending:feedback => <PendingPage bodyClassName="usage-report" title="Usage" description="Workspace usage">{feedback}</PendingPage>},

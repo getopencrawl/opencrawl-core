@@ -1,4 +1,5 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
+import {ApiKeys} from '../../src/selfhost/api-keys.tsx';
 import {OpenCrawlApp} from '../../src/application/app.tsx';
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -126,4 +127,4 @@ function Fixture() {
 const mount = document.getElementById('root');
 if (!mount) throw new Error('Fixture mount is missing');
 const fullApp = new URLSearchParams(window.location.search).has('full-app');
-createRoot(mount).render(fullApp ? <OpenCrawlApp api={fullApi}/> : <AppRouter><Fixture /></AppRouter>);
+createRoot(mount).render(fullApp ? <OpenCrawlApp api={fullApi} extensions={new URLSearchParams(location.search).has('api-keys') ? {computerApiKeys:<ApiKeys/>} : undefined}/> : <AppRouter><Fixture /></AppRouter>);

@@ -46,7 +46,7 @@ export async function postDocumentAction(action:string, fields:URLSearchParams, 
 export interface MachineKey {id: string; name: string; createdAt: string}
 
 async function machineKeyRequest<T>(path: string, signal: AbortSignal, input?: {name: string} | {id: string}): Promise<T> {
-  const response = await fetch('/api/settings/machine-keys' + path, {
+  const response = await fetch('/api/keys' + path, {
     method: input ? 'POST' : 'GET', signal, credentials: 'same-origin', cache: 'no-store',
     headers: {'Accept': 'application/json', ...(input && {'Content-Type': 'application/json'})},
     body: input && JSON.stringify(input),
@@ -54,7 +54,7 @@ async function machineKeyRequest<T>(path: string, signal: AbortSignal, input?: {
   const body = await response.json().catch(() => null);
   if (response.redirected || !response.ok) {
     const status = response.redirected ? 401 : response.status;
-    const error = new ConsoleApiError(body?.error ?? 'Could not access machine keys.', status);
+    const error = new ConsoleApiError(body?.error ?? 'Could not access API keys.', status);
     if ([401, 403].includes(status)) window.dispatchEvent(new CustomEvent('opencrawl:access-denied', {detail: error.message}));
     throw error;
   }

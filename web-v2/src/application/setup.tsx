@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react';
+import {useEffect, useState, type ReactNode} from 'react';
 import {Icon, Notice, Page, Section, Table, Tabs} from '../design/components.tsx';
 import {nativeInstallCommand} from '../../../src/sessions/cli-installation.mjs';
 import {CommandSnippet} from '../onboarding/copy.tsx';
@@ -23,8 +23,8 @@ const setupSteps = [
   {title:'Run an example session to verify capture', detail:`Send “${verificationMessage}” to each connected agent. Look for “Captured and searchable” under “Your computers”.`},
 ];
 
-function AgentInstructions({mcpUrl, first}: {mcpUrl: string; first: boolean}) {
-  const [platform, setPlatform] = useState(() => /Windows/.test(navigator.userAgent) ? 'windows' : 'unix');
+function AgentInstructions({mcpUrl, first, apiKeys}: {mcpUrl: string; first: boolean; apiKeys?: ReactNode}) {
+  const [platform, setPlatform] = useState(() => apiKeys && location.hash === '#api-key' ? 'api-key' : /Windows/.test(navigator.userAgent) ? 'windows' : 'unix');
   const workspace = new URL(mcpUrl).origin;
   const windows = connectionCommands(mcpUrl, true);
   const apiArg = workspace === 'https://app.getopencrawl.com' ? '' : ` --api '${workspace.replaceAll("'", "'\\''")}'`;
@@ -32,19 +32,19 @@ function AgentInstructions({mcpUrl, first}: {mcpUrl: string; first: boolean}) {
     ? `${windows.cli}\n${windows.recording}`
     : `${nativeInstallCommand()} -s -- --connect${apiArg}`;
   return <Section className="oc-host-install" title={first ? 'Connect your first computer' : undefined}
-    description={platform === 'windows'
+    description={apiKeys ? undefined : platform === 'windows'
       ? 'On the computer you want to connect, paste these commands into PowerShell. Sign in and choose which agents to record.'
       : 'On the computer you want to connect, paste this command into Terminal. Sign in and choose which agents to record.'}>
     <div className="oc-install-instructions">
-      <Tabs label="Operating system" items={platforms} value={platform} onChange={setPlatform}/>
-      <CommandSnippet key={platform} label="Copy setup command" text={text}/>
+      <Tabs label={apiKeys ? "Connection method" : "Operating system"} items={apiKeys ? [...platforms, {value:"api-key",label:"API key"}] : platforms} value={platform} onChange={setPlatform}/>
+      {platform === 'api-key' ? apiKeys : <CommandSnippet key={platform} label="Copy setup command" text={text}/>}
     </div>
-    <ol className="oc-host-guide" aria-label="Setup steps">
+    {platform !== 'api-key' && <ol className="oc-host-guide" aria-label="Setup steps">
       {setupSteps.map(step => <li key={step.title}>
         <h3>{step.title}</h3>
         <p>{step.detail}</p>
       </li>)}
-    </ol>
+    </ol>}
   </Section>;
 }
 
@@ -109,21 +109,21 @@ function ComputerGrid({installations}: {installations: Installation[]}) {
   </ul>;
 }
 
-export function SetupPage({status, error, mcpUrl}: {mcpUrl: string; status: NonNullable<Bootstrap['setup']>; error: string}) {
+export function SetupPage({status, error, mcpUrl, apiKeys}: {apiKeys?: ReactNode; mcpUrl: string; status: NonNullable<Bootstrap['setup']>; error: string}) {
   const {installations} = status;
   const first = installations.length === 0;
   return <Page className="oc-management-page" bodyClassName="oc-host-setup" title="Setup">
     {error && <Notice tone="danger">{error}</Notice>}
-    {first ? <div className="oc-host-start">
+    {first && !apiKeys ? <div className="oc-host-start">
       <header className="oc-host-welcome">
         <div><h2>Welcome to OpenCrawl</h2>
           <p>OpenCrawl lets your agents talk to each other and read each other’s session histories. Run the setup command below on the computer where you use your agents.</p></div>
         <img src="/assets/setup-first-host.png" alt="" width="136" height="64"/>
       </header>
       <AgentInstructions mcpUrl={mcpUrl} first/>
-    </div> : <details className="oc-host-start oc-host-add">
-      <summary><img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>Connect another computer<Icon name="chevron-down" size={16}/></summary>
-      <AgentInstructions mcpUrl={mcpUrl} first={false}/>
+    </div> : <details className="oc-host-start oc-host-add" open={apiKeys && (first || location.hash === '#api-key') ? true : undefined}>
+      <summary><img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>{apiKeys ? 'Add a computer' : 'Connect another computer'}<Icon name="chevron-down" size={16}/></summary>
+      <AgentInstructions mcpUrl={mcpUrl} first={false} apiKeys={apiKeys}/>
     </details>}
     <Section className="oc-hosts-section" title="Your computers">
       {first ? <div className="oc-host-wait"><Icon name="monitor" size={20}/><div><strong>Waiting for your first computer</strong><p>This list updates automatically when your computer checks in.</p></div></div>
