@@ -13,7 +13,7 @@ import {digest,sourceBatchIdentity} from './event-identity.mjs';
 import {messageFingerprint,type CaptureFingerprints} from './capture-matches.mjs';
 import {createMemorySearch} from '../memories/search.mjs';
 import {visibleTo, createControls} from './controls.mjs';
-import type {ResourceControl} from './controls.mjs';
+import type {ResourceControl, ResourceControls} from './controls.mjs';
 import {applySessionControl, createSessionLibrary} from './library.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
 import {sessionOverlap} from './overlap.mjs';
@@ -24,10 +24,10 @@ import {sessionIndexMapping} from '../search/mapping.mjs';
 import {fail} from '../errors.mjs';
 export {sessionIndexMapping};
 
-export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string}) {
+export function createSessionSearch(options: RealmOptions & {store?: ObjectStore; prefix?: string; controls?: ResourceControls}) {
   const resolve=createRealmResolver(options), f=(field: string)=>realmField('session',field);
-  const controls=options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null;
-  const original=options.store&&options.prefix?createSessionIngest({store:options.store,prefix:options.prefix}):undefined;
+  const controls=options.controls ?? (options.store && options.prefix ? createControls({store:options.store,prefix:options.prefix}) : null);
+  const original=options.store&&options.prefix?createSessionIngest({store:options.store,prefix:options.prefix,controls: controls ?? undefined}):undefined;
   const captureFingerprints:CaptureFingerprints=async(principal,hits)=>{
     const hashes=new Map<string,string>(),batches=new Map<string,Passage[]>();
     if(!original||!options.prefix)return hashes;
@@ -50,10 +50,10 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
     }));
     return hashes;
   };
-  async function readableHits(principal:Principal,docs:Passage[]){
+  async function hitAccess(principal:Principal,docs:Passage[]){
     sessionScope(principal);
     if(principal.captureAccess!==undefined||!controls)fail(403,'Session read access required');
-    const resources=new Map<string,Passage>(),allowedByResource=new Map<string,boolean>();
+    const resources=new Map<string,Passage>(),controlByResource=new Map<string,ResourceControl|null>();
     const resourceKey=(doc:Passage)=>JSON.stringify([doc.userId,doc.harness,doc.sessionId]);
     for(const doc of docs){
       if(doc.tenantId!==principal.tenantId||!doc.userId||typeof doc.harness!=='string'||typeof doc.sessionId!=='string')throw new Error('Invalid session search identity');
@@ -64,9 +64,13 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
     // Never retain this permission result across requests or fetches.
     for(let start=0;start<entries.length;start+=8)await Promise.all(entries.slice(start,start+8).map(async([key,doc])=>{
       const control=await controls.read({...principal,userId:doc.userId!},'sessions',doc.harness!,doc.sessionId!);
-      allowedByResource.set(key,!control?.deletedAt&&(control?.visibility!=='private'||doc.userId===principal.userId));
+      controlByResource.set(key,control);
     }));
-    return docs.map(doc=>allowedByResource.get(resourceKey(doc))===true);
+    return docs.map(doc=>{
+      const control=controlByResource.get(resourceKey(doc));
+      const privateSession=control ? control.visibility === 'private' : doc.private === true;
+      return {readable: !control?.deletedAt && (!privateSession || doc.userId === principal.userId), visibility: control?.visibility};
+    });
   }
   function search(principal: Principal, input: SearchInput & {raw: true}): Promise<OpenSearchResponse>;
   function search(principal: Principal, input?: SearchInput & {raw?: false}): Promise<SearchResult>;
@@ -85,8 +89,12 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       if(!Array.isArray(hits)||hits.some(hit=>hit._source?.tenantId!==principal.tenantId||typeof hit._source?.userId!=='string'||!hit._source.userId))throw new Error('Search returned an invalid ownership scope');
       // The index is a projection, never the authority for deletion/privacy.
       // Recheck after retrieval, including fetch-by-ID and raw diagnostics.
-      const allowed=await readableHits(principal,hits.map(hit=>hit._source as Passage));
-      result.hits.hits=hits.filter((_,i)=>allowed[i]);
+      const access=await hitAccess(principal,hits.map(hit=>hit._source as Passage));
+      result.hits.hits=hits.flatMap((hit,i)=>{
+        const {readable,visibility}=access[i]!;
+        if(!readable)return [];
+        return [visibility ? {...hit,_source:{...hit._source,private:visibility === 'private'}} : hit];
+      });
       const filtered=result.hits.hits.length!==hits.length;
       if(filtered)result.hits.total={value:result.hits.hits.length,relation:'gte'};
       if(raw)return result;
@@ -108,7 +116,8 @@ export function createSessionSearch(options: RealmOptions & {store?: ObjectStore
       });
       await collection.bulk(principal,prepared);
     },
-    search,captureFingerprints,readableHits,
+    search,captureFingerprints,
+    readableHits:async (principal:Principal, docs:Passage[])=>(await hitAccess(principal,docs)).map(access=>access.readable),
     context: (principal: Principal, anchor: Passage, input: SessionContextInput) => sessionContext(resolve(principal).collection('session'), controls, principal, anchor, input),
     async overlap(principal: Principal, window?: {days?: number; now?: number}) {
       sessionScope(principal);

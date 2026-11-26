@@ -1,10 +1,10 @@
 import type {Principal} from '../sessions/types.mjs';
 import type {SearchDocument} from '../search/types.mjs';
-import {createControls} from '../sessions/controls.mjs';
+import type {ResourceControls} from '../sessions/controls.mjs';
 import {sessionScope} from '../sessions/event-identity.mjs';
 
 /** An index projection cannot override a later owner visibility change or delete. */
-export async function authorizedMemoryDocuments<T extends SearchDocument>(controls: ReturnType<typeof createControls> | null, principal: Principal, documents: T[]): Promise<T[]> {
+export async function authorizedMemoryDocuments<T extends SearchDocument>(controls: ResourceControls | null, principal: Principal, documents: T[]): Promise<T[]> {
   sessionScope(principal);
   if (principal.captureAccess !== undefined) throw Object.assign(new Error('Memory read access required'), {status: 403});
   if (!controls) throw Object.assign(new Error('Memory reads require authoritative resource controls'), {status: 503});

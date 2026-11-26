@@ -3,7 +3,7 @@ import {z} from 'zod';
 import {errorInfo,fail} from '../errors.mjs';
 import {readDevinStartupEvents} from '../integrations/devin-first-turn.mjs';
 import {verifyDevinEventCredential,verifyDevinRecording} from '../integrations/devin-events-client.mjs';
-import {createControls} from '../sessions/controls.mjs';
+import {createControls, type ResourceControls} from '../sessions/controls.mjs';
 import type {RecordingPolicy} from '../sessions/recording.mjs';
 import type {ObjectStore,Principal} from '../sessions/types.mjs';
 import type {SetupState} from '../state/setup.mjs';
@@ -13,7 +13,7 @@ import type {createDevinWorkloads} from './devin.mjs';
 import {devinOrganization,scope} from './devin-schema.mjs';
 import {isAdmin as adminMembership} from './team.mjs';
 
-export interface DevinStartupServices {setup:SetupState;recording:RecordingPolicy;store:ObjectStore;prefix:string}
+export interface DevinStartupServices {setup:SetupState;recording:RecordingPolicy;store:ObjectStore;prefix:string;controls?:ResourceControls}
 type Options={repository:DevinState;workloads:ReturnType<typeof createDevinWorkloads>;audience:string;tenantId?:string;
   isAdmin:(principal:Principal)=>Promise<boolean>;
   authenticateAdmin:(req:IncomingMessage)=>Promise<{principal:Principal;member:DirectoryMembership}>;
@@ -26,7 +26,7 @@ const grantInput=z.union([prepareRecording,z.strictObject({organizationId:devinO
 const startupInput=z.strictObject({installationId:scope,through:z.iso.datetime({offset:true})});
 
 export function devinEventsHandler(options:Options,operation:'grant'|'startup') {
-  const controls=options.startup && createControls({store:options.startup.store,prefix:options.startup.prefix});
+  const controls=options.startup && (options.startup.controls ?? createControls(options.startup));
   return async (req:IncomingMessage,res:ServerResponse)=>{
     const send=(status:number,value:object)=>{
       res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});

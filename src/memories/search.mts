@@ -5,7 +5,7 @@ import type {RealmOptions, SearchInput, DocumentItem, Passage} from '../search/t
 import {createRealmResolver,realmField} from '../search/realm.mjs';
 import {digest,sessionScope} from '../sessions/event-identity.mjs';
 import {visibleTo,createControls} from '../sessions/controls.mjs';
-import type {ResourceControl} from '../sessions/controls.mjs';
+import type {ResourceControl, ResourceControls} from '../sessions/controls.mjs';
 import {searchFilters,searchSort} from '../search/controls.mjs';
 import {passages,PASSAGE_VERSION} from '../search/passages.mjs';
 import {activeMemoryProjectionFilter,memoryProjectionId,memoryPassageId,MEMORY_HEAD_FIELDS} from './projection.mjs';
@@ -13,9 +13,9 @@ import {authorizedMemoryDocuments} from './access.mjs';
 import {fail} from '../errors.mjs';
 
 const f=(field: string)=>realmField('memory',field);
-export function createMemorySearch(options: RealmOptions & {store?:ObjectStore;prefix?:string}) {
+export function createMemorySearch(options: RealmOptions & {store?:ObjectStore;prefix?:string;controls?:ResourceControls}) {
   const resolve=createRealmResolver(options);
-  const authoritativeControls=options.store&&options.prefix?createControls({store:options.store,prefix:options.prefix}):null;
+  const authoritativeControls=options.controls ?? (options.store&&options.prefix?createControls({store:options.store,prefix:options.prefix}):null);
   async function heads(principal: Principal) {
     const result=await resolve(principal).collection('memory').search(principal,{size:10000,track_total_hits:true,
       query:{term:{[f('kind')]:'snapshot'}},_source:MEMORY_HEAD_FIELDS});

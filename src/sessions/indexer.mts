@@ -125,7 +125,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
  * The runtime supplies fixed self-host identity or resolves server-authenticated
  * stored owners. Workflow arguments never select a bucket, index, or principal.
  */
-export function createSessionPipeline({store,privacy,eventIdentities,prefix,search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
+export function createSessionPipeline({store,privacy,eventIdentities,prefix,controls = createControls({store,prefix}),search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
   if(Boolean(principal)===Boolean(resolvePrincipal))throw new Error('Supply one fixed single-tenant principal or a trusted scope resolver');
   if(principal)sessionScope(principal);
   if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid session prefix');
@@ -137,7 +137,6 @@ export function createSessionPipeline({store,privacy,eventIdentities,prefix,sear
     if(typeof key!=='string'||!key.startsWith(sourcePrefix)||!(sourceBatchIdentity(prefix,key)||memorySourceIdentity(prefix,key)))throw Object.assign(new Error('Session object outside authorized source'),{permanent:true});
   }
   const receiptKey=(key: string)=>statePrefix+'/batches/'+digest(key)+'.json';
-  const controls=createControls({store,prefix});
   async function indexed(key: string) {
     const receipt=await store.get(receiptKey(key));
     return Boolean(receipt&&parseJson<{status: string}>(receipt).status==='indexed');

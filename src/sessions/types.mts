@@ -1,5 +1,7 @@
 import type {IncomingMessage, ServerResponse} from 'node:http';
 
+import type {ResourceControls} from './controls.mjs';
+
 export interface Principal {
   tenantId: string;
   userId: string;
@@ -71,6 +73,7 @@ export interface EventIdentityStore {
 }
 export interface EventReservationOptions extends SessionIdentity {store: ObjectStore; events: SessionEvent[]; eventIdentities?: EventIdentityStore; initialize?: boolean}
 export interface SourceOptions {
+  controls?: ResourceControls;
   store: ObjectStore; prefix: string; principal?: Principal;
   resolvePrincipal?: (input: {key: string; batch: SessionBatch}) => Promise<Principal>;
   initialize?: boolean;

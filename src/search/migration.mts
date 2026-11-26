@@ -1,3 +1,5 @@
+import {writeCurrentSessionDocuments} from '../sessions/restore-documents.mjs';
+import {createControls, type ResourceControls} from '../sessions/controls.mjs';
 import type {TenantPrincipal, JsonValue, ObjectStore} from '../sessions/types.mjs';
 import type {Corpus, DocumentItem, IndexTransportOptions} from './types.mjs';
 import type {createRealm} from './realm.mjs';
@@ -45,7 +47,7 @@ export function legacyRealmSource({corpus,tenantId,...options}: IndexTransportOp
   };
 }
 /** Checkpoint only after write+readback; interrupted pages are safe to replay while target writers are stopped. */
-export async function migrateRealmCorpus({principal,corpus,source,realm,store,prefix,load,save,onPage=async()=>{}}: {principal: TenantPrincipal; corpus: Corpus; source: MigrationSource; realm: ReturnType<typeof createRealm>; store?:ObjectStore;prefix?:string;load(): Promise<MigrationState | null>; save(state: MigrationState): Promise<unknown>; onPage?(progress: {copied: number; total: number | null}): Promise<unknown>}){
+export async function migrateRealmCorpus({principal,corpus,source,realm,store,prefix, controls,load,save,onPage=async()=>{}}: {principal: TenantPrincipal; corpus: Corpus; source: MigrationSource; realm: ReturnType<typeof createRealm>; store?:ObjectStore;prefix?:string;controls?:ResourceControls;load(): Promise<MigrationState | null>; save(state: MigrationState): Promise<unknown>; onPage?(progress: {copied: number; total: number | null}): Promise<unknown>}){
   realm.scope(principal);const collection=realm.collection(corpus);
   let state=await load();const identity=JSON.stringify([source.identity,realm.identity,corpus]);
   if(state&&state.identity!==identity)throw new Error('Migration checkpoint scope mismatch');
@@ -65,22 +67,24 @@ export async function migrateRealmCorpus({principal,corpus,source,realm,store,pr
       state={...state,total:page.total,complete:true};await save(state);return state;
     }
     // Schedule small batches; a larger individual document is sent alone.
-    const copy=async()=>{
+    const copy=async(documents:DocumentItem[])=>{
     let batch: DocumentItem[]=[],bytes=0;
-    for(const item of page.documents){
+    for(const item of documents){
       const size=Buffer.byteLength(JSON.stringify(realmDocument(corpus,item.id,item.document)));
       if(batch.length&&bytes+size>INITIAL_BULK_TARGET_BYTES){await collection.bulk(principal,batch);batch=[];bytes=0;}
       batch.push(item);bytes+=size;
     }
     await collection.bulk(principal,batch);
-    const verified=await collection.mget(principal,page.documents.map(d=>d.id));
+    const verified=await collection.mget(principal,documents.map(d=>d.id));
     const actual=new Map(verified.docs.map(h=>[h._id,h]));
-    if(page.documents.some(d=>!actual.get(d.id)?.found||documentDigest(actual.get(d.id)!._source)!==documentDigest(d.document)))throw new Error('Migration document verification failed');
+    if(documents.some(d=>!actual.get(d.id)?.found||documentDigest(actual.get(d.id)!._source)!==documentDigest(d.document)))throw new Error('Migration document verification failed');
     };
     if(corpus==='session'){
       if(!store||!prefix)throw new Error('Session migration requires authoritative deletion controls');
-      await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:page.documents},copy);
-    }else await copy();
+      const authority=controls ?? createControls({store,prefix});
+      await withSessionDocumentWrites({store,prefix,controls:authority,tenantId:principal.tenantId,documents:page.documents},()=>
+        writeCurrentSessionDocuments(authority, collection, principal.tenantId, page.documents, copy));
+    }else await copy(page.documents);
     state={...state,total:page.total,after:page.next,copied:state.copied+page.documents.length};
     if(state.copied>page.total)throw new Error('Migration duplicated source records');
     await save(state);await onPage({copied:state.copied,total:state.total});

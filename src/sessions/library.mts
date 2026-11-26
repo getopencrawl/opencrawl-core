@@ -13,8 +13,8 @@ import type {RealmOptions, QueryBody, IndexHit} from '../search/types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest, MAX_ATTACHMENT_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
-import {createControls, visibleTo} from './controls.mjs';
-import type {ResourceControl} from './controls.mjs';
+import {createControls, storedHarnesses, visibleTo} from './controls.mjs';
+import type {ResourceControl, ResourceControls} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {capturedActor,type CapturedActor} from './actors.mjs';
 import {validParticipant, type SessionParticipant} from './participants.mjs';
@@ -145,47 +145,18 @@ function decodeCursor(cursor: unknown): JsonValue[] | undefined {
 /** Team members read every session that is not private to another member.
  * Only the owner changes visibility or deletes; deletion removes raw capture,
  * search documents and future uploads of the same session. */
-export interface SessionLibraryOptions extends RealmOptions {capturePairs?:CaptureLookup; store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; forgetSearches?: (p:Principal,key:SessionKey)=>Promise<void>; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
-export function createSessionLibrary({store, prefix, capturePairs, eventIdentities, forgetSearches, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
-  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+export interface SessionLibraryOptions extends RealmOptions {controls?: ResourceControls; capturePairs?:CaptureLookup; store: ObjectStore; prefix: string; eventIdentities?: EventIdentityStore; forgetSearches?: (p:Principal,key:SessionKey)=>Promise<void>; purgeCopies?: (principal: Principal, key: SessionKey, store: ObjectStore, controls: ResourceControls) => Promise<number>; scheduleDeletion?: (key: string) => Promise<unknown>}
+export function createSessionLibrary({store, prefix, controls = createControls({store, prefix}), capturePairs, eventIdentities, forgetSearches, purgeCopies, scheduleDeletion, ...options}: SessionLibraryOptions) {
+  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix, controls});
   const reader = (principal: Principal) => {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Session read access required');
     return resolve(principal).collection('session');
   };
   const sessionFilter = (key: SessionKey) => [{term: {[f('userId')]: key.userId}}, {term: {[f('harness')]: key.harness}}, {term: {[f('sessionId')]: key.sessionId}}];
-  async function readable(principal: Principal, key: SessionKey) {
+  async function access(principal: Principal, key: SessionKey) {
     const control = await controls.read({...principal, userId: key.userId}, 'sessions', key.harness, key.sessionId);
-    return !control?.deletedAt && (control?.visibility !== 'private' || key.userId === principal.userId);
-  }
-  // S3 returns common prefixes with a delimiter. Flat stores return the matching keys.
-  async function* storedHarnesses(root: string) {
-    const seen = new Set<string>(), cursors = new Set<string>();
-    let cursor: string | null = null;
-    do {
-      const page = await store.listPage(root, {delimiter: '/', continuationToken: cursor, maxKeys: 1000});
-      for (const path of [...(page.prefixes ?? []), ...page.keys]) {
-        if (!path.startsWith(root)) throw new Error('Harness inventory outside owner scope');
-        const tail = path.slice(root.length), slash = tail.indexOf('/');
-        if (slash < 0) continue;
-        const harness = tail.slice(0, slash);
-        if (isSessionHarness(harness) && !seen.has(harness)) {
-          seen.add(harness);
-          yield harness;
-        }
-      }
-      cursor = page.nextToken;
-      if (cursor && cursors.has(cursor)) throw new Error('Harness inventory cursor did not advance');
-      if (cursor) cursors.add(cursor);
-    } while (cursor);
-  }
-  async function pendingDeletions(principal: Principal) {
-    const pending: Array<{harness: string; sessionId: string}> = [];
-    const root = `${prefix}/${sessionScope(principal)}/controls/sessions/`;
-    for await (const harness of storedHarnesses(root)) for (const control of (await controls.list(principal, 'sessions', harness)).values()) {
-      if (control.deletedAt && control.deletion?.state === 'pending') pending.push({harness, sessionId: control.deletion.sessionId});
-    }
-    return pending;
+    return {readable: !control?.deletedAt && (control?.visibility !== 'private' || key.userId === principal.userId), visibility: control?.visibility};
   }
   const userText = {bool: {minimum_should_match: 1, should: [{term: {[f('kind')]: 'user_message'}}, {bool: {filter: [{term: {[f('kind')]: 'message'}}, {term: {[f('role')]: 'user'}}]}}]}};
   /** One scoped query for all displayed titles. Read the originals, since indexed
@@ -329,13 +300,13 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
   async function purgeDeletionArchives(principal: Principal, input: {harness?: unknown; sessionId?: unknown}) {
     const key = checkKey({userId: principal.userId, harness: input.harness as string, sessionId: input.sessionId as string});
     await deletionControl(principal, key);
-    return {objects: purgeCopies ? await purgeCopies(principal, key, store) : 0};
+    return {objects: purgeCopies ? await purgeCopies(principal, key, store, controls) : 0};
   }
   // Legacy captures could share an owner-wide blob. New writes use session
   // keys, so no new references can appear while this inventory is being read.
   async function retainedLegacyAttachments(principal: Principal, deleting: SessionKey) {
     const ownerRoot = `${prefix}/${sessionScope(principal)}/`, retained = new Set<string>();
-    for await (const harness of storedHarnesses(ownerRoot)) {
+    for await (const harness of storedHarnesses(store, ownerRoot)) {
       const root = ownerRoot + harness + '/';
       let continuationToken: string | null = null;
       do {
@@ -414,7 +385,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
       const keys=[...refs].filter(([id,key])=>key.userId===principal.userId||captured.has(id));
       const allowed=new Set<string>();
       for(let i=0;i<keys.length;i+=6)await Promise.all(keys.slice(i,i+6).map(async([id,key])=>{
-        if(await readable(principal,key))allowed.add(id);
+        if((await access(principal,key)).readable)allowed.add(id);
       }));
       return rows.filter(row=>row.sessionId&&isSessionHarness(row.harness)
         ?allowed.has(keyOf({userId:row.userId,harness:row.harness,sessionId:row.sessionId})):row.userId===principal.userId);
@@ -425,7 +396,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
       if (keys.length > 25) fail(400, 'Too many session titles requested');
       const unique = [...new Map(keys.map(key => [JSON.stringify([key.userId, key.harness, key.sessionId]), key])).values()];
       const names = await titles(principal, unique);
-      if (!(await Promise.all(unique.map(key => readable(principal, key)))).every(Boolean)) fail(403, 'Session access changed');
+      if (!(await Promise.all(unique.map(key => access(principal, key)))).every(result=>result.readable)) fail(403, 'Session access changed');
       return names;
     },
     async list(principal: Principal, {scope = 'all', query = '', participant, limit = 50}: {scope?: unknown; query?: unknown; participant?: unknown; limit?: unknown} = {}) {
@@ -533,7 +504,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
         const sessions=await load(window);
         const pairs=capturePairs&&scope==='all'&&sessions.some(s=>s.harness==='replicas')&&sessions.some(s=>s.harness==='claude-code'||s.harness==='codex')
           ?await capturePairs(principal.tenantId,sessions):[];
-        const allowed=pairs.length?await Promise.all(sessions.map(s=>readable(principal,s))):sessions.map(()=>true);
+        const allowed=pairs.length?await Promise.all(sessions.map(async s=>(await access(principal,s)).readable)):sessions.map(()=>true);
         const visible=sessions.filter((_,i)=>allowed[i]);
         const candidates=new Map(visible.map(s=>[captureKey(s),s]));
         const merged=new Map<string,SessionSummary>();
@@ -578,13 +549,13 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
         // Titles may read raw batches. Check both independently owned sources
         // again after that I/O, including a revocation racing the merge.
         const checked=await Promise.all(result.map(async s=>({
-          live:await readable(principal,s),history:s.historyCapture?await readable(principal,s.historyCapture):false
+          live:await access(principal,s),history:s.historyCapture?(await access(principal,s.historyCapture)).readable:false
         })));
         return {sessions:result.flatMap((s,i)=>{
-          const access=checked[i]!;
-          if(!access.live)return [];
-          if(s.historyCapture&&!access.history)return [candidates.get(captureKey(s))!];
-          return [s];
+          const {live,history}=checked[i]!;
+          if(!live.readable)return [];
+          const summary=s.historyCapture&&!history?candidates.get(captureKey(s))!:s;
+          return [{...summary, private: live.visibility ? live.visibility === 'private' : summary.private}];
         }),limit};
       }
     },
@@ -594,7 +565,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
       const key = checkKey(input), after = decodeCursor(input.cursor), limit = input.limit ?? 100;
       if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 200) fail(400, 'Invalid page size');
       const collection = reader(principal);
-      if (!await readable(principal, key)) fail(404, 'Session not found');
+      if (!(await access(principal, key)).readable) fail(404, 'Session not found');
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
       const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
         aggs: {host: hostTerms},
@@ -618,8 +589,9 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
       }
       const first = page.hits.hits[0]?._source;
       const names = await titles(principal, [key]);
-      if (!await readable(principal, key)) fail(404, 'Session not found');
-      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null,
+      const current = await access(principal, key);
+      if (!current.readable) fail(404, 'Session not found');
+      return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: current.visibility ? current.visibility === 'private' : page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null,
           ...capturedHosts(page.aggregations?.host as HostBuckets | undefined)},
         events, total: page.hits.total.value, next: page.hits.hits.length === limit ? encodeCursor(page.hits.hits.at(-1)!.sort) : null};
     },
@@ -655,7 +627,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
       catch {console.error(JSON.stringify({event: 'session.deletion.submission_deferred', requestKey}));}
       return {...key, deleted: false, pending: true};
     },
-    pendingDeletions,
+    pendingDeletions: (principal: Principal) => controls.pendingDeletions(principal),
     prepareDeletion, purgeDeletionArchives, finishDeletion,
     /** Low-level operator erasure, also used by upgrade verification. Public
      * HTTP/RPC deletion calls requestDeletion and never runs cleanup inline. */

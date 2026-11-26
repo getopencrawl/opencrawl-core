@@ -1,3 +1,5 @@
+import {writeCurrentSessionDocuments} from './restore-documents.mjs';
+import {createControls, type ResourceControls} from './controls.mjs';
 import type {TenantPrincipal, JsonValue, ObjectStore} from './types.mjs';
 import type {DocumentItem, IndexHit, SearchDocument} from '../search/types.mjs';
 import type {createRealm} from '../search/realm.mjs';
@@ -65,8 +67,8 @@ async function write(sessions: ReturnType<Realm['collection']>, principal: Tenan
  * `restoreSessionDocumentIds` can undo it; the index is also rebuildable from
  * stored capture batches.
  */
-export async function migrateSessionDocumentIds({realm, principal, store, prefix, backup, dryRun = false, pageSize = 500, after = null, onPage = async () => {}}: {
-  realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; backup(step: SessionIdentityBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number;
+export async function migrateSessionDocumentIds({realm, principal, store, prefix, controls = createControls({store, prefix}), backup, dryRun = false, pageSize = 500, after = null, onPage = async () => {}}: {
+  realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; controls?:ResourceControls; backup(step: SessionIdentityBackup): Promise<unknown>; dryRun?: boolean; pageSize?: number;
   after?: JsonValue[] | null; onPage?(report: SessionIdentityReport): Promise<unknown>;
 }): Promise<SessionIdentityReport> {
   if (principal?.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
@@ -77,11 +79,11 @@ export async function migrateSessionDocumentIds({realm, principal, store, prefix
 
   async function flush() {
     if (dryRun || !writes.length && !removals.length) {writes = []; removals = []; return;}
-    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:[...writes,...removals]},async()=>{
+    await withSessionDocumentWrites({store,prefix,controls,tenantId:principal.tenantId,documents:[...writes,...removals]},async()=>{
     await backup({written: writes.map(item => item.id), removed: removals});
     // Write the surviving copy before removing anything, so an interrupted run
     // leaves at most an extra copy that the next run resolves.
-    await write(sessions, principal, writes);
+    await writeCurrentSessionDocuments(controls, sessions, principal.tenantId, writes, projected=>write(sessions, principal, projected));
     for (let start = 0; start < removals.length; start += 500) {
       await sessions.delete(principal, removals.slice(start, start + 500).map(item => item.id));
     }
@@ -146,12 +148,13 @@ export async function migrateSessionDocumentIds({realm, principal, store, prefix
 }
 
 /** Undoes migration steps, newest first: puts removed documents back, then drops IDs the step created. */
-export async function restoreSessionDocumentIds({realm, principal, store, prefix, steps}: {realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; steps: SessionIdentityBackup[]}) {
+export async function restoreSessionDocumentIds({realm, principal, store, prefix, controls = createControls({store, prefix}), steps}: {realm: Realm; principal: TenantPrincipal; store:ObjectStore; prefix:string; controls?:ResourceControls; steps: SessionIdentityBackup[]}) {
   if (principal?.tenantId !== realm.tenantId || principal.captureAccess !== undefined) throw Object.assign(new Error('Realm scope denied'), {status: 403});
   const sessions = realm.collection('session');
   let restored = 0, removed = 0;
   for (const step of [...steps].reverse()) {
-    await withSessionDocumentWrites({store,prefix,tenantId:principal.tenantId,documents:step.removed},()=>write(sessions, principal, step.removed));
+    await withSessionDocumentWrites({store,prefix,controls,tenantId:principal.tenantId,documents:step.removed},()=>
+      writeCurrentSessionDocuments(controls, sessions, principal.tenantId, step.removed, projected=>write(sessions, principal, projected)));
     const previous = new Set(step.removed.map(item => item.id)), created = step.written.filter(id => !previous.has(id));
     for (let start = 0; start < created.length; start += 500) await sessions.delete(principal, created.slice(start, start + 500));
     restored += step.removed.length; removed += created.length;

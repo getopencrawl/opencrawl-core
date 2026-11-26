@@ -5,7 +5,7 @@ interface RecentBucket {key: string[]; lastActivity: {value: number}}
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {createSessionIngest, sessionScope, digest} from './ingest.mjs';
 import {sourceBatchIdentity} from './event-identity.mjs';
-import {createControls, visibleTo} from './controls.mjs';
+import {createControls, visibleTo, type ResourceControls} from './controls.mjs';
 import {capturedTitle, TITLE_KINDS} from './titles.mjs';
 import {parseSessionReference} from './session-reference.mjs';
 import {promptText} from './library.mjs';
@@ -40,8 +40,8 @@ export function sessionMessage(event: SessionEvent) {
 
 /** Read the current tenant's ten newest indexed sessions, then verify and read
  * original events from immutable capture. No new projection or reindex needed. */
-export function createRecentSessions({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
-  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix}), controls = createControls({store, prefix});
+export function createRecentSessions({store, prefix, controls = createControls({store, prefix}), ...options}: RealmOptions & {store: ObjectStore; prefix: string; controls?: ResourceControls}) {
+  const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix, controls});
   async function read(principal: Principal, {signal, summary = false, id, field = 'context', openingPrompt = false}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField; openingPrompt?: boolean} = {}) {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});
