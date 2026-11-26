@@ -50,7 +50,7 @@ const progressiveUsageAdapter: ConsoleDataAdapter = {...usageAdapter,
   usageHighlights: signal => request('/api/console/usage/highlights', signal),
   usageDetails: (signal, range = '30d') => request('/api/console/usage/details', signal, {range}),
 };
-const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, search:(query,signal,page)=>request('/api/debug/search',signal,{query,page}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
+const diagnosticsAdapter: ConsoleDataAdapter = {...usageAdapter, boardDestination:(path,signal)=>request('/api/console/board-target?'+new URLSearchParams({path}),signal), search:(query,signal,page)=>request('/api/debug/search',signal,{query,page}), board: (input, signal) => request('/api/console/board?' + new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)])), signal)};
 const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost');
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
@@ -83,8 +83,8 @@ function Fixture() {
     days={[{date:'2026-11-17',value:10,segments:[2,3,5]},{date:'2026-11-18',value:0,segments:[0,0,0]},
       {date:'2026-11-19',value:null},{date:'2026-11-20',value:9,segments:[8,1,0]}]}
     series={[{label:'Sessions'},{label:'Documents'},{label:'Memories'}]} unit={n=>n+' items'}/>;
-  if (location.pathname === '/messages' || location.pathname === '/search') {
-    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
+  if (location.pathname.startsWith('/board/') || location.pathname === '/messages' || location.pathname === '/search') {
+    return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', alternatePaths:['/board/:workspace/:kind/:value'], label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} workspace={location.pathname.startsWith('/board/') || new URLSearchParams(location.search).has('links') ? 'fixtureboard' : undefined} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
   }
   if (location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')) return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[
     {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>},

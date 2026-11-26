@@ -1,8 +1,8 @@
 import {connectionPage,connectionPath,integrationIdPattern} from './connection-links.mjs';
-import {workspaceLinkHint} from '../state/capture-links.mjs';
 import {boardIdentity} from '../board/identity.mjs';
+import {boardPage} from './board-links.mjs';
 import {capturePage} from './capture-links.mjs';
-import {attachCaptureLinks,type CaptureLinks} from '../state/capture-links.mjs';
+import {attachCaptureLinks,workspaceLinkHint,type CaptureLinks} from '../state/capture-links.mjs';
 import {usagePaths} from './usage-paths.mjs';
 import {digest} from '../sessions/event-identity.mjs';
 import type {BoardRepository} from '../state/board.mjs';
@@ -63,6 +63,7 @@ export interface ConsoleServices {
 const LIBRARY = /^\/api\/console\/library\/((?:sessions|memories)\/(?:list|read|visibility|delete)|(?:privacy|recording)\/(?:status|change))$/;
 export const consolePages = new Set(['/', '/setup', ...usagePaths, '/sessions', '/memories', '/sources', '/integrations', '/data', '/messages', '/diagnostics', '/settings', '/settings/team', '/settings/privacy', '/agent-setup', '/team', '/search', '/_/debug', '/_/debug/', '/onboarding', '/onboarding/sources', '/onboarding/invite']);
 export function consoleRoute(method: string, path: string) {
+  if(boardPage(path)) return {name:'/messages', ...(method==='GET'?{}:{status:405})};
   if(connectionPage(path))return {name:'/sources',...(method==='GET'?{}:{status:405})};
   const capture = capturePage(path);
   if (capture) return {name:'/'+capture.collection,...(method === 'GET' ? {} : {status:405})};
@@ -128,7 +129,7 @@ export function createConsoleApi(services: ConsoleServices, extensions: ConsoleE
       } else if (path === '/api/console/bootstrap') {
         const [organization, progress, extension] = await Promise.all([workspace(), services.progress(principal), extensions.bootstrap?.(context)]);
         const completed = hasCompletedOnboarding(progress);
-        body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
+        body = {...extension,...(services.usageActivity?{searchActivity:true}:{}),...(services.usageParts ? {splitUsage: true} : {}),...(services.invitationPolicy?{invitationPolicy:services.invitationPolicy}:{}),cacheScope,boardWorkspace:workspaceLinkHint(principal.tenantId),workspace:{name:organization.name,userName:name(user),email:user.email,...(user.avatarUrl?{avatarUrl:user.avatarUrl}:{}),role:admin(member) ? 'admin' : 'member'}, mcpUrl:services.url + '/mcp',setupPrompt:services.setupPrompt,...(admin(member)?{replicasSetupPrompt:replicasSetupPrompt(services.url),canInstallReplicas:Boolean(services.replicas)}:{}),canInvite:admin(member),onboarding:{completed,next:completed ? '/' : await services.next(principal)}};
       } else if(path==='/api/console/usage/calls'||path==='/api/console/usage/search-history'){
         if(!services.usageActivity)throw consoleFailure(503,'Search activity unavailable.');
         if(path.endsWith('/calls')){
