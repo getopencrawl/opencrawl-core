@@ -215,6 +215,18 @@ test('Team keeps the leaders and member activity and follows the range', async (
   expect(requests.details).toEqual(expect.arrayContaining(['30d', '7d']));
 });
 
+test('legacy report bookmarks reopen the chosen tab, period and fragment', async ({page}) => {
+  await serve(page);
+  for (const path of ['/', '/usage']) {
+    await page.goto(path + '?split&activity&tab=team&range=7#workspace-content');
+    await expect(page).toHaveURL(url => url.pathname === '/usage/team' && url.searchParams.get('range') === '7d'
+      && url.searchParams.has('split') && !url.searchParams.has('tab') && url.hash === '#workspace-content');
+    await expect(tab(page, 'Team')).toHaveAttribute('aria-selected', 'true');
+    await page.reload();
+    await expect(page.getByLabel('Date range')).toHaveValue('7d');
+  }
+});
+
 test('a changed workspace clears the report instead of showing another workspace’s numbers', async ({page}) => {
   await serve(page);
   await page.route('**/api/console/usage/tokens', route => route.fulfill({json: {cacheScope: 'another-workspace', source: 'meter', range: '30d', total: 5, daily: []}}));

@@ -100,7 +100,9 @@ test('Cursor selection installs the pinned archive offline, binds both MCP files
  expect(readFileSync(join(f.dir,'skills/oc-import-memories/SKILL.md'),'utf8')).toContain('name: oc-import-memories');
  const continuation = readFileSync(join(f.dir,'skills/oc-continue/SKILL.md'),'utf8');
  const canonical = readFileSync(new URL('../../plugins/opencrawl-sessions/shared/skills/oc-continue/SKILL.md',import.meta.url),'utf8');
- expect(continuation.replaceAll('\r\n','\n')).toBe(canonical.replaceAll('\r\n','\n'));
+ // The offline v0.3.0 archive remains installable with its original skill.
+ const expectedSkillHash=realDir ? fileHash(canonical.replaceAll('\r\n','\n')) : '21cf68c52d300fb68e9628fdea43f845cec8ee97ab1da089bffaa48b5d97d282';
+ expect(fileHash(continuation.replaceAll('\r\n','\n'))).toBe(expectedSkillHash);
  expect(existsSync(join(f.dir,'skills/oc-share/SKILL.md'))).toBe(Boolean(entry.shareSkill));
  const listing=read(join(f.dir,'.cursor-plugin/plugin.json'));
  expect(listing.name).toBe('opencrawl');

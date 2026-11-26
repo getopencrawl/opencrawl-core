@@ -1,4 +1,6 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
+import {ConnectionPage} from '../../src/application/connection.tsx';
+import {connectionPage} from '../../../src/application/connection-links.mjs';
 import {OpenCrawlApp} from '../../src/application/app.tsx';
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -53,6 +55,7 @@ const selfhostSetup = new URLSearchParams(window.location.search).has('selfhost'
 const libraryAdapter: LibraryAdapter = (operation, input, signal) => request('/api/library/' + operation, signal, input);
 /** The Integrations page against the same fixture state as the onboarding step. */
 const sourcesAdapter: SourcesAdapter = {
+  connection: (path,signal) => request('/api/console/sources/connection', signal ?? never, {path}),
   replicasHistory:(input,signal)=>request('/api/integrations/replicas/history',signal??never,input),
   devinRecording:(input,signal)=>request('/api/integrations/devin/recording',signal??never,input),
   sources: signal => request('/api/console/sources', signal ?? never),
@@ -75,7 +78,7 @@ function Fixture() {
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {window.__onboardingTestNavigate = path => {void navigate(path);}; return () => {delete window.__onboardingTestNavigate;};}, [navigate]);
-  if (usagePaths.includes(location.pathname)) return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', alternatePaths:usagePaths.filter(path => path !== '/usage'), label: 'Usage', icon: 'usage', element: <UsagePage showActivity={new URLSearchParams(location.search).has('activity')?'usage-fixture':undefined} adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
+  if (usagePaths.includes(location.pathname) || (location.pathname === '/' && new URLSearchParams(location.search).has('tab'))) return <ConsoleDataProvider scopeKey="usage-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/usage', alternatePaths:['/', ...usagePaths.filter(path => path !== '/usage')], label: 'Usage', icon: 'usage', element: <UsagePage showActivity={new URLSearchParams(location.search).has('activity')?'usage-fixture':undefined} adapter={progressiveUsageAdapter} reportScope={new URLSearchParams(location.search).has('split') ? 'usage-fixture' : undefined}/>}]}/></ConsoleDataProvider>;
   if (location.pathname === '/stacked-usage-fixture') return <DailyBarChart label="Items per day" xAxisLabel="Date (UTC)" yAxisLabel="Items"
     days={[{date:'2026-11-17',value:10,segments:[2,3,5]},{date:'2026-11-18',value:0,segments:[0,0,0]},
       {date:'2026-11-19',value:null},{date:'2026-11-20',value:9,segments:[8,1,0]}]}
@@ -83,7 +86,11 @@ function Fixture() {
   if (location.pathname === '/messages' || location.pathname === '/search') {
     return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
   }
-  if (location.pathname === '/sessions') return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/sessions', label: 'Sessions', icon: 'sessions', element: <SessionsPage adapter={libraryAdapter}/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')) return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[
+    {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>},
+    {path:'/sessions/:permalinkId',navigation:false,label:'Session',element:<SessionsPage adapter={libraryAdapter}/>},
+  ]}/></ConsoleDataProvider>;
+  if (connectionPage(location.pathname)) return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><ConnectionPage adapter={sourcesAdapter}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:location.search.includes('decorated')
       ? <div className="stack"><div className="stack"><SourcesPage adapter={sourcesAdapter} canConfigure/><p><a href="#connector-terms" id="connector-terms">Connector terms</a></p></div></div>
       : <SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;

@@ -24,7 +24,7 @@ export interface DevinRecordingStatus {
   connectedAt: string;
   lastCheckedAt: string | null;
   capture: 'waiting' | 'indexing' | 'recording' | 'delayed' | 'stopped';
-  latestSession?: SessionKey;
+  latestSession?: SessionKey & {permalinkId?:string};
 }
 interface Options {
   database: ApplicationDatabase;

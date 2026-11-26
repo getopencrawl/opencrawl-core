@@ -1,6 +1,6 @@
 import {useEffect, useId, useRef, useState} from 'react';
 import type {KeyboardEvent, ReactNode} from 'react';
-import {Link, NavLink, Route, Routes, useLocation} from './router.tsx';
+import {Link, NavLink, Route, Routes, matchesConsoleRoute, useLocation} from './router.tsx';
 import type {NavigationItem, WorkspaceIdentity} from './contracts.ts';
 import {Avatar, Brand, Button, EmptyState, ExternalLink, LinkButton, Page} from './design/components.tsx';
 import {Icon} from './design/icons.tsx';
@@ -36,7 +36,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
   const toggle = useRef<HTMLButtonElement>(null);
   const restoreNavigationFocus = useRef(false);
   const previousPath = useRef(location.pathname);
-  const current = routes.find(route => route.path === location.pathname || route.alternatePaths?.includes(location.pathname)) ?? routes.find(route => route.path !== '/' && location.pathname.startsWith(route.path + '/'));
+  const current = routes.find(route => matchesConsoleRoute(route,location.pathname)) ?? routes.find(route => route.path !== '/' && location.pathname.startsWith(route.path + '/'));
   useEffect(() => {
     const query = matchMedia('(max-width: 800px)');
     const update = () => {setCompact(query.matches); accountPanel.current?.hidePopover(); setAccountOpen(false); if (!query.matches) setMenuOpen(false);};
@@ -45,7 +45,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
   useEffect(() => {
     document.title = `OpenCrawl: ${current?.group === 'settings' ? 'Settings / ' : ''}${current?.label ?? 'Workspace'}`;
     if (previousPath.current === location.pathname) return;
-    const withinSection = current?.alternatePaths && [current.path, ...current.alternatePaths].includes(previousPath.current);
+    const withinSection = current?.alternatePaths && matchesConsoleRoute(current,previousPath.current);
     previousPath.current = location.pathname;
     setMenuOpen(false);
     accountPanel.current?.hidePopover();
@@ -86,7 +86,7 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
       <nav id="workspace-navigation" aria-label={navigationLabel ?? 'Workspace navigation'}>{navigation ? navigation(() => {if (compact) closeMenu();}) : (['workspace', 'manage'] as const).map(group => <div className="oc-nav-group" key={group}>{routes.filter(route => route.navigation !== false && (route.group ?? 'workspace') === group).map(route => {
         const content = <><Icon name={route.icon ?? 'overview'}/><span>{route.label}</span>{route.badge}</>;
         const close = () => {if (compact) closeMenu();};
-        if (route.alternatePaths?.includes(location.pathname)) return <Link key={route.path} to={route.path} onClick={close} className="oc-nav-link oc-nav-active" aria-current="page">{content}</Link>;
+        if (route.alternatePaths && matchesConsoleRoute(route,location.pathname)) return <Link key={route.path} to={route.path} onClick={close} className="oc-nav-link oc-nav-active" aria-current="page">{content}</Link>;
         return <NavLink key={route.path} to={route.path} onClick={close} end={route.end ?? route.path === '/'} className={({isActive}) => `oc-nav-link${isActive ? ' oc-nav-active' : ''}`}>{content}</NavLink>;
       })}</div>)}</nav>
 

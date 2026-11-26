@@ -1,7 +1,48 @@
 import {test, expect} from '@playwright/test';
 import type {SessionSummary,TranscriptEvent} from '../src/pages/library-types.js';
 
+test('an old bookmark becomes a canonical link that reopens and reloads the same transcript',async({page})=>{
+  const permalinkId='oc_'+'a'.repeat(32);
+  const requested:Array<Record<string,unknown>>=[];
+  await page.route('**/api/library/sessions/read',async route=>{
+    requested.push(route.request().postDataJSON() as Record<string,unknown>);
+    await route.fulfill({json:{session:{...base,permalinkId},events:[],total:0,next:null}});
+  });
+  await page.goto('/sessions?user=alice&harness=codex&id=single');
+  await expect(page).toHaveURL(url=>url.pathname==='/sessions/'+permalinkId && url.search==='');
+  await page.reload();
+  await expect(page.getByRole('heading',{name:'Single machine'})).toBeVisible();
+  expect(requested[0]).toMatchObject({userId:'alice',harness:'codex',sessionId:'single'});
+  expect(requested.at(-1)).toMatchObject({permalinkId});
+  expect(requested.at(-1)).not.toHaveProperty('userId');
+});
+
 const base: SessionSummary = {userId: 'alice', harness: 'codex', sessionId: 'single', title: 'Single machine', private: false, mine: true, origin: 'desktop', host: 'laptop.local', hosts: ['laptop.local'], hostsTruncated: false, firstActivityAt: null, lastActivityAt: '2026-11-11T10:00:00Z', events: 2};
+test('a tool-result link requests the cited event and expands its exact entry after reload',async({page})=>{
+  const permalinkId='oc_'+'b'.repeat(32);
+  const event:TranscriptEvent={eventId:'mixed',installationId:'machine-one',kind:'tool',timestamp:null,entries:[
+    {type:'message',role:'assistant',text:'Reading the file'},
+    {type:'tool_call',name:'Read',input:'overview.md',truncated:false},
+    {type:'tool_result',text:'Original result from an older turn',truncated:false},
+  ]};
+  const requests:Array<Record<string,unknown>>=[];
+  await page.route('**/api/library/sessions/read',async route=>{
+    requests.push(route.request().postDataJSON() as Record<string,unknown>);
+    await route.fulfill({json:{session:{...base,permalinkId},events:[event],total:1,next:null}});
+  });
+  const path='/sessions/'+permalinkId;
+  await page.goto(path+'#event=mixed&installation=machine-one&entry=2');
+  await page.reload();
+  const cited=page.locator('[data-cited]');
+  await expect(cited).toHaveCount(1);
+  await expect(cited).toContainText('Original result from an older turn');
+  await expect(cited).toBeVisible();
+  await expect(cited.getByRole('link',{name:'Permalink to tool result'})).toHaveAttribute('href',path+'#event=mixed&installation=machine-one&entry=2');
+  expect(requests.at(-1)).toMatchObject({permalinkId,event:{eventId:'mixed',installationId:'machine-one'}});
+  await page.getByRole('link',{name:'Open full transcript'}).click();
+  await expect(page).toHaveURL(url=>url.pathname===path && !url.hash);
+  await expect(page.getByRole('link',{name:'Open full transcript'})).toHaveCount(0);
+});
 const sessions: SessionSummary[] = [{...base, capturedTokens: 12432},
   {...base, sessionId: 'multiple', harness: 'external-recorder', title: 'Continued on another machine', hosts: ['laptop.local', 'runner-42'], capturedTokens: 1200000},
   {...base, sessionId: 'missing', title: 'Older capture', host: null, hosts: [], capturedTokens: null},
