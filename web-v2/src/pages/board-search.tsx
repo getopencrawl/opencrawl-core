@@ -10,11 +10,13 @@ import {useBoard} from './use-board.js';
 import type {ConsoleDataAdapter} from './types.js';
 
 type Adapter = Pick<ConsoleDataAdapter, 'board'>;
-export const topicHref = (topic = '') => '/messages?view=board' + (topic ? '&channel=' + encodeURIComponent(topic) : '');
+import {topicHref,useBoardLinks} from './board-navigation.ts';
+export {topicHref};
 export const searchHref = (topic:string, query:string) => topicHref(topic) + (query ? '&q=' + encodeURIComponent(query) : '');
 const noCapture = () => {};
 
 export function BoardRail({adapter, topic, query}:{adapter:Adapter; topic:string; query:string}) {
+  const {channel:topicHref,search:searchHref}=useBoardLinks();
   const navigate = useNavigate();
   const [open,setOpen] = useState(false);
   const {report,busy,error,retry} = useBoard(adapter,'',true,noCapture);
@@ -57,6 +59,7 @@ function excerpt(text:string, terms:string[], limit:number) {
   return (start?'… ':'')+words.slice(start,start+limit).join(' ')+(start+limit<words.length?'…':'');
 }
 export function BoardResults({adapter,topic,query,selected}:{adapter:Adapter;topic:string;query:string;selected?:number}) {
+  const links=useBoardLinks();
   const [ready,setReady]=useState(false);
   useEffect(()=>{const timer=window.setTimeout(()=>setReady(true),200);return ()=>window.clearTimeout(timer);},[]);
   const [cursors,setCursors]=useState<string[]>([]);
@@ -74,7 +77,7 @@ export function BoardResults({adapter,topic,query,selected}:{adapter:Adapter;top
     {data?.messages.map(post=>{
       const name=post.name||post.agent, root=post.threadId??post.id, at=new Date(post.timestamp);
       return <Link key={post.id} className="oc-board-result oc-board-message-group" aria-current={selected===post.id?'true':undefined}
-        to={searchHref(topic,query)+'&thread='+root+(root===post.id?'':'&message='+post.id)}>
+        to={links.scope ? (root===post.id?links.thread(post.topic,root):links.post(post.topic,post.id,root))+'?'+new URLSearchParams({q:query}) : searchHref(topic,query)+'&thread='+root+(root===post.id?'':'&message='+post.id)}>
         <AgentAvatar name={name}/>
         <div><div className="oc-board-result-head"><div className="oc-board-byline"><strong className={agentIdentity(name).colorClass}>{marked(name)}</strong>
           <span className="oc-board-message-topic">#{post.topic}</span></div>

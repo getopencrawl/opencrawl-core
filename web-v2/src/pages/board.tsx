@@ -1,6 +1,7 @@
 import {Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode} from 'react';
 import {Button, EmptyState, LoadingState, Select, Notice, ScrollControl} from '../design/components.js';
-import {BoardResults, searchHref, topicHref} from './board-search.js';
+import {useBoardLinks} from './board-navigation.ts';
+import {BoardResults} from './board-search.js';
 import {agentIdentity} from '../design/identity.js';
 import {AgentAvatar} from '../design/agent-avatar.js';
 import {Icon} from '../design/icons.js';
@@ -8,13 +9,12 @@ import {Link, useNavigate} from '../router.js';
 import type {BoardMessage, BoardReport, ConsoleDataAdapter} from './types.js';
 import {useBoard} from './use-board.js';
 
-export {topicHref};
-const threadHref = (channel: string, id: number) => topicHref(channel) + '&thread=' + id;
-export const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
+export {topicHref,messageHref} from './board-navigation.ts';
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
 const authorName = (post: BoardMessage) => post.name || post.agent;
 function MessageText({text, messages}: {text: string; messages: ReadonlyArray<BoardMessage>}) {
+  const links=useBoardLinks();
   const parts: ReactNode[] = [];
   const pattern = /https?:\/\/[^\s<>]+|@[a-zA-Z0-9][a-zA-Z0-9:_.-]*|(?:message\s+|#)\d{3,}/g;
   let at = 0;
@@ -26,11 +26,12 @@ function MessageText({text, messages}: {text: string; messages: ReadonlyArray<Bo
       let safe = false;
       try {const url = new URL(clean); safe = !url.username && !url.password;} catch { /* Preserve malformed source text. */ }
       parts.push(safe ? <a key={match.index} href={clean} target="_blank" rel="noopener noreferrer">{clean}</a> : clean, value.slice(clean.length));
-    } else if (value.startsWith('@')) parts.push(<span key={match.index} className="oc-board-mention">{value}</span>);
+    } else if (value.startsWith('@') && links.scope) parts.push(<Link key={match.index} className="oc-board-mention" to={links.agent(value)!}>{value}</Link>);
+    else if (value.startsWith('@')) parts.push(<span key={match.index} className="oc-board-mention">{value}</span>);
     else {
       const id = Number(value.match(/\d+/)?.[0]);
       const referenced = messages.find(message => message.id === id);
-      parts.push(referenced ? <Link key={match.index} to={messageHref(referenced.topic, id, referenced.threadId)}>{value}</Link> : value);
+      parts.push((links.scope || referenced) && Number.isSafeInteger(id) && id>0 ? <Link key={match.index} to={links.post(referenced?.topic??'', id, referenced?.threadId)}>{value}</Link> : value);
     }
     at = match.index + value.length;
   }
@@ -71,6 +72,7 @@ function DaySeparator({timestamp,dates,prefix}:{timestamp:number;dates:[string,n
 export function BoardContent({report, stream, message, inThread=false, channel='', selectedThread}: {report: BoardReport; stream: boolean; message?: number; inThread?:boolean; channel?:string; selectedThread?:number}) {
   const prefix=useId();
   if (!report.messages.length) return <EmptyState title={inThread ? 'No replies yet' : stream ? 'No workspace messages yet' : 'No messages in this channel yet'}/>;
+  const {thread:threadHref,post:messageHref,channel:topicHref,agent}=useBoardLinks();
   const groups = messageGroups(report.messages, message);
   const dates = [...new Map(groups.map(([first])=>[day(first!.timestamp),first!.timestamp])).entries()];
   return <>{groups.map((group, index) => {
@@ -82,7 +84,7 @@ export function BoardContent({report, stream, message, inThread=false, channel='
         <AgentAvatar name={author}/>
         <header className="oc-board-post-header">
           <div className="oc-board-byline">
-            <h3 className={agentIdentity(author).colorClass}>{author}</h3>
+            <h3 className={agentIdentity(author).colorClass}>{agent(first.agent) ? <Link to={agent(first.agent)!}>{author}</Link> : author}</h3>
             {first.system && <span>System</span>}
             {inThread ? <time dateTime={new Date(first.timestamp).toISOString()}>{new Date(first.timestamp).toLocaleDateString(undefined,{month:'short',day:'numeric'})} at {time(first.timestamp)}</time> :
               <Link className="oc-board-time" to={threadHref(channel,first.id)} aria-label={'Show thread for message #'+first.id}><time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></Link>}
@@ -106,7 +108,8 @@ export function BoardWorkspace({adapter, topic, query, message, threadId}: {adap
   if(threadId===undefined&&message!==undefined&&message!==channelMessage)setChannelMessage(message);
   const navigate=useNavigate(), returnFocus=useRef<HTMLElement|null>(null), close=useRef<HTMLButtonElement>(null);
   const term=query.trim();
-  const channelUrl=searchHref(topic,query)+(!term && channelMessage!==undefined?'&message='+channelMessage:'');
+  const links=useBoardLinks();
+  const channelUrl=!term && channelMessage!==undefined?links.post(topic,channelMessage):links.search(topic,query);
   useLayoutEffect(()=>{
     if(threadId===undefined)return;
     returnFocus.current=document.activeElement instanceof HTMLElement?document.activeElement:null;

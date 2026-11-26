@@ -8,6 +8,7 @@ import {diagnosticPage, MAX_SEARCH_PAGE, SEARCH_PAGE_SIZE, SOURCE_WINDOW} from '
 import {Link, useSearchParams} from '../router.js';
 import {memoryHarness, memoryPath} from './memories.js';
 import {sessionHarness, sessionPath} from './sessions.js';
+import {boardPage} from '../../../src/application/board-links.mjs';
 import {messageHref} from './board.js';
 import {SearchReader} from './search-reader.js';
 import {accessFailure, consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
@@ -39,6 +40,8 @@ const examples = ['onboarding', 'launch checklist', 'design review', 'customer f
 function sourcePath(hit: DiagnosticHit, source: SearchSource) {
   const {userId, harness, sessionId, path, channel, messageId, threadId,permalinkId} = hit._source ?? {};
   if ((source==='sessions'||source==='memories') && typeof permalinkId==='string') return '/'+source+'/'+encodeURIComponent(permalinkId);
+  const permalink=hit._source?.permalink;
+  if(source==='board' && typeof permalink==='string' && boardPage(permalink)?.kind==='posts') return permalink;
   if (source === 'board' && typeof channel === 'string' && channel && typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0 &&
       typeof threadId === 'number' && Number.isSafeInteger(threadId) && threadId > 0) return messageHref(channel, messageId, threadId);
   if (typeof userId !== 'string' || !userId || typeof harness !== 'string') return;

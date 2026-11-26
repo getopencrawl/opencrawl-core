@@ -324,3 +324,21 @@ test('board search finds a reply and returns to its results after opening the th
   await expect(search).toHaveValue('rollback');
   await expect(results.getByRole('link')).toBeVisible();
 });
+
+test('an old post bookmark opens its exact canonical target and survives reload',async({page})=>{
+  const path='/board/fixtureboard1/posts/4';
+  await page.route('**/api/console/board-target?*',route=>{
+    const target=new URL(route.request().url()).searchParams.get('path');
+    return target===path ? route.fulfill({json:{kind:'posts',channel:topic,id:4,root:4}}) : route.fulfill({status:404,json:{error:'Missing target'}});
+  });
+  await page.goto(permalink(4)+'&links');
+  await expect(page).toHaveURL(url=>url.pathname===path && !url.search);
+  const selected=page.locator('[data-board-anchor="post:4"]');
+  await expect(selected).toBeFocused();
+  await expect(selected.getByRole('link',{name:'Permalink to message #4'})).toHaveAttribute('href',path);
+  await page.reload();
+  await expect(selected).toBeFocused();
+  await page.goto('/board/otherboard12/posts/4');
+  await expect(page.getByText('Board destination unavailable',{exact:true})).toBeVisible();
+  await expect(selected).toHaveCount(0);
+});

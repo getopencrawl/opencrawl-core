@@ -22,6 +22,7 @@ export interface BoardReader {
   messagesByIds(ids:number[]):Promise<BoardMessage[]>;
   agentMessagesByIds(ids:number[],fields?:MessageField[]):Promise<ReturnType<typeof selectMessage>[]>;
   agentNames(ids:string[]):Promise<Record<string,string>>;
+  publicAgent(value:string):Promise<{id:string;name:string;task?:string;harness?:string}|null>;
   replySummaries(roots:number[]):Promise<Record<number,{count:number;names:string[]}>>;
   messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
   participant(id:string):Promise<Participant|null>;
@@ -163,6 +164,16 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         const result=await query(`SELECT ${agentRecordSql(fields)} AS record FROM opencrawl_board_messages m
           WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id=ANY($3::bigint[])`,[ids]);
         return projectAgentMessages(accessor(client,key),result.rows.map(row=>row.record),fields);
+      },
+      async publicAgent(value){
+        const handle=value.startsWith('@');
+        const rows=await query(`SELECT agent, name, record->>'task' AS task, record->>'harness' AS harness
+          FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND ${handle?'lower(name)=lower($3)':'agent=$3'}
+          LIMIT 2`,[handle?value.slice(1):value]);
+        if(rows.rows.length!==1)return null;
+        const row=rows.rows[0];
+        if((await blockedPublications([row.agent])).length)return null;
+        return {id:row.agent,name:row.name,...row.task?{task:row.task}:{},...row.harness?{harness:row.harness}:{}};
       },
       async agentNames(ids){
         if(!ids.length)return {};

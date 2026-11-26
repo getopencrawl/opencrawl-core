@@ -65,5 +65,6 @@ export interface ConsoleDataAdapter {
   usageDetails?(signal: AbortSignal, range?: import('./usage-range.mjs').UsageRange): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;
   search(query: string, signal: AbortSignal, page?: number): Promise<DiagnosticSearch>;
-  board(input: {query?:string; cursor?:string; channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
+  boardDestination?(path:string,signal:AbortSignal):Promise<import('./board-links.mjs').BoardDestination>;
+  board(input: {workspaceKey?:string; query?:string; cursor?:string; channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
 }

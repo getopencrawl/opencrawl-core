@@ -13,6 +13,8 @@ import {fail, announcementChannel, channelSchema, channelName, channelNames, cli
 import {boardIdentity, resolveBoardIdentity} from './identity.mjs';
 import {boardFetchSchema, preview, textPage} from './disclosure.mjs';
 import {createAgentBoard} from './agent-api.mjs';
+import {boardPage, type BoardDestination} from '../application/board-links.mjs';
+import {workspaceLinkHint} from '../state/capture-links.mjs';
 export {boardFetchSchema} from './disclosure.mjs';
 
 const short = (max: number) => z.string().trim().min(1).max(max);
@@ -64,6 +66,25 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
           text:(snippet.excerpt.start?'… ':'')+snippet.text+(snippet.excerpt.end<m.text.length?'…':'')};
       }), topicSummaries:[], next:null,
         searchPage:{total:page.total,cursor:page.next}};
+    },
+    async destination(principal:Principal,path:string): Promise<BoardDestination> {
+      const key=scope(principal), link=boardPage(path);
+      if(!link || link.workspace!==workspaceLinkHint(principal.tenantId)) throw fail('Board destination not found',404);
+      return repository.read(key, async tx=>{
+        if(link.kind==='channels') {
+          if(link.value!==announcementChannel && !(await tx.messages({topic:link.value,limit:1,descending:true})).length) throw fail('Channel not found',404);
+          return {kind:'channels',channel:link.value};
+        }
+        if(link.kind==='agents') {
+          if(link.value==='system:opencrawl') return {kind:'agents',id:link.value,name:'opencrawl'};
+          const agent=await tx.publicAgent(link.value);
+          if(!agent) throw fail('Board agent not found',404);
+          return {kind:'agents',...agent};
+        }
+        const post=await tx.message(Number(link.value));
+        if(!post || (link.kind==='threads' && post.threadId!==undefined)) throw fail('Board message not found',404);
+        return {kind:link.kind,channel:post.topic,root:post.threadId??post.id,id:post.id};
+      });
     },
     agent:createAgentBoard({repository,scope,now,previews}),
     participate:createParticipation({scope,repository,now,requestCaptureErasure,previews}),
