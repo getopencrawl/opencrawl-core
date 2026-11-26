@@ -1,10 +1,11 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useRef} from 'react';
 import {ProactiveTab, scoped} from './search-activity.tsx';
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
 import type {MetricItem} from '../design/components.js';
 import {BarList, Button, DailyBarChart, DailyLineChart, EmptyState, IntegrationCard, LoadingState, MetricGrid, Notice, Page, Section, Select, Table, Tabs} from '../design/components.js';
-import {Link} from '../router.js';
+import {Link, useLocation, useNavigate} from '../router.js';
+import {usagePath, usageTabs, type UsageTab as Tab} from '../../../src/application/usage-paths.mjs';
 import {CopyPromptButton} from '../onboarding/copy.tsx';
 import type {ConsoleDataAdapter, UsageReport} from './types.js';
 import {ago, compact, count, harnessName, memberName, originName, plural, sortedMembers, sourceStatus, speciesLabel, topMember} from './usage-model.ts';
@@ -16,7 +17,6 @@ import {UsageOverview, type OverviewPeriod} from './usage-overview.tsx';
 import {SearchesTab, type QueryRange} from './usage-queries.tsx';
 
 const refreshPolicy = {autoRefreshMilliseconds: 60_000, staleMilliseconds: 60_000, reconcile: reconcileUsage};
-type Tab = 'overview' | 'searches' | 'proactive' | 'team' | 'activity' | 'sources';
 const ranges: ReadonlyArray<{value: UsageRange; label: string}> = [{value: '30d', label: 'Last 30 days'}, {value: '7d', label: 'Last 7 days'}, {value: 'all', label: 'All time'}];
 
 export function useUsage(adapter: ConsoleDataAdapter) {
@@ -181,13 +181,21 @@ function usePrefetchedRanges(ready: boolean, current: UsageRange, reads: Readonl
 }
 
 export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: PageProps) {
-  const [tab, setTab] = useState<Tab>('overview');
-  const [range, setRange] = useState<UsageRange>('30d');
-  const [period, setPeriod] = useState<OverviewPeriod>('30d');
+  const location = useLocation(), navigate = useNavigate();
+  const tab = usageTabs.find(item => usagePath(item) === location.pathname) ?? 'overview';
+  const params = new URLSearchParams(location.search);
+  const selectedRange = params.get('range');
+  const range: UsageRange = selectedRange === '7d' || selectedRange === 'all' ? selectedRange : '30d';
+  const period: OverviewPeriod = selectedRange === '90d' ? '90d' : range;
+  function openReport(report: Tab, nextRange: OverviewPeriod) {
+    const next = new URLSearchParams(params);
+    if (nextRange === '30d') next.delete('range');
+    else next.set('range', nextRange);
+    void navigate({pathname: usagePath(report), search:next.toString()});
+  }
   const toolbar = useRef<HTMLDivElement>(null);
   function viewAllSearches(queryRange: QueryRange) {
-    setRange(queryRange);
-    setTab('searches');
+    openReport('searches', queryRange);
     requestAnimationFrame(() => toolbar.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus());
   }
   const queryRange = range === '7d' ? '7d' : '30d';
@@ -211,12 +219,12 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
   const current: Tab = tabs.some(item => item.value === tab) ? tab : tabs[0]!.value;
   return <Page title="Usage" bodyClassName="usage-report" actions={setupPrompt && current !== 'overview' ? <CopyPromptButton text={setupPrompt}/> : undefined}>
     <div className="usage-toolbar" ref={toolbar}>
-      <Tabs label="Usage" items={tabs} value={current} onChange={value => setTab(value as Tab)}/>
-      {current !== 'overview' && <Select aria-label="Date range" value={current === 'searches' ? queryRange : range} onChange={event => setRange(event.target.value as UsageRange)}>
+      <Tabs label="Usage" items={tabs} value={current} onChange={value => openReport(value as Tab, value === 'searches' ? queryRange : range)}/>
+      {current !== 'overview' && <Select aria-label="Date range" value={current === 'searches' ? queryRange : range} onChange={event => openReport(current, event.target.value as UsageRange)}>
         {ranges.filter(item => current !== 'searches' || item.value !== 'all').map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
       </Select>}
     </div>
-    {current === 'overview' && scope && hasOverview && <UsageOverview adapter={adapter} activity={activity?.adapter} scope={scope} names={names} period={period} setPeriod={setPeriod} onViewAll={viewAllSearches}/>}
+    {current === 'overview' && scope && hasOverview && <UsageOverview adapter={adapter} activity={activity?.adapter} scope={scope} names={names} period={period} setPeriod={value => openReport(current, value)} onViewAll={viewAllSearches}/>}
     {current === 'searches' && activity && <SearchesTab adapter={activity.adapter} scope={activity.scope} range={queryRange} names={names}/>}
     {current === 'proactive' && activity && <ProactiveTab adapter={activity.adapter} scope={activity.scope} range={range} names={names}/>}
     {(current === 'activity' || current === 'sources') && <>

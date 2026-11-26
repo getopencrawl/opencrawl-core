@@ -182,6 +182,10 @@ test('Searches shows observed query history, and Proactive suggestions keeps its
   await expect(page.locator('.report-bar-chart')).toHaveCount(0);
   await page.getByLabel('Date range').selectOption('7d');
   await expect.poll(() => requests.history).toContainEqual({kind: 'agent', range: '7d', basis: 'events', withQuery: true});
+  await expect(page).toHaveURL(/\/usage\/searches\?.*range=7d/);
+  await page.reload();
+  await expect(tab(page, 'Searches')).toHaveAttribute('aria-selected','true');
+  await expect(page.getByLabel('Date range')).toHaveValue('7d');
   await tab(page, 'Proactive suggestions').click();
   await page.getByLabel('Date range').selectOption('all');
   await expect(chartTotal(page, 'Proactive context edits')).toHaveText('1,540');
