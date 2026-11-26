@@ -1,4 +1,6 @@
 import type {SourceCard} from '../application/types.mjs';
+import {connectionPath} from '../application/connection-links.mjs';
+import {workspaceLinkHint} from '../state/capture-links.mjs';
 import {errorInfo, required} from '../errors.mjs';
 import type {Principal} from '../sessions/types.mjs';
 import type {Environment} from './types.mjs';
@@ -814,6 +816,24 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       return resume(current, providers[current.provider]);
     },
 
+    async connection(principal: Principal, id:string):Promise<SourceCard|null> {
+      if (!INTEGRATION.test(id) || principal.captureAccess !== undefined) return null;
+      const records=await registry.listTenant(principal.tenantId);
+      const matches=records.filter(record=>record.environment===environment && record.tenantId===principal.tenantId && record.integrationId===id);
+      if(matches.length!==1)return null;
+      const record=matches[0]!, provider=providers[record.provider];
+      const allowed=(row:IntegrationRecord)=>row.environment===environment && row.tenantId===principal.tenantId &&
+        visible(principal,provider,row) && (row.status!=='connecting' || row.userId===principal.userId);
+      if(!provider || !allowed(record))return null;
+      const card=await view(principal,record,provider);
+      const otherConnections=records.some(row=>row.integrationId!==id && allowed(row))
+        ? (await registry.listTenant(principal.tenantId)).filter(row=>row.integrationId!==id && INTEGRATION.test(row.integrationId) && allowed(row))
+          .map(row=>({account:row.account || row.integrationId,path:connectionPath(workspaceLinkHint(principal.tenantId),row.integrationId)}))
+        : [];
+      const fresh=await registry.get(principal.tenantId,record.userId,id);
+      if (!fresh || fresh.integrationId!==id || fresh.userId!==record.userId || !allowed(fresh)) return null;
+      return otherConnections.length ? {...card,otherConnections} : card;
+    },
     async list(principal: Principal): Promise<Array<SourceCard & {integrationId?: string; connectedById?: string}>> {
       const records = await registry.listTenant(principal.tenantId);
       let bucket: Promise<string|null> | undefined;

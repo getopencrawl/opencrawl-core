@@ -38,6 +38,8 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     tokenSessions:p.input(tokenSessionsRequest).query(({ctx,input})=>ctx.invoke<TokenSessionPage & {cacheScope:string}>('/api/console/usage/token-sessions','POST',input)),
     searchHistory:p.input(historyRead).query(({ctx,input})=>ctx.invoke<SearchActivityPage & {cacheScope:string}>('/api/console/usage/search-history','POST',input)),
     usageDetails: p.input(rangeOnly).query(({ctx,input}) => ctx.invoke<import('./reports.mjs').UsageDetails & {cacheScope: string}>('/api/console/usage/details','POST',input)),
+    fileView:p.input(z.strictObject({path:z.string().min(1).max(8192)})).query(({ctx,input})=>ctx.invoke<import('./file-links.mjs').FileView>('/api/console/files/view','POST',input)),
+    connection:p.input(z.strictObject({path:z.string().max(100)})).query(({ctx,input})=>ctx.invoke<SourceCard>('/api/console/sources/connection','POST',input)),
     sources: p.input(empty).query(({ctx}) => ctx.invoke<{items: SourceCard[]}>('/api/console/sources')),
     team: p.input(empty).query(({ctx}) => ctx.invoke<T>('/api/console/team')),
     invite: p.input(email).mutation(({ctx,input}) => ctx.invoke<{ok: true; inviteUrl?: string}>('/api/console/team/invite','POST',input)),
@@ -47,7 +49,8 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
   },
   diagnostics: t.router({
     search: p.input(z.object({query:z.string().max(4000),page:z.number().int().min(1).max(MAX_SEARCH_PAGE).optional()}).strict()).query(({ctx,input}) => ctx.invoke<DiagnosticSearch>('/api/debug/search','POST',input)),
-    board: p.input(z.object({query:z.string().trim().min(1).max(500).optional(),cursor:z.string().max(100).optional(),channel:z.string().max(80).optional(),threadId:z.number().int().positive().optional(),rootsOnly:z.boolean().optional(),topic:z.string().max(200).optional(),before:z.number().int().positive().optional()}).strict()).query(({ctx,input}) => ctx.invoke<BoardReport>('/api/debug/board'+(Object.keys(input).length?'?'+new URLSearchParams(Object.entries(input).map(([k,v])=>[k,String(v)])) : ''))),
+    boardDestination:p.input(z.strictObject({path:z.string().max(1600)})).query(({ctx,input})=>ctx.invoke<import('./board-links.mjs').BoardDestination>('/api/debug/board?'+new URLSearchParams({destination:input.path}))),
+    board: p.input(z.object({workspaceKey:z.string().length(12).optional(),query:z.string().trim().min(1).max(500).optional(),cursor:z.string().max(100).optional(),channel:z.string().max(80).optional(),threadId:z.number().int().positive().optional(),rootsOnly:z.boolean().optional(),topic:z.string().max(200).optional(),before:z.number().int().positive().optional()}).strict()).query(({ctx,input}) => ctx.invoke<BoardReport>('/api/debug/board'+(Object.keys(input).length?'?'+new URLSearchParams(Object.entries(input).map(([k,v])=>[k,String(v)])) : ''))),
   }),
   library: t.router({
     privacy: t.router({

@@ -22,6 +22,7 @@ export interface BoardReader {
   messagesByIds(ids:number[]):Promise<BoardMessage[]>;
   agentMessagesByIds(ids:number[],fields?:MessageField[]):Promise<ReturnType<typeof selectMessage>[]>;
   agentNames(ids:string[]):Promise<Record<string,string>>;
+  publicAgent(value:string):Promise<{id:string;name:string;task?:string;harness?:string}|null>;
   replySummaries(roots:number[]):Promise<Record<number,{count:number;names:string[]}>>;
   messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
   participant(id:string):Promise<Participant|null>;
@@ -30,7 +31,7 @@ export interface BoardReader {
   profileByName(name:string,userId:string):Promise<{id:string;name:string}|null>;
   onlinePeers(except:string,cutoff:number):Promise<Array<{agent:string;name:string;task:string;captureRef?:string}>>;
   sharedUpdates(input:{after:number;through:number;channels?:string[];limit:number}):Promise<BoardMessage[]>;
-  agentProfiles(input:{after:number;limit:number;cutoff:number;active:boolean;query:string}):Promise<Array<Omit<Participant,'pending'>>>;
+  agentProfiles(input:{after:number;limit:number;cutoff:number;active:boolean;query:string}):Promise<Array<Omit<Participant,'pending'> & {agentId:string}>>;
   directory(input:{after:number;limit:number;cutoff:number}):Promise<{agents:Array<{id:string;participant:BoardProfile}>;total:number}>;
   agents():Promise<BoardState['agents']>;
   topics():Promise<Array<{topic:string;posts:number;first:number;latest:{id:number;timestamp:number;name:string}}>>;
@@ -164,6 +165,21 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
           WHERE m.namespace=$1 AND m.tenant_hash=$2 AND m.id=ANY($3::bigint[])`,[ids]);
         return projectAgentMessages(accessor(client,key),result.rows.map(row=>row.record),fields);
       },
+      async publicAgent(value){
+        const handle=value.startsWith('@');
+        const rows=await query(`SELECT agent, name, record->>'task' AS task, record->>'harness' AS harness
+          FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND ${handle?'lower(name)=lower($3)':'agent=$3'}
+          LIMIT 2`,[handle?value.slice(1):value]);
+        if(!handle && !rows.rows.length){
+          if((await blockedPublications([value])).length)return null;
+          const prior=await query('SELECT name FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3 ORDER BY id DESC LIMIT 1',[value]);
+          return prior.rows.length?{id:value,name:prior.rows[0].name}:null;
+        }
+        if(rows.rows.length!==1)return null;
+        const row=rows.rows[0];
+        if((await blockedPublications([row.agent])).length)return null;
+        return {id:row.agent,name:row.name,...row.task?{task:row.task}:{},...row.harness?{harness:row.harness}:{}};
+      },
       async agentNames(ids){
         if(!ids.length)return {};
         const rows=await query(`SELECT DISTINCT ON(agent) agent,name FROM (
@@ -220,7 +236,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
           ORDER BY id LIMIT $6`,[after,through,channels??null,limit])).rows.map(row=>row.record);
       },
       async agentProfiles({after,limit,cutoff,active,query:term}){
-        return (await query(`SELECT record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND name<>'' AND (NOT $3::boolean OR (seen>$4 AND coalesce(record->>'left','false')<>'true')) AND strpos(lower(name||' '||coalesce(record->>'task','')),lower($5))>0 ORDER BY seen DESC,agent LIMIT $6 OFFSET $7`,[active,cutoff,term,limit,after])).rows.map(row=>row.record);
+        return (await query(`SELECT record || jsonb_build_object('agentId',agent) AS record FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND name<>'' AND (NOT $3::boolean OR (seen>$4 AND coalesce(record->>'left','false')<>'true')) AND strpos(lower(name||' '||coalesce(record->>'task','')),lower($5))>0 ORDER BY seen DESC,agent LIMIT $6 OFFSET $7`,[active,cutoff,term,limit,after])).rows.map(row=>row.record);
       },
       async directory({after,limit,cutoff}){const total=Number((await query('SELECT count(*) count FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND seen>$3',[cutoff])).rows[0].count);const rows=(await query(`SELECT p.agent,p.record,d.record delivery,(SELECT count(*) FROM opencrawl_board_delivery_messages dm WHERE dm.namespace=p.namespace AND dm.tenant_hash=p.tenant_hash AND dm.agent=p.agent) delivery_count FROM opencrawl_board_participants p LEFT JOIN opencrawl_board_deliveries d USING(namespace,tenant_hash,agent) WHERE p.namespace=$1 AND p.tenant_hash=$2 AND p.seen>$3 ORDER BY p.seen DESC,p.agent LIMIT $4 OFFSET $5`,[cutoff,limit,after])).rows;return {total,agents:rows.map(row=>({id:row.agent,participant:{...row.record,pending:row.delivery?{...row.delivery,count:Number(row.delivery_count)}:null}}))};},
       async agents(){return Object.fromEntries((await query('SELECT agent,record FROM opencrawl_board_agents WHERE namespace=$1 AND tenant_hash=$2 ORDER BY position,agent')).rows.map(row=>[row.agent,row.record]));},

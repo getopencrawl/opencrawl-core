@@ -117,6 +117,10 @@ test('real session and memory library: viewer, private visibility, owner-only co
     {type: 'tool_call', name: 'Bash', input: JSON.stringify({command: 'ls lighthouse'}, null, 2), truncated: false},
     {type: 'tool_result', text: 'beacon.md', truncated: false}]);
   assert.equal(transcript.total, 3, 'bookkeeping events are not part of the transcript');
+  const citation = {userId:'alice', harness:'claude-code', sessionId:'alpha', event:{eventId:'a3',installationId:'laptop'}};
+  const cited = await api(bob, 'sessions/read', citation);
+  assert.deepEqual(cited.events.map(event=>[event.eventId,event.installationId,event.entries[0].type]),[['a3','laptop','tool_result']]);
+  await assert.rejects(api(bob, 'sessions/read', {...citation,event:{...citation.event,installationId:'other'}}), {status:404});
   const paged = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2});
   assert.equal(paged.events.length, 2); assert.ok(paged.next);
   const rest = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2, cursor: paged.next});
@@ -142,6 +146,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
   assert.deepEqual((await api(bob, 'sessions/list', {})).sessions.map(s => s.sessionId), ['gamma', 'beta']);
   await assert.rejects(api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha'}), {status: 404});
   await assert.rejects(api(bob, 'sessions/read', {...backward, cursor: latest.next}), {status: 404});
+  await assert.rejects(api(bob, 'sessions/read', citation), {status:404});
   const bobSearch = await workspace.search(bob, {query: 'lighthouse', source: 'sessions'});
   assert.deepEqual(new Set(bobSearch.results.map(r => r.provenance?.sessionId ?? r.sessionId)), new Set(['gamma']));
   assert.ok(!(await recent.read(bob)).some(s => s.sessionId === 'alpha'));

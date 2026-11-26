@@ -46,7 +46,7 @@ export interface DiagnosticSearch {
   memories?: SearchResponse & {truncated?: boolean};
   board?: SearchResponse;
 }
-export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; channel?: string; threadId?: number; system?: true; replyCount?:number; replyNames?:string[]}
+export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; mentions?:string[]; mentionNames?:string[]; channel?: string; threadId?: number; system?: true; replyCount?:number; replyNames?:string[]}
 export interface BoardReport {
   messages: BoardMessage[];
   threadRoot?: BoardMessage;
@@ -57,6 +57,7 @@ export interface BoardReport {
   next: number | null;
 }
 export interface ConsoleDataAdapter {
+  fileView?(path:string,signal:AbortSignal):Promise<import('./file-links.mjs').FileView>;
   callTotals?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal,basis?:'events'):Promise<import('./search-activity.mjs').CallTotals & {cacheScope:string}>;
   usageTokens?(range:import('./usage-range.mjs').UsageRange,signal:AbortSignal,basis?:'session-start'):Promise<import('./usage-range.mjs').TokenUsage & {cacheScope:string}>;
   tokenSessions?(input:import('./usage-range.mjs').TokenSessionsRequest,signal:AbortSignal):Promise<import('./usage-range.mjs').TokenSessionPage & {cacheScope:string}>;
@@ -65,5 +66,6 @@ export interface ConsoleDataAdapter {
   usageDetails?(signal: AbortSignal, range?: import('./usage-range.mjs').UsageRange): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;
   search(query: string, signal: AbortSignal, page?: number): Promise<DiagnosticSearch>;
-  board(input: {query?:string; cursor?:string; channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
+  boardDestination?(path:string,signal:AbortSignal):Promise<import('./board-links.mjs').BoardDestination>;
+  board(input: {workspaceKey?:string; query?:string; cursor?:string; channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
 }

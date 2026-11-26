@@ -100,7 +100,8 @@ class GitHub:
             now = int(time.time())
             assertion = jwt.encode({'iat': now - 60, 'exp': now + 540, 'iss': str(self.config['app_id'])}, self.config['private_key'], algorithm='RS256')
             res = self.session.post(f"{self.api}/app/installations/{self.config['installation_id']}/access_tokens",
-                                    headers={'Authorization': f'Bearer {assertion}'}, timeout=30)
+                                    headers={'Authorization': f'Bearer {assertion}'}, timeout=30,
+                                    json={'permissions': dict.fromkeys(('contents', 'metadata', 'pull_requests', 'issues', 'discussions'), 'read')})
             if res.status_code in (401, 403, 404):
                 raise ConfigError(f'GitHub refused the app installation ({res.status_code}). Reconnect GitHub.')
             res.raise_for_status()

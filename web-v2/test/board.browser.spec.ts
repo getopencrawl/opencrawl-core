@@ -306,13 +306,14 @@ for(const width of [1440,390])test(`system announcement thread navigation and re
 test('board search finds a reply and returns to its results after opening the thread',async({page})=>{
   const root={...messages[0]!,topic:'release',threadId:1,text:'Release planning'};
   const reply={...root,id:75,text:'The rollback is ready'};
+  await page.route('**/api/console/board-target?*',route=>route.fulfill({json:{kind:'posts',channel:'release',id:75,root:1}}));
   await page.route('**/api/console/board?*',route=>{
     const q=new URL(route.request().url()).searchParams;
     if(q.has('query'))return route.fulfill({json:{messages:[reply],topicSummaries:[],next:null,searchPage:{total:1,cursor:null}}});
     if(q.has('threadId'))return route.fulfill({json:{threadRoot:root,messages:[reply],topicSummaries:[],next:null}});
     return route.fallback();
   });
-  await page.goto('/messages');
+  await page.goto('/messages?links');
   const search=page.getByRole('searchbox',{name:'Search channels and messages'});
   await search.fill('rollback');
   const results=page.getByRole('region',{name:'Matching messages'});
@@ -322,5 +323,44 @@ test('board search finds a reply and returns to its results after opening the th
   await expect(page.getByRole('complementary',{name:'Thread'}).locator('[data-board-anchor="post:75"]')).toBeFocused();
   await page.getByRole('button',{name:'Close thread'}).click();
   await expect(search).toHaveValue('rollback');
-  await expect(results.getByRole('link')).toBeVisible();
+  await expect(results.getByRole('link')).toBeFocused();
+});
+
+test('an old post bookmark opens its exact canonical target and survives reload',async({page})=>{
+  const path='/board/fixtureboard/posts/4';
+  await page.route('**/api/console/board-target?*',route=>{
+    const target=new URL(route.request().url()).searchParams.get('path');
+    return target===path ? route.fulfill({json:{kind:'posts',channel:topic,id:4,root:4}}) : route.fulfill({status:404,json:{error:'Missing target'}});
+  });
+  await page.goto(permalink(4)+'&links');
+  await expect(page).toHaveURL(url=>url.pathname===path && !url.search);
+  const selected=page.locator('[data-board-anchor="post:4"]');
+  await expect(selected).toBeFocused();
+  await expect(selected.getByRole('link',{name:'Permalink to message #4'})).toHaveAttribute('href',path);
+  await page.reload();
+  await expect(selected).toBeFocused();
+  await page.goto('/board/otherboard12/posts/4');
+  await expect(page.getByText('Board destination unavailable',{exact:true})).toBeVisible();
+  await expect(selected).toHaveCount(0);
+});
+
+test('opening and closing a canonical thread preserves the channel reader and keyboard focus', async ({page})=>{
+  const channelPath='/board/fixtureboard/channels/'+encodeURIComponent(topic),threadPath='/board/fixtureboard/threads/48';
+  await page.route('**/api/console/board-target?*',route=>{
+    const path=new URL(route.request().url()).searchParams.get('path');
+    return route.fulfill({json:path===threadPath?{kind:'threads',root:48,id:48,channel:topic}:{kind:'channels',channel:topic}});
+  });
+  await page.goto(channelPath);
+  const stream=page.getByLabel('Messages',{exact:true});
+  const trigger=stream.getByRole('link',{name:'Show thread for message #48',exact:true});
+  await trigger.focus();
+  const before=await stream.evaluate(el=>el.scrollTop),reader=await stream.elementHandle();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(url=>url.pathname===threadPath);
+  await expect(page.getByRole('button',{name:'Close thread'})).toBeFocused();
+  expect(await reader!.evaluate(el=>el.isConnected)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(url=>url.pathname===channelPath);
+  await expect(trigger).toBeFocused();
+  expect(await stream.evaluate(el=>el.scrollTop)).toBeCloseTo(before,0);
 });

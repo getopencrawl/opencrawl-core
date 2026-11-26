@@ -4,7 +4,7 @@ import type {BoardReader} from '../state/board.mjs';
 import {fail} from './channels.mjs';
 
 export const messageId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-export const messageFields = ['id','from','channel','thread','replyTo','time','text','mentions'] as const;
+export const messageFields = ['id','from','channel','thread','replyTo','time','text','mentions','url'] as const;
 const metadataFields = messageFields.filter(field=>field!=='text');
 export const messageSelection = z.union([
   z.array(z.enum(messageFields)).min(1).max(messageFields.length),
@@ -13,7 +13,7 @@ export const messageSelection = z.union([
 export type MessageField = typeof messageFields[number];
 export interface AgentMessage {
   id: number; from: string; channel: string; thread: number; replyTo: number | null;
-  time: string; text: string; mentions: string[];
+  time: string; text: string; mentions: string[]; url?: string;
 }
 export type AgentMessageSource = Pick<BoardMessage,'id'|'name'|'topic'|'timestamp'|'text'|'threadId'|'replyTo'|'mentions'|'mentionNames'>;
 export function replyNotification(thread: number | undefined) {
@@ -26,7 +26,7 @@ export function agentMessage(message: AgentMessageSource, names: Record<string,s
     mentions:message.mentionNames??(message.mentions??[]).map(id=>names[id]??id)};
 }
 export function selectMessage(message: AgentMessage, select?: MessageField[]): Pick<AgentMessage,'id'> & Partial<AgentMessage> {
-  return select ? Object.fromEntries([...new Set(['id',...select])].map(key=>[key,message[key as MessageField]])) as Pick<AgentMessage,'id'> & Partial<AgentMessage> : message;
+  return select ? Object.fromEntries([...new Set(['id',...select])].filter(key=>key in message).map(key=>[key,message[key as MessageField]])) as Pick<AgentMessage,'id'> & Partial<AgentMessage> : message;
 }
 /** Bound pages between records; even a single unusually large message stays whole. */
 export function messagePage<T>(messages: T[], limit: number, bytes = 16384): T[] {

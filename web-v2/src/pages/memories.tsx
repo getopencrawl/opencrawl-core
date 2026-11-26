@@ -1,8 +1,8 @@
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import {Button, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, Tabs} from '../design/components.js';
 import {Icon} from '../design/icons.js';
 import {Markdown} from '../design/markdown.js';
-import {Link, useNavigate, useSearchParams} from '../router.js';
+import {Link, useLocation, useNavigate, useParams, useSearchParams} from '../router.js';
 import type {Harness, LibraryAdapter, LibraryScope, MemoryRef, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, harnessName} from './library-controls.js';
 import {sessionPath} from './sessions.js';
@@ -10,13 +10,18 @@ import {useLibraryMutation, useResource} from './use-resource.js';
 import {consoleResourceKey, useConsoleModel} from '../data.tsx';
 
 export const memoryHarness = (value: string | null): Harness | null => value === 'claude-code' || value === 'codex' ? value : null;
-export function memoryPath({userId, harness, path}: MemoryRef) {
-  return '/memories?' + new URLSearchParams({user: userId, harness, path}).toString();
+type MemoryLocation = MemoryRef | {permalinkId:string};
+export function memoryPath(ref: MemoryLocation) {
+  if (ref.permalinkId) return '/memories/' + encodeURIComponent(ref.permalinkId);
+  if ('path' in ref) return '/memories?' + new URLSearchParams({user:ref.userId,harness:ref.harness,path:ref.path});
+  return '/memories';
 }
 
 /** Current memory files agents have written, as captured by OpenCrawl. */
 export function MemoriesPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
+  const {permalinkId}=useParams();
+  if (permalinkId) return <MemoryViewer key={consoleResourceKey(adapter,permalinkId).join(':')} adapter={adapter} reference={{permalinkId}}/>;
   const userId = params.get('user'), harness = memoryHarness(params.get('harness')), path = params.get('path');
   if (userId && harness && path) return <MemoryViewer key={memoryPath({userId, harness, path})} adapter={adapter} reference={{userId, harness, path}}/>;
   return <MemoryList adapter={adapter}/>;
@@ -49,9 +54,13 @@ function MemoryList({adapter}: {adapter: LibraryAdapter}) {
   </Page>;
 }
 
-function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference: MemoryRef}) {
+function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference: MemoryLocation}) {
   const navigate = useNavigate();
   const {data, error, loading, retry} = useResource(adapter, 'memories/read', memoryPath(reference), 0, signal => adapter('memories/read', reference, signal), 'This memory could not load. Try again.');
+  const location=useLocation(), canonical=data?.memory.permalinkId;
+  useEffect(()=>{
+    if (canonical && !reference.permalinkId) void navigate('/memories/'+canonical+location.hash,{replace:true});
+  },[canonical,reference.permalinkId,location.hash,navigate]);
   const mutate = useLibraryMutation(adapter);
   const [visibility, setVisibility] = useState<Visibility | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -67,7 +76,7 @@ function MemoryViewer({adapter, reference}: {adapter: LibraryAdapter; reference:
       deleteDescription="OpenCrawl removes this memory from search for everyone and ignores this version in future captures. The file on your machine is not changed; if the agent rewrites it, the new version is captured."/> : undefined}/>
     <MetaList items={[{label: 'Status', value: current === 'private' ? <VisibilityBadge value/> : null}, {label: 'File', value: <code>{memory.path}</code>}, {label: 'Project', value: memory.project}, {label: 'Captured by', value: authorName(memory.userId, memory.mine, data.authors)},
       {label: 'Agent', value: harnessName(memory.harness)}, {label: 'Updated', value: <When value={memory.modifiedAt}/>},
-      {label: 'Written in', value: memory.sourceSessionId ? <Link to={sessionPath({userId: memory.userId, harness: memory.harness, sessionId: memory.sourceSessionId})}>Source session</Link> : null}]}/>
+      {label: 'Written in', value: memory.sourceSessionId ? <Link to={sessionPath({userId: memory.userId, harness: memory.harness, sessionId: memory.sourceSessionId,permalinkId:memory.sourcePermalinkId})}>Source session</Link> : null}]}/>
     {current === 'private' && <Notice>Only you can see this memory. Teammates and their agents cannot read or search it.</Notice>}
     <div className="oc-memory-text" role="region" aria-label="Memory contents"><Markdown>{data.text}</Markdown></div>
     <details className="oc-memory-source" onToggle={event => setSourceOpen(event.currentTarget.open)}><summary>View Markdown source</summary>

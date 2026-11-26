@@ -9,10 +9,13 @@ import {boardReadSchema} from '../board/board.mjs';
 import {errorInfo} from '../errors.mjs';
 import type {DiagnosticSearch} from './reports.mjs';
 import {excerpt} from '../search/presentation.mjs';
+import {boardPath} from './board-links.mjs';
+import {attachCaptureLinks,workspaceLinkHint,type CaptureLinks} from '../state/capture-links.mjs';
 export interface DiagnosticOptions {
+  links?:CaptureLinks;
   search?: ReturnType<typeof createSessionSearch> | null;
   connectors?: ReturnType<typeof createConnectorResolver> | null;
-  board?: Pick<ReturnType<typeof createBoard>, 'read'> & Partial<Pick<ReturnType<typeof createBoard>, 'searchCandidates' | 'searchConsole' | 'agent'>>;
+  board?: Pick<ReturnType<typeof createBoard>, 'read'> & Partial<Pick<ReturnType<typeof createBoard>, 'searchCandidates' | 'searchConsole' | 'agent' | 'destination'>>;
 }
 async function nameSessionHits(result: DiagnosticSearch, principal: Principal, search: NonNullable<DiagnosticOptions['search']>) {
   if (!search.resultTitles) return;
@@ -42,18 +45,28 @@ async function boardText(result: DiagnosticSearch, principal: Principal, board: 
   for (const [index, hit] of hits.entries()) {
     const message = messages[index];
     if (!message || message.id !== ids[index] || typeof message.text !== 'string') throw new Error('Incomplete board result');
-    hit._source = {messageId: message.id, channel: message.channel, threadId: message.thread,
+    hit._source = {permalink:boardPath(workspaceLinkHint(principal.tenantId),'posts',message.id),messageId: message.id, channel: message.channel, threadId: message.thread,
       author: message.from, timestamp: message.time, ...excerpt(message.text, query)};
   }
 }
 export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {name: string}, {
-  search, connectors, board, principal, revalidate, respond, onSearch,
+  search, connectors, board, links, principal, revalidate, respond, onSearch,
 }: DiagnosticOptions & {principal: Principal; admin?: boolean; revalidate(): Promise<number>;
   respond(status: number, body: string, type?: string): void; onSearch?(length: number): void}) {
   if (!principal?.tenantId || !principal.userId) return respond(403, 'Workspace access required');
   try {
       if (route.name === 'debug-board') {
         const json = (status: number, value: unknown) => respond(status, JSON.stringify(value), 'application/json');
+        const workspace=url.searchParams.getAll('workspaceKey');
+        if(workspace.length && (workspace.length!==1 || workspace[0]!==workspaceLinkHint(principal.tenantId))) return json(404,{error:'BOARD_DESTINATION_NOT_FOUND'});
+        if(workspace.length){url=new URL(url.href);url.searchParams.delete('workspaceKey');}
+        if (url.searchParams.has('destination')) {
+          if([...url.searchParams].length!==1) return json(400,{error:'INVALID_QUERY'});
+          if(!board?.destination) return json(503,{error:'BOARD_NOT_CONFIGURED'});
+          const destination=await board.destination(principal,url.searchParams.get('destination')!);
+          const status=await revalidate();
+          return json(status,status===200?destination:{error:'WORKSPACE_ACCESS_DENIED'});
+        }
         if (url.searchParams.has('query')) {
           const params = url.searchParams;
           const parsed = z.strictObject({query:z.string().trim().min(1).max(500), cursor:z.string().min(1).max(100).optional()}).safeParse(Object.fromEntries(params));
@@ -115,6 +128,10 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
           ...(boardCandidates ? {board: {state: 'ready', hits: {total: {value: boardCandidates.total},
             hits: boardCandidates.ids.map(id => ({_id: String(id)}))}}} : {})};
         const result = page ? diagnosticPage(raw, page) : raw;
+        if (links) await Promise.all([
+          attachCaptureLinks(links,principal.tenantId,'sessions',(result.sessions??[]).flatMap(group=>(group.response.hits?.hits??[]).flatMap(hit=>hit._source?[hit._source]:[]))),
+          attachCaptureLinks(links,principal.tenantId,'memories',(result.memories?.hits?.hits??[]).flatMap(hit=>hit._source?[hit._source]:[])),
+        ]);
         await Promise.all([nameSessionHits(result, principal, search), boardText(result, principal, board, query.query)]);
         // Revalidate membership after retrieval as well as before it.
         const status = await revalidate();

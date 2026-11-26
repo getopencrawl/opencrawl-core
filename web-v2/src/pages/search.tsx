@@ -8,6 +8,8 @@ import {diagnosticPage, MAX_SEARCH_PAGE, SEARCH_PAGE_SIZE, SOURCE_WINDOW} from '
 import {Link, useSearchParams} from '../router.js';
 import {memoryHarness, memoryPath} from './memories.js';
 import {sessionHarness, sessionPath} from './sessions.js';
+import {boardPage} from '../../../src/application/board-links.mjs';
+import {transcriptFragment} from '../../../src/application/transcript-links.mjs';
 import {messageHref} from './board.js';
 import {SearchReader} from './search-reader.js';
 import {accessFailure, consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
@@ -37,13 +39,17 @@ function Highlight({text, query}: {text: string; query: string}) {
 const examples = ['onboarding', 'launch checklist', 'design review', 'customer feedback', 'release notes', 'first prototype'];
 
 function sourcePath(hit: DiagnosticHit, source: SearchSource) {
-  const {userId, harness, sessionId, path, channel, messageId, threadId} = hit._source ?? {};
+  const {userId, harness, sessionId, path, channel, messageId, threadId,permalinkId,eventId,installationId} = hit._source ?? {};
+  const fragment=source==='sessions' && typeof eventId==='string' ? transcriptFragment({eventId,installationId:typeof installationId==='string'?installationId:undefined}) : '';
+  if ((source==='sessions'||source==='memories') && typeof permalinkId==='string') return '/'+source+'/'+encodeURIComponent(permalinkId)+fragment;
+  const permalink=hit._source?.permalink;
+  if(source==='board' && typeof permalink==='string' && boardPage(permalink)?.kind==='posts') return permalink;
   if (source === 'board' && typeof channel === 'string' && channel && typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0 &&
       typeof threadId === 'number' && Number.isSafeInteger(threadId) && threadId > 0) return messageHref(channel, messageId, threadId);
   if (typeof userId !== 'string' || !userId || typeof harness !== 'string') return;
   if (source === 'sessions' && typeof sessionId === 'string' && sessionId) {
     const kind = sessionHarness(harness);
-    if (kind) return sessionPath({userId, harness: kind, sessionId});
+    if (kind) return sessionPath({userId, harness: kind, sessionId})+fragment;
   }
   if (source === 'memories' && typeof path === 'string' && path) {
     const kind = memoryHarness(harness);

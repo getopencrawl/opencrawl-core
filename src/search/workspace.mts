@@ -5,6 +5,9 @@ import type {Principal, Authenticate, HttpHandler} from '../sessions/types.mjs';
 import {parseJson} from '../sessions/types.mjs';
 import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
+import {attachCaptureLinks,type CaptureLinks} from '../state/capture-links.mjs';
+import {capturePage} from '../application/capture-links.mjs';
+import {transcriptFragment} from '../application/transcript-links.mjs';
 interface WorkspaceOptions {currentCapture?:CurrentCaptureLookup;capturePairs?:CaptureLookup;sessions?: SearchAdapter & {memories?: SearchAdapter;captureFingerprints?:CaptureFingerprints;readableHits?:(principal:Principal,docs:Passage[])=>Promise<boolean[]>}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
 import {serviceError} from '../sessions/types.mjs';
@@ -23,7 +26,7 @@ const searchOptions = z.strictObject({
   query: z.string().trim().max(4000).describe('Use 2–6 distinctive keywords or an exact phrase, not a question. Start match=all; shorten or use any if needed. Use filters.after and filters.before to focus on a period.'),
   source: z.enum(['all', 'sessions', 'connectors','memories']).default('all'),
   match: z.enum(['any', 'all', 'phrase']).default('any').describe('any ranks passages matching any words; all requires every analyzed term in one indexed passage, across its title/text fields. Terms do not combine across a chat. phrase requires analyzed words in order.'),
-  sessionId: z.string().min(1).max(200).optional().describe('Restrict to a known session; requires source=sessions.'),
+  sessionId: z.string().min(1).max(200).optional().describe('Restrict to a native session ID or canonical /sessions/oc_<id> path. Requires source=sessions.'),
   currentSession: currentSessionSchema.optional(),
   includeCurrentSession: z.boolean().default(false).describe('Default false: exclude the current chat when its native identity is available. Set true to search it explicitly.'),
   includeToolOutputs: z.boolean().default(false).describe('Default false: omit captured tool output, including messages containing tool-result blocks. Set true to include it; connector documents are unaffected.'),
@@ -73,7 +76,20 @@ const WINDOW = 100, TTL = 5 * 60_000;
  * recognized machine approval records after evidence, unless approvals are queried.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
-export function createWorkspaceSearch({currentCapture,capturePairs,sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions = {}) {
+export function createWorkspaceSearch({links,publicUrl,currentCapture,capturePairs,sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions & {links?:CaptureLinks;publicUrl?:string} = {}) {
+  async function linkResults(principal:Principal,hits:WorkspaceHit[]) {
+    if (!links) return;
+    await Promise.all((['sessions','memories'] as const).map(async collection=>{
+      const rows=hits.filter(hit=>hit.source===collection);
+      const documents=rows.map(hit=>hit.provenance as typeof hit.provenance & {permalinkId?:string});
+      await attachCaptureLinks(links,principal.tenantId,collection,documents);
+      for (const [index, doc] of documents.entries()) {
+        if (!doc.permalinkId) continue;
+        const path='/'+collection+'/'+doc.permalinkId+(collection==='sessions' && doc.eventId ? transcriptFragment({eventId:doc.eventId,installationId:doc.installationId}) : '');
+        rows[index]!.url=publicUrl ? new URL(path,publicUrl).href : path;
+      }
+    }));
+  }
   function sign(value: string) {return createHmac('sha256', cursorKey).update(value).digest('base64url');}
   function encode(payload: SearchCursor) {const data = Buffer.from(JSON.stringify(payload)).toString('base64url'); return data + '.' + sign(data);}
   function decode(cursor: string, fingerprint: string): SearchCursor {
@@ -97,20 +113,26 @@ export function createWorkspaceSearch({currentCapture,capturePairs,sessions, con
       query.currentSession = currentSessionSchema.parse({harness: 'devin', sessionId: principal.owner.sessionId});
     const fingerprint = hash([principal.tenantId, principal.userId, query]);
     const page = cursor ? decode(cursor, fingerprint) : {offset: 0, expires: now() + TTL};
+    const target=query.sessionId && capturePage(query.sessionId);
+    const key=target && target.collection==='sessions' ? await links?.resolve(principal.tenantId,'sessions',target.permalinkId) : undefined;
+    const matchesFilters=key && (!query.filters?.authors || query.filters.authors.includes(key.userId))
+      && (!query.filters?.harnesses || query.filters.harnesses.includes(key.harness));
     const selected = query.source === 'all' ? ['sessions', 'connectors',...(memories?['memories']:[])] : [query.source];
     const groups = await Promise.all(selected.map(async source => {
       const adapter = source === 'sessions' ? sessions : source==='memories'?memories:connectors;
       if (!adapter) return {source, state: 'not_configured', hits: [], truncated: false};
+      if (target && !matchesFilters) return {source, state:'ready',hits:[],truncated:false};
       let result;
       try {
         const capture=source==='sessions'&&currentCapture&&principal.owner?.provider==='replicas'&&query.currentSession&&!query.includeCurrentSession
           ?await currentCapture(principal,query.currentSession):undefined;
-        result = await adapter.search(principal, {query: query.query, match: query.match, filters:query.filters, order:query.order, ...(query.sessionId ? {sessionId: query.sessionId} : {}), ...(source==='sessions'?{...(capture?{currentCapture:capture}:{}),currentSession:query.currentSession,includeCurrentSession:query.includeCurrentSession,includeToolOutputs:query.includeToolOutputs}:{}), limit: WINDOW});}
+        result = await adapter.search(principal, {query: query.query, match: query.match, filters:key ? {...query.filters,authors:[key.userId],harnesses:[key.harness]} : query.filters, order:query.order, ...(query.sessionId ? {sessionId:key?.name ?? query.sessionId} : {}), ...(source==='sessions'?{...(capture?{currentCapture:capture}:{}),currentSession:query.currentSession,includeCurrentSession:query.includeCurrentSession,includeToolOutputs:query.includeToolOutputs}:{}), limit: WINDOW});}
       catch(caught){const error=serviceError(caught);
         if ([401, 403].includes(error.status ?? 0)) throw error;
         return {source, state: error.status === 404 && error.type === 'index_not_found_exception' ? 'pending' : 'unavailable', hits: [], truncated: false};
       }
       if (!Array.isArray(result.hits) || result.hits.length > WINDOW || result.hits.some(hit => hit.tenantId !== principal.tenantId || typeof hit.id !== 'string')) throw new Error('Invalid workspace search scope');
+      if (key && result.hits.some(hit=>hit.userId!==key.userId || hit.harness!==key.harness || hit.sessionId!==key.name)) throw new Error('Invalid session permalink scope');
       return {source, state: 'ready', hits: result.hits, truncated: Boolean(result.truncated)||(result.total ?? 0)>result.hits.length};
     }));
     const sessionGroup=groups.find(g=>g.source==='sessions');
@@ -132,7 +154,9 @@ export function createWorkspaceSearch({currentCapture,capturePairs,sessions, con
     const prioritized = query.order === 'relevance' ? prioritizeEvidence(ranked, query.query) : {results: ranked, demoted: 0};
     const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
     const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
-    const results = grouped.results.slice(page.offset, page.offset + query.limit).map(hit => {
+    const visiblePage=grouped.results.slice(page.offset,page.offset+query.limit);
+    if (query.select.includes('provenance') || query.select.includes('url')) await linkResults(principal,visiblePage);
+    const results = visiblePage.map(hit => {
       const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
       return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
     }), offset = page.offset + results.length;
@@ -208,6 +232,7 @@ export function createWorkspaceSearch({currentCapture,capturePairs,sessions, con
           ...(unclassifiedEvents && !input.includeToolOutputs ? {warning: 'Some neighboring events predate tool-output classification and may contain embedded tool output.'} : {}),
           pagination: 'live', maxCharsPerEvent: 2000};
       }
+      await linkResults(principal,[hit,...context?.before??[],...context?.after??[]]);
       return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion,...neighbors,...(context ? {context} : {})};
     },
   };
