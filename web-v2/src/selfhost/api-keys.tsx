@@ -66,6 +66,12 @@ function ApiKeySettings() {
   const {data, loading, error, reload, updateData} = useResource(machineKeyApi.list);
   const mutation = useKeyMutation();
   const section = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  function cancel() {
+    if (mutation.busy) return;
+    setSelected(null);
+    requestAnimationFrame(() => trigger.current?.focus());
+  }
   async function revoke(key: MachineKey, signal: AbortSignal) {
     await machineKeyApi.revoke(key.id, signal);
     if (signal.aborted) return;
@@ -87,12 +93,12 @@ function ApiKeySettings() {
           <tr key={key.id}>
             <td>{key.name}</td>
             <td className="muted"><time dateTime={key.createdAt}>{new Date(key.createdAt).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})}</time></td>
-            <td><Button variant="danger-quiet" aria-label={'Revoke ' + key.name} onClick={() => {mutation.clearError(); setSelected(key);}}>Revoke</Button></td>
+            <td><Button variant="danger-quiet" aria-label={'Revoke ' + key.name} onClick={event => {trigger.current = event.currentTarget; mutation.clearError(); setSelected(key);}}>Revoke</Button></td>
           </tr>)}</tbody>
       </Table> : <p className="muted">No active API keys.</p>)}
     </Section>
-    {selected && <Dialog open title={'Revoke ' + selected.name + '?'} description="Agents using this key will lose access immediately." onClose={() => {if (!mutation.busy) setSelected(null);}} actions={<>
-      <Button disabled={mutation.busy} onClick={() => setSelected(null)}>Cancel</Button>
+    {selected && <Dialog open title={'Revoke ' + selected.name + '?'} description="Agents using this key will lose access immediately." onClose={cancel} actions={<>
+      <Button disabled={mutation.busy} onClick={cancel}>Cancel</Button>
       <Button variant="danger" busy={mutation.busy} onClick={() => void mutation.run(signal => revoke(selected, signal))}>Revoke key</Button></>}>
       {mutation.error && <Notice tone="danger">{mutation.error}</Notice>}
     </Dialog>}
