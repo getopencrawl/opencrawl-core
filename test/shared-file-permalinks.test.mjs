@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {filePage, filePath} from '../dist/src/application/file-links.mjs';
+import {git} from '../dist/src/files/git.mjs';
+import {readFileView} from '../dist/src/files/view.mjs';
+import {workspaceLinkHint} from '../dist/src/state/capture-links.mjs';
+
+test('files and commits resolve at a published immutable revision within the current workspace', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'oc-revision-'));
+  t.after(() => rm(root, {recursive:true,force:true}));
+  const run = (...args) => git(root,args);
+  await run('init','--initial-branch=main');
+  await mkdir(join(root,'guides'));
+  const name='guides/check [1] #é%.md', original='  original\n\n';
+  await writeFile(join(root,name),original);
+  await writeFile(join(root,'binary'),Buffer.from([0,254]));
+  await writeFile(join(root,'large'),Buffer.alloc(128*1024+1,0x61));
+  await run('add','.');
+  // Store a symlink as a Git object independently of the operating system's symlink privileges.
+  await writeFile(join(root,'link-content'),'../../outside');
+  const symlink=await run('hash-object','-w','link-content');
+  await run('update-index','--add','--cacheinfo','120000,'+symlink+',shortcut');
+  await run('commit','-m','First handoff');
+  const revision=await run('rev-parse','HEAD');
+  const tenantId='workspace-a', userId='user', workspace=workspaceLinkHint(tenantId);
+  let opens=0;
+  const store={open:async tenant=>{opens++;assert.equal(tenant,tenantId);return root;}};
+  const open=(path,principal={tenantId,userId})=>readFileView(store,principal,path);
+  const href=(path,rev=revision)=>filePath({workspace,revision:rev,path});
+  const published=href(name);
+  assert.deepEqual(filePage(published),{workspace,revision,path:name});
+  assert.match(published,/%23%C3%A9%25/);
+  await assert.rejects(open(published,{tenantId:'workspace-b',userId}),{status:404});
+  await assert.rejects(open(published,{tenantId,userId,captureAccess:{}}),{status:403});
+  await assert.rejects(open(published,{tenantId}),{status:403});
+  for(const path of ['x%2Fy','x/%2e%2e/y','%00','x//y','%zz']) {
+    await assert.rejects(open('/files/'+workspace+'/'+revision+'/'+path),{status:404});
+  }
+  assert.equal(filePage('/commits/'+workspace+'/main'),null);
+  assert.equal(opens,0);
+  const first=await open('/files');
+  assert.equal(first.kind,'commit'); assert.equal(first.commit,revision);
+  assert.deepEqual(first.files,['binary',name,'large','shortcut']);
+  assert.equal((await open(href('shortcut'))).text,'../../outside');
+  assert.equal((await open(href('binary'))).text,null);
+  assert.deepEqual((({bytes,text,large})=>({bytes,text,large}))(await open(href('large'))),{bytes:131073,text:null,large:true});
+  await writeFile(join(root,name),'new');
+  await run('commit','-am','Revise handoff');
+  const latest=await open('/files');
+  assert.deepEqual(latest.parents,[revision]);
+  assert.equal((await open(published)).text,original);
+  assert.equal((await open(href(name,latest.commit))).text,'new');
+  assert.equal((await open(href())).title,'First handoff');
+  for(const path of ['lost','guides','guides/check *']) await assert.rejects(open(href(path)),{status:404});
+  const unpublished=await run('commit-tree',await run('rev-parse','HEAD^{tree}'),'-m','Unpublished object');
+  await assert.rejects(open(href(undefined,unpublished)),{status:404});
+  await assert.rejects(open(href(undefined,symlink)),{status:404});
+});
