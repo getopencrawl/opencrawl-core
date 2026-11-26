@@ -119,10 +119,21 @@ for (const width of [1440, 390]) test(`conversation shows full messages, event c
   const assistant: TranscriptEvent = {eventId: 'assistant', kind: 'message', timestamp: '2026-11-13T21:38:00Z', entries: [{type: 'message', role: 'assistant', text: 'Latest response.'}]};
   const cursors: Array<string | undefined> = [];
   await page.route('**/api/library/**', async route => {
-    const {cursor} = route.request().postDataJSON() as {cursor?: string}; cursors.push(cursor);
-    await route.fulfill({json: {session: {...base, mine: false}, events: cursor === 'second' ? [human, assistant] : cursor === 'third' ? [{...empty, eventId: 'last'}] : [empty, tool, human], total: 5, next: cursor === 'third' ? null : cursor === 'second' ? 'third' : 'second', authors: {alice: 'Workspace capture'}}});
+    const {direction, cursor} = route.request().postDataJSON();
+    expect(direction).toBe('backward');
+    cursors.push(cursor);
+    await route.fulfill({json: {session: {...base, mine: false}, events: cursor ? [empty, tool, human] : [human, assistant], total: 4, next: cursor ? null : 'older', authors: {alice: 'Workspace capture'}}});
   });
   await page.goto('/sessions?user=alice&harness=codex&id=single');
+  const reader = page.locator('.oc-session-reading');
+  const bottomGap = () => reader.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop);
+  await expect(page.getByRole('status')).toContainText('Showing 2 of 4 captured events.');
+  await expect.poll(bottomGap).toBeLessThan(2);
+  await expect(page.getByText('Latest response.', {exact: true})).toBeInViewport();
+  expect(cursors).toEqual([undefined]);
+  await reader.evaluate(el => {el.scrollTop = 0;});
+  await page.getByRole('button', {name: 'Load older events'}).click();
+  await expect(page.getByRole('status')).toContainText('Showing 4 of 4 captured events.');
   await expect(page.locator('.oc-log-user')).toContainText('Final sentence.');
   await expect(page.getByRole('button', {name: 'Show full message'})).toHaveCount(0);
   await expect(page.locator('.oc-log-tools > summary').first()).toHaveText('2 events');
@@ -135,19 +146,13 @@ for (const width of [1440, 390]) test(`conversation shows full messages, event c
   await expect(page.getByRole('heading', {name: 'Session details'})).toBeFocused();
   await expect(page.getByRole('button', {name: 'Delete session', exact: true})).toHaveCount(0);
   await page.keyboard.press('Escape'); await expect(info).toBeFocused();
-  const reader = page.locator('.oc-session-reading');
+  await reader.evaluate(el => {el.scrollTop = 0;});
   expect(await page.locator('.oc-session-jump').evaluate(el => getComputedStyle(el).position)).toBe('absolute');
-  await reader.evaluate(el => {el.scrollTop = el.scrollHeight - el.clientHeight - 199;});
-  await expect(page.getByRole('button', {name: 'Jump to latest', exact: true})).toHaveCount(0);
-  await expect(page.getByRole('button', {name: 'Load more', exact: true})).toBeVisible();
-  await reader.evaluate(el => {el.scrollTop = el.scrollHeight - el.clientHeight - 201;});
   await page.getByRole('button', {name: 'Jump to latest', exact: true}).click();
-  await expect(page.getByRole('status')).toContainText('Showing 5 of 5 captured events.');
+  await expect.poll(bottomGap).toBeLessThan(2);
   await expect(page.locator('.oc-log-user')).toHaveCount(1);
-  await expect(page.locator('.oc-log-assistant')).toContainText('Latest response.');
-  expect(cursors).toEqual([undefined, 'second', 'third']);
-  await expect.poll(() => reader.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(2);
-  await expect(page.locator('.oc-session-jump')).toHaveCount(0);
+  await expect(page.getByText('Latest response.', {exact: true})).toBeInViewport();
+  expect(cursors).toEqual([undefined, 'older']);
   await expect(page.getByText('End of captured session', {exact: true})).toHaveCount(0);
   await reader.evaluate(el => {el.scrollTop = el.scrollHeight - el.clientHeight - 199;});
   await expect(page.locator('.oc-session-jump')).toHaveCount(0);
@@ -158,29 +163,35 @@ for (const width of [1440, 390]) test(`conversation shows full messages, event c
   await page.screenshot({path: testInfo.outputPath(`conversation-${width}.png`)});
 });
 
-for (const width of [1440, 390]) test(`the bottom control loads one page and updates as the transcript grows at ${width}px`, async ({page, request}) => {
+for (const width of [1440, 390]) test(`older pages preserve the reading position at ${width}px`, async ({page, request}) => {
   await request.post('/__test/reset', {data: {}});
   await page.setViewportSize({width, height: 844});
   const cursors: Array<string | undefined> = [];
   await page.route('**/api/library/**', async route => {
-    const {cursor} = route.request().postDataJSON() as {cursor?: string}; cursors.push(cursor);
-    const text = cursor === 'second' ? 'Recorded paragraph. '.repeat(800) : cursor === 'third' ? 'Final response.' : 'Short first page.';
-    await route.fulfill({json: {session: base, events: [{eventId: cursor ?? 'first', kind: 'message', timestamp: null, entries: [{type: 'message', role: 'assistant', text}]}], total: 3, next: cursor === 'third' ? null : cursor === 'second' ? 'third' : 'second'}});
+    const {cursor, direction} = route.request().postDataJSON();
+    expect(direction).toBe('backward');
+    cursors.push(cursor);
+    const text = (cursor ?? 'Latest') + ' ' + 'Recorded paragraph. '.repeat(450);
+    const event = {eventId: cursor ?? 'latest', kind: 'message', timestamp: null, entries: [{type: 'message', role: 'assistant', text}]};
+    await route.fulfill({json: {session: base, events: [event], total: 3, next: cursor === 'first' ? null : cursor ? 'first' : 'middle'}});
   });
   await page.goto('/sessions?user=alice&harness=codex&id=single');
   const reader = page.locator('.oc-session-reading');
-  const loadMore = page.getByRole('button', {name: 'Load more', exact: true});
-  await expect(page.getByRole('button', {name: 'Jump to latest', exact: true})).toHaveCount(0);
-  await loadMore.click();
-  await expect(page.getByRole('status')).toContainText('Showing 2 of 3 captured events.');
-  await expect(page.getByRole('button', {name: 'Jump to latest', exact: true})).toBeVisible();
-  expect(cursors).toEqual([undefined, 'second']);
-  await reader.evaluate(el => {el.scrollTop = el.scrollHeight;});
-  await loadMore.click();
-  await expect(page.getByRole('status')).toContainText('Showing 3 of 3 captured events.');
-  expect(cursors).toEqual([undefined, 'second', 'third']);
-  await reader.evaluate(el => {el.scrollTop = el.scrollHeight;});
-  await expect(page.locator('.oc-session-jump')).toHaveCount(0);
+  const load = page.getByRole('button', {name: 'Load older events'});
+  for (const [prefix, count] of [['Latest', 2], ['middle', 3]] as const) {
+    await reader.evaluate(el => {el.scrollTop = 0;});
+    const row = page.locator('.oc-log-assistant').filter({hasText: prefix});
+    const top = await row.evaluate(el => el.getBoundingClientRect().top);
+    await load.click();
+    await expect(page.getByRole('status')).toContainText(`Showing ${count} of 3 captured events.`);
+    expect(Math.abs(await row.evaluate(el => el.getBoundingClientRect().top) - top)).toBeLessThan(2);
+  }
+  expect(cursors).toEqual([undefined, 'middle', 'first']);
+  await expect(load).toHaveCount(0);
+  await expect(page.locator('.oc-log-assistant')).toHaveText([/first/, /middle/, /Latest/]);
+  await page.reload();
+  await expect(page.getByRole('status')).toContainText('Showing 1 of 3 captured events.');
+  await expect.poll(() => reader.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(2);
 });
 
 test('a denied transcript page clears already loaded conversation content', async ({page, request}) => {
@@ -192,7 +203,7 @@ test('a denied transcript page clears already loaded conversation content', asyn
   });
   await page.goto('/sessions?user=alice&harness=codex&id=single');
   await expect(page.getByText('Previously readable message.')).toBeVisible();
-  await page.getByRole('button', {name: 'Load more', exact: true}).click();
+  await page.getByRole('button', {name: 'Load older events', exact: true}).click();
   await expect(page.getByText('Session access was revoked.')).toBeVisible();
   await expect(page.getByText('Previously readable message.')).toHaveCount(0);
 });
@@ -208,7 +219,7 @@ test('a network failure clears the transcript and retry refetches its initial pa
   });
   await page.goto('/sessions?user=alice&harness=codex&id=single');
   await expect(page.getByText('Initially readable message.')).toBeVisible();
-  await page.getByRole('button', {name: 'Load more', exact: true}).click();
+  await page.getByRole('button', {name: 'Load older events', exact: true}).click();
   const retry = page.getByRole('button', {name: 'Try again', exact: true});
   await expect(retry).toBeVisible();
   await expect(page.getByText('Initially readable message.')).toHaveCount(0);

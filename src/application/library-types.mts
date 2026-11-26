@@ -42,7 +42,7 @@ export interface LibraryContract {
   'recording/status': {input: Record<string,never>; output: PersonalRecordingStatus | {available:false}};
   'recording/change': {input: {mode:import('../sessions/recording.mjs').PauseMode; revision:string; subject:string}; output: PersonalRecordingStatus};
   'sessions/list': {input: {scope: LibraryScope; query?: string; participant?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
-  'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number}; output: SessionTranscript & Authors};
+  'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number; direction?: 'forward' | 'backward'}; output: SessionTranscript & Authors};
   'sessions/visibility': {input: {harness: SessionHarness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};
   'sessions/delete': {input: {harness: SessionHarness; sessionId: string}; output: {deleted: boolean; pending?: boolean}};
   'memories/list': {input: {scope: LibraryScope}; output: {memories: MemorySummary[]; truncated: boolean} & Authors};

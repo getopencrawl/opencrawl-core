@@ -138,7 +138,7 @@ function encodeCursor(sort: JsonValue[] | undefined) {return sort ? Buffer.from(
 function decodeCursor(cursor: unknown): JsonValue[] | undefined {
   if (cursor === undefined || cursor === null) return undefined;
   if (typeof cursor !== 'string' || cursor.length > 2048) fail(400, 'Invalid cursor');
-  try {const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown; if (Array.isArray(value) && value.length === 5 && value.every(v => ['string', 'number'].includes(typeof v))) return value as JsonValue[];} catch { /* rejected below */ }
+  try {const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown; if (Array.isArray(value) && value.length === 5 && value.every((v, i) => (i === 0 && v === null) || ['string', 'number'].includes(typeof v))) return value as JsonValue[];} catch { /* rejected below */ }
   fail(400, 'Invalid cursor');
 }
 
@@ -561,18 +561,23 @@ export function createSessionLibrary({store, prefix, controls = createControls({
     },
 
     /** Index order and paging; content comes from the verified original batch. */
-    async read(principal: Principal, input: Partial<SessionKey> & {cursor?: unknown; limit?: unknown}) {
+    async read(principal: Principal, input: Partial<SessionKey> & {cursor?: unknown; limit?: unknown; direction?: 'forward' | 'backward'}) {
       const key = checkKey(input), after = decodeCursor(input.cursor), limit = input.limit ?? 100;
       if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 200) fail(400, 'Invalid page size');
       const collection = reader(principal);
       if (!(await access(principal, key)).readable) fail(404, 'Session not found');
       const filter = [...sessionFilter(key), {term: {[f('chunk')]: 0}}, visibleTo('session', principal)];
-      const page = await collection.search(principal, {size: limit, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
+      const backward = input.direction === 'backward', order = backward ? 'desc' : 'asc';
+      const pageSize = Number(limit);
+      const page = await collection.search(principal, {size: pageSize + 1, track_total_hits: true, query: {bool: {filter, must_not: [{terms: {[f('kind')]: HIDDEN}}]}},
         aggs: {host: hostTerms},
-        sort: [{timestamp: {order: 'asc', missing: '_first'}}, {[f('sequence')]: 'asc'}, {[f('eventId')]: 'asc'}, {[f('installationId')]: 'asc'}, {id: 'asc'}],
+        sort: [{timestamp: {order, missing: backward ? '_last' : '_first'}}, {[f('sequence')]: order}, {[f('eventId')]: order}, {[f('installationId')]: order}, {id: order}],
         ...(after ? {search_after: after} : {})});
       if (!after && !page.hits.hits.length) fail(404, 'Session not found');
-      const hits = (page.hits.hits as IndexHit[]).map(hit => {
+      const selected = page.hits.hits.slice(0, pageSize);
+      const next = page.hits.hits.length > pageSize ? encodeCursor(selected.at(-1)!.sort) : null;
+      if (backward) selected.reverse();
+      const hits = (selected as IndexHit[]).map(hit => {
         const d = hit._source;
         if (d?.tenantId !== principal.tenantId || d.userId !== key.userId || d.harness !== key.harness || d.sessionId !== key.sessionId || typeof d.eventId !== 'string' || typeof d.installationId !== 'string') throw new Error('Invalid session read response');
         const source = sourceBatchIdentity(prefix, d.sourceKey ?? '');
@@ -587,13 +592,13 @@ export function createSessionLibrary({store, prefix, controls = createControls({
         const event = loaded.get(hit.sourceKey)?.get(hit.eventId); // Missing: raw capture removed after indexing (for example, mid-delete).
         if (event && event.kind === hit.kind) events.push(event);
       }
-      const first = page.hits.hits[0]?._source;
+      const first = selected[0]?._source;
       const names = await titles(principal, [key]);
       const current = await access(principal, key);
       if (!current.readable) fail(404, 'Session not found');
       return {session: {...key, title: names.get(JSON.stringify([key.userId, key.harness, key.sessionId])) ?? `Session ${key.sessionId}`, mine: key.userId === principal.userId, private: current.visibility ? current.visibility === 'private' : page.hits.hits.some(hit => hit._source?.private === true), origin: typeof first?.origin === 'string' ? first.origin : null,
           ...capturedHosts(page.aggregations?.host as HostBuckets | undefined)},
-        events, total: page.hits.total.value, next: page.hits.hits.length === limit ? encodeCursor(page.hits.hits.at(-1)!.sort) : null};
+        events, total: page.hits.total.value, next};
     },
 
     async setVisibility(principal: Principal, input: {harness?: unknown; sessionId?: unknown; visibility?: unknown}) {
