@@ -8,6 +8,7 @@ import type {BoardState,BoardMessage,Participant,Delivery} from '../board/types.
 import {systemIdentity,announcementChannel} from '../board/channels.mjs';
 import {agentMessage, selectMessage, type AgentMessageSource, type MessageField} from '../board/messages.mjs';
 import {boardIdentity} from '../board/identity.mjs';
+import {onlineWindow} from '../board/inbox.mjs';
 
 const fail=(message:string,status=503)=>Object.assign(new Error(message),{status});
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -95,7 +96,14 @@ function* boardBatches<T>(rows:Iterable<T>):Generator<T[]>{
  if(batch.length)yield batch;
 }
 
-export function createPostgresBoardState(database:ApplicationDatabase) {
+/** An opt-in consumer can append an outbox entry in the same transaction as
+ * the named participant becoming reachable. Imports do not replay joins. */
+export interface BoardOnlineObserver {
+  observes(tenantHash:string):boolean;
+  joined(client:PoolClient, tenantHash:string, agent:string, seen:number):Promise<void>;
+}
+
+export function createPostgresBoardState(database:ApplicationDatabase, observer?:BoardOnlineObserver) {
   const {namespace}=database;
   async function ready(){await database.ready();await database.transaction(async client=>{await client.query("SELECT pg_advisory_xact_lock(hashtextextended('opencrawl-board-schema-v1',0))");await client.query(`
     CREATE TABLE IF NOT EXISTS opencrawl_board_heads(namespace text NOT NULL,tenant_hash text NOT NULL,head bigint NOT NULL DEFAULT 0 CHECK(head>=0),usage jsonb NOT NULL,participants_present boolean NOT NULL DEFAULT false,PRIMARY KEY(namespace,tenant_hash));
@@ -126,7 +134,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     await ensureSchemaIndex(client,{table:'opencrawl_board_search_snapshots',name:'opencrawl_board_search_snapshots_expiry',keys:['namespace','expires']});
   });}
   function tenant(value:string){if(!/^[a-f0-9]{64}$/.test(value))throw fail('Invalid board tenant identity',400);return value;}
-  function accessor(client:PoolClient,key:string):BoardTransaction {
+  function accessor(client:PoolClient,key:string,watch=false):BoardTransaction {
     const scope=[namespace,tenant(key)];
     const query=(sql:string,values:unknown[]=[])=>client.query(sql,[...scope,...values]);
     async function blockedPublications(agents:string[]):Promise<string[]>{
@@ -137,6 +145,10 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     async function metadata(){const row=(await query('SELECT head,usage,participants_present FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2')).rows[0];return {head:Number(row?.head??0),usage:row?.usage??{calls:0,inputBytes:0,outputBytes:0},participantsPresent:row?.participants_present??false};}
     async function pending(id:string):Promise<Delivery|null>{const row=(await query('SELECT record FROM opencrawl_board_deliveries WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id])).rows[0];if(!row)return null;const rows=await query('SELECT record FROM opencrawl_board_delivery_messages WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3 ORDER BY ordinal',[id]);return {...row.record,messages:rows.rows.map(row=>row.record)};}
     async function putParticipant(id:string,value:Participant){const {pending:delivery,...record}=value;
+      if(watch && value.name && !value.left && observer?.observes(key)){
+        const prior=(await query("SELECT 1 FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3 AND name<>'' AND seen>$4 AND coalesce(record->>'left','false')<>'true'",[id,value.seen-onlineWindow])).rowCount;
+        if(!prior)await observer.joined(client,key,id,value.seen);
+      }
       await query(`INSERT INTO opencrawl_board_participants VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(namespace,tenant_hash,agent) DO UPDATE SET user_id=EXCLUDED.user_id,name=EXCLUDED.name,seen=EXCLUDED.seen,record=EXCLUDED.record`,[id,value.userId??null,value.name,value.seen,record]);
       await query('UPDATE opencrawl_board_heads SET participants_present=true WHERE namespace=$1 AND tenant_hash=$2');
       if(!delivery){await query('DELETE FROM opencrawl_board_deliveries WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3',[id]);return;}
@@ -257,7 +269,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
     };
   }
   async function initialize(client:PoolClient,key:string){await client.query('INSERT INTO opencrawl_board_heads(namespace,tenant_hash,usage) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[namespace,tenant(key),{calls:0,inputBytes:0,outputBytes:0}]);}
-  async function transaction<T>(key:string,run:(tx:BoardTransaction)=>Promise<T>):Promise<T>{return database.transaction(async client=>{await initialize(client,key);await client.query('SELECT head FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2 FOR UPDATE',[namespace,key]);return run(accessor(client,key));});}
+  async function transaction<T>(key:string,run:(tx:BoardTransaction)=>Promise<T>):Promise<T>{return database.transaction(async client=>{await initialize(client,key);await client.query('SELECT head FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2 FOR UPDATE',[namespace,key]);return run(accessor(client,key,true));});}
   async function read<T>(key:string,run:(tx:BoardReader)=>Promise<T>):Promise<T>{return database.transaction(async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return run(accessor(client,key));});}
   async function exportIn(client:PoolClient,key:string):Promise<BoardState|null>{const tx=accessor(client,key);const exists=(await client.query('SELECT 1 FROM opencrawl_board_heads WHERE namespace=$1 AND tenant_hash=$2',[namespace,key])).rowCount;if(!exists)return null;const meta=await tx.metadata(),messages:BoardMessage[]=[];for(let after=0;;){const page=await tx.messages({after,limit:250});if(!page.length)break;messages.push(...page);after=page.at(-1)!.id;}return {schema:1,messages,agents:await tx.agents(),usage:meta.usage,...(meta.participantsPresent?{participants:await tx.participants()}: {})};}
   async function exportLegacy(key:string){return database.transaction(async client=>{await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return exportIn(client,tenant(key));});}

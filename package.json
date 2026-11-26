@@ -48,6 +48,7 @@
     "./sessions/credentials": "./dist/src/sessions/credentials.mjs",
     "./sessions/cloud-setup": "./dist/src/sessions/cloud-setup.mjs",
     "./board": "./dist/src/board/board.mjs",
+    "./board/live-sessions": "./dist/src/board/live-sessions.mjs",
     "./board/http": "./dist/src/board/http.mjs",
     "./connectors/slack-source": "./dist/src/connectors/slack-source-files.mjs",
     "./connectors/slack-source-http": "./dist/src/connectors/slack-source-http.mjs",

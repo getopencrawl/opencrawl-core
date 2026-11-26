@@ -42,10 +42,10 @@ export function sessionMessage(event: SessionEvent) {
  * original events from immutable capture. No new projection or reindex needed. */
 export function createRecentSessions({store, prefix, controls = createControls({store, prefix}), ...options}: RealmOptions & {store: ObjectStore; prefix: string; controls?: ResourceControls}) {
   const resolve = createRealmResolver(options), ingest = createSessionIngest({store, prefix, controls});
-  async function read(principal: Principal, {signal, summary = false, id, field = 'context', openingPrompt = false}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField; openingPrompt?: boolean} = {}) {
+  async function read(principal: Principal, {signal, summary = false, id, field = 'context', openingPrompt = false, presenceRef = false}: {signal?: AbortSignal; summary?: boolean; id?: string; field?: SessionContextField; openingPrompt?: boolean; presenceRef?:boolean} = {}) {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});
-    const ref = id === undefined ? undefined : parseSessionReference(id, openingPrompt);
+    const ref = id === undefined ? undefined : parseSessionReference(id, openingPrompt || presenceRef);
     if (ref && ref[0] !== principal.tenantId) throw Object.assign(new Error('Session not found or no longer available.'), {status: 404});
     const selection = ref?.slice(1);
     const collection = resolve(principal).collection('session');
@@ -60,7 +60,7 @@ export function createRecentSessions({store, prefix, controls = createControls({
     const buckets = result.aggregations?.recent?.buckets as unknown as RecentBucket[] | undefined;
     if (!Array.isArray(buckets) || buckets.length > 10) throw invalid();
     // An incomplete reference must resolve to exactly one visible capture.
-    if (openingPrompt && buckets.length !== 1) return [];
+    if ((openingPrompt || presenceRef) && buckets.length !== 1) return [];
     const sessions = [];
     for (const bucket of buckets) {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 4 || bucket.key.some(value => typeof value !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(value)) || !Number.isFinite(bucket.lastActivity?.value)) throw invalid();
@@ -127,7 +127,7 @@ export function createRecentSessions({store, prefix, controls = createControls({
         return null;
       }
       let title = null, titleTimestamp = null;
-      const metadata = openingPrompt ? {hits: {hits: []}} : await query({size: 20, query: {bool: {filter: [...filter,
+      const metadata = openingPrompt || presenceRef ? {hits: {hits: []}} : await query({size: 20, query: {bool: {filter: [...filter,
         {terms: {[f('kind')]: TITLE_KINDS}}]}}, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]});
       for (const hit of metadata.hits.hits) {
         const source = await original(hit);

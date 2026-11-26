@@ -1,3 +1,4 @@
+import {sessionMessage} from './recent.mjs';
 import {messageFingerprint} from './capture-matches.mjs';
 import {expandReplicasPayload} from './replicas-payload.mjs';
 import type {Principal, SourceOptions, SessionBatch, Attachment, SessionEvent} from './types.mjs';
@@ -6,7 +7,13 @@ import type {DocumentItem} from '../search/types.mjs';
 import type {StoredMemorySnapshot} from '../memories/types.mjs';
 import type {createSessionSearch} from './search.mjs';
 import {reviewSessionPrompts, type PrivacyReviewer} from './privacy.mjs';
-export interface SessionPipelineOptions extends SourceOptions {privacy?:PrivacyReviewer; search: ReturnType<typeof createSessionSearch>; jobId?: string; checkActive?: () => Promise<void>}
+/** Optional post-index delivery. Consumers deduplicate by the complete capture
+ * identity and event ID. No prompt body crosses this boundary. */
+export interface IndexedUserMessages {
+  observes(principal:Principal):boolean;
+  receive(principal:Principal,batch:Pick<SessionBatch,'harness'|'installationId'|'sessionId'>,eventIds:string[]):Promise<void>;
+}
+export interface SessionPipelineOptions extends SourceOptions {userMessages?:IndexedUserMessages; privacy?:PrivacyReviewer; search: ReturnType<typeof createSessionSearch>; jobId?: string; checkActive?: () => Promise<void>}
 import {gunzipSync} from 'node:zlib';
 import {digest,sessionScope,MAX_BATCH_BYTES} from './ingest.mjs';
 import {sourceBatchIdentity,reserveSessionEvents} from './event-identity.mjs';
@@ -125,7 +132,7 @@ export function batchDocuments({prefix,key,batch,principal,visibility='team',eve
  * The runtime supplies fixed self-host identity or resolves server-authenticated
  * stored owners. Workflow arguments never select a bucket, index, or principal.
  */
-export function createSessionPipeline({store,privacy,eventIdentities,prefix,controls = createControls({store,prefix}),search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
+export function createSessionPipeline({store,privacy,userMessages,eventIdentities,prefix,controls = createControls({store,prefix}),search,principal,resolvePrincipal,jobId='sessions-v1',checkActive=async()=>{}}: SessionPipelineOptions) {
   if(Boolean(principal)===Boolean(resolvePrincipal))throw new Error('Supply one fixed single-tenant principal or a trusted scope resolver');
   if(principal)sessionScope(principal);
   if(!prefix||prefix.split('/').some(p=>!p||p==='.'||p==='..'))throw new Error('Invalid session prefix');
@@ -233,6 +240,10 @@ export function createSessionPipeline({store,privacy,eventIdentities,prefix,cont
       const after=await controls.read(scope,'sessions',batch.harness,batch.sessionId);
       if(after?.deletedAt||(after?.visibility??'team')!==(control?.visibility??'team'))await search.applySessionControl(scope,{harness:batch.harness,sessionId:batch.sessionId},after!);
       await checkActive();
+      if(userMessages?.observes(scope) && batch.captureMode!=='history' && !after?.deletedAt && after?.visibility!=='private'){
+        const ids=expanded.events.filter(event=>sessionMessage(event)?.role==='user').map(event=>event.id);
+        if(ids.length)await userMessages.receive(scope,{harness:batch.harness,installationId:batch.installationId,sessionId:batch.sessionId},ids);
+      }
       await store.put(stateKey,Buffer.from(JSON.stringify({status:'indexed',sourceKey:key,documents:docs.length,indexedAt:new Date().toISOString()})),'application/json');
       return {records:docs.length,skipped:false};
     },

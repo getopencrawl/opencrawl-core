@@ -244,3 +244,25 @@ test('public session indexer exposes the existing memory source identity validat
  assert.equal(memorySourceIdentity,existing);
  assert.equal(memorySourceIdentity('sessions/test/v1','outside/the/source.json.gz'),null);
 });
+
+test('post-index prompt observer receives live human event identities and retries before checkpointing',async()=>{
+ const store=memoryStore(),prefix='sessions/watch/v1',ingest=createSessionIngest({store,prefix});
+ const current=batch(owner,'please fix the uploader');
+ current.events.push({id:'assistant',kind:'message',data:{role:'assistant',content:'I will inspect capture'}},
+   {id:'tool',kind:'message',data:{role:'user',content:[{type:'tool_result',content:'log'}]}},
+   {id:'followup',kind:'user_message',data:{message:'also check the retry'}});
+ await ingest.putBatch(owner,current);
+ await ingest.putBatch(owner,{...current,sessionId:'archive',captureMode:'history'});
+ const foreign={...owner,tenantId:'another-tenant'};
+ await ingest.putBatch(foreign,batch(foreign));
+ const seen=[];let retry=true;
+ const search={identity:'test-index',ensureIndex:async()=>{},putDocuments:async()=>{}};
+ const pipeline=createSessionPipeline({store,prefix,search,resolvePrincipal:async({batch})=>batch.owner,userMessages:{
+   observes:p=>p.tenantId===owner.tenantId,
+   async receive(p,source,ids){assert.deepEqual(p.tenantId,owner.tenantId);if(retry){retry=false;throw Error('outbox unavailable');}seen.push([source,ids]);},
+ }});
+ assert.equal((await sweep(pipeline)).failed,1);
+ assert.equal((await sweep(pipeline)).indexed,1);
+ assert.equal((await sweep(pipeline)).indexed,0);
+ assert.deepEqual(seen,[[{harness:'codex',installationId:'same-device',sessionId:'same-session'},['same-event','followup']]]);
+});

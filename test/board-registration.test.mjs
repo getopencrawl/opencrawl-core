@@ -90,3 +90,26 @@ test('startup sync offers actual shared updates until a native session can recei
   assert.deepEqual(unnamed.messages,[expected]);assert.equal(unnamed.scope,undefined);
   assert.deepEqual((await api.sync(owner,{session:'a',after:0})).messages.map(m=>m.id),[2]);
 });
+
+test('online observer runs transactionally on first naming, return and resume, including quiet agents',async t=>{
+  const {database}=await boardStateFixture(t);
+  const {createPostgresBoardState}=await import('../dist/src/state/board.mjs');
+  const {createBoard}=await import('../dist/src/board/board.mjs');
+  const scope=boardTenant(owner.tenantId),events=[];
+  let time=1000,refuse=false;
+  const repository=createPostgresBoardState(database,{observes:key=>key===scope,joined:async(_client,key,agent,at)=>{
+    assert.equal(key,scope);if(refuse)throw Error('outbox unavailable');events.push([agent,at]);
+  }});
+  const board=createBoard({state:{board:repository},now:()=>time});
+  const presence={name:'tcas-test',session:'chat',announce:false};
+  await board.participate(owner,'bootstrap',{session:'chat',harness:'codex'});
+  await board.agent.presence(owner,presence);
+  await board.agent.presence(owner,presence);
+  await board.agent.presence({...owner,tenantId:'other'},presence);
+  time+=16*60_000;
+  await board.agent.presence(owner,presence);
+  await board.agent.presence(owner,{...presence,leave:true});
+  refuse=true;await assert.rejects(board.agent.presence(owner,presence),/outbox unavailable/);
+  refuse=false;time++;await board.agent.presence(owner,presence);
+  assert.deepEqual(events.map(e=>e[1]),[1000,961000,961001]);
+});
