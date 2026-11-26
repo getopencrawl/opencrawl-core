@@ -4,8 +4,8 @@ import {Icon} from '../design/icons.js';
 import type {ConsoleDataAdapter, DiagnosticHit, DiagnosticSearch} from './types.js';
 import {excerpt, highlightedText, resultSummary, searchGroups, searchHit} from './search-model.js';
 import type {SearchSource} from './search-model.js';
-import {diagnosticPage, SEARCH_PAGE_SIZE, SOURCE_WINDOW} from '../../../src/application/search-page.mjs';
-import {Link} from '../router.js';
+import {diagnosticPage, MAX_SEARCH_PAGE, SEARCH_PAGE_SIZE, SOURCE_WINDOW} from '../../../src/application/search-page.mjs';
+import {Link, useSearchParams} from '../router.js';
 import {memoryHarness, memoryPath} from './memories.js';
 import {sessionHarness, sessionPath} from './sessions.js';
 import {messageHref} from './board.js';
@@ -115,30 +115,79 @@ export function SearchResults({result: response, query, onPage, focusSummary = f
   );
 }
 export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 'search'>}) {
+  const [params, setParams] = useSearchParams();
+  const submitted = (params.get('q') ?? '').trim();
+  const requestedPage = Number(params.get('page'));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1 && requestedPage <= MAX_SEARCH_PAGE ? requestedPage : 1;
   const deny=useConsoleAccessFailure();
-  const model=useConsoleModel(consoleResourceKey(adapter,'search'),()=>({draft:'',reader:new SearchReader({search:async(query,signal,page)=>{try{return await adapter.search(query,signal,page);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}})}));
+  const model=useConsoleModel(consoleResourceKey(adapter,'search'),()=>({draft:'',page:1,reader:new SearchReader({search:async(query,signal,page)=>{try{return await adapter.search(query,signal,page);}catch(error){if(accessFailure(error))deny?.(error);throw error;}}})}));
   const [draft,setDraft]=useState({model,value:model.draft});
   const query=draft.model===model?draft.value:model.draft;
   const input = useRef<HTMLInputElement>(null);
   const reader = model.reader;
   const snapshot = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot);
   const paging = useRef(false);
+  const previousModel = useRef<typeof model | null>(null);
+  function writeLocation(value: string, nextPage: number, replace = false) {
+    const next = new URLSearchParams(params);
+    if (value) next.set('q', value); else next.delete('q');
+    if (nextPage > 1) next.set('page', String(nextPage)); else next.delete('page');
+    setParams(next, {replace});
+  }
+  useEffect(() => {
+    const entering = previousModel.current !== model;
+    previousModel.current = model;
+    const cached = reader.snapshot();
+    if (!submitted) {
+      if (entering && cached.state === 'complete') writeLocation(cached.query, model.page, true);
+      else if (!entering && cached.state !== 'idle') {
+        model.draft = '';
+        setDraft({model, value:''});
+        reader.clear();
+      }
+      return;
+    }
+    if (submitted.length > 4000) {
+      reader.clear();
+      return;
+    }
+    if (submitted !== cached.query) {
+      model.draft = submitted;
+      setDraft({model, value:submitted});
+    }
+    if (submitted !== cached.query || page !== model.page || (entering && cached.state === 'canceled')) {
+      model.page = page;
+      void reader.search(submitted, page);
+    }
+  }, [model, reader, submitted, page]);
   function setQuery(value: string) {
     model.draft = value;
     setDraft({model, value});
-    if (!value.trim() && snapshot.state !== 'idle') reader.clear();
+    if (!value.trim()) {
+      reader.clear();
+      if (submitted) writeLocation('', 1);
+    }
   }
-  function run(value: string) {paging.current = false; void reader.search(value);}
+  function run(value: string, nextPage = 1) {
+    const text = value.trim();
+    if (!text || text.length > 4000) return;
+    if (submitted !== text || page !== nextPage) writeLocation(text, nextPage);
+    model.page = nextPage;
+    void reader.search(text, nextPage);
+  }
   function surprise() {
     const choices = examples.filter(example => example !== query && example !== snapshot.query);
     const example = choices[Math.floor(Math.random() * choices.length)]!;
-    setQuery(example); run(example);
+    paging.current = false; setQuery(example); run(example);
   }
   const busy = snapshot.state === 'loading';
-  useEffect(() => () => reader.suspend(), [reader]);
+  useEffect(() => () => {
+    previousModel.current = null;
+    reader.suspend();
+  }, [reader]);
   return (
     <section className={snapshot.state === 'idle' ? 'oc-search-inspector oc-search-start' : 'oc-search-inspector'} aria-label="Inspect search">
-      <form className="query-form" onSubmit={event => {event.preventDefault(); run(query);}}>
+      <form className="query-form" onSubmit={event => {event.preventDefault(); paging.current = false; run(query);}}>
         <div className="oc-search-input">
           <Icon name="search" size={18}/>
           <Input ref={input} aria-label="Search query" type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={4000} required placeholder="Search your workspace"/>
@@ -152,7 +201,7 @@ export function SearchInspector({adapter}: {adapter: Pick<ConsoleDataAdapter, 's
       {snapshot.state === 'failed' && <Notice tone="danger">{snapshot.error}</Notice>}
       {snapshot.state === 'canceled' && <p role="status" className="muted">Query canceled.</p>}
       {busy && <LoadingState label="Running query"/>}
-      {snapshot.result && <SearchResults key={snapshot.query} result={snapshot.result} query={snapshot.query} showQuery={query.trim() !== snapshot.query} focusSummary={paging.current} onPage={page => {paging.current = true; void reader.search(snapshot.query, page);}}/>}
+      {snapshot.result && <SearchResults key={snapshot.query} result={snapshot.result} query={snapshot.query} showQuery={query.trim() !== snapshot.query} focusSummary={paging.current} onPage={page => {paging.current = true; run(snapshot.query, page);}}/>}
     </section>
   );
 }
