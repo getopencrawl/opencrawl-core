@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
-import {createCaptureLinks} from '../dist/src/state/capture-links.mjs';
+import {captureLinkMatchesWorkspace,createCaptureLinks} from '../dist/src/state/capture-links.mjs';
 import {createLibraryApi} from '../dist/src/sessions/library-http.mjs';
 import {createWorkspaceSearch} from '../dist/src/search/workspace.mjs';
 
@@ -15,6 +15,9 @@ test('old capture keys and canonical IDs resolve with the same current scope and
   ]);
   assert.match(id,/^oc_[A-Za-z0-9_-]{32}$/);
   assert.equal(again,id);assert.notEqual(foreign,id);assert.notEqual(memoryId,id);
+  assert.equal(captureLinkMatchesWorkspace(id,'alpha'),true);
+  assert.equal(captureLinkMatchesWorkspace(id,'beta'),false);
+  assert.equal(captureLinkMatchesWorkspace(memoryId,'alpha'),true);
   assert.deepEqual(await second.resolve('alpha','sessions',id),key);
   assert.equal(await links.resolve('beta','sessions',id),null);
   assert.equal(await links.resolve('alpha','memories',id),null);

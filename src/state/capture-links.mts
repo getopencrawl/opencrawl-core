@@ -1,6 +1,16 @@
 import {createHash} from 'node:crypto';
 import {captureIdPattern,type CaptureCollection} from '../application/capture-links.mjs';
 import type {ApplicationDatabase} from './postgres.mjs';
+export {capturePage} from '../application/capture-links.mjs';
+
+/** A routing hint lets a host compare a link to the viewer's known memberships without inspecting another tenant's data. */
+export function workspaceLinkHint(tenantId:string) {
+  return createHash('sha256').update('opencrawl.workspace-link.v1\0'+tenantId).digest().subarray(0,9).toString('base64url');
+}
+
+export function captureLinkMatchesWorkspace(id:string,tenantId:string) {
+  return captureIdPattern.test(id) && id.slice(3,15)===workspaceLinkHint(tenantId);
+}
 
 export interface CaptureLinkKey {userId:string; harness:string; name:string}
 export interface CaptureLinks {
@@ -33,9 +43,10 @@ export function createCaptureLinks(database:ApplicationDatabase):CaptureLinks {
   return {
     async register(tenantId,collection,keys) {
       if (!keys.length) return [];
+      const hint=workspaceLinkHint(tenantId);
       const rows=keys.map(({userId,harness,name})=>{
         const digest=createHash('sha256').update(JSON.stringify([collection,tenantId,userId,harness,name])).digest();
-        return {id:'oc_'+digest.subarray(0,24).toString('base64url'),user_id:userId,harness,name};
+        return {id:'oc_'+hint+digest.subarray(0,15).toString('base64url'),user_id:userId,harness,name};
       });
       await ready();
       // Stable ordering avoids opposing lock orders when overlapping pages arrive together.

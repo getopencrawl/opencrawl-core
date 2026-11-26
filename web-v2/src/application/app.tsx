@@ -15,6 +15,7 @@ import {DocumentFrame, ProductDocument, readBrowserDocument} from './documents.t
 import {useAdmission} from './admission.ts';
 import type {ConsoleReload} from '../../../src/application/console-reload.mjs';
 import {usagePaths} from '../../../src/application/usage-paths.mjs';
+import {matchesConsoleRoute} from '../router.tsx';
 
 function readReload<B extends Bootstrap>(): ConsoleReload<B> | undefined {
   const element = document.getElementById('opencrawl-reload');
@@ -119,7 +120,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
   if (!data) {
     const feedback = error ? <div className="stack"><Notice tone="danger">{error}</Notice><div className="action-row"><Button onClick={retry}>Try again</Button><LinkButton to="/auth/login" reloadDocument>Sign in</LinkButton></div></div> : undefined;
     if (onboarding) return <FocusedFrame footer={<SignOut/>}>{feedback ?? <Page title="Set up OpenCrawl"><LoadingState label="Loading your workspace"/></Page>}</FocusedFrame>;
-    const route = routes.find(item => item.path === location.pathname || item.alternatePaths?.includes(location.pathname));
+    const route = routes.find(item => matchesConsoleRoute(item,location.pathname));
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
   if (location.hash === '#replicas-capture' && ['/setup', '/agent-setup'].includes(location.pathname)) return <Navigate to={replicasCapturePath} replace/>;
