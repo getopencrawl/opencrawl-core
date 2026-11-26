@@ -203,6 +203,8 @@ export async function runCaptureDaemon({signal,flushMs=10_000,reconcileMs=30_000
         const now=Date.now(),reconcile=now>=nextReconcile;
         if(reconcile){
           nextReconcile=now+reconcileMs;inboxDirty=true;
+          // A missed directory notification must not leave a published batch asleep indefinitely.
+          queueDirty=true;wakeUpload();
           // Native file notifications can be lost even with no active transcript.
           // Recover only this installation's pending inbox, never its history.
           if(config.backgroundStartup){startupDirty=true;wakeStartup();}
