@@ -111,7 +111,10 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([database.namespace,environment,record.tenantId,record.provider,owner])]);
     const {rowCount}=await client.query(`SELECT 1 FROM opencrawl_integrations WHERE namespace=$1 AND environment=$2 AND tenant_id=$3 AND provider=$4
       AND integration_id<>$5 AND status NOT IN ('connecting','disconnected','abandoned')
-      AND CASE WHEN record->>'scope'='team' THEN 'team' ELSE user_id END=$6 LIMIT 1`,[database.namespace,environment,record.tenantId,record.provider,record.integrationId,owner]);
+      AND CASE WHEN record->>'scope'='team' THEN 'team' ELSE user_id END=$6
+      AND (NOT $7::boolean OR record->>'workspace'=$8 OR record->>'installationId'=$9) LIMIT 1`,
+      [database.namespace,environment,record.tenantId,record.provider,record.integrationId,owner,
+        record.provider==='github' && !!record.workspace && !!record.installationId,record.workspace??null,record.installationId??null]);
     if(rowCount)throw conflict();
   }
   function validateCommand(operation:IntegrationCommandOperation,secrets:IntegrationCommandSecret,requestedBy?:string){
@@ -137,7 +140,9 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
       await ready();return database.transaction(async client=>{
         const current=await locked(client,identity);
         if(!current||options.whenStatus&&!options.whenStatus.includes(current.status)||Object.entries(options.whenFields??{}).some(([field,expected])=>!isDeepStrictEqual((current as unknown as Record<string,unknown>)[field],expected)))throw conflict();
-        return save(client,{...current,...fields});
+        const next={...current,...fields};
+        if (current.provider==='github' && current.status==='connecting' && next.status==='provisioning') await claimProvider(client,next);
+        return save(client,next);
       });
     },
   };
@@ -160,7 +165,7 @@ function createRegistry({database,environment,commands,organizationId,bindingId,
         if(operation!=='disconnect'&&!(operation==='provision'&&prior.operation==='consent'))throw conflict();
         await checked.commands.supersede(client,prior.reference);
       }
-      if(operation==='provision')await claimProvider(client,record!);
+      if(operation==='provision')await claimProvider(client,{...record!,...consent});
       const ref=reference(randomUUID());
       await save(client,{...record!,...consent,status:operation==='disconnect'?'disconnecting':operation==='provision'?'provisioning':record!.status,
         ...(operation==='provision'||operation==='disconnect'?{provisionRun:ref.commandId,provisionVersion:randomUUID()}:{}),lifecycleCommandId:ref.commandId,lifecycleOperation:operation});

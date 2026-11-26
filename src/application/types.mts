@@ -12,6 +12,8 @@ export interface SourceCard {
   primaryMetric?: string;
   units?: [string, string];
   account?: string | null;
+  integrationId?: string;
+  canAddAccount?: boolean;
   state: 'disconnected' | 'disconnecting' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
   setup?: SourceSetup;
   scope?: 'team' | 'user';

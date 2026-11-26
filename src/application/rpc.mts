@@ -83,8 +83,8 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
     replicasHistory:p.input(replicasImportInput).mutation(({ctx,input})=>ctx.invoke<import('../integrations/replicas-import.mjs').ReplicasImportStatus>('/api/integrations/replicas/history','POST',input)),
     devinRecording:p.input(devinRecordingInput).mutation(({ctx,input})=>ctx.invoke<import('../integrations/devin-recording.mjs').DevinRecordingStatus>('/api/integrations/devin/recording','POST',input)),
     connect: p.input(z.object({provider,apiKey:z.string().max(4000).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok?:boolean;redirectUrl?:string}>('/api/integrations/'+input.provider+'/connect','POST',{apiKey:input.apiKey})),
-    retry: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/retry','POST',{})),
-    disconnect: p.input(z.object({provider}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/disconnect','POST',{})),
+    retry: p.input(z.object({provider,integrationId:z.string().regex(/^int_[a-f0-9]{26}$/).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/retry','POST',{integrationId:input.integrationId})),
+    disconnect: p.input(z.object({provider,integrationId:z.string().regex(/^int_[a-f0-9]{26}$/).optional()}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/'+input.provider+'/disconnect','POST',{integrationId:input.integrationId})),
     saveCredential: p.input(z.object({credential:provider,value:z.string().min(1).max(4000)}).strict()).mutation(({ctx,input})=>ctx.invoke<{ok:true}>('/api/integrations/credentials/'+input.credential,'POST',{value:input.value})),
   }),
 };}

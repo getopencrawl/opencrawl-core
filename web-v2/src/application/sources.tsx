@@ -16,7 +16,7 @@ import {ReplicasHistoryDialog} from './replicas-history-dialog.tsx';
 const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
 
 function removalNotice(source: SourceCard, retried = false) {
-  return {provider: source.provider, requested: `Removal requested for ${source.name}.`,
+  return {provider: source.provider, integrationId:source.canAddAccount ? source.integrationId : undefined, requested: `Removal requested for ${source.name}.`,
     completed: retried ? `${source.name} removal completed and its imported data deleted.` : `${source.name} disconnected and its imported data deleted.`};
 }
 
@@ -146,7 +146,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
     if (!confirmation) return;
     const selected = confirmation;
     void run(selected.provider, async request => {
-      await adapter.disconnect(selected.provider, request.signal);
+      await adapter.disconnect(selected.provider, request.signal, selected.canAddAccount ? selected.integrationId : undefined);
       if (!current(request)) return;
       setConfirmation(null);
       setSuccess(removalNotice(selected));
@@ -155,7 +155,8 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
 
   const sources = alphabeticalSources(data?.items ?? []);
   const successText = typeof success === 'string' ? success
-    : sources.some(source => source.provider === success.provider && source.state === 'disconnected') ? success.completed : success.requested;
+    : (success.integrationId ? !sources.some(source=>source.integrationId===success.integrationId)
+      : sources.some(source => source.provider === success.provider && source.state === 'disconnected')) ? success.completed : success.requested;
   const showSearch = sources.length >= 15;
   const searchQuery = showSearch ? query.trim().toLowerCase() : '';
   const visible = sources.filter(source=>`${source.name} ${source.description ?? ''}`.toLowerCase().includes(searchQuery));
@@ -167,13 +168,15 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
     {unlock && canConfigure && adapter.saveCredential && <Notice>{`One ${unlock.name} key unlocks ${listPhrase(unlock.unlocks)}. Choose Connect on any of them to add it.`}</Notice>}
 
     {successText && <Notice tone="success">{successText}</Notice>}
+    {[...new Map(visible.filter(source=>source.canAddAccount).map(source=>[source.provider,source])).values()].map(source=>
+      <Button key={source.provider} disabled={pending!==null} onClick={()=>connect(source)}>Connect another {source.name} account</Button>)}
     {!data ? loading ? <LoadingState label="Loading integrations" /> : <EmptyState title="Integrations couldn’t load" description="Try again to see your connections." action={<Button onClick={() => void reload()}>Try again</Button>} /> : <>
       {showSearch && <div className="oc-source-toolbar"><div className="oc-source-search"><Icon name="search" size={16}/><Input type="search" aria-label="Search integrations" placeholder="Search integrations" value={query} onChange={event=>setQuery(event.target.value)}/></div></div>}
       {groups.filter(group=>group.items.length>0).map(group=><Section key={group.title} title={group.title} className="oc-source-section">
         <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
           {group.items.map(source => source.provider==='devin'&&adapter.devinRecording
             ? <DevinRecordingCard key={source.provider} source={source} mutate={adapter.devinRecording} onChange={()=>void reload()}/>
-            : source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? removalNotice(source, true) : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+            : source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.integrationId ?? source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal, source.canAddAccount ? source.integrationId : undefined); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? removalNotice(source, true) : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}

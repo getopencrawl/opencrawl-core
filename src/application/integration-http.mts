@@ -67,7 +67,12 @@ export async function integrationRequest(req: IncomingMessage,url: URL,route: Ro
             track(provider.auth === 'api-key' && 'ok' in result && result.ok ? 'integration_connected' : 'integration_connect_started', principal, {provider: provider.id, auth: provider.auth === 'api-key' ? 'api_key' : 'oauth'});
             return json(200, result);
           }
-          if (route.action === 'retry' || route.action === 'disconnect') await integrations[route.action](principal, provider.id);
+          if (route.action === 'retry' || route.action === 'disconnect') {
+            const {integrationId} = await smallJson(req);
+            if (integrationId !== undefined && (typeof integrationId !== 'string' || !/^int_[a-f0-9]{26}$/.test(integrationId)))
+              return json(400, {error:{code:'INVALID_REQUEST',message:'Choose a valid integration.'}});
+            await integrations[route.action](principal, provider.id, integrationId);
+          }
           track(route.action === 'disconnect' ? 'integration_disconnect_requested' : 'integration_retry_requested', principal, {provider: provider.id});
           return json(200, {ok: true});
         } catch (error) {

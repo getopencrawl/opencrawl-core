@@ -207,9 +207,13 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     return bucket;
   }
 
-  async function current(principal: Principal, provider: Provider) {
+  async function current(principal: Principal, provider: Provider, id?: string) {
     const records = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r));
-    return newest(records.filter(r => r.status !== 'connecting')) || newest(records);
+    const connected = records.filter(r => r.status !== 'connecting');
+    if (id !== undefined) return records.find(r => r.integrationId === id);
+    if (provider.auth === 'github-app' && connected.length > 1)
+      throw Object.assign(new Error('Choose which connected account to manage.'), {status: 409, expose: true});
+    return newest(connected) || newest(records);
   }
 
   function observeCounts(admission: IntegrationCountAdmission, record: IntegrationRecord, entry: StatusEntry, key: string, succeeded: Set<number>, active: boolean, observedAt: number) {
@@ -648,6 +652,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       return {ok: false, reason: 'declined'};
     }
     const state = `${id}.${nonce}`;
+    const live = (await registry.listTenant(principal.tenantId)).filter(r => r.integrationId !== id && visible(principal, provider, r) && r.status !== 'connecting');
     const callbackUrl = new URL('/integrations/github/callback', appUrl).href;
     const userToken = await github!.userToken(query.get('code')!, callbackUrl);
     let installation;
@@ -656,10 +661,11 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const installations = await github!.userInstallations(userToken);
       if (installations.some(item => !/^[1-9]\d{0,19}$/.test(String(item.id)) || !item.account?.login)) throw new Error('Invalid GitHub installation response');
       const installationId = selectedId || callbackId;
+      const available = installations.filter(item => !live.some(r => String(r.installationId) === String(item.id) || r.workspace === String(item.account.id)));
       if (installationId) installation = installations.find(item => String(item.id) === installationId);
-      else if (installations.length === 1) installation = installations[0];
+      else if (available.length === 1) installation = available[0];
       else return {ok: false, reason: 'choose', actions: [
-        ...installations.map(item => ({label: `Connect ${item.account.login}`, url: github!.authorizeUrl(`${state}.${item.id}`, callbackUrl)})),
+        ...available.map(item => ({label: `Connect ${item.account.login}`, url: github!.authorizeUrl(`${state}.${item.id}`, callbackUrl)})),
         {label: installations.length ? 'Install for another account' : 'Install GitHub App', url: github!.installUrl(state)},
       ]};
       if (installation) repositories = await github!.userRepositories(userToken, String(installation.id));
@@ -672,8 +678,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     const githubRepositoryIds = [...new Set(repositories.map(repo => repo.id))];
     const {label, workspace} = provider.account(installation, repositories);
     const s3Prefix = landingPrefix(provider, {...record, workspace});
-    const taken = (await registry.listTenant(principal.tenantId)).some(r => r.integrationId !== record.integrationId && visible(principal, provider, r) && r.status !== 'connecting');
-    if (taken) {
+    if (live.some(r => String(r.installationId) === installationId || r.workspace === workspace)) {
       await registry.update(record, {status: 'abandoned'}, {whenStatus: ['connecting']});
       return {ok: false, reason: 'taken'};
     }
@@ -814,13 +819,20 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       let bucket: Promise<string|null> | undefined;
       const readBucket=recordCounts?.currentBucket;
       const currentBucket=readBucket ? () => bucket ??= readBucket(principal.tenantId) : undefined;
-      return Promise.all(Object.values(providers).map(provider => {
+      return Promise.all(Object.values(providers).flatMap(provider => {
         // A teammate's unfinished sign-in never hides a live team connection.
         const live = records.filter(r => visible(principal, provider, r));
-        const record = newest(live.filter(r => r.status !== 'connecting')) || newest(live);
-        return view(principal, record, provider, currentBucket).catch(error => {
-          log('integration.status.failed', {provider: provider.id, message: errorInfo(error).message});
-          return {provider: provider.id, name: provider.name, description: provider.description, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp, state: 'unavailable' as const};
+        const connected = live.filter(r => r.status !== 'connecting');
+        const multi = provider.auth === 'github-app';
+        const shown = multi && connected.length ? connected : [newest(connected) || newest(live)];
+        return shown.map(async record => {
+          try {
+            const card = await view(principal, record, provider, currentBucket);
+            return multi && connected.length ? {...card, canAddAccount:true} : card;
+          } catch(error) {
+            log('integration.status.failed', {provider: provider.id, message: errorInfo(error).message});
+            return {provider: provider.id, name: provider.name, description: provider.description, units: provider.units, scope: provider.scope, help: provider.help, auth: provider.auth === 'api-key' ? 'api-key' as const : 'oauth' as const, keyHelp: provider.keyHelp, state: 'unavailable' as const};
+          }
         });
       }));
     },
@@ -834,7 +846,7 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
       const provider = providerFor(providerId);
       if(provider.unavailableReason)throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       const live = (await registry.listTenant(principal.tenantId)).filter(r => visible(principal, provider, r));
-      if (live.some(r => r.status !== 'connecting')) throw Object.assign(new Error('Already connected'), {status: 409});
+      if (provider.auth !== 'github-app' && live.some(r => r.status !== 'connecting')) throw Object.assign(new Error('Already connected'), {status: 409});
       // Team-wide sources land under the OpenCrawl organization.
       if (provider.teamOnly && !ORG.test(principal.tenantId)) throw Object.assign(new Error(`Connect ${provider.name} from your team’s OpenCrawl organization.`), {status: 400, expose: true});
       if (provider.auth === 'api-key') return connectWithKey(principal, provider, apiKey);
@@ -921,19 +933,20 @@ export function createIntegrations({environment, appUrl, buckets, legacyBucket, 
     },
 
     /** Retries setup if it failed, otherwise runs a sync now. */
-    async retry(principal: Principal, providerId: string) {
+    async retry(principal: Principal, providerId: string, id?: string) {
       requireWritable();
       const provider = providerFor(providerId);
-      const record = await current(principal, provider);
+      const record = await current(principal, provider, id);
       if (!record || record.status === 'connecting') throw Object.assign(new Error('Not connected'), {status: 404});
       if(provider.unavailableReason&&record.status!=='disconnecting')throw Object.assign(new Error(provider.unavailableReason),{status:503,expose:true});
       return resume(record, provider,principal.userId);
     },
 
     /** Stops syncing, deletes the imported data and revokes the grant. */
-    async disconnect(principal: Principal, providerId: string) {
+    async disconnect(principal: Principal, providerId: string, id?: string) {
       requireWritable();
-      const record = await current(principal, providerFor(providerId));
+      const record = await current(principal, providerFor(providerId), id);
+      if (!record && id !== undefined) throw Object.assign(new Error('Not connected'), {status:404});
       if (record) {
         if(lifecycle)await dispatch(await lifecycle.requests.requestLifecycle(record,'disconnect',{},principal.userId));
         else await disconnectRecord(record);

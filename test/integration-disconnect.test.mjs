@@ -26,6 +26,22 @@ test('self-host disconnect removes its connection without uninstalling a shared 
  assert.deepEqual(removed,['connection','source','destination','data']);
 });
 
+test('two workspace GitHub accounts are listed and disconnect must target a connection',async()=>{
+ const principal={tenantId:'org_team',userId:'user_a'};
+ const records=['a','b'].map((letter,i)=>({...principal,userId:'user_'+letter,integrationId:'int_'+letter.repeat(26),
+  environment:'selfhost',provider:'github',scope:'team',status:'provisioning',account:'org-'+i,installationId:String(i+42),lifecycleCommandId:'command-'+i}));
+ const requested=[];
+ const service=createIntegrations({environment:'selfhost',appUrl:'https://self.example',registry:{listTenant:async()=>records},
+  providers:{github:{id:'github',scope:'team',auth:'github-app'}},airbyte:{},oauth:{},buckets:{},destination:{},legacyBucket:'owned',workspaceId:async()=>'workspace',
+  lifecycle:{requests:{requestLifecycle:async record=>{requested.push(record.integrationId);return {}; }},start:async()=>{}},log:(_event,data)=>assert.fail(JSON.stringify(data))});
+ const cards=await service.list(principal);
+ assert.deepEqual(cards.map(card=>card.integrationId),records.map(record=>record.integrationId));
+ await assert.rejects(service.disconnect(principal,'github'),{status:409});
+ await assert.rejects(service.disconnect(principal,'github','int_'+'c'.repeat(26)),{status:404});
+ await service.disconnect(principal,'github',records[1].integrationId);
+ assert.deepEqual(requested,[records[1].integrationId]);
+});
+
 test('startup recovery skips active, pending consent, removed and nonrecoverable error records',async()=>{
  const record={tenantId:'org_team',userId:'user_a',integrationId:'int_'+'b'.repeat(26),environment:'selfhost',provider:'github',status:'provisioning'};
  let current; const service=createIntegrations({environment:'selfhost',appUrl:'https://self.example',providers:{github:{id:'github',scope:'team'}},
