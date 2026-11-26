@@ -1,36 +1,19 @@
-import {Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode} from 'react';
-import {Button, EmptyState, LinkButton, LoadingState, Notice, ScrollControl} from '../design/components.js';
-import {agentIdentityClass} from '../design/identity.js';
+import {Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode} from 'react';
+import {Button, EmptyState, LoadingState, Select, Notice, ScrollControl} from '../design/components.js';
+import {BoardRail, BoardResults, searchHref, topicHref} from './board-search.js';
+import {agentIdentity} from '../design/identity.js';
 import {AgentAvatar} from '../design/agent-avatar.js';
 import {Icon} from '../design/icons.js';
 import {Link, useNavigate} from '../router.js';
 import type {BoardMessage, BoardReport, ConsoleDataAdapter} from './types.js';
 import {useBoard} from './use-board.js';
 
-export const topicHref = (topic = '') => '/messages?view=board' + (topic ? '&channel=' + encodeURIComponent(topic) : '');
+export {topicHref};
 const threadHref = (channel: string, id: number) => topicHref(channel) + '&thread=' + id;
 export const messageHref = (topic: string, id: number, threadId?:number) => (threadId&&threadId!==id?threadHref(topic,threadId):topicHref(topic)) + '&message=' + id;
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
 const authorName = (post: BoardMessage) => post.name || post.agent;
-const noCapture = () => {};
-
-/** Summaries use a scoped reader; opening an older permalink never scans history. */
-export function BoardNavigation({adapter, topic, closeNavigation}: {adapter: Pick<ConsoleDataAdapter, 'board'>; topic: string; closeNavigation: () => void}) {
-  const {report, busy, error, retry} = useBoard(adapter, '', true, noCapture);
-  const topics = report?.channelSummaries?.map(item=>item.channel) ?? ['opencrawl',...(report?.topicSummaries.map(item=>item.topic)??[]).filter(name=>name!=='opencrawl')];
-  if (topic && !topics.includes(topic)) topics.push(topic);
-  return <>
-    <div className="oc-nav-group oc-board-back"><LinkButton variant="quiet" to="/messages?nav=workspace" onClick={closeNavigation}><Icon name="arrow-left"/><span>Back</span></LinkButton></div>
-    <div className="oc-nav-group">
-      <Link className={`oc-nav-link${!topic ? ' oc-nav-active' : ''}`} to={topicHref()} aria-current={!topic ? 'page' : undefined} onClick={closeNavigation}><Icon name="overview"/><span>All channels</span></Link>
-      {topics.map(name => <Link key={name} className={`oc-nav-link${topic === name ? ' oc-nav-active' : ''}`} to={topicHref(name)} aria-current={topic === name ? 'page' : undefined} onClick={closeNavigation}><span className="oc-board-topic-mark" aria-hidden="true">#</span><span>{name}</span></Link>)}
-      {!report && busy && <LoadingState label="Loading channels"/>}
-      {error && <div className="oc-board-navigation-error"><Notice tone="warning">Channels couldn’t update.</Notice><Button variant="quiet" disabled={busy} onClick={() => void retry()}>Try again</Button></div>}
-    </div>
-  </>;
-}
-
 function MessageText({text, messages}: {text: string; messages: ReadonlyArray<BoardMessage>}) {
   const parts: ReactNode[] = [];
   const pattern = /https?:\/\/[^\s<>]+|@[a-zA-Z0-9][a-zA-Z0-9:_.-]*|(?:message\s+|#)\d{3,}/g;
@@ -68,43 +51,61 @@ export function messageGroups(messages: ReadonlyArray<BoardMessage>, selected?: 
   return groups;
 }
 
+function dayLabel(stamp:number) {
+  const date=new Date(stamp), n=date.getDate();
+  const ordinal=n%100>=11 && n%100<=13?'th':({1:'st',2:'nd',3:'rd'}[n%10]??'th');
+  return date.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+ordinal+
+    (date.getFullYear()===new Date().getFullYear()?'':', '+date.getFullYear());
+}
+function DaySeparator({timestamp,dates,prefix}:{timestamp:number;dates:[string,number][];prefix:string}) {
+  const current=dates.find(([label])=>label===day(timestamp))![1], label=dayLabel(current);
+  return <div className="oc-board-date" id={prefix+current}><span className="oc-board-day-picker">
+    {label}{dates.length>1 && <><Icon name="chevron-down"/><Select value={current} aria-label={'Jump to day, '+label} onChange={event=>{
+      const target=document.getElementById(prefix+event.target.value);
+      target?.scrollIntoView({block:'start'});target?.querySelector('select')?.focus({preventScroll:true});
+    }}>{dates.map(([key,stamp])=><option key={key} value={stamp}>{dayLabel(stamp)}</option>)}</Select></>}
+  </span></div>;
+}
+
 export function BoardContent({report, stream, message, inThread=false, channel='', selectedThread}: {report: BoardReport; stream: boolean; message?: number; inThread?:boolean; channel?:string; selectedThread?:number}) {
+  const prefix=useId();
   if (!report.messages.length) return <EmptyState title={inThread ? 'No replies yet' : stream ? 'No workspace messages yet' : 'No messages in this channel yet'}/>;
   const groups = messageGroups(report.messages, message);
+  const dates = [...new Map(groups.map(([first])=>[day(first!.timestamp),first!.timestamp])).entries()];
   return <>{groups.map((group, index) => {
     const first = group[0]!, previous = groups[index - 1]?.[0], date = day(first.timestamp);
     const author = authorName(first);
     return <Fragment key={first.id}>
-      {(!inThread || index>0) && (!previous || date !== day(previous.timestamp)) && <div className="oc-board-date"><span>{date}</span></div>}
+      {(!inThread || index>0) && (!previous || date !== day(previous.timestamp)) && <DaySeparator timestamp={first.timestamp} dates={dates} prefix={prefix}/>}
       <div className="oc-board-message-group">
         <AgentAvatar name={author}/>
         <header className="oc-board-post-header">
-          {stream && <Link className="oc-board-message-topic" to={topicHref(first.topic)}># {first.topic}</Link>}
           <div className="oc-board-byline">
-            <h3 className={agentIdentityClass(first.agent)}>{author}</h3>
+            <h3 className={agentIdentity(author).colorClass}>{author}</h3>
             {first.system && <span>System</span>}
-            <time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time>
+            {inThread ? <time dateTime={new Date(first.timestamp).toISOString()}>{time(first.timestamp)}</time> :
+              <Link className="oc-board-time" to={threadHref(channel,first.id)} aria-label={'Show thread for message #'+first.id}><time dateTime={new Date(first.timestamp).toISOString()} title={new Date(first.timestamp).toLocaleString()}>{time(first.timestamp)}</time></Link>}
+            {stream && <Link className="oc-board-message-topic" to={topicHref(first.topic)}>#{first.topic}</Link>}
           </div>
         </header>
         {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id || selectedThread === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${authorName(post)}, ${time(post.timestamp)}`}>
+          {offset>0 && !inThread && <Link className="oc-board-time" to={threadHref(channel,post.id)} aria-label={'Show thread for message #'+post.id}>{time(post.timestamp)}</Link>}
           <Link className="oc-board-post-id" to={messageHref(post.topic, post.id, post.threadId)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>
           <p className="oc-board-post-body"><MessageText text={post.text} messages={report.messages}/></p>
-          {!inThread && <>
-            <LinkButton variant="quiet" className="oc-board-thread-action" to={threadHref(channel,post.id)} aria-label={'Show thread for message #' + post.id} title="Show thread" aria-controls="board-thread" aria-expanded={selectedThread===post.id}><Icon name="diagnostics" size={18}/></LinkButton>
-            {Boolean(post.replyCount) && <Link className="oc-board-replies" to={threadHref(channel,post.id)} aria-controls="board-thread" aria-expanded={selectedThread===post.id}><Icon name="diagnostics" size={14}/><span>{post.replyCount} {post.replyCount===1?'reply':'replies'}</span></Link>}
-          </>}
+          {!inThread && Boolean(post.replyCount) && <Link className="oc-board-replies" to={threadHref(channel,post.id)} aria-controls="board-thread" aria-expanded={selectedThread===post.id}>{post.replyNames?.length ? <span className="oc-board-reply-faces">{post.replyNames.map(name=><AgentAvatar key={name} name={name}/>)}</span> : <Icon name="diagnostics"/>}<span>{post.replyCount} {post.replyCount===1?'reply':'replies'}</span></Link>}
         </article>)}
       </div>
     </Fragment>;
   })}</>;
 }
 
-export function BoardWorkspace({adapter, topic, message, threadId}: {adapter: Pick<ConsoleDataAdapter, 'board'>; topic:string; message?:number; threadId?:number}) {
+export function BoardWorkspace({adapter, topic, query, message, threadId}: {adapter: Pick<ConsoleDataAdapter, 'board'>; topic:string; query:string; message?:number; threadId?:number}) {
   // The channel reader and its DOM survive opening, switching and closing threads.
   const [channelMessage,setChannelMessage]=useState(threadId===undefined?message:undefined);
   if(threadId===undefined&&message!==undefined&&message!==channelMessage)setChannelMessage(message);
   const navigate=useNavigate(), returnFocus=useRef<HTMLElement|null>(null), close=useRef<HTMLButtonElement>(null);
-  const channelUrl=topicHref(topic)+(channelMessage!==undefined?'&message='+channelMessage:'');
+  const term=query.trim();
+  const channelUrl=searchHref(topic,query)+(!term && channelMessage!==undefined?'&message='+channelMessage:'');
   useLayoutEffect(()=>{
     if(threadId===undefined)return;
     returnFocus.current=document.activeElement instanceof HTMLElement?document.activeElement:null;
@@ -113,16 +114,16 @@ export function BoardWorkspace({adapter, topic, message, threadId}: {adapter: Pi
   },[threadId]);
   useEffect(()=>{
     if(threadId===undefined)return;
-    const dismiss=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!event.defaultPrevented){event.preventDefault();void navigate(channelUrl);}};
+    const dismiss=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!event.defaultPrevented&&!document.querySelector('dialog[open]')){event.preventDefault();void navigate(channelUrl);}};
     window.addEventListener('keydown',dismiss);return()=>window.removeEventListener('keydown',dismiss);
   },[threadId,channelUrl,navigate]);
-  return <div className={`oc-board-workspace${threadId!==undefined?' has-thread':''}`}>
-    <div className="oc-board-channel"><BoardInspector key={channelMessage??'latest'} adapter={adapter} stream={!topic} topic={topic} message={channelMessage} selectedThread={threadId}/></div>
+  return <div className="oc-board-frame"><BoardRail adapter={adapter} topic={topic} query={query}/><div className="oc-board-stage"><div className={`oc-board-workspace${threadId!==undefined?' has-thread':''}`}>
+    <div className="oc-board-channel">{term ? <BoardResults key={term} adapter={adapter} topic={topic} query={term} selected={message??threadId}/> : <BoardInspector key={channelMessage??'latest'} adapter={adapter} stream={!topic} topic={topic} message={channelMessage} selectedThread={threadId}/>}</div>
     {threadId!==undefined&&<aside id="board-thread" className="oc-board-thread" aria-label="Thread">
       <header className="oc-board-thread-header"><h2>Thread</h2><Button ref={close} variant="quiet" onClick={()=>void navigate(channelUrl)} aria-label="Close thread" title="Close thread (Esc)"><Icon name="close"/></Button></header>
       <BoardInspector key={JSON.stringify([threadId,message])} adapter={adapter} stream={false} topic="" message={message} threadId={threadId}/>
     </aside>}
-  </div>;
+  </div></div></div>;
 }
 
 export function BoardInspector({adapter, stream, topic, message, threadId, selectedThread}: {adapter: Pick<ConsoleDataAdapter, 'board'>; stream: boolean; topic: string; message?: number; threadId?:number; selectedThread?:number}) {

@@ -62,3 +62,16 @@ test('reply totals are scoped bulk reads and include replies outside the display
   assert.equal((await board.read({...principal,tenantId:'other'},{threadId:1})).threadRoot.replyCount,3);
  }finally{pool.connect=connect;}
 });
+
+test('console board search includes reply text and names, scoped to the authorized workspace',async t=>{
+ const f=await boardStateFixture(t), board=f.make();
+ await board.post(principal,{agent:'cedar',posts:[{id:'root',channel:'general',text:'Release planning'}]});
+ await board.post(principal,{agent:'birch',posts:[{id:'reply',channel:'general',threadId:1,text:'Rollback ready'}]});
+ await board.post({...principal,tenantId:'other'},{agent:'birch',posts:[{id:'elsewhere',channel:'general',text:'Rollback elsewhere'}]});
+ for(const query of ['rollback','birch']){
+   const page=await board.searchConsole(principal,{query});
+   assert.deepEqual(page.messages.map(m=>[m.id,m.threadId]),[[2,1]]);
+   assert.deepEqual(page.searchPage,{total:1,cursor:null});
+ }
+ assert.deepEqual((await board.read(principal,{rootsOnly:true})).messages[0].replyNames,['birch']);
+});

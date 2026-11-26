@@ -4,6 +4,7 @@ import type {createRecentSessions} from '../sessions/recent.mjs';
 import {serviceError} from '../sessions/types.mjs';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
+import {excerpt} from '../search/presentation.mjs';
 import {boardSearchSchema,searchParameters,searchMessages} from './search.mjs';
 import {createParticipation,type RequestCaptureErasure} from './participation.mjs';
 import {presencePreviews} from './presence-prompts.mjs';
@@ -50,6 +51,20 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
       }, now(), ['id']);
       return {ids: page.messages.map(message => message.id), total: page.total};
     },
+    async searchConsole(principal:Principal, input:{query:string;cursor?:string}) {
+      const key = scope(principal);
+      const {query,cursor} = boardSearchSchema.pick({query:true,cursor:true}).parse(input);
+      if (!query) throw fail('Enter a search query');
+      const page = await repository.search(key, principal.userId, {
+        query, cursor, includeNames:true, sort:'newest', limit:10, topics:[], agents:[], authors:[], facets:[], facetSize:1,
+      }, now());
+      return {messages:page.messages.map(m=>{
+        const snippet=excerpt(m.text,query);
+        return {id:m.id, name:m.name, agent:m.agent, topic:m.topic, threadId:m.threadId??m.id, timestamp:m.timestamp,
+          text:(snippet.excerpt.start?'… ':'')+snippet.text+(snippet.excerpt.end<m.text.length?'…':'')};
+      }), topicSummaries:[], next:null,
+        searchPage:{total:page.total,cursor:page.next}};
+    },
     agent:createAgentBoard({repository,scope,now,previews}),
     participate:createParticipation({scope,repository,now,requestCaptureErasure,previews}),
     async read(principal:Principal,input:unknown={}){const key=scope(principal),args=boardReadSchema.parse(input);return repository.read(key,async tx=>{
@@ -57,8 +72,8 @@ export function createBoard({state,now=Date.now,recentSessions,requestCaptureEra
       const root=args.threadId!==undefined?await tx.message(args.threadId):null;
       if(args.threadId!==undefined&&(!root||root.threadId!==undefined||(channel&&root.topic!==channel)))throw fail('Thread not found',404);
       const summaries=await tx.topics(),messages=await tx.messages({before:args.before,topic:channel,threadId:args.threadId,rootsOnly:args.threadId===undefined&&args.rootsOnly,limit:21,descending:true});
-      const page=messages.slice(0,20),counts=await tx.replyCounts([...page.filter(m=>m.threadId===undefined).map(m=>m.id),...root?[root.id]:[]]);
-      const present=(m:typeof messages[number])=>({...visibleMessage(m),...m.threadId===undefined?{replyCount:counts[m.id]??0}:{}});
+      const page=messages.slice(0,20),replies=await tx.replySummaries([...page.filter(m=>m.threadId===undefined).map(m=>m.id),...root?[root.id]:[]]);
+      const present=(m:typeof messages[number])=>({...visibleMessage(m),...m.threadId===undefined?{replyCount:replies[m.id]?.count??0,replyNames:replies[m.id]?.names??[]}:{}});
       const channelSummaries=[{channel:announcementChannel,posts:0,latest:{id:0,timestamp:0,name:'opencrawl'},readOnly:true},...summaries.filter(t=>t.topic!==announcementChannel).sort((a,b)=>b.latest.id-a.latest.id).map(({topic,first,...summary})=>({channel:topic,...summary,readOnly:false}))];
       const announcements=summaries.find(t=>t.topic===announcementChannel);if(announcements)Object.assign(channelSummaries[0],{posts:announcements.posts,latest:announcements.latest});
       return {topics:summaries.map(t=>t.topic).sort(),topicSummaries:summaries.sort((a,b)=>b.latest.id-a.latest.id).map(({first,...summary})=>summary),channels:channelSummaries.map(c=>c.channel),channelSummaries,messages:page.map(present),next:messages.length>20?messages[19].id:null,...root?{threadRoot:present(root)}:{}};

@@ -104,9 +104,13 @@ function WorkspaceShell({workspace, routes, children, footer, navigation, naviga
   </div>;
 }
 
+export function PageNavigation({label,className,children}:{label:string;className:string;children:ReactNode}) {
+  return <nav className={className} aria-label={label}>{children}</nav>;
+}
+
 function SettingsFrame({routes, children}: {routes: ReadonlyArray<NavigationItem>; children: ReactNode}) {
   return <Page title="Settings" description="Manage your workspace and access.">
-    <nav className="oc-settings-nav" aria-label="Settings">{routes.map(route => <NavLink key={route.path} to={route.path} end className="oc-settings-link">{route.label}</NavLink>)}</nav>
+    <PageNavigation className="oc-settings-nav" label="Settings">{routes.map(route => <NavLink key={route.path} to={route.path} end className="oc-settings-link">{route.label}</NavLink>)}</PageNavigation>
     {children}
   </Page>;
 }

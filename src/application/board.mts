@@ -9,6 +9,12 @@ export function authorizedBoard({authorize, admit = authorize,...options}:Parame
 }) {
   const board=createBoard(options),resolve=authorize;
   return {
+    async searchConsole(principal: Principal, input: Parameters<typeof board.searchConsole>[1]) {
+      const scope = await admit(principal);
+      const result = await board.searchConsole(scope, input);
+      await resolve(scope, scope.tenantId);
+      return result;
+    },
     async searchCandidates(principal: Principal, query: string, limit: number) {
       const scope = await admit(principal);
       const result = await board.searchCandidates(scope, query, limit);

@@ -191,8 +191,8 @@ implementations and fixtures below to see how a screen fits together.
 [AppShell](web-v2/src/app.tsx) supplies the desktop sidebar, docked account
 menu and mobile drawer. [Page](web-v2/src/design/components.tsx) keeps the title
 above the scrolling body on desktop. On phones, the title and actions scroll
-with the page below the navigation row. The message board keeps a compact
-channel heading above its independently scrolling messages. Use the same
+with the page below the navigation row. The message board keeps its page heading above an independently scrolling
+channel list and conversation. On phones, Browse channels opens the list beside the search field. Use the same
 centered page grid for content, loading and failure. Bound forms and prose
 inside that grid. A Section adds its own top rule. Check what already separates
 the content before adding one.

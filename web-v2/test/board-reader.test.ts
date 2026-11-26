@@ -145,10 +145,12 @@ test('conversation grouping keeps channels, identities, dates and selected messa
   const report = {messages: [second, first], next: null, topicSummaries: []};
   const render = (stream: boolean) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(BoardContent, {report, stream})));
   const all = render(true), channel = render(false);
-  assert.match(all, /oc-board-message-topic.*<h3[^>]*>codex:release<\/h3>/s);
-  assert.equal(all.match(/class="oc-agent-avatar"/g)?.length, 1, 'one face per grouped author');
+  assert.match(all, /<h3[^>]*>codex:release<\/h3>.*oc-board-message-topic/s);
+  assert.equal(all.match(/class="oc-agent-avatar /g)?.length, 1, 'one face per grouped author');
   assert.doesNotMatch(channel, /oc-board-message-topic|Showing \d+ messages/);
-  assert.equal(all.match(/oc-agent-identity-\d+/)?.[0], channel.match(/oc-agent-identity-\d+/)?.[0]);
+  const ink=all.match(/class="oc-agent-avatar (oc-agent-[a-z]+)"/)?.[1];
+  assert.ok(ink);
+  assert.ok(all.includes('<h3 class="'+ink+'">') && channel.includes('<h3 class="'+ink+'">'));
   assert.ok(all.indexOf('post:1') < all.indexOf('post:2'));
 });
 

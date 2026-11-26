@@ -35,7 +35,7 @@ test('the same displayed author keeps its pixel tile across registrations and ol
 
   const rows = await faces.first().evaluate(svg => {
     const layers = Array.from(svg.querySelectorAll<SVGGeometryElement>('rect, path')).reverse();
-    const symbols: Record<string, string> = {'#241c35': '.', '#b5a0ff': 'x', '#fc8c9a': '+'};
+    const symbols: Record<string, string> = {'#241c35': '.', 'currentColor': 'x', '#fc8c9a': '+'};
     return Array.from({length: 12}, (_, y) => Array.from({length: 12}, (_, x) => {
       const pixel = layers.find(layer => layer.isPointInFill(new DOMPoint(x + 0.5, y + 0.5)));
       return symbols[pixel?.getAttribute('fill') ?? ''] ?? '?';
@@ -56,7 +56,7 @@ test('wide workspace margins scroll the board conversation', async ({page}) => {
   await page.evaluate(() => document.fonts.ready);
   const scrollTop = () => stream.evaluate(element => element.scrollTop);
   await stream.evaluate(element => { element.scrollTop = 0; });
-  const box = await page.getByRole('main').boundingBox();
+  const box = await stream.boundingBox();
   if (!box) throw new Error('Expected a visible workspace');
   await page.mouse.move(box.x + 8, box.y + box.height / 2);
   await page.mouse.wheel(0, 240);
@@ -80,14 +80,15 @@ test('each outside margin scrolls its adjacent reader when a board thread is ope
   await expect(replies.locator('.oc-board-post')).toHaveCount(21);
   await page.evaluate(() => document.fonts.ready);
   await channel.evaluate(element => { element.scrollTop = 0; });
-  const box = await page.getByRole('main').boundingBox();
-  if (!box) throw new Error('Expected a visible workspace');
+  const box = await channel.boundingBox();
+  if (!box) throw new Error('Expected a visible channel');
   await page.mouse.move(box.x + 8, box.y + box.height / 2);
   await page.mouse.wheel(0, 240);
   await expect.poll(() => channel.evaluate(element => element.scrollTop)).toBeGreaterThan(50);
   expect(await replies.evaluate(element => element.scrollTop)).toBe(0);
   const channelTop = await channel.evaluate(element => element.scrollTop);
-  await page.mouse.move(box.x + box.width - 8, box.y + box.height / 2);
+  const right=await replies.boundingBox(); expect(right).toBeTruthy();
+  await page.mouse.move(right!.x + right!.width - 8, right!.y + right!.height / 2);
   await page.mouse.wheel(0, 240);
   await expect.poll(() => replies.evaluate(element => element.scrollTop)).toBeGreaterThan(50);
   expect(await channel.evaluate(element => element.scrollTop)).toBe(channelTop);
@@ -160,30 +161,25 @@ for (const width of [1440, 390]) {
       return route.fulfill({json: {messages: mixed.filter(post => !query.get('channel') || post.topic === query.get('channel')).toReversed(), next: null, topicSummaries: ['engineering', 'release'].map(topic => ({topic, posts: 4, latest: {name: 'codex:one', timestamp: mixed.at(-1)!.timestamp}}))}});
     });
     await page.goto('/messages');
-    await expect(page.getByRole('heading', {name: 'All channels', exact: true})).toBeVisible();
+    await expect(page.getByRole('heading', {name: 'Message board', level:1})).toBeVisible();
     await expect(page.locator('.oc-board-post')).toHaveCount(8);
     await expect(page.getByText(/Showing \d+ messages/)).toHaveCount(0);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(8);
     const header = page.locator('.oc-board-post-header').first();
-    const channelBox = (await header.getByRole('link').boundingBox())!;
+    const channelBox = (await header.locator('.oc-board-message-topic').boundingBox())!;
     const authorBox = (await header.getByRole('heading').boundingBox())!;
-    expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(authorBox.y);
+    expect(channelBox.x).toBeGreaterThan(authorBox.x + authorBox.width);
     const hues = await page.locator('.oc-board-post-header h3').evaluateAll(nodes => nodes.map(node => ({name: node.textContent, color: getComputedStyle(node).color})));
     expect(new Set(hues.map(item => item.color)).size).toBe(2);
     await page.screenshot({path: info.outputPath(`all-topics-${width}.png`)});
-    const openNavigation = async () => {if (width < 800) await page.getByRole('button', {name: 'Open workspace navigation', exact: true}).click();};
-    await openNavigation();
-    await page.getByRole('navigation', {name: 'Message board channels'}).getByRole('link', {name: 'engineering', exact: true}).click();
-    await expect(page.getByRole('heading', {name: '# engineering'})).toBeVisible();
+    if (width < 800) await page.getByRole('button', {name:'Browse channels'}).click();
+    await page.getByRole('navigation', {name:'Message board channels',exact:true}).getByRole('link', {name: 'engineering', exact: true}).click();
+    await expect(page).toHaveURL(/channel=engineering$/);
     await expect(page.locator('.oc-board-post')).toHaveCount(4);
     await expect(page.locator('.oc-board-message-topic')).toHaveCount(0);
     await page.screenshot({path: info.outputPath(`channel-${width}.png`)});
     expect(await page.locator('.oc-board-post-header h3').first().evaluate(node => getComputedStyle(node).color)).toBe(hues.find(item => item.name === 'codex:one')!.color);
-    await openNavigation();
-    const back = page.getByRole('link', {name: 'Back', exact: true});
-    await expect(back).toHaveText('Back'); await expect(back.locator('svg')).toHaveCount(1);
-    await back.click();
-    await openNavigation();
+    if (width < 800) await page.getByRole('button', {name:'Open workspace navigation',exact:true}).click();
     await page.getByRole('link', {name: 'Search playground', exact: true}).click();
     await expect(page).toHaveURL('/search');
     await expect(page.getByRole('heading', {name: 'Search playground'})).toBeVisible();
@@ -249,13 +245,13 @@ for(const width of [1440,390])test(`thread pane preserves combined channel histo
  const channel=page.locator('.oc-board-channel'),scroll=channel.getByLabel('Messages',{exact:true});
  await expect(channel.locator('.oc-board-post')).toHaveCount(39);
  const root=channel.locator('[data-board-anchor="post:30"]');await root.scrollIntoViewIfNeeded();
- const trigger=root.getByRole('link',{name:'Show thread for message #30',exact:true});await trigger.focus();
+ const trigger=channel.getByRole('link',{name:'Show thread for message #30',exact:true});await trigger.focus();
  const before=await scroll.evaluate(node=>node.scrollTop),element=await root.elementHandle();
  await page.keyboard.press('Enter');await expect(page).toHaveURL('/messages?view=board&thread=30');
  await expect(page.getByRole('complementary',{name:'Thread',exact:true})).toBeVisible();
  expect(await element!.evaluate(node=>node.isConnected)).toBe(true);
  await expect(channel.locator('.oc-board-post')).toHaveCount(39);
- if(width>1100){const left=(await channel.boundingBox())!,right=(await page.locator('#board-thread').boundingBox())!;expect(right.x).toBeGreaterThan(left.x+left.width);}
+ if(width>1100){const left=(await channel.boundingBox())!,right=(await page.locator('#board-thread').boundingBox())!;expect(right.x).toBeGreaterThanOrEqual(left.x+left.width-1);}
  await page.getByRole('button',{name:'Close thread',exact:true}).click();
  await expect(trigger).toBeFocused();expect(await scroll.evaluate(node=>node.scrollTop)).toBeCloseTo(before,0);
  await page.goBack();await expect(page.locator('#board-thread')).toBeVisible();
@@ -303,4 +299,26 @@ for(const width of [1440,390])test(`system announcement thread navigation and re
  await page.screenshot({path:info.outputPath(`announcement-thread-${width}.png`)});
  await page.route('**/api/console/board?*',route=>route.fulfill({status:403,json:{error:'Workspace access revoked'}}));
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.locator('.oc-board-post')).toHaveCount(0);
+});
+
+test('board search finds a reply and returns to its results after opening the thread',async({page})=>{
+  const root={...messages[0]!,topic:'release',threadId:1,text:'Release planning'};
+  const reply={...root,id:75,text:'The rollback is ready'};
+  await page.route('**/api/console/board?*',route=>{
+    const q=new URL(route.request().url()).searchParams;
+    if(q.has('query'))return route.fulfill({json:{messages:[reply],topicSummaries:[],next:null,searchPage:{total:1,cursor:null}}});
+    if(q.has('threadId'))return route.fulfill({json:{threadRoot:root,messages:[reply],topicSummaries:[],next:null}});
+    return route.fallback();
+  });
+  await page.goto('/messages');
+  const search=page.getByRole('searchbox',{name:'Search channels and messages'});
+  await search.fill('rollback');
+  const results=page.getByRole('region',{name:'Matching messages'});
+  await expect(results.getByRole('heading')).toHaveText('1 message');
+  await expect(results.locator('mark:visible')).toHaveText('rollback');
+  await results.getByRole('link').click();
+  await expect(page.getByRole('complementary',{name:'Thread'}).locator('[data-board-anchor="post:75"]')).toBeFocused();
+  await page.getByRole('button',{name:'Close thread'}).click();
+  await expect(search).toHaveValue('rollback');
+  await expect(results.getByRole('link')).toBeVisible();
 });

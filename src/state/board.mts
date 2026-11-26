@@ -22,7 +22,7 @@ export interface BoardReader {
   messagesByIds(ids:number[]):Promise<BoardMessage[]>;
   agentMessagesByIds(ids:number[],fields?:MessageField[]):Promise<ReturnType<typeof selectMessage>[]>;
   agentNames(ids:string[]):Promise<Record<string,string>>;
-  replyCounts(roots:number[]):Promise<Record<number,number>>;
+  replySummaries(roots:number[]):Promise<Record<number,{count:number;names:string[]}>>;
   messages(input:{before?:number;after?:number;through?:number;topic?:string;threadId?:number;rootsOnly?:boolean;limit:number;descending?:boolean}):Promise<BoardMessage[]>;
   participant(id:string):Promise<Participant|null>;
   participants():Promise<Record<string,Participant>>;
@@ -57,7 +57,7 @@ export interface BoardTransaction extends BoardReader {
   append(message:Omit<BoardMessage,'id'>):Promise<BoardMessage>;
   addUsage(inputBytes:number,outputBytes:number):Promise<void>;
 }
-export interface BoardSearchInput {query:string;topics:string[];agents:string[];authors:string[];since?:string;until?:string;sort:'relevance'|'newest'|'oldest';after?:number;before?:number;thread?:number;rootsOnly?:boolean;limit:number;facets:Array<'topic'|'agent'|'author'|'day'>;facetSize:number;cursor?:string}
+export interface BoardSearchInput {query:string;includeNames?:boolean;topics:string[];agents:string[];authors:string[];since?:string;until?:string;sort:'relevance'|'newest'|'oldest';after?:number;before?:number;thread?:number;rootsOnly?:boolean;limit:number;facets:Array<'topic'|'agent'|'author'|'day'>;facetSize:number;cursor?:string}
 export interface SearchFacet {values:Array<{value:string;count:number;name?:string}>;other:number}
 interface SearchSnapshot {through:number;total:number;facets:Record<string,SearchFacet>}
 interface SearchBoundary {rank:number;stamp:number;id:number}
@@ -172,11 +172,14 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         ) names ORDER BY agent,priority,id DESC`,[ids]);
         return Object.fromEntries(rows.rows.map(row=>[row.agent,row.name]));
       },
-      async replyCounts(roots){
+      async replySummaries(roots){
         if(roots.length>21||roots.some(id=>!Number.isSafeInteger(id)||id<1))throw fail('Invalid thread count selection',400);
         if(!roots.length)return {};
-        const rows=await query("SELECT (record->>'threadId')::bigint AS root,count(*) AS replies FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND record ? 'threadId' AND (record->>'threadId')::bigint=ANY($3::bigint[]) GROUP BY (record->>'threadId')::bigint",[roots]);
-        return Object.fromEntries(rows.rows.map(row=>[Number(row.root),Number(row.replies)]));
+        const rows = await query(`SELECT root, sum(replies) AS count, (array_agg(name ORDER BY first_reply))[1:4] AS names
+          FROM (SELECT (record->>'threadId')::bigint AS root, name, count(*) AS replies, min(id) AS first_reply
+            FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND record ? 'threadId'
+            AND (record->>'threadId')::bigint=ANY($3::bigint[]) GROUP BY root,name) participants GROUP BY root`,[roots]);
+        return Object.fromEntries(rows.rows.map(row=>[Number(row.root),{count:Number(row.count),names:row.names}]));
       },
       async messages({before,after,through,topic,threadId,rootsOnly=false,limit,descending=false}){if(!Number.isSafeInteger(limit)||limit<1||limit>250)throw fail('Invalid board page');return (await query(`SELECT record FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND ($3::bigint IS NULL OR id<$3) AND ($4::bigint IS NULL OR id>$4) AND ($5::bigint IS NULL OR id<=$5) AND ($6::text IS NULL OR topic=$6) ${threadId!==undefined?"AND record ? 'threadId'":''} AND ($8::bigint IS NULL OR (record->>'threadId')::bigint=$8) AND (NOT $9::boolean OR NOT record ? 'threadId') ORDER BY id ${descending?'DESC':'ASC'} LIMIT $7`,[before??null,after??null,through??null,topic??null,limit,threadId??null,rootsOnly])).rows.map(row=>row.record);},
       async blockPublicationAndQueueErasure(intent){
@@ -338,7 +341,7 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
       // Resolve matching IDs as one scoped set. A correlated anti-join can scan
       // the chunks relation once per message when PostgreSQL chooses a weak plan.
       // Distinct terms retain all-term matching across separate message chunks.
-      const filters=`cardinality($9::text[])>=0 AND m.namespace=$1 AND m.tenant_hash=$2 AND m.id<=$3 AND(cardinality($4::text[])=0 OR m.topic=ANY($4)) AND(cardinality($5::text[])=0 OR m.agent=ANY($5) OR lower(m.name)=ANY(SELECT lower(regexp_replace(handle,'^@','')) FROM unnest($5::text[]) handle)) AND(cardinality($6::text[])=0 OR m.author=ANY($6)) AND($7::bigint IS NULL OR m.stamp>=$7) AND($8::bigint IS NULL OR m.stamp<=$8) ${args.after!==undefined?`AND m.id>${args.after}`:''} ${args.before!==undefined?`AND m.id<${args.before}`:''} ${args.thread!==undefined?`AND (m.id=${args.thread} OR (m.record->>'threadId')::bigint=${args.thread})`:''} ${args.rootsOnly?`AND NOT m.record ? 'threadId'`:''} ${args.query?`AND cardinality($9::text[])>0 AND m.id=ANY(ARRAY(SELECT message_id FROM matched))`:''}`;
+      const filters=`cardinality($9::text[])>=0 AND m.namespace=$1 AND m.tenant_hash=$2 AND m.id<=$3 AND(cardinality($4::text[])=0 OR m.topic=ANY($4)) AND(cardinality($5::text[])=0 OR m.agent=ANY($5) OR lower(m.name)=ANY(SELECT lower(regexp_replace(handle,'^@','')) FROM unnest($5::text[]) handle)) AND(cardinality($6::text[])=0 OR m.author=ANY($6)) AND($7::bigint IS NULL OR m.stamp>=$7) AND($8::bigint IS NULL OR m.stamp<=$8) ${args.after!==undefined?`AND m.id>${args.after}`:''} ${args.before!==undefined?`AND m.id<${args.before}`:''} ${args.thread!==undefined?`AND (m.id=${args.thread} OR (m.record->>'threadId')::bigint=${args.thread})`:''} ${args.rootsOnly?`AND NOT m.record ? 'threadId'`:''} ${args.query?`AND cardinality($9::text[])>0 AND (m.id=ANY(ARRAY(SELECT message_id FROM matched)) ${args.includeNames?"OR tsvector_to_array(to_tsvector('simple',m.name)) @> $9::text[]":''})`:''}`;
       const ranking=args.query&&args.sort==='relevance'?`(SELECT coalesce(sum(ts_rank(c.words,plainto_tsquery('simple',$10))),0)::float8 FROM opencrawl_board_search_chunks c WHERE c.namespace=m.namespace AND c.tenant_hash=m.tenant_hash AND c.message_id=m.id)`:'0::float8';
       if(!cursor){snapshot.total=Number((await client.query(`${withMatches}SELECT count(*) total FROM opencrawl_board_messages m WHERE ${filters}`,values)).rows[0].total);snapshot.facets={};
         for(const field of new Set(args.facets)){const expression=field==='day'?"to_char(to_timestamp(m.stamp/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD')":'m.'+field;

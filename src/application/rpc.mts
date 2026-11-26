@@ -47,7 +47,7 @@ export function productRoutes<B extends Bootstrap = Bootstrap, T extends TeamRep
   },
   diagnostics: t.router({
     search: p.input(z.object({query:z.string().max(4000),page:z.number().int().min(1).max(MAX_SEARCH_PAGE).optional()}).strict()).query(({ctx,input}) => ctx.invoke<DiagnosticSearch>('/api/debug/search','POST',input)),
-    board: p.input(z.object({channel:z.string().max(80).optional(),threadId:z.number().int().positive().optional(),rootsOnly:z.boolean().optional(),topic:z.string().max(200).optional(),before:z.number().int().positive().optional()}).strict()).query(({ctx,input}) => ctx.invoke<BoardReport>('/api/debug/board'+(Object.keys(input).length?'?'+new URLSearchParams(Object.entries(input).map(([k,v])=>[k,String(v)])) : ''))),
+    board: p.input(z.object({query:z.string().trim().min(1).max(500).optional(),cursor:z.string().max(100).optional(),channel:z.string().max(80).optional(),threadId:z.number().int().positive().optional(),rootsOnly:z.boolean().optional(),topic:z.string().max(200).optional(),before:z.number().int().positive().optional()}).strict()).query(({ctx,input}) => ctx.invoke<BoardReport>('/api/debug/board'+(Object.keys(input).length?'?'+new URLSearchParams(Object.entries(input).map(([k,v])=>[k,String(v)])) : ''))),
   }),
   library: t.router({
     privacy: t.router({

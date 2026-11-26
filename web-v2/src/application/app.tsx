@@ -9,7 +9,6 @@ import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
 import {SetupPage} from './setup.tsx';
 import {PrivacySettings} from '../pages/privacy-settings.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
-import {BoardNavigation} from '../pages/board.tsx';
 import {SearchPlaygroundPage} from '../pages/diagnostics.tsx';
 import {DocumentFrame, ProductDocument, readBrowserDocument} from './documents.tsx';
 
@@ -81,9 +80,6 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     if (!signal.aborted) navigate(next.setup || next.onboarding.completed ? '/' : next.onboarding.next);
   };
   const onboarding = location.pathname.startsWith('/onboarding');
-  const boardQuery = new URLSearchParams(location.search);
-  const boardNavigation = location.pathname === '/messages' && boardQuery.get('nav') !== 'workspace' && boardQuery.get('view') !== 'search';
-  const boardTopic = boardQuery.get('view') === 'stream' ? '' : (boardQuery.get('channel')??boardQuery.get('topic'))?.trim() || '';
   const machineSetup = data ? Boolean(data.setup) : document.getElementById('root')?.dataset.setupMode !== 'guided';
   const canSetUpReplicas = data?.workspace.role === 'admin' && data.canInstallReplicas === true && Boolean(api.replicasSetup);
   const extensionRoutes=extensions?.routes?.({data, activated}) ?? [];
@@ -102,7 +98,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     {path:'/memories',label:'Memories',icon:'memories',element:<MemoriesPage adapter={libraryAdapter}/>,pending:feedback => <PendingPage bodyClassName="oc-library" title="Memories" description="Memory files your agents keep, captured so teammates’ agents can use them.">{feedback}</PendingPage>},
     {path:'/sources',label:'Integrations',icon:'sources',navigation:data ? data.workspace.role === 'admin' : initialIntegrationsNav && !accessDenied,element:<SourcesPage adapter={api} canSetUpReplicas={canSetUpReplicas} canConfigure={data?.workspace.role === 'admin'}/>,pending:feedback => <PendingPage bodyClassName="oc-connections" title="Integrations" description="Connect your tools and OpenCrawl keeps their content in sync for your agents.">{feedback}</PendingPage>},
     {path:'/usage',label:'Usage',navigation:false,element:<Navigate to={'/' + location.search} replace/>},
-    {path:'/messages',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title={boardTopic ? '# ' + boardTopic : 'All channels'}>{feedback}</PendingPage>},
+    {path:'/messages',label:'Message board',icon:'diagnostics',element:<DiagnosticsPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Message board">{feedback}</PendingPage>},
     {path:'/search',label:'Search playground',icon:'search',element:<SearchPlaygroundPage adapter={dataAdapter}/>,pending:feedback => <PendingPage title="Search playground">{feedback}</PendingPage>},
     {path:'/agent-setup',label:'Agent setup',icon:'terminal',navigation:!machineSetup,element:data?.setup ? <Navigate to={'/setup' + location.hash} replace/> : data ? <AgentOnboarding key={data.cacheScope} adapter={onboardingAdapter} mcpUrl={data.mcpUrl} setupPrompt={data.setupPrompt} presentation="workspace"/> : null,pending:feedback => <PendingPage title="Agent setup">{feedback}</PendingPage>},
     {path:'/settings/team',label:'Team',icon:'team',group:'settings',element:<TeamPage embedded adapter={api} footer={extensions?.teamFooter} onWorkspaceRenamed={rename}/>,pending:feedback => <TeamLoadingPage embedded>{feedback}</TeamLoadingPage>},
@@ -134,7 +130,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     <Route path="/onboarding/invite" element={<InviteOnboarding adapter={onboardingAdapter} canInvite={data.canInvite} invitationDelivery={data.invitationPolicy?.delivery} returnToAgent={Boolean(data.invitationPolicy?.beforeAgentSetup && !data.onboarding.completed && data.onboarding.next === '/onboarding')} onComplete={async path => {await refresh();navigate(path);}}/>}/>
   </Routes></FocusedFrame></ConsoleDataProvider>;
   const shown = extensions?.decorateRoute ? routes.map(route => extensions.decorateRoute!(route, data)) : routes;
-  return <ConsoleDataProvider scopeKey={data.cacheScope} initial={seeds} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} workspaceNotice={extensions?.workspaceNotice?.(data)} routes={shown} footer={<SignOut/>} navigationLabel={boardNavigation ? 'Message board channels' : undefined} navigation={boardNavigation ? closeNavigation => <BoardNavigation adapter={dataAdapter} topic={boardTopic} closeNavigation={closeNavigation}/> : undefined}/></ConsoleDataProvider>;
+  return <ConsoleDataProvider scopeKey={data.cacheScope} initial={seeds} onAccessFailure={invalidateAccess}><WorkspaceInvalidation/><AppShell workspace={data.workspace} workspaceNotice={extensions?.workspaceNotice?.(data)} routes={shown} footer={<SignOut/>}/></ConsoleDataProvider>;
 }
 /** Members finish their personal setup without entering workspace administration. */
 function FinishMemberOnboarding({api,onComplete}:{api:Pick<ProductApi,'finishOnboarding'>;onComplete:()=>Promise<void>}) {

@@ -11,7 +11,10 @@ export function fixtureBoardState(){
       async blockPublication(id){if(!data.blocked.includes(id))data.blocked.push(id);},
       async blockedPublications(ids){return ids.filter(id=>data.blocked.includes(id));},
       async publicationBlocked(id){return data.blocked.includes(id);},
-      async replyCounts(roots){return Object.fromEntries(roots.map(id=>[id,data.messages.filter(m=>m.threadId===id).length]));},
+      async replySummaries(roots){return Object.fromEntries(roots.map(id=>{
+        const replies=data.messages.filter(m=>m.threadId===id);
+        return [id,{count:replies.length,names:[...new Set(replies.map(m=>m.name))].slice(0,4)}];
+      }));},
       async headBefore(time){return data.messages.filter(m=>m.timestamp<time).at(-1)?.id??0;},
       async metadata(){return {head:data.head,usage:copy(data.usage),participantsPresent:data.participantsPresent};},
       async message(id){return copy(data.messages.find(m=>m.id===id)??null);},async messages(input){return copy(messages(input));},

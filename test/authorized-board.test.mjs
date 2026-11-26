@@ -15,3 +15,11 @@ test('reusing request admission never skips final authorization or permits a wor
   revoke=true;await assert.rejects(board.topics(principal,{workspace:'org_a'}),/revoked/);
   assert.equal(checks,2);
 });
+
+test('board search rechecks access after reading the scoped index', async()=>{
+  const principal={tenantId:'local',userId:'member'};
+  let revoked=false;
+  const board=authorizedBoard({state:{board:{async search(){revoked=true;return {messages:[],total:0,next:null};}}},
+    admit:async p=>p,authorize:async p=>{if(revoked)throw Object.assign(Error('Revoked'),{status:403});return p;}});
+  await assert.rejects(board.searchConsole(principal,{query:'release'}),{status:403});
+});

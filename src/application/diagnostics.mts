@@ -4,6 +4,7 @@ import type {Principal} from '../identity/types.mjs';
 import type {createSessionSearch} from '../sessions/search.mjs';
 import type {createConnectorResolver} from '../integrations/resolver.mjs';
 import type {createBoard} from '../board/board.mjs';
+import {z} from 'zod';
 import {boardReadSchema} from '../board/board.mjs';
 import {errorInfo} from '../errors.mjs';
 import type {DiagnosticSearch} from './reports.mjs';
@@ -11,7 +12,7 @@ import {excerpt} from '../search/presentation.mjs';
 export interface DiagnosticOptions {
   search?: ReturnType<typeof createSessionSearch> | null;
   connectors?: ReturnType<typeof createConnectorResolver> | null;
-  board?: Pick<ReturnType<typeof createBoard>, 'read'> & Partial<Pick<ReturnType<typeof createBoard>, 'searchCandidates' | 'agent'>>;
+  board?: Pick<ReturnType<typeof createBoard>, 'read'> & Partial<Pick<ReturnType<typeof createBoard>, 'searchCandidates' | 'searchConsole' | 'agent'>>;
 }
 async function nameSessionHits(result: DiagnosticSearch, principal: Principal, search: NonNullable<DiagnosticOptions['search']>) {
   if (!search.resultTitles) return;
@@ -53,6 +54,16 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
   try {
       if (route.name === 'debug-board') {
         const json = (status: number, value: unknown) => respond(status, JSON.stringify(value), 'application/json');
+        if (url.searchParams.has('query')) {
+          const params = url.searchParams;
+          const parsed = z.strictObject({query:z.string().trim().min(1).max(500), cursor:z.string().min(1).max(100).optional()}).safeParse(Object.fromEntries(params));
+          if (!parsed.success || [...params.keys()].some(key => params.getAll(key).length !== 1)) return json(400, {error:'INVALID_QUERY'});
+          if (!board?.searchConsole) return json(503, {error:'BOARD_NOT_CONFIGURED'});
+          const result = await board.searchConsole(principal, parsed.data);
+          const status = await revalidate();
+          if (status !== 200) return json(status, {error:status === 503 ? 'AUTH_UNAVAILABLE' : 'WORKSPACE_ACCESS_DENIED'});
+          return json(200, result);
+        }
         if ([...url.searchParams.keys()].some(key => !['channel','topic','threadId','rootsOnly', 'before'].includes(key) || url.searchParams.getAll(key).length !== 1)) return json(400, {error: 'INVALID_QUERY'});
         const input = boardReadSchema.safeParse({
           ...(url.searchParams.has('channel') ? {channel: url.searchParams.get('channel')} : {}),

@@ -14,7 +14,7 @@ export function DiagnosticsPage({adapter}: {adapter: ConsoleDataAdapter; canInsp
   const id = query.get('message') || '', parsed = /^\d+$/.test(id) ? Number(id) : NaN;
   const message = Number.isSafeInteger(parsed) && parsed > 0 && parsed < Number.MAX_SAFE_INTEGER ? parsed : undefined;
   const thread=Number(query.get('thread')),threadId=Number.isSafeInteger(thread)&&thread>0?thread:undefined;
-  return <Page title={topic ? '# ' + topic : 'All channels'} className="oc-conversation-page"><BoardWorkspace key={topic} adapter={adapter} topic={topic} message={message} threadId={threadId}/></Page>;
+  return <Page title="Message board" className="oc-conversation-page"><BoardWorkspace key={topic} adapter={adapter} topic={topic} query={query.get('q') ?? ''} message={message} threadId={threadId}/></Page>;
 }
 
 export function SearchPlaygroundPage({adapter}: {adapter: ConsoleDataAdapter; canInspect?: boolean}) {

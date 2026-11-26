@@ -46,10 +46,11 @@ export interface DiagnosticSearch {
   memories?: SearchResponse & {truncated?: boolean};
   board?: SearchResponse;
 }
-export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; channel?: string; threadId?: number; system?: true; replyCount?:number}
+export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; channel?: string; threadId?: number; system?: true; replyCount?:number; replyNames?:string[]}
 export interface BoardReport {
   messages: BoardMessage[];
   threadRoot?: BoardMessage;
+  searchPage?: {total:number; cursor:string|null};
   channels?: string[];
   channelSummaries?: Array<{channel:string;readOnly:boolean;posts:number;latest:{timestamp:number;name:string}}>;
   topicSummaries: Array<{topic: string; posts: number; latest: {timestamp: number; name: string}}>;
@@ -64,5 +65,5 @@ export interface ConsoleDataAdapter {
   usageDetails?(signal: AbortSignal, range?: import('./usage-range.mjs').UsageRange): Promise<UsageDetails & {cacheScope: string}>;
   usage(signal: AbortSignal): Promise<UsageReport>;
   search(query: string, signal: AbortSignal, page?: number): Promise<DiagnosticSearch>;
-  board(input: {channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
+  board(input: {query?:string; cursor?:string; channel?:string; topic?: string; threadId?:number; rootsOnly?:boolean; before?: number}, signal: AbortSignal): Promise<BoardReport>;
 }
