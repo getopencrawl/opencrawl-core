@@ -91,7 +91,7 @@ export function createGitHubApp({appId, slug, clientId, clientSecret, privateKey
     },
     /** Repositories the installation was granted (the owner's choice at install). */
     async repositories(installationId: string) {
-      const created = await call<{token: string}>(`/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {method: 'POST', token: await appToken()});
+      const created = await call<{token: string}>(`/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {method: 'POST', token: await appToken(), body: {permissions: {metadata: 'read'}}});
       if (created.status !== 201) throw fail('installation token', created);
       const repos: GithubRepository[] = [];
       for (let page = 1; page <= 50; page++) {
