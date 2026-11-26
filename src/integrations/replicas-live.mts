@@ -50,6 +50,10 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
   database:ApplicationDatabase;ready:()=>Promise<void>;key:Uint8Array;ingest:ReplicasIngest;schedule:(job:ReplicasRepairJob)=>Promise<unknown>;request?:typeof fetch;tenantId?:string;
 }){
   const envelope=sealedEnvelope(key),namespace=database.namespace;
+  // Ingest can read resource controls through the same pool while it holds
+  // the binding transaction. Leave connections for those reads and other jobs.
+  let available=Math.max(1,Math.floor((database.pool.options.max??8)/2));
+  const writers:Array<()=>void>=[];
   function collector(scope:ReplicasLiveScope,stop:AbortSignal){
     if(!scope.tenantId?.trim()||!uuid.safeParse(scope.organizationId).success)throw new Error('Explicit Replicas live capture scope required');
     const binding=[namespace,scope.tenantId,scope.organizationId];
@@ -57,11 +61,20 @@ export function createReplicasLiveCapture({database,ready,key,ingest,schedule,re
       AND state->'organization'->>'id'=$3 AND ${connected}`;
     const identityPath=JSON.stringify([namespace,scope.tenantId]);
     async function hold(active:Connection,action:(tx:ApplicationTransaction)=>Promise<void>){
-      await database.transaction(async tx=>{
-        const allowed=await tx.query(connectionSql+" AND state->>'id'=$4 AND credential=$5 FOR SHARE",[...binding,active.id,active.credential]);
-        if(!allowed.rowCount)throw new Error('Replicas live capture authorization changed');
-        await action(tx);
-      });
+      if(available)available--;
+      else await new Promise<void>(resolve=>writers.push(resolve));
+      try{
+        stop.throwIfAborted();
+        await database.transaction(async tx=>{
+          const allowed=await tx.query(connectionSql+" AND state->>'id'=$4 AND credential=$5 FOR SHARE",[...binding,active.id,active.credential]);
+          if(!allowed.rowCount)throw new Error('Replicas live capture authorization changed');
+          stop.throwIfAborted();
+          await action(tx);
+        });
+      }finally{
+        const waiting=writers.shift();
+        if(waiting)waiting();else available++;
+      }
     }
     async function capture(tx:ApplicationTransaction,workspace:string,chat:string,history:ReplicasHistory,mode:'history'|'live',title?:string,catalog:Record<string,unknown>={},events:SessionEvent[]=replicasRecords(chat,history)){
       const identity=replicasSession(scope.tenantId,scope.organizationId,workspace,chat);

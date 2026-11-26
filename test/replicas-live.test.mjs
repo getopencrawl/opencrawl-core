@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {ReplicasProviderError} from '../dist/src/integrations/replicas-api.mjs';
 import {MockActivityEnvironment,TestWorkflowEnvironment} from '@temporalio/testing';
 import {Worker} from '@temporalio/worker';
@@ -340,8 +341,13 @@ test('workers discover existing and new API-key bindings, share locks, and captu
       options.signal.addEventListener('abort',()=>{streams.delete(account.tenantId);controller.close();},{once:true});
     }}),{headers:{'content-type':'text/event-stream'}});
   };
-  const service=tenantId=>createReplicasImport({database,key,request,tenantId,schedule:async()=>{},ingest:async(p,b)=>writes.push([p.tenantId,b.owner.userId,b.events[0].id])});
-  const first=service(),second=service(),single=service(accounts[0].tenantId);
+  const peer=createApplicationDatabase({connectionString:postgresUrl,namespace:database.namespace,max:4,connectionTimeoutMillis:1500});
+  const service=(db,tenantId)=>createReplicasImport({database:db,key,request,tenantId,schedule:async()=>{},ingest:async(p,b)=>{
+    // Hosted storage checks resource access while the binding transaction is open.
+    await db.pool.query('SELECT 1');
+    writes.push([p.tenantId,b.owner.userId,b.events[0].id]);
+  }});
+  const first=service(database),second=service(peer),single=service(database,accounts[0].tenantId);
   const connect=account=>first.action(account,{action:'connect',apiKey:account.key});
   for(const account of accounts.slice(0,-1))await connect(account);
   const one=new AbortController(),two=new AbortController(),local=new AbortController();
@@ -373,5 +379,6 @@ test('workers discover existing and new API-key bindings, share locks, and captu
   }finally{
     one.abort();two.abort();local.abort();
     await Promise.all([firstRun,secondRun,localRun]);
+    await peer.close();
   }
 });
