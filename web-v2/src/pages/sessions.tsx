@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, ScrollControl} from '../design/components.js';
 import {Markdown} from '../design/markdown.js';
 import {Icon} from '../design/icons.js';
@@ -210,20 +210,38 @@ function TranscriptBlock({block, agent, user}: {block: Block; agent: string; use
 
 function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionRef}) {
   const navigate = useNavigate(), deny = useConsoleAccessFailure();
-  const {data: loaded, error, loading, retry, replace} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, signal => adapter('sessions/read', reference, signal), 'This session could not load. Try again.');
+  const readPage = (signal: AbortSignal, cursor?: string) => adapter('sessions/read', {...reference, direction: 'backward', cursor}, signal);
+  const {data: loaded, error, loading, retry, replace} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, readPage, 'This session could not load. Try again.');
   const mutate = useLibraryMutation(adapter);
-  const [more, setMore] = useState<{events: TranscriptEvent[]; next: string | null; total: number} | null>(null);
+  const [older, setOlder] = useState<Pick<SessionTranscript, 'events' | 'next' | 'total'> | null>(null);
   const [moreState, setMoreState] = useState({busy: false, error: ''}), [visibility, setVisibility] = useState<Visibility | null>(null);
   const [details, setDetails] = useState(false), [readFailure, setReadFailure] = useState('');
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const reader = useRef<HTMLDivElement>(null), transcript = useRef<HTMLDivElement>(null);
-  const controller = useRef<AbortController | null>(null), end = useRef<HTMLDivElement>(null), panelHeading = useRef<HTMLHeadingElement>(null), info = useRef<HTMLButtonElement>(null), jumpPending = useRef(false);
+  const controller = useRef<AbortController | null>(null), panelHeading = useRef<HTMLHeadingElement>(null), info = useRef<HTMLButtonElement>(null);
+  const bottomOffset = useRef<number | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {if (details) panelHeading.current?.focus();}, [details]);
   const data = readFailure ? null : loaded;
-  const events = [...new Map([...data?.events ?? [], ...(data ? more?.events ?? [] : [])].map(event => [event.eventId, event])).values()];
-  const next = data ? more ? more.next : data.next : null;
+  const events = [...new Map([...(data && older ? older.events : []), ...(data?.events ?? [])].map(event => [event.eventId, event])).values()];
+  const next = data ? older ? older.next : data.next : null;
   const transcriptVisible = Boolean(data);
+  useLayoutEffect(() => {
+    const viewport = reader.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+    const initial = viewport.scrollTop;
+    let active = true;
+    void document.fonts.ready.then(() => {
+      if (active && viewport.scrollTop === initial) viewport.scrollTop = viewport.scrollHeight;
+    });
+    return () => {active = false;};
+  }, [transcriptVisible]);
+  useLayoutEffect(() => {
+    const viewport = reader.current, content = transcript.current;
+    if (viewport && content && bottomOffset.current !== null) viewport.scrollTop = content.offsetHeight - bottomOffset.current;
+    bottomOffset.current = null;
+  }, [older]);
   useEffect(() => {
     const viewport = reader.current, content = transcript.current;
     if (!viewport || !content) return;
@@ -233,29 +251,22 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
     viewport.addEventListener('scroll', measure, {passive: true}); measure();
     return () => {observer.disconnect(); viewport.removeEventListener('scroll', measure);};
   }, [transcriptVisible]);
-  useEffect(() => {if (jumpPending.current && !moreState.busy && !next) {end.current?.scrollIntoView({behavior: 'instant', block: 'end'}); jumpPending.current = false;}}, [events.length, next, moreState.busy]);
-  async function loadMore(all = false) {
+  async function loadOlder() {
     if (!next || controller.current) return;
     const current = new AbortController(); controller.current = current;
     setMoreState({busy: true, error: ''});
-    let cursor: string | null = next, collected = more?.events ?? [];
-    const seen = new Set<string>();
     try {
-      do {
-        if (seen.has(cursor)) throw new Error('The next transcript page repeated. Try again.');
-        seen.add(cursor);
-        const page: SessionTranscript = await adapter('sessions/read', {...reference, cursor}, current.signal);
-        if (current.signal.aborted) return;
-        collected = [...new Map([...collected, ...page.events].map(event => [event.eventId, event])).values()];
-        setMore({events: collected, next: page.next, total: page.total}); cursor = page.next;
-      } while (all && cursor);
+      const page = await readPage(current.signal, next);
+      if (current.signal.aborted) return;
+      const viewport = reader.current, content = transcript.current;
+      if (viewport && content) bottomOffset.current = content.offsetHeight - viewport.scrollTop;
+      setOlder({events: [...page.events, ...(older?.events ?? [])], next: page.next, total: page.total});
       setMoreState({busy: false, error: ''});
     } catch (failure) {
       if (!current.signal.aborted) {
-        jumpPending.current = false;
-        const message = failureMessage(failure, 'More of this session could not load. Try again.');
+        const message = failureMessage(failure, 'Older events could not load. Try again.');
         if (failureStatus(failure) === undefined || (failureStatus(failure) ?? 0) < 500) {
-          setMore(null); setReadFailure(message);
+          setOlder(null); setReadFailure(message);
           if ([401, 402, 403].includes(failureStatus(failure) ?? 0)) deny?.(failure);
         }
         setMoreState({busy: false, error: message});
@@ -265,9 +276,9 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   async function retryTranscript() {
     if (controller.current) return;
     const current = new AbortController(); controller.current = current;
-    jumpPending.current = false; setMore(null); setMoreState({busy: true, error: ''});
+    setOlder(null); setMoreState({busy: true, error: ''});
     try {
-      const page = await adapter('sessions/read', reference, current.signal);
+      const page = await readPage(current.signal);
       if (!current.signal.aborted) {replace(() => page); setReadFailure(''); setMoreState({busy: false, error: ''});}
     } catch (failure) {
       if (!current.signal.aborted) {
@@ -286,29 +297,29 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   const replicas = session.userId.startsWith('workload_replicas_') || events.some(event => event.actor?.provider === 'replicas');
   const source = replicas ? 'Replicas' : session.origin === 'desktop' ? 'Desktop' : session.origin === 'cli' ? 'CLI' : session.origin === 'cloud' ? 'Cloud' : session.origin;
   const captureOwner = session.userId.startsWith('workload_replicas_') ? 'Workspace capture' : authorName(session.userId, session.mine, data.authors);
-  const blocks = transcriptBlocks(events), total = more?.total ?? data.total;
+  const blocks = transcriptBlocks(events), total = older?.total ?? data.total;
   return <div className="oc-session-viewer">
     <header className="oc-session-header"><div className="oc-session-title">{back}<div><PageHeader title={session.title}/><div className="oc-session-subtitle"><span>{harnessName(session.harness)}</span>{source && <span>{source}</span>}{first && <span className="oc-session-date">{dateLabel(first)}</span>}</div></div></div>
       <Button ref={info} className="oc-icon-button" title="Session details" aria-label="Session details" aria-expanded={details} aria-controls="session-details" onClick={() => details ? closeDetails() : setDetails(true)}><Icon name="info"/></Button></header>
     <div className="oc-session-workspace">
       <div className="oc-session-reading-pane"><div ref={reader} className="oc-session-reading" tabIndex={0} aria-label="Session transcript">
-        <div ref={transcript} className="oc-session-transcript">{error && <Notice tone="danger">{error}</Notice>}{first && <p className="oc-session-day">{dateLabel(first, true)}</p>}
-          {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map(block => <TranscriptBlock key={block.key} block={block} agent={harnessName(session.harness)} user={replicas ? 'Unknown sender' : authorName(session.userId, session.mine, data.authors)}/>)}</ol>
-            : <EmptyState title="No readable messages yet" description="This page contains only capture metadata. Load more of the session to continue."/>}
-          <p className="oc-session-count" role="status">Showing {events.length.toLocaleString()} of {total.toLocaleString()} captured events.</p>
+        <div ref={transcript} className="oc-session-transcript">{error && <Notice tone="danger">{error}</Notice>}
+          {next && <div className="oc-session-pagination"><ScrollControl direction="up" aria-disabled={moreState.busy} onClick={() => void loadOlder()}>Load older events</ScrollControl></div>}
           {moreState.error && <Notice tone="danger">{moreState.error}</Notice>}
-          <div ref={end} className="oc-session-end" aria-hidden="true"/>
+          {first && <p className="oc-session-day">{dateLabel(first, true)}</p>}
+          {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map(block => <TranscriptBlock key={block.key} block={block} agent={harnessName(session.harness)} user={replicas ? 'Unknown sender' : authorName(session.userId, session.mine, data.authors)}/>)}</ol>
+            : <EmptyState title="No readable messages yet" description="This page contains only capture metadata."/>}
+          <p className="oc-session-count" role="status">Showing {events.length.toLocaleString()} of {total.toLocaleString()} captured events.</p>
+          <div className="oc-session-end" aria-hidden="true"/>
         </div></div>
-        {(awayFromBottom || next) && <ScrollControl className="oc-session-jump" busy={moreState.busy} onClick={() => {
-          if (!awayFromBottom) {void loadMore();}
-          else if (next) {jumpPending.current = true; void loadMore(true);}
-          else end.current?.scrollIntoView({behavior: 'instant', block: 'end'});
-        }}>{awayFromBottom ? 'Jump to latest' : 'Load more'}</ScrollControl>}
+        {awayFromBottom && <ScrollControl className="oc-session-jump" onClick={() => {
+          if (reader.current) reader.current.scrollTop = reader.current.scrollHeight;
+        }}>Jump to latest</ScrollControl>}
       </div>
       {details && <aside id="session-details" className="oc-session-details" aria-labelledby="session-details-title" onKeyDown={event => {if (event.key === 'Escape') closeDetails();}}>
         <div className="oc-session-details-title"><h2 id="session-details-title" ref={panelHeading} tabIndex={-1}>Session details</h2><Button variant="quiet" className="oc-icon-button" aria-label="Close details" onClick={closeDetails}><Icon name="close" size={16}/></Button></div>
         <MetaList items={[{label: 'Captured by', value: captureOwner}, {label: 'Agent', value: harnessName(session.harness)}, {label: 'Source', value: source}, {label: 'Origin', value: session.origin},
-          {label: 'First event', value: fullTime(first)}, {label: next ? 'Last loaded event' : 'Last event', value: fullTime(last)}, {label: 'Captured events', value: total.toLocaleString()},
+          {label: next ? 'First loaded event' : 'First event', value: fullTime(first)}, {label: 'Last event', value: fullTime(last)}, {label: 'Captured events', value: total.toLocaleString()},
           {label: 'Captured on', value: <CaptureHostname session={session} expanded/>}, {label: 'Visibility', value: current === 'private' ? <VisibilityBadge value/> : 'Shared with workspace'}, {label: 'Session ID', value: <code>{session.sessionId}</code>}]}/>
         {current === 'private' && <Notice>Only you can see this session. Teammates and their agents cannot read or search it.</Notice>}
         {session.mine && <OwnerControls noun="session" visibility={current}

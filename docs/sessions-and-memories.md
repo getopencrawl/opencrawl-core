@@ -218,13 +218,17 @@ The self-host MCP runtime serves them as `POST /api/library/<operation>`.
 | Operation | Input |
 | --- | --- |
 | `sessions/list` | `scope` (`all`/`mine`), `query`, `limit` (1-500) |
-| `sessions/read` | `userId`, `harness`, `sessionId`, `cursor`, `limit` (1-200) |
+| `sessions/read` | `userId`, `harness`, `sessionId`, `cursor`, `limit` (1-200), `direction` (`forward` by default, or `backward`) |
 | `sessions/visibility` | `harness`, `sessionId`, `visibility` (`team`/`private`) |
 | `sessions/delete` | `harness`, `sessionId` |
 | `memories/list` | `scope` |
 | `memories/read` | `userId`, `harness`, `path` |
 | `memories/visibility` | `harness`, `path`, `visibility` |
 | `memories/delete` | `harness`, `path` |
+
+Session history opens with a backward read of the newest events. Each page lists
+its events chronologically. Use the same direction with the returned cursor to
+read the adjacent page.
 
 Capture-only credentials are refused. Ownership comes from the authenticated
 principal; requests cannot name another owner for a change.

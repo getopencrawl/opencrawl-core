@@ -122,6 +122,13 @@ test('real session and memory library: viewer, private visibility, owner-only co
   const rest = await api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', limit: 2, cursor: paged.next});
   assert.equal(rest.session.title, transcript.session.title, 'pagination never changes the title');
   assert.deepEqual(rest.events.map(e => e.eventId), ['a3']);
+  const backward = {userId: 'alice', harness: 'claude-code', sessionId: 'alpha', direction: 'backward'};
+  const latest = await api(bob, 'sessions/read', {...backward, limit: 2});
+  assert.deepEqual(latest.events.map(e => e.eventId), ['a2', 'a3']);
+  assert.ok(latest.next);
+  const older = await api(bob, 'sessions/read', {...backward, limit: 1, cursor: latest.next});
+  assert.deepEqual(older.events.map(e => e.eventId), ['a1']);
+  assert.equal(older.next, null);
 
   // Only the owner controls a session; another member is told it does not exist.
   await assert.rejects(api(bob, 'sessions/visibility', {harness: 'claude-code', sessionId: 'alpha', visibility: 'private'}), {status: 404});
@@ -134,6 +141,7 @@ test('real session and memory library: viewer, private visibility, owner-only co
   await upload(alice, 'alpha', 'claude-code', [{id: 'a4', kind: 'message', timestamp: at(7), sequence: 4, data: {role: 'user', content: 'lighthouse follow up'}}], 'desktop');
   assert.deepEqual((await api(bob, 'sessions/list', {})).sessions.map(s => s.sessionId), ['gamma', 'beta']);
   await assert.rejects(api(bob, 'sessions/read', {userId: 'alice', harness: 'claude-code', sessionId: 'alpha'}), {status: 404});
+  await assert.rejects(api(bob, 'sessions/read', {...backward, cursor: latest.next}), {status: 404});
   const bobSearch = await workspace.search(bob, {query: 'lighthouse', source: 'sessions'});
   assert.deepEqual(new Set(bobSearch.results.map(r => r.provenance?.sessionId ?? r.sessionId)), new Set(['gamma']));
   assert.ok(!(await recent.read(bob)).some(s => s.sessionId === 'alpha'));
