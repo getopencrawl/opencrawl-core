@@ -1,3 +1,4 @@
+import {Readable} from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGuidedOnboarding} from '../dist/src/application/onboarding.mjs';
@@ -46,7 +47,7 @@ test('skipping sources never skips agent setup',async()=>{
 test('a connect refused for our own stated reason keeps that reason; only a live connection is already connected',async()=>{
   const act=async(action,error)=>{
     let response;
-    await integrationRequest({},new URL(`https://self.example/api/integrations/slack/${action}`),{name:'integration-action',provider:'slack',action},{
+    await integrationRequest(Readable.from([]),new URL(`https://self.example/api/integrations/slack/${action}`),{name:'integration-action',provider:'slack',action},{
       integrations:{[action]:async()=>{throw error;}},providers:{slack:{id:'slack',name:'Slack',auth:'oauth'}},principal,member:{userId:principal.userId,organizationId:principal.tenantId,status:'active',role:{slug:'admin'}},onboarding:null,guided:{},
       respond:(status,body)=>{response={status,body:JSON.parse(body)};},message:()=>assert.fail(),document:()=>assert.fail(),
     });
