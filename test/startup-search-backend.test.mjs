@@ -86,6 +86,14 @@ test('deployment builds its shared image once before starting services',t=>{
   ]);
 });
 
+test('the deployment build revision becomes the runtime REVISION',()=>{
+  const lines=readFileSync(join(source,'deploy/Dockerfile'),'utf8').split('\n').map(line=>line.trim());
+  const stage=lines.findLastIndex(line=>line.startsWith('FROM '));
+  const argument=lines.indexOf('ARG OPENCRAWL_SOURCE_REVISION=development');
+  assert.deepEqual(lines.filter(line=>/^(ARG|ENV) REVISION\b/.test(line)),['ENV REVISION=$OPENCRAWL_SOURCE_REVISION']);
+  assert.ok(stage<argument&&argument<lines.indexOf('ENV REVISION=$OPENCRAWL_SOURCE_REVISION'));
+});
+
 test('bundled credential bootstrap checks the effective named volume before creating it',t=>{
   const f=fixture(t);
   writeFileSync(join(f.root,'bin/docker'),`#!${process.execPath}

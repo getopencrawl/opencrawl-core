@@ -41,7 +41,6 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
           build-args: |
-            REVISION=${{ github.sha }}
             OPENCRAWL_SOURCE_REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
