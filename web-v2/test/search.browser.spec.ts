@@ -17,6 +17,32 @@ const result: DiagnosticSearch = {
   connectors: {responses: [{hits: {total: {value: 1}, hits: [{_id: 'release', _source: {provider: 'notion', kind: 'page', title: 'Release notes', url: 'https://example.com/notes', text: 'The onboarding release notes are ready for review.'}}]}}]},
 };
 
+test('a search permalink restores the submitted query and page after reload and Back', async ({page}) => {
+  const requests: Array<{query: string; page: number}> = [];
+  await page.route('**/api/debug/search', route => {
+    const input = route.request().postDataJSON();
+    requests.push({query: input.query, page: input.page});
+    return route.fulfill({json: diagnosticPage(result, input.page)});
+  });
+  const field = page.getByRole('searchbox', {name:'Search query'});
+  const summary = page.locator('.oc-search-summary');
+  await page.goto('/search?q=release+%26+rollback&page=2');
+  await expect(field).toHaveValue('release & rollback');
+  await expect(summary).toHaveText('26–29 of 29 results');
+  await field.fill('onboarding');
+  await field.press('Enter');
+  await expect(page).toHaveURL(/\/search\?q=onboarding$/);
+  await expect(summary).toHaveText('1–25 of 29 results');
+  await page.reload();
+  await expect(field).toHaveValue('onboarding');
+  await expect(summary).toHaveText('1–25 of 29 results');
+  await page.goBack();
+  await expect(summary).toHaveText('26–29 of 29 results');
+  expect(requests.map(item => [item.query, item.page])).toEqual([
+    ['release & rollback', 2], ['onboarding', 1], ['onboarding', 1], ['release & rollback', 2],
+  ]);
+});
+
 for (const width of [390, 1280]) {
   test(`prompt, board reply and connector document are distinguishable at ${width}px`, async ({page}, info) => {
     await page.setViewportSize({width, height: 900});
