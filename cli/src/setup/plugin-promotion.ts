@@ -8,7 +8,7 @@ import {readCaptureConfig} from '../capture/runtime.ts';
 import {readSetupState,updateSetupState,automaticUpdateClients,type SetupState} from './state.ts';
 import {verifyPluginBundle,type PluginBinding} from './plugin-context.ts';
 import {setupPluginIdentity,recordingInstallState,recordingRuntime,writeBundle,type PluginOptions} from './plugins.ts';
-import {bindPublishedPackage,loadPublishedPackage,type PublishedPackage} from './published-plugins.ts';
+import {acceptedPackageSource,bindPublishedPackage,loadPublishedPackage,type PublishedPackage} from './published-plugins.ts';
 import {pluginRelease} from './plugin-release.ts';
 import {bundleManifest} from './plugin-bundle.ts';
 import {exchangePluginDirectories} from './exchange-plugin.ts';
@@ -135,7 +135,8 @@ export async function promoteDirectoryPlugin(state:SetupState,client:Client,sign
   if(enrolled?.installationId!==installationId||enrolled.client!==client||enrolled.api!==api||enrolled.configHome!==home||
     enrolled.owner?.tenantId!==config.owner.tenantId||enrolled.owner?.userId!==config.owner.userId||enrolled.captureMode!==(state.captureMode??'hook'))return false;
   const prior=state.pluginResults?.find(row=>row.client===client);
-  if(!prior?.source?.archive||prior.source.repository!==pluginRelease.repository||prior.source.path!==pin.path||
+  if(!prior?.source?.archive||prior.source.repository!==pluginRelease.repository||
+    (prior.source.path!==pin.path&&!acceptedPackageSource(client,prior.source))||
     !['installed','unchanged','prepared'].includes(prior.status))return false;
   const consent=()=>automaticUpdateClients(readSetupState(state.scope)).includes(client)&&isDeepStrictEqual(config,readCaptureConfig());
 
