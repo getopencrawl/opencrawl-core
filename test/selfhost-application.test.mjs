@@ -522,8 +522,9 @@ test('admin connects Replicas through the product before onboarding; native fork
  const {prompt,expiresAt}=await setup.json();assert.ok(Date.parse(expiresAt)>Date.now());
  const code=prompt.match(/[a-f0-9]{64}/)?.[0];assert.ok(code);
  assert.ok(prompt.includes(f.origin));
- assert.ok(prompt.includes('https://docs.getopencrawl.com/agents/replicas-capture/index.md'));
- assert.doesNotMatch(prompt,/opencrawl collect|curl /);
+ assert.ok(prompt.includes('https://docs.getopencrawl.com/agents/replicas/index.md'));
+ assert.match(prompt,/CLI, skill, and MCP/);
+ assert.doesNotMatch(prompt,/capture|recorder|organization api key|opencrawl collect|curl /i);
  assert.ok(prompt.length < f.origin.length + 280,'the admin prompt is a short guide reference');
  const boot=await (await f.request('/api/console/bootstrap','admin')).json();assert.equal(boot.canInstallReplicas,true);assert.ok(!JSON.stringify(boot).includes(code));
  const memberBoot=await (await f.request('/api/console/bootstrap','bob')).json();assert.equal(memberBoot.canInstallReplicas,undefined);

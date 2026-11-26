@@ -99,8 +99,9 @@ test('owner revocation permanently invalidates old delegations without affecting
 
 test('Replicas setup points agents to the admin dialog and agent guide',()=>{
  const prompt=replicasSetupPrompt('https://selfhost.example');
- assert.ok(prompt.includes('https://selfhost.example/sources#replicas-capture'));
- assert.ok(prompt.includes('https://docs.getopencrawl.com/agents/replicas-capture/index.md'));
- assert.ok(prompt.includes('organization API key'));
+ assert.ok(prompt.includes('https://selfhost.example/sources#replicas-agents'));
+ assert.ok(prompt.includes('https://docs.getopencrawl.com/agents/replicas/index.md'));
+ assert.match(prompt,/CLI, skill, and MCP/);
+ assert.doesNotMatch(prompt,/capture|recorder|organization api key/i);
  assert.doesNotMatch(prompt,/opencrawl (collect install|login|token create)|warm-hooks|hooks.json/);
 });

@@ -3,10 +3,10 @@ import {Button, ExternalLink, LoadingState, Notice} from '../design/components.t
 import {CommandSnippet} from './copy.tsx';
 import type {OnboardingAdapter} from './types.ts';
 
-export const replicasCapturePath = '/sources#replicas-capture';
-export const replicasCaptureGuide = 'https://docs.getopencrawl.com/agents/replicas-capture/';
+export const replicasAgentSetupPath = '/sources#replicas-agents';
+export const replicasAgentGuide = 'https://docs.getopencrawl.com/agents/replicas/';
 
-export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdapter['replicasSetup']>}) {
+export function ReplicasAgentSetup({issue}: {issue: NonNullable<OnboardingAdapter['replicasSetup']>}) {
   const [attempt, setAttempt] = useState(0);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState('');
@@ -29,7 +29,7 @@ export function ReplicasCaptureSetup({issue}: {issue: NonNullable<OnboardingAdap
   }, [issue, attempt]);
 
   return <div className="stack-sm">
-    <p>To set up the <ExternalLink href={replicasCaptureGuide}>CLI, skill, and MCP</ExternalLink>, paste this into a Replicas chat within 30 minutes.</p>
+    <p>If you want the <ExternalLink href={replicasAgentGuide}>CLI, skill, and MCP</ExternalLink>, paste this prompt into a Replicas chat within 30 minutes.</p>
     {prompt ? <CommandSnippet label="Copy agent setup prompt" text={prompt}/>
       : error ? <Notice tone="danger" actions={<Button onClick={() => setAttempt(attempt + 1)}>Get a new prompt</Button>}>{error}</Notice>
       : <LoadingState label="Preparing agent setup prompt"/>}
