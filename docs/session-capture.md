@@ -8,7 +8,15 @@ Capture uses command hooks and incremental reads of native JSONL transcripts. Th
 
 ## Cloud machine keys
 
-Set `OPENCRAWL_TOKEN` to the organization machine key in the service’s secret store. The CLI and enrolled session capture use the same key and default to OpenCrawl Cloud. A recorder can use `OPENCRAWL_SESSIONS_TOKEN` when it needs a separate upload-only credential. [Create a machine key](https://app.getopencrawl.com/setup#api-key).
+Set `OPENCRAWL_TOKEN` to the organization machine key in the service’s secret store. The CLI and enrolled session capture use the same key and default to OpenCrawl Cloud. [Create a machine key](https://app.getopencrawl.com/setup#api-key).
+
+For Claude Code cloud, add the key to the environment’s secrets. Install the current CLI in the setup script and prepare the hooks before Claude injects the runtime secret:
+
+```sh
+opencrawl collect install --yes --harness claude-code --defer-auth --backfill skip
+```
+
+Start a fresh session, run a command, and check `opencrawl collect status` for a stored receipt. Sessions uploaded with a machine key belong to that machine identity.
 
 ## Sending capture from another client
 
@@ -73,7 +81,7 @@ Bot's shell, not on the device that shows the chat:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/getopencrawl/opencrawl-core/main/cli/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-opencrawl login --no-browser          # or an upload-only OPENCRAWL_SESSIONS_TOKEN
+opencrawl login --no-browser
 opencrawl collect install --yes --harness grok-bot
 ```
 
@@ -178,9 +186,7 @@ already bound. `--defer-auth` installs the hooks without identifying anyone,
 and until someone signs in on a computer its hooks record nothing at all. A
 member opts in by signing in on their own computer (`opencrawl login
 --no-browser`); the next hook binds that identity and recording starts from
-there. Do not distribute one `OPENCRAWL_SESSIONS_TOKEN` as a Team
-Secret: an upload credential belongs to one person, so every member's sessions
-would be attributed to its owner. This manifest follows xAI's documented format
+there. Each member signs in separately so their sessions are attributed to them. This manifest follows xAI's documented format
 and has not been run by OpenCrawl on an Enterprise team.
 
 ## Contents and identity
