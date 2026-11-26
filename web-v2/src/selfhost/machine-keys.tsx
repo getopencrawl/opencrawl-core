@@ -54,7 +54,7 @@ export function MachineKeysPage() {
         {data.keys.map(key => <tr key={key.id}><td>{key.name}</td><td>{new Date(key.createdAt).toLocaleDateString()}</td><td><Button variant="danger-quiet" disabled={busy} onClick={() => {setFailure(''); setRevoking(key);}} aria-label={'Revoke ' + key.name}>Revoke</Button></td></tr>)}
       </tbody></Table> : <p>No active keys.</p>)}
     </Section>
-    {secret && <Dialog open title="Copy your machine key" description="Save this key in your agent’s secret store. You can copy it only once." onClose={() => setSecret('')} actions={<Button onClick={() => setSecret('')}>Done</Button>}>
+    {secret && <Dialog open title="Copy your machine key" description="Save this key in your agent’s secret store before closing this dialog." onClose={() => setSecret('')} actions={<Button onClick={() => setSecret('')}>Done</Button>}>
       <CopyField label="Machine key" value={secret}/>
     </Dialog>}
     {revoking && <Dialog open title={'Revoke ' + revoking.name + '?'} description="Agents using this key will lose access immediately." onClose={() => {if (!busy) setRevoking(null);}} actions={<>

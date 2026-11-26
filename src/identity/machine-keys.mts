@@ -1,5 +1,5 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
-import type {Pool} from 'pg';
+import type {ApplicationDatabase} from '../state/postgres.mjs';
 import type {Principal} from './types.mjs';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -7,7 +7,7 @@ const denied = () => Object.assign(new Error('Machine key access denied'), {stat
 type Key = {id:string; name:string; createdAt:Date};
 
 /** The pool is bound to this installation's local identity schema. */
-export function machineKeys(pool:Pool, organization:string) {
+export function machineKeys(pool:ApplicationDatabase['identityPool'], organization:string) {
   const authenticated = new WeakMap<Principal,string>();
   const owner = (id:string) => 'workload_machine_' + digest(JSON.stringify([organization,id]));
   const list = async () => (await pool.query<Key>(
