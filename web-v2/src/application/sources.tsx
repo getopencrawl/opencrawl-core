@@ -8,9 +8,9 @@ import {ConnectorSetupDialog} from './connector-setup.tsx';
 import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connector-card.tsx';
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
-import {ReplicasCaptureSetup, replicasCapturePath} from '../onboarding/replicas-capture.tsx';
+import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
 import {DevinRecordingCard} from './devin-recording-card.tsx';
-import {ReplicasHistoryDialog} from './replicas-history-dialog.tsx';
+import {ReplicasConnectDialog} from './replicas-connect-dialog.tsx';
 
 // Pick up the first background snapshot promptly, then return to normal polling.
 const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items.some(source => source.statusUpdatedAt === null && source.statusRefreshing && !source.statusUnavailable) ? 1000 : 30_000;
@@ -18,6 +18,10 @@ const refreshInterval = (data: {items: SourceCard[]} | undefined) => data?.items
 function removalNotice(source: SourceCard, retried = false) {
   return {provider: source.provider, integrationId:source.canAddAccount ? source.integrationId : undefined, requested: `Removal requested for ${source.name}.`,
     completed: retried ? `${source.name} removal completed and its imported data deleted.` : `${source.name} disconnected and its imported data deleted.`};
+}
+
+function needsReplicasKey(source: SourceCard) {
+  return source.history?.requiresReconnect || ['disconnected', 'error'].includes(source.state);
 }
 
 export function SourcesPage({adapter, canConfigure = false, canSetUpReplicas = false}: {adapter: SourcesAdapter; /** Admin permission for shared integrations and operator credentials. */ canConfigure?: boolean; canSetUpReplicas?: boolean}) {
@@ -36,7 +40,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   const [keySource, setKeySource] = useState<SourceCard | null>(null);
   const [setupSource, setSetupSource] = useState<SourceCard | null>(null);
   const [apiKey, setApiKey] = useState('');
-  const [replicasSource,setReplicasSource]=useState<SourceCard|null>(null);
+  const [replicasOpen, setReplicasOpen] = useState(false);
   const popup = useRef<Window | null>(null);
   const mutation = useRef<AbortController | null>(null);
   const mounted = useRef(false);
@@ -54,7 +58,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
     return () => window.removeEventListener('message', receive);
   }, [reload]);
   useEffect(() => {
-    if (!data && !loading && error) {setConfirmation(null); setKeySource(null); setSetupSource(null); setReplicasSource(null); setApiKey('');}
+    if (!data && !loading && error) {setConfirmation(null); setKeySource(null); setSetupSource(null); setReplicasOpen(false); setApiKey('');}
   }, [data, loading, error]);
 
   const current = (request: AbortController) => mounted.current && mutation.current === request && !request.signal.aborted;
@@ -78,10 +82,8 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
 
   function replicasActions(source:SourceCard){
     const history=source.history;
-    const setup = canSetUpReplicas && <LinkButton to={replicasCapturePath}>Set up capture</LinkButton>;
-    if (setup && (history?.requiresReconnect || ['disconnected','error'].includes(source.state))) return <div className="actions">
-      <Button variant="primary" disabled={pending !== null} aria-label="Connect Replicas" onClick={() => setReplicasSource(source)}>Connect</Button>{setup}
-    </div>;
+    if (needsReplicasKey(source)) return undefined;
+    const setup = captureSetup && <LinkButton to={replicasCapturePath}>Set up capture</LinkButton>;
     if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup || undefined;
     return <div className="actions">{setup}
       <Button disabled={pending!==null} onClick={()=>void run(source.provider,async request=>{
@@ -154,6 +156,14 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   }
 
   const sources = alphabeticalSources(data?.items ?? []);
+  const replicas = sources.find(source => source.provider === 'replicas');
+  const history = replicas && needsReplicasKey(replicas) ? adapter.replicasHistory : undefined;
+  const captureSetup = canSetUpReplicas ? adapter.replicasSetup : undefined;
+  const captureLinkOpen = captureSetup && location.hash === '#replicas-capture';
+  function closeReplicas() {
+    setReplicasOpen(false);
+    if (captureLinkOpen) navigate(location.pathname + location.search, {replace:true});
+  }
   const successText = typeof success === 'string' ? success
     : (success.integrationId ? !sources.some(source=>source.integrationId===success.integrationId)
       : sources.some(source => source.provider === success.provider && source.state === 'disconnected')) ? success.completed : success.requested;
@@ -176,15 +186,20 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
         <div className={group.title === 'Available' ? 'oc-source-grid' : 'oc-integration-grid'}>
           {group.items.map(source => source.provider==='devin'&&adapter.devinRecording
             ? <DevinRecordingCard key={source.provider} source={source} mutate={adapter.devinRecording} onChange={()=>void reload()}/>
-            : source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={canConfigure&&['disconnected','error'].includes(source.state)?'Connect':undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={()=>setReplicasSource(source)}/>:<SourceRow key={source.integrationId ?? source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal, source.canAddAccount ? source.integrationId : undefined); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? removalNotice(source, true) : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
+            : source.provider==='replicas'&&adapter.replicasHistory?<ConnectorCard key={source.provider} source={source} action={history ? 'Connect' : undefined} pending={pending!==null} busy={false} actionLink={replicasActions(source)} onAction={() => setReplicasOpen(true)}/>:<SourceRow key={source.integrationId ?? source.provider} source={source} canManage={canConfigure || source.scope === 'user'} pending={pending !== null} active={pending === source.provider} connect={() => connect(source)} setUp={() => {setActionError(''); setSetupSource(source);}} retry={() => void run(source.provider, async request => {await adapter.retry(source.provider, request.signal, source.canAddAccount ? source.integrationId : undefined); if (current(request)) setSuccess(source.recoveryAction === 'disconnect' ? removalNotice(source, true) : `${source.name} sync requested.`);})} disconnect={() => {setActionError(''); setConfirmation(source);}} />)}
         </div>
       </Section>)}
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </>}
-    {data && canSetUpReplicas && !sources.some(source => source.provider === 'replicas' && adapter.replicasHistory) && <LinkButton to={replicasCapturePath}>Set up Replicas capture</LinkButton>}
-    {canSetUpReplicas && adapter.replicasSetup && location.hash === '#replicas-capture' && <ReplicasCaptureSetup issue={adapter.replicasSetup} onClose={() => navigate(location.pathname + location.search, {replace:true})}/>}
-    {replicasSource&&<ReplicasHistoryDialog adapter={adapter} onClose={()=>setReplicasSource(null)} onConnected={result=>{setReplicasSource(null);setActionError('');setSuccess(result.phase==='complete'?'Replicas connected. No retained history was found.':'Replicas connected. Your history import started in the background.');void reload();}}/>}
+    {data && captureSetup && !(replicas && adapter.replicasHistory) && <LinkButton to={replicasCapturePath}>Set up Replicas capture</LinkButton>}
+    {data && (replicasOpen || captureLinkOpen) && (history || captureSetup) && <ReplicasConnectDialog
+      history={history} issue={captureSetup} onClose={closeReplicas} onConnected={result => {
+        closeReplicas();
+        setActionError('');
+        setSuccess(result.phase === 'complete' ? 'Replicas connected. No retained history was found.' : 'Replicas connected. Your history import started in the background.');
+        void reload();
+      }}/>}
     <Dialog open={confirmation !== null} onClose={() => {if (!pending) setConfirmation(null);}} title={`Disconnect ${confirmation?.name ?? 'source'}?`} description={confirmation ? disconnectDescription(confirmation) : undefined} actions={<><Button disabled={pending !== null} onClick={() => setConfirmation(null)}>Cancel</Button><Button variant="danger" disabled={pending !== null} onClick={remove}>{pending ? 'Disconnecting…' : 'Disconnect and delete'}</Button></>}>
       {actionError && <Notice tone="danger">{actionError}</Notice>}
     </Dialog>

@@ -1,7 +1,8 @@
 # Replicas organization connections
 
-A workspace admin opens **Agent setup**, chooses **Install on Replicas**, and
-pastes the generated prompt into the intended Replicas workspace. The prompt
+In **Integrations**, a workspace admin opens **Connect** on the Replicas card,
+copies the capture setup prompt, and pastes it into a chat in the intended
+Replicas environment. If history is already connected, choose **Set up capture**. The prompt
 contains a one-time setup capability valid for 30 minutes. OpenCrawl stores only
 its hash. Enrollment also requires a signed Replicas workspace token minted for
 this OpenCrawl origin. The request cannot supply a destination tenant or a
@@ -155,7 +156,7 @@ is descriptive and grants no authentication or resource access.
 
 ## Shared installation onboarding
 
-Administrators can use **Install on Replicas** in Agent setup to copy a dedicated
+Administrators can open Replicas in **Integrations** to copy a dedicated
 setup prompt into a Replicas chat. It covers the persistent environment, workload
 authentication and fresh-session verification. The administrator approves the
 organization once; developers do not repeat setup or provide personal credentials
