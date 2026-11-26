@@ -56,6 +56,10 @@ test('Codex IDE and attached-file headers never become the prompt or title', () 
   assert.equal(promptText('# Context from my IDE setup:\n\n## Open tabs:\n- a.ts'), null);
   assert.equal(promptText('<environment_context>cwd</environment_context>'), null);
   assert.equal(promptText('  plain ask '), 'plain ask');
+  assert.equal(promptText('<codex_internal_context source="goal">Continue working</codex_internal_context>'), null);
+  assert.equal(promptText('<heartbeat><automation_id>background</automation_id></heartbeat>'), null);
+  assert.equal(promptText('<send_user_message_question_reply>\n[{"question":"Proceed?","answer":"ship it"},{"answer":"Only in staging"}]\n</send_user_message_question_reply>'), 'ship it\nOnly in staging');
+  assert.equal(promptText('<send_user_message_question_reply>malformed</send_user_message_question_reply>'), null);
   assert.deepEqual(transcriptEntries({id: 'e', kind: 'user_message', data: {message: wrapped}}).map(entry => entry.type === 'message' ? entry.text : entry.label), ['Attached context', 'Move the nav to a left sidebar']);
 });
 
