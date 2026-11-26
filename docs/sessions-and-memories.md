@@ -82,12 +82,37 @@ matches one verified active workspace member. The lookup uses a tenant-scoped ha
 To add this measurement to already indexed Replicas senders, run the same migration
 with `replicasActivityOnly: true`. Each page can be retried from its last successful cursor.
 
-Visibility is stored as an owner control object beside the owner's capture
-objects (`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`) and
-copied onto every indexed document (`session.private`, `memory.private`). New
-batches and snapshots are indexed with the current control; a change that lands
-while a batch is indexing is reapplied after the write. Existing realms gain the
-two boolean fields through an additive in-place mapping update.
+Self-hosted and customer-bucket adapters store owner controls under
+`<prefix>/tenants/<t>/users/<u>/controls/{sessions,memories}/...`. A deployment
+can bind these controls to its application PostgreSQL namespace. Both stores
+preserve manual and automatic visibility, deletion timestamps, and pending or
+completed deletion state. Search keeps visibility projections in
+`session.private` and `memory.private`. Readers check the authoritative owner
+control, and indexing and restore reconcile changes that overlap a write.
+
+### Moving owner controls to PostgreSQL
+
+Deploy the resource-control bridge to every reader and writer, including
+indexing, capture, search maintenance, archive recovery, and deletion workers.
+Use a bridge-capable rollback image. Independently inventory both scoped object
+families, preserving each physical version and original byte digest. The
+activation callback attests the installed consumers before scanning, then
+compares the candidate counts and digest with the independent inventory under
+the final writer lock. A mismatch rolls back the import. Refresh the independent
+inventory and retry if a legitimate concurrent update changed the digest.
+
+A durable unsettled source write blocks activation. Identify its operation UUID
+from `opencrawl_resource_control_source_writes` within the exact namespace,
+drain the writers, and verify that the original provider request has reached a
+terminal outcome. Run `reconcile(operation, attest)` through the same bridge.
+It can replay the original CAS with its original precondition, and checks that
+the source honors the requested restriction. If the source has a conflicting
+later change, reconcile that owner's intended state before retrying. The
+activation transaction clears its temporary write journal. After activation,
+verify the retained object manifest against PostgreSQL, and bind the native
+receiver only once both live and rollback releases recognize the committed
+authority. Raw capture, object-write fences and durable deletion requests
+continue to use their original storage.
 
 ## Deletion
 
