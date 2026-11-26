@@ -16,7 +16,7 @@ is required for new connections. A Replicas organization cannot be connected to
 two OpenCrawl organizations. An environment ID still contributes to the stable
 workspace owner ID; migration never rewrites existing owners or captured data.
 
-The admin prompt points to the [agent setup guide](https://docs.getopencrawl.com/agents/replicas-capture/) and supplies the server origin and a one-time approval code. The guide configures the CLI, OpenCrawl skill and native MCP authentication. The [Replicas API integration](replicas-history-import.md) uses a separate organization API key for retained history and live events. Existing installations may also use native recorder plugins.
+The admin prompt points to the [agent setup guide](https://docs.getopencrawl.com/agents/replicas/) and supplies the server origin and a one-time approval code. The guide configures the CLI, OpenCrawl skill and native MCP authentication. The [Replicas API integration](replicas-history-import.md) uses a separate organization API key for retained history and live events. Existing installations may also use native recorder plugins.
 
 One workspace must produce actual CLI,
 MCP test, and fresh-session receipts before OpenCrawl reports the team setup as

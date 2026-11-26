@@ -206,12 +206,12 @@ test('a completed Replicas import leads to agent setup',async({page})=>{
   await page.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Clipboard denied');}}}));
   await page.goto('/sources?full-app');
   await page.getByRole('article',{name:'Replicas'}).getByRole('link',{name:'Set up agents'}).click();
-  await expect(page).toHaveURL(/\/sources#replicas-capture$/);
+  await expect(page).toHaveURL(/\/sources#replicas-agents$/);
   const dialog = page.getByRole('dialog', {name:'Set up Replicas agents'});
   const snippet = dialog.getByRole('button', {name:'Copy agent setup prompt'});
   await expect(snippet.locator('code')).toHaveText('One-time fixture prompt for Replicas');
   await expect(dialog.getByLabel('Organization API key')).toHaveCount(0);
-  await expect(dialog.getByRole('link', {name:'CLI, skill, and MCP'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas-capture/');
+  await expect(dialog.getByRole('link', {name:'CLI, skill, and MCP'})).toHaveAttribute('href','https://docs.getopencrawl.com/agents/replicas/');
   await snippet.click();
   await expect(dialog.getByText('Copy the selected text with your keyboard or selection menu.')).toBeVisible();
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('One-time fixture prompt for Replicas');
@@ -249,9 +249,9 @@ test('an admin can set up agents from Connect and published setup links',async({
   await expect(page).toHaveTitle(prompt);
   await expect(dialog.getByRole('status')).toHaveText('Copied');
   expect(issued).toBe(1);
-  for (const path of ['/setup','/agent-setup']) {
+  for (const path of ['/setup','/agent-setup','/sources']) {
     await page.goto(path+'?full-app#replicas-capture');
-    await expect(page).toHaveURL(/\/sources#replicas-capture$/);
+    await expect(page).toHaveURL(/\/sources#replicas-agents$/);
     await expect(code).toHaveText(prompt);
     await expect(key).toBeVisible();
   }

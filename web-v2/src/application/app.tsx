@@ -5,7 +5,7 @@ import type {ConsoleDataAdapter, NavigationItem, OnboardingAdapter} from '../ind
 import type {Bootstrap, ProductApi} from './api.ts';
 import {SourcesPage} from './sources.tsx';
 import {RecordingSettings} from '../pages/recording-control.js';
-import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
+import {replicasAgentSetupPath} from '../onboarding/replicas-agent-setup.tsx';
 import {SetupPage} from './setup.tsx';
 import {PrivacySettings} from '../pages/privacy-settings.tsx';
 import {TeamPage, TeamLoadingPage} from './team.tsx';
@@ -125,7 +125,7 @@ function ConsoleApp<B extends Bootstrap>({api, extensions}: {api: ProductApi<B>;
     const route = routes.find(item => matchesConsoleRoute(item,location.pathname));
     return <AppShell workspace={{name:'Workspace'}} routes={routes} footer={<SignOut/>}>{route?.pending?.(feedback) ?? <PendingPage title={route?.label ?? 'Workspace'}>{feedback}</PendingPage>}</AppShell>;
   }
-  if (location.hash === '#replicas-capture' && ['/setup', '/agent-setup'].includes(location.pathname)) return <Navigate to={replicasCapturePath} replace/>;
+  if (location.hash === '#replicas-capture' && ['/setup', '/agent-setup', '/sources'].includes(location.pathname)) return <Navigate to={replicasAgentSetupPath} replace/>;
   if (data.setup && onboarding) return <Navigate to="/setup" replace/>;
   if (!data.setup && !data.onboarding.completed && !onboarding) return <Navigate to={data.onboarding.next} replace/>;
   if (onboarding && data.workspace.role !== 'admin' && location.pathname !== '/onboarding') return data.onboarding.completed ? <Navigate to="/" replace/> : <FinishMemberOnboarding api={api} onComplete={async () => {await refresh();navigate('/');}}/>;

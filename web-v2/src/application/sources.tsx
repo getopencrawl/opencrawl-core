@@ -8,7 +8,7 @@ import {ConnectorSetupDialog} from './connector-setup.tsx';
 import {ConnectorCard, ProviderIcon, SourceStats, SourceProgress} from './connector-card.tsx';
 import {alphabeticalSources, sourceConnected} from './connector-card-model.ts';
 import {listPhrase} from '../onboarding/model.ts';
-import {replicasCapturePath} from '../onboarding/replicas-capture.tsx';
+import {replicasAgentSetupPath} from '../onboarding/replicas-agent-setup.tsx';
 import {DevinRecordingCard} from './devin-recording-card.tsx';
 import {ReplicasConnectDialog} from './replicas-connect-dialog.tsx';
 
@@ -83,7 +83,7 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   function replicasActions(source:SourceCard){
     const history=source.history;
     if (needsReplicasKey(source)) return undefined;
-    const setup = captureSetup && <LinkButton to={replicasCapturePath}>Set up agents</LinkButton>;
+    const setup = agentSetup && <LinkButton to={replicasAgentSetupPath}>Set up agents</LinkButton>;
     if(!canConfigure||!history||!(source.state==='syncing'||source.state==='synced'&&history.retryAt))return setup || undefined;
     return <div className="actions">{setup}
       <Button disabled={pending!==null} onClick={()=>void run(source.provider,async request=>{
@@ -158,11 +158,11 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
   const sources = alphabeticalSources(data?.items ?? []);
   const replicas = sources.find(source => source.provider === 'replicas');
   const history = replicas && needsReplicasKey(replicas) ? adapter.replicasHistory : undefined;
-  const captureSetup = canSetUpReplicas ? adapter.replicasSetup : undefined;
-  const captureLinkOpen = captureSetup && location.hash === '#replicas-capture';
+  const agentSetup = canSetUpReplicas ? adapter.replicasSetup : undefined;
+  const agentLinkOpen = agentSetup && location.hash === '#replicas-agents';
   function closeReplicas() {
     setReplicasOpen(false);
-    if (captureLinkOpen) navigate(location.pathname + location.search, {replace:true});
+    if (agentLinkOpen) navigate(location.pathname + location.search, {replace:true});
   }
   const successText = typeof success === 'string' ? success
     : (success.integrationId ? !sources.some(source=>source.integrationId===success.integrationId)
@@ -192,9 +192,9 @@ function AdminSourcesPage({adapter,canSetUpReplicas}:{adapter:SourcesAdapter;can
       {sources.length > 0 && !visible.length && <EmptyState title="No matching integrations" description="Try another name or clear your search." action={<Button onClick={()=>setQuery('')}>Clear search</Button>}/>}
       {!data.items.length && <EmptyState title="No integrations available" description="Available connections will appear here." />}
     </>}
-    {data && captureSetup && !(replicas && adapter.replicasHistory) && <LinkButton to={replicasCapturePath}>Set up Replicas agents</LinkButton>}
-    {data && (replicasOpen || captureLinkOpen) && (history || captureSetup) && <ReplicasConnectDialog
-      history={history} issue={captureSetup} onClose={closeReplicas} onConnected={result => {
+    {data && agentSetup && !(replicas && adapter.replicasHistory) && <LinkButton to={replicasAgentSetupPath}>Set up Replicas agents</LinkButton>}
+    {data && (replicasOpen || agentLinkOpen) && (history || agentSetup) && <ReplicasConnectDialog
+      history={history} issue={agentSetup} onClose={closeReplicas} onConnected={result => {
         closeReplicas();
         setActionError('');
         setSuccess(result.phase === 'complete' ? 'Replicas connected. No retained history was found.' : 'Replicas connected. Your history import started in the background.');

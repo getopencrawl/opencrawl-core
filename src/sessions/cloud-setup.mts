@@ -2,7 +2,7 @@ import type {CapturePage} from '../application/page-types.mjs';
 import {NATIVE_INSTALL_SH,NPM_INSTALL_COMMAND,nativeInstallCommand} from './cli-installation.mjs';
 // Stable core pins a published CLI; continuous publication updates this pin.
 const CLOUD_CLI_VERSION='0.4.159';
-const replicasAgentGuide='https://docs.getopencrawl.com/agents/replicas-capture/index.md';
+const replicasAgentGuide='https://docs.getopencrawl.com/agents/replicas/index.md';
 const quote=(value: string)=>"'"+value.replace(/'/g,"'\\''")+"'";
 export function cloudSetupScript(api: string) {
   const url=new URL(api);if(url.protocol!=='https:'||url.origin!==api)throw new Error('Cloud capture requires an HTTPS API origin');
@@ -22,7 +22,7 @@ export function cloudCapturePage({api,credential,revoked=false}: {api:string;cre
   return {kind:'capture',api,credential,revoked,script:cloudSetupScript(api)};
 }
 export function replicasSetupPrompt(api: string) {
-  return `Open ${api}/sources#replicas-capture. An admin connects the Replicas organization API key there for history and live capture. For CLI, skill, and MCP access, use the agent setup prompt from that dialog and follow ${replicasAgentGuide} with OPENCRAWL_AUTH=replicas-workspace. Preserve existing workspace configuration.`;
+  return `For the OpenCrawl CLI, skill, and MCP, ask an admin for the agent setup prompt from ${api}/sources#replicas-agents. Follow ${replicasAgentGuide} with OPENCRAWL_AUTH=replicas-workspace. Preserve existing workspace configuration.`;
 }
 export function captureSetupPrompt(api: string) {
   return `Set up OpenCrawl across all coding agents and environments I use. Work in three phases and ask me for decisions in one consent question, not one at a time. Keep setup short: configure the current environment first, then other approved accessible environments. Reuse valid configuration and authentication, complete what's missing, and make every approved setup available to future sessions using mechanisms appropriate to the environment. Respect existing approvals and keep credentials out of chats and repositories.
@@ -69,7 +69,7 @@ Return to my work with a short coverage report: configured and verified now, his
 export function replicasEnrollmentPrompt(api: string, code: string) {
   const origin = new URL(api);
   if (origin.origin !== api || !['https:', 'http:'].includes(origin.protocol) || origin.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Invalid Replicas enrollment prompt');
-  return `Follow ${replicasAgentGuide}
+  return `Set up the OpenCrawl CLI, skill, and MCP using ${replicasAgentGuide}
 Server: ${api}
 Approval code: ${code}`;
 }
