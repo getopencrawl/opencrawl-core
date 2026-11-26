@@ -28,6 +28,10 @@ Or with npm (Node.js 22.15+; allow install scripts and optional dependencies):
 npm install -g @getopencrawl/cli
 ```
 
+## Cloud machine keys
+
+Set `OPENCRAWL_TOKEN` to the machine key from [OpenCrawl Cloud setup](https://app.getopencrawl.com/setup#api-key). The CLI, MCP, and enrolled capture hooks use this key. Run `opencrawl whoami` to verify the connection. The API defaults to OpenCrawl Cloud. A recorder with a separate upload-only credential can use `OPENCRAWL_SESSIONS_TOKEN` to override the machine key for capture.
+
 ## Set up on macOS or Linux
 
 Linux setup supports x64 and ARM64 systems with glibc.
