@@ -313,7 +313,7 @@ test('self-host API keys share the Add a computer panel and fit desktop and mobi
   await expect(revoke).toHaveCount(0);
   await page.getByRole('link',{name:'Manage API keys'}).click();
   await expect(page.getByRole('navigation',{name:'Settings'}).getByRole('link',{name:'API keys'})).toHaveAttribute('aria-current','page');
-  await expect(page.getByRole('table',{name:'Active API keys'})).toContainText(name);
+  await expect(page.getByRole('region',{name:'Active API keys'}).getByRole('table')).toContainText(name);
   for(const width of [1280,390,320]){
     await page.setViewportSize({width,height:850});
     await expect(revoke).toBeInViewport();
