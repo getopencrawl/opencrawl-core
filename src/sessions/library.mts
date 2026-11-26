@@ -55,7 +55,6 @@ const CONVERSATION = ['message', 'user_message', 'agent_message', 'replicas_even
 const HIDDEN = ['token_count', 'hook', 'turn_metadata', ...TITLE_KINDS];
 // Rendered-text budget for reused batches (UTF-16 code units, about 64 MB).
 const CACHE_CHARS = 32 * 1024 * 1024, FETCH_CONCURRENCY = 12;
-const TITLE_FETCH_CONCURRENCY = 4;
 function checkKey({userId, harness, sessionId}: Partial<SessionKey>) {
   if (!identity(userId) || !isSessionHarness(harness) || !identity(sessionId)) fail(400, 'Invalid session');
   return {userId: userId!, harness: harness!, sessionId: sessionId!};
@@ -195,13 +194,17 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
     const values = new Map<string, string>(), keyOf = (key: SessionKey) => JSON.stringify([key.userId, key.harness, key.sessionId]);
     if (!keys.length) return values;
     const allowed = new Set(keys.map(keyOf));
+    // The title comes from the original capture. Only fetch its scoped locator
+    // from the index, even when a session has many candidate prompts.
+    const hitFields = ['schema', 'tenantId', 'corpus', 'id', 'sourceKey',
+      ...['userId', 'harness', 'sessionId', 'eventId', 'installationId', 'kind', 'private'].map(f)];
     const result = await reader(principal).search(principal, {size: 0, query: {bool: {filter: [
       {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
       {bool: {minimum_should_match: 1, should: keys.map(key => ({bool: {filter: sessionFilter(key)}}))}},
       {bool: {minimum_should_match: 1, should: [userText, {terms: {[f('kind')]: [...TITLE_KINDS,'replicas_history_page']}}]}},
     ]}}, aggs: {titles: {multi_terms: {terms: ['userId', 'harness', 'sessionId'].map(field => ({field: f(field)})), size: keys.length}, aggs: {
-      metadata: {filter: {terms: {[f('kind')]: [...TITLE_KINDS,'replicas_history_page']}}, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]}}}},
-      prompts: {filter: userText, aggs: {records: {top_hits: {size: 20, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}, {id: 'asc'}]}}}},
+      metadata: {filter: {terms: {[f('kind')]: [...TITLE_KINDS,'replicas_history_page']}}, aggs: {records: {top_hits: {_source: hitFields, size: 20, sort: [{timestamp: 'desc'}, {[f('sequence')]: 'desc'}, {id: 'desc'}]}}}},
+      prompts: {filter: userText, aggs: {records: {top_hits: {_source: hitFields, size: 20, sort: [{timestamp: 'asc'}, {[f('sequence')]: 'asc'}, {id: 'asc'}]}}}},
     }}}});
     type Records = {records: {hits: {hits: IndexHit[]}}};
     const buckets = result.aggregations?.titles?.buckets as unknown as Array<{key: string[]; metadata: Records; prompts: Records}>;
@@ -231,7 +234,7 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
       const record = (await pending).get(d.eventId);
       return record?.kind === d.kind ? record : null;
     }
-    for (let offset = 0; offset < buckets.length; offset += TITLE_FETCH_CONCURRENCY) await Promise.all(buckets.slice(offset, offset + TITLE_FETCH_CONCURRENCY).map(async bucket => {
+    async function resolveTitle(bucket: (typeof buckets)[number]) {
       if (!Array.isArray(bucket.key) || bucket.key.length !== 3) throw new Error('Invalid session title response');
       const key = {userId: bucket.key[0]!, harness: bucket.key[1]!, sessionId: bucket.key[2]!}, encoded = keyOf(key);
       if (!allowed.has(encoded)) throw new Error('Invalid session title scope');
@@ -243,7 +246,20 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
         const record = await original(hit, key);
         if (record?.prompt) {values.set(encoded, record.prompt); return;}
       }
-    }));
+    }
+    const pending = buckets.values();
+    let stopped = false;
+    async function worker() {
+      for (const bucket of pending) {
+        if (stopped) return;
+        await resolveTitle(bucket);
+      }
+    }
+    try {
+      await Promise.all(Array.from({length: Math.min(FETCH_CONCURRENCY, buckets.length)}, worker));
+    } finally {
+      stopped = true;
+    }
     return values;
   }
   async function owned(principal: Principal, key: SessionKey) {
@@ -536,12 +552,12 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
         // Summarize all event kinds, including tools, once per event. Missing
         // historical counts must never turn a partial sum into a session total.
         if (result.length) {
-          const counts = await collection.search(principal, {size: 0, query: {bool: {filter: [
+          const [counts, names] = await Promise.all([collection.search(principal, {size: 0, query: {bool: {filter: [
             {term: {[f('chunk')]: 0}}, visibleTo('session', principal),
             {bool: {minimum_should_match: 1, should: result.map(key => ({bool: {filter: sessionFilter(key)}}))}},
           ]}}, aggs: {tokenCounts: {multi_terms: {terms: ['userId','harness','sessionId'].map(key=>({field:f(key)})), size: result.length}, aggs: {
             tokens: {sum: {field: f('capturedTokens')}}, counted: {value_count: {field: f('capturedTokens')}},
-          }}}});
+          }}}}), titles(principal, result)]);
           type Count = {key: string[]; doc_count: number; tokens: {value: number}; counted: {value: number}};
           const values = counts.aggregations?.tokenCounts?.buckets as unknown as Count[] | undefined;
           if (!Array.isArray(values)) throw new Error('Invalid session token response');
@@ -553,10 +569,12 @@ export function createSessionLibrary({store, prefix, capturePairs, eventIdentiti
               !Number.isSafeInteger(value.doc_count) || value.doc_count < 1 || !Number.isSafeInteger(value.counted?.value) || value.counted.value < 0 || value.counted.value > value.doc_count) throw new Error('Invalid session token response');
             totals.set(key, value.counted.value === value.doc_count ? value.tokens.value : null);
           }
-          for (const session of result) session.capturedTokens = totals.get(JSON.stringify([session.userId, session.harness, session.sessionId])) ?? null;
+          for (const session of result) {
+            const id = captureKey(session);
+            session.capturedTokens = totals.get(id) ?? null;
+            session.title = names.get(id) ?? session.title;
+          }
         }
-        const names=await titles(principal,result);
-        for(const session of result)session.title=names.get(captureKey(session))??session.title;
         // Titles may read raw batches. Check both independently owned sources
         // again after that I/O, including a revocation racing the merge.
         const checked=await Promise.all(result.map(async s=>({
