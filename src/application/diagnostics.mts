@@ -9,7 +9,9 @@ import {boardReadSchema} from '../board/board.mjs';
 import {errorInfo} from '../errors.mjs';
 import type {DiagnosticSearch} from './reports.mjs';
 import {excerpt} from '../search/presentation.mjs';
+import {attachCaptureLinks,type CaptureLinks} from '../state/capture-links.mjs';
 export interface DiagnosticOptions {
+  links?:CaptureLinks;
   search?: ReturnType<typeof createSessionSearch> | null;
   connectors?: ReturnType<typeof createConnectorResolver> | null;
   board?: Pick<ReturnType<typeof createBoard>, 'read'> & Partial<Pick<ReturnType<typeof createBoard>, 'searchCandidates' | 'searchConsole' | 'agent'>>;
@@ -47,7 +49,7 @@ async function boardText(result: DiagnosticSearch, principal: Principal, board: 
   }
 }
 export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {name: string}, {
-  search, connectors, board, principal, revalidate, respond, onSearch,
+  search, connectors, board, links, principal, revalidate, respond, onSearch,
 }: DiagnosticOptions & {principal: Principal; admin?: boolean; revalidate(): Promise<number>;
   respond(status: number, body: string, type?: string): void; onSearch?(length: number): void}) {
   if (!principal?.tenantId || !principal.userId) return respond(403, 'Workspace access required');
@@ -115,6 +117,10 @@ export async function diagnosticRequest(req: IncomingMessage, url: URL, route: {
           ...(boardCandidates ? {board: {state: 'ready', hits: {total: {value: boardCandidates.total},
             hits: boardCandidates.ids.map(id => ({_id: String(id)}))}}} : {})};
         const result = page ? diagnosticPage(raw, page) : raw;
+        if (links) await Promise.all([
+          attachCaptureLinks(links,principal.tenantId,'sessions',(result.sessions??[]).flatMap(group=>(group.response.hits?.hits??[]).flatMap(hit=>hit._source?[hit._source]:[]))),
+          attachCaptureLinks(links,principal.tenantId,'memories',(result.memories?.hits?.hits??[]).flatMap(hit=>hit._source?[hit._source]:[])),
+        ]);
         await Promise.all([nameSessionHits(result, principal, search), boardText(result, principal, board, query.query)]);
         // Revalidate membership after retrieval as well as before it.
         const status = await revalidate();

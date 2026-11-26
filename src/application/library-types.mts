@@ -6,7 +6,8 @@ export type Visibility = 'team' | 'private';
 export type Harness = 'claude-code' | 'codex';
 import type {SessionHarness} from '../sessions/types.mjs';
 export type {SessionHarness};
-export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string}
+export interface SessionRef {userId: string; harness: SessionHarness; sessionId: string; permalinkId?:string}
+export type PermalinkRef = {permalinkId:string};
 /** Capture-machine names, not a verified original execution host. Optional for older adapters. */
 export interface SessionHosts {host?: string | null; hosts?: string[]; hostsTruncated?: boolean}
 export type {SessionParticipant} from '../sessions/participants.mjs';
@@ -26,8 +27,9 @@ export interface SessionTranscript {
   session: SessionRef & SessionHosts & {title: string; mine: boolean; private: boolean; origin: string | null};
   events: TranscriptEvent[]; total: number; next: string | null;
 }
-export interface MemoryRef {userId: string; harness: Harness; path: string}
+export interface MemoryRef {userId: string; harness: Harness; path: string; permalinkId?:string}
 export interface MemorySummary extends MemoryRef {
+  sourcePermalinkId?:string;
   title: string; project: string; description: string; modifiedAt: string | null; private: boolean; mine: boolean; host: string | null; sourceSessionId: string | null;
 }
 export interface MemoryDocument {memory: Omit<MemorySummary, 'description'>; text: string}
@@ -42,11 +44,11 @@ export interface LibraryContract {
   'recording/status': {input: Record<string,never>; output: PersonalRecordingStatus | {available:false}};
   'recording/change': {input: {mode:import('../sessions/recording.mjs').PauseMode; revision:string; subject:string}; output: PersonalRecordingStatus};
   'sessions/list': {input: {scope: LibraryScope; query?: string; participant?: string; limit?: number}; output: {sessions: SessionSummary[]; limit: number} & Authors};
-  'sessions/read': {input: SessionRef & {cursor?: string | null; limit?: number; direction?: 'forward' | 'backward'}; output: SessionTranscript & Authors};
+  'sessions/read': {input: (SessionRef | PermalinkRef) & {cursor?: string | null; limit?: number; direction?: 'forward' | 'backward'}; output: SessionTranscript & Authors};
   'sessions/visibility': {input: {harness: SessionHarness; sessionId: string; visibility: Visibility}; output: {visibility: Visibility}};
   'sessions/delete': {input: {harness: SessionHarness; sessionId: string}; output: {deleted: boolean; pending?: boolean}};
   'memories/list': {input: {scope: LibraryScope}; output: {memories: MemorySummary[]; truncated: boolean} & Authors};
-  'memories/read': {input: MemoryRef; output: MemoryDocument & Authors};
+  'memories/read': {input: MemoryRef | PermalinkRef; output: MemoryDocument & Authors};
   'memories/visibility': {input: {harness: Harness; path: string; visibility: Visibility}; output: {visibility: Visibility}};
   'memories/delete': {input: {harness: Harness; path: string}; output: {deleted: true}};
 }

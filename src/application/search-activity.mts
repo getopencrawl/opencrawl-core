@@ -16,6 +16,7 @@ export const historyRead = historyRequest.extend({basis: z.literal('events').opt
   .refine(input => !input.withQuery || (input.kind === 'agent' && input.basis === 'events'));
 export type HistoryRequest = z.infer<typeof historyRequest>;
 export interface SearchActivityRow {
+  permalinkId?:string;
   id:string; at:string; userId:string; operation:string; queries:string[];
   agentName?:string;
   harness:string|null; sessionId:string|null; messageId:string|null; message:string|null;

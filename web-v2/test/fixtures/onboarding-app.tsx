@@ -82,7 +82,10 @@ function Fixture() {
   if (location.pathname === '/messages' || location.pathname === '/search') {
     return <ConsoleDataProvider scopeKey="diagnostics-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/messages', label: 'Message board', icon: 'diagnostics', element: <DiagnosticsPage adapter={diagnosticsAdapter} canInspect/>}, {path: '/search', label: 'Search playground', icon: 'search', element: <SearchPlaygroundPage adapter={diagnosticsAdapter} canInspect/>}]}/></ConsoleDataProvider>;
   }
-  if (location.pathname === '/sessions') return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name: 'Example workspace', userName: 'Alex', role: 'Admin'}} routes={[{path: '/sessions', label: 'Sessions', icon: 'sessions', element: <SessionsPage adapter={libraryAdapter}/>}]}/></ConsoleDataProvider>;
+  if (location.pathname === '/sessions' || location.pathname.startsWith('/sessions/')) return <ConsoleDataProvider scopeKey="session-fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[
+    {path:'/sessions',label:'Sessions',icon:'sessions',element:<SessionsPage adapter={libraryAdapter}/>},
+    {path:'/sessions/:permalinkId',navigation:false,label:'Session',element:<SessionsPage adapter={libraryAdapter}/>},
+  ]}/></ConsoleDataProvider>;
   if (location.pathname === '/integrations-fixture') return <ConsoleDataProvider scopeKey="fixture" onAccessFailure={() => {}}><AppShell workspace={{name:'Example workspace',userName:'Alex',role:'Admin'}} routes={[{path:'/integrations-fixture',label:'Integrations',icon:'sources',element:location.search.includes('decorated')
       ? <div className="stack"><div className="stack"><SourcesPage adapter={sourcesAdapter} canConfigure/><p><a href="#connector-terms" id="connector-terms">Connector terms</a></p></div></div>
       : <SourcesPage adapter={sourcesAdapter} canConfigure={!location.search.includes('role=member')}/>}]}/></ConsoleDataProvider>;

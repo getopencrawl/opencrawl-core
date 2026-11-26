@@ -30,7 +30,7 @@ export function DevinRecordingCard({source,mutate,onChange}:{
     : connection?.capture==='delayed' ? 'Recording is delayed. OpenCrawl will retry automatically.'
     : connection?.capture==='indexing' ? 'The first session is being indexed.'
     : connection?.capture==='recording' ? 'Recording new sessions.' : 'Waiting for the first indexed session.';
-  const link = latest && '/sessions?'+new URLSearchParams({user:latest.userId,harness:latest.harness,id:latest.sessionId});
+  const link = latest && (latest.permalinkId ? '/sessions/'+latest.permalinkId : '/sessions?'+new URLSearchParams({user:latest.userId,harness:latest.harness,id:latest.sessionId}));
   return <>
     <IntegrationCard name="Devin" icon="/assets/integrations/devin.png" compact={!connected}
       status={{label:connection?.health==='needs-key'?'Key expired or revoked':'Connected',tone:connection?.health==='needs-key'?'danger':'success'}}

@@ -26,9 +26,10 @@ export function From({userId,harness,names}:{userId:string;harness:string|null;n
   return <>{names.get(userId)??'Workspace member'}{harness&&<span className="report-email">{harnessName(harness)}</span>}</>;
 }
 
-export function SessionLink({userId,harness,sessionId,label}:{userId:string;harness:string|null;sessionId:string|null;label?:string}){
+export function SessionLink({userId,harness,sessionId,label,permalinkId}:{userId:string;harness:string|null;sessionId:string|null;label?:string;permalinkId?:string}){
   if(!sessionId||!harness)return <span className="report-email">Not recorded</span>;
-  return <Link to={'/sessions?'+new URLSearchParams({user:userId,harness,id:sessionId})}>{label ?? <code>{sessionId.slice(0,8)}</code>}</Link>;
+  const path=permalinkId ? '/sessions/'+permalinkId : '/sessions?'+new URLSearchParams({user:userId,harness,id:sessionId});
+  return <Link to={path}>{label ?? <code>{sessionId.slice(0,8)}</code>}</Link>;
 }
 
 const time=(at:string)=><time dateTime={at} title={at}>{dateFormat.format(new Date(at))}</time>;
@@ -64,7 +65,7 @@ export function ProactiveTab({adapter,scope,range,names}:{adapter:ActivityAdapte
           <td>{row.withheld?null:row.queries.length?row.queries.join('\n'):<span className="report-email">No query text</span>}</td>
           <td>{row.returned==null?<span className="report-email">{row.charge?.reason==='failed'?'None':'Not recorded'}</span>:count(row.returned)}</td>
           <td>{row.userId?<From userId={row.userId} harness={row.harness} names={names}/>:<span className="report-email">Not recorded</span>}</td>
-          <td><SessionLink userId={row.userId} harness={row.harness} sessionId={row.sessionId}/></td>
+          <td><SessionLink {...row}/></td>
           {billed&&<td>{row.charge?<Charge charge={row.charge}/>:null}</td>}
         </tr>}/>
       <p className="report-note">{billed

@@ -71,6 +71,7 @@ import {errorInfo} from '../errors.mjs';
 import type {Log} from '../integrations/ports.mjs';
 type Store=ObjectStore;
 export interface SelfhostApplicationOptions {
+  captureLinks?:import('../state/capture-links.mjs').CaptureLinks;
   usageActivity?:SearchActivity;
   replicasRepository?:ReplicasRepository;
   replicasImport?:ReplicasImport;
@@ -99,7 +100,7 @@ export interface SelfhostApplicationOptions {
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
 export function selfhostApplication({settings,store,teamWrite,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasRepository,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
-  captureCredentials:credentials,onboardingRepository,devinState,devinIdentityKey,usageActivity,contextSuggestions={},
+  captureCredentials:credentials,captureLinks,onboardingRepository,devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
 }:SelfhostApplicationOptions) {
@@ -158,7 +159,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
     if(!result)throw Object.assign(new Error('Membership required'),{status:403});
     return result;
   }
-  const workspace=createWorkspaceSearch({sessions:search,connectors,capturePairs:replicasImport?.capturePairs});
+  const workspace=createWorkspaceSearch({links:captureLinks,sessions:search,connectors,capturePairs:replicasImport?.capturePairs});
   const authorizedSearch={
     async browse(p:Principal,input:unknown){await authorize(p);const result=await workspace.browse(p,input);await authorize(p);return result;},
     async search(p:Principal,input:unknown){await authorize(p);const result=await workspace.search(p,input);await authorize(p);return result;},
@@ -205,7 +206,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
     return principal;
   }});
   const guided=createGuidedOnboarding({onboarding,integrations,organizations,authorizedSearch,smallJson,inviteBeforeSetup:true});
-  const library=createLibraryApi({recording,sessions,memories:createMemoryLibrary({store,prefix,...settings.search})});
+  const library=createLibraryApi({recording,sessions,links:captureLinks,memories:createMemoryLibrary({store,prefix,...settings.search})});
   const members=async(organizationId:string)=>{
     if(organizationId!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
     const result=await directory.userManagement.listOrganizationMemberships({organizationId,statuses:['active'],limit:100});
@@ -301,7 +302,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[],
         ...devinRecording?[await devinRecording.source(p,key=>sessions.read(p,{...key,limit:1}))]:[]];
-      const consoleApi=createConsoleApi({activityBoard:boardState.board,usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
+      const consoleApi=createConsoleApi({captureLinks,activityBoard:boardState.board,usageActivity:usageActivity&&{totals:usageActivity.totals,page:(p,input)=>usageActivity.page(p,input,sessions.visibleActivity)},log,replicas,invitationPolicy:{delivery:'link',beforeAgentSetup:true},url:settings.url,setupPrompt:captureSetupPrompt(settings.url),organization:id=>directory.organizations.getOrganization(id),members,user:id=>directory.userManagement.getUser(id),
         invitations:(u,id,known)=>organizations.pendingInvitations(u,id,known),invite:(u,id,email)=>organizations.invite(u,id,email),changeRole:(u,id,target,role)=>organizations.changeRole(u,id,target,role),removeMember:(u,id,target)=>organizations.removeMember(u,id,target),renameOrganization:(u,id,name)=>organizations.rename(u,id,name),sources,
         ...usageServices(principal => ({principal,directory,integrations,search,connectors,onboarding,log,visible:sessions.visibleActivity})),progress:guided.progress,next:guided.next,library,libraryFailure},setup?{bootstrap:async context=>({setup:await setup.read(context.principal)})}:{});
       const execute=async(request:IncomingMessage,target:URL,selected:Route,reply:typeof respond,rpc=false)=>{
@@ -309,7 +310,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
           if(!setup&&!['/api/console/bootstrap','/api/console/replicas/setup'].includes(selected.name)&&!hasCompletedOnboarding(await guided.progress(principal)))return reply(409,JSON.stringify({error:'Complete onboarding before opening the workspace.',onboardingUrl:await guided.next(principal)}),'application/json');
           const result=await consoleApi(request,selected.name,{principal,user,member,cacheScope,admitted:true,revalidate:rpc?async()=>true:revalidate});return reply(result.status,JSON.stringify(result.body),'application/json');
         }
-        if(request.method==='GET'&&consolePages.has(target.pathname)){
+        if(request.method==='GET'&&(consolePages.has(target.pathname)||consolePages.has(selected.name))){
           const progress=await guided.progress(principal);
           if(!setup&&!target.pathname.startsWith('/onboarding')&&!hasCompletedOnboarding(progress))return redirect(await guided.next(principal));
           // An admin can invite teammates while connecting their own agent. Other setup and workspace gates remain receipt-based.
@@ -320,7 +321,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
         }
         if(guided.handles(selected.name))return guided.handle(request,{route:selected,principal,identity:{user},member,respond:reply});
         if(selected.name==='/api/onboarding')return reply(200,JSON.stringify({data:{...await onboarding.read(principal),displayName:user.firstName?.trim()||null}}),'application/json');
-        if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{search,connectors,board,principal,revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
+        if(['debug-search','debug-board'].includes(selected.name))return diagnosticRequest(request,target,selected,{links:captureLinks,search,connectors,board,principal,revalidate:async()=>rpc||await revalidate()?200:403,respond:reply});
         if(selected.name==='integration-credential'){
           const refuse=(status:number,code:string,text:string)=>reply(status,JSON.stringify({error:{code,message:text}}),'application/json');
           if(!connectorSettings)return refuse(503,'INTEGRATIONS_NOT_CONFIGURED','Integrations aren’t available yet.');

@@ -29,6 +29,7 @@
     "./sessions/controls": "./dist/src/sessions/controls.mjs",
     "./state/postgres-resource-controls": "./dist/src/state/postgres-resource-controls.mjs",
     "./state/resource-controls": "./dist/src/state/resource-controls.mjs",
+    "./state/capture-links": "./dist/src/state/capture-links.mjs",
     "./state/credentials": "./dist/src/state/credentials.mjs",
     "./state/postgres-credentials": "./dist/src/state/postgres-credentials.mjs",
     "./state/postgres-onboarding": "./dist/src/state/postgres-onboarding.mjs",

@@ -37,7 +37,8 @@ function Highlight({text, query}: {text: string; query: string}) {
 const examples = ['onboarding', 'launch checklist', 'design review', 'customer feedback', 'release notes', 'first prototype'];
 
 function sourcePath(hit: DiagnosticHit, source: SearchSource) {
-  const {userId, harness, sessionId, path, channel, messageId, threadId} = hit._source ?? {};
+  const {userId, harness, sessionId, path, channel, messageId, threadId,permalinkId} = hit._source ?? {};
+  if ((source==='sessions'||source==='memories') && typeof permalinkId==='string') return '/'+source+'/'+encodeURIComponent(permalinkId);
   if (source === 'board' && typeof channel === 'string' && channel && typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0 &&
       typeof threadId === 'number' && Number.isSafeInteger(threadId) && threadId > 0) return messageHref(channel, messageId, threadId);
   if (typeof userId !== 'string' || !userId || typeof harness !== 'string') return;

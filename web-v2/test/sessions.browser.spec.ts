@@ -1,6 +1,22 @@
 import {test, expect} from '@playwright/test';
 import type {SessionSummary,TranscriptEvent} from '../src/pages/library-types.js';
 
+test('an old bookmark becomes a canonical link that reopens and reloads the same transcript',async({page})=>{
+  const permalinkId='oc_'+'a'.repeat(32);
+  const requested:Array<Record<string,unknown>>=[];
+  await page.route('**/api/library/sessions/read',async route=>{
+    requested.push(route.request().postDataJSON() as Record<string,unknown>);
+    await route.fulfill({json:{session:{...base,permalinkId},events:[],total:0,next:null}});
+  });
+  await page.goto('/sessions?user=alice&harness=codex&id=single');
+  await expect(page).toHaveURL(url=>url.pathname==='/sessions/'+permalinkId && url.search==='');
+  await page.reload();
+  await expect(page.getByRole('heading',{name:'Single machine'})).toBeVisible();
+  expect(requested[0]).toMatchObject({userId:'alice',harness:'codex',sessionId:'single'});
+  expect(requested.at(-1)).toMatchObject({permalinkId});
+  expect(requested.at(-1)).not.toHaveProperty('userId');
+});
+
 const base: SessionSummary = {userId: 'alice', harness: 'codex', sessionId: 'single', title: 'Single machine', private: false, mine: true, origin: 'desktop', host: 'laptop.local', hosts: ['laptop.local'], hostsTruncated: false, firstActivityAt: null, lastActivityAt: '2026-11-11T10:00:00Z', events: 2};
 const sessions: SessionSummary[] = [{...base, capturedTokens: 12432},
   {...base, sessionId: 'multiple', harness: 'external-recorder', title: 'Continued on another machine', hosts: ['laptop.local', 'runner-42'], capturedTokens: 1200000},

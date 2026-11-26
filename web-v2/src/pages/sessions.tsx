@@ -2,7 +2,7 @@ import {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {Button, Dialog, EmptyState, Field, Input, LoadingState, Notice, Page, PageHeader, ScrollControl} from '../design/components.js';
 import {Markdown} from '../design/markdown.js';
 import {Icon} from '../design/icons.js';
-import {Link, useNavigate, useSearchParams} from '../router.js';
+import {Link, useLocation, useNavigate, useParams, useSearchParams} from '../router.js';
 import type {SessionHarness, SessionHosts, LibraryAdapter, LibraryScope, SessionRef, SessionSummary, TranscriptEntry, TranscriptEvent, SessionTranscript, Visibility} from './library-types.js';
 import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harnessName} from './library-controls.js';
 import {failureMessage, failureStatus, useLibraryMutation, useResource} from './use-resource.js';
@@ -11,8 +11,11 @@ import {isSessionHarness} from '../../../src/sessions/types.mjs';
 
 const PAGE = 50, MAX = 500;
 export const sessionHarness = (value: string | null): SessionHarness | null => isSessionHarness(value) ? value : null;
-export function sessionPath({userId, harness, sessionId}: SessionRef) {
-  return '/sessions?' + new URLSearchParams({user: userId, harness, id: sessionId}).toString();
+type SessionLocation = SessionRef | {permalinkId:string};
+export function sessionPath(ref: SessionLocation) {
+  if (ref.permalinkId) return '/sessions/' + encodeURIComponent(ref.permalinkId);
+  if ('sessionId' in ref) return '/sessions?' + new URLSearchParams({user:ref.userId,harness:ref.harness,id:ref.sessionId});
+  return '/sessions';
 }
 
 function CaptureHostname({session, expanded = false}: {session: SessionHosts; expanded?: boolean}) {
@@ -40,6 +43,8 @@ function CapturedTokens({value}: {value?: number | null}) {
 /** Captured agent sessions: a searchable list and a transcript viewer. */
 export function SessionsPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
+  const {permalinkId}=useParams();
+  if (permalinkId) return <SessionViewer key={consoleResourceKey(adapter,permalinkId).join(':')} adapter={adapter} reference={{permalinkId}}/>;
   const userId = params.get('user'), harness = sessionHarness(params.get('harness')), sessionId = params.get('id');
   if (userId && harness && sessionId) return <SessionViewer key={consoleResourceKey(adapter).join(':') + sessionPath({userId, harness, sessionId})} adapter={adapter} reference={{userId, harness, sessionId}}/>;
   return <SessionList adapter={adapter}/>;
@@ -208,10 +213,14 @@ function TranscriptBlock({block, agent, user}: {block: Block; agent: string; use
   </li>;
 }
 
-function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionRef}) {
+function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionLocation}) {
   const navigate = useNavigate(), deny = useConsoleAccessFailure();
   const readPage = (signal: AbortSignal, cursor?: string) => adapter('sessions/read', {...reference, direction: 'backward', cursor}, signal);
   const {data: loaded, error, loading, retry, replace} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, readPage, 'This session could not load. Try again.');
+  const location=useLocation(), canonical=loaded?.session.permalinkId;
+  useEffect(()=>{
+    if (canonical && !reference.permalinkId) void navigate('/sessions/'+canonical+location.hash,{replace:true});
+  },[canonical,reference.permalinkId,location.hash,navigate]);
   const mutate = useLibraryMutation(adapter);
   const [older, setOlder] = useState<Pick<SessionTranscript, 'events' | 'next' | 'total'> | null>(null);
   const [moreState, setMoreState] = useState({busy: false, error: ''}), [visibility, setVisibility] = useState<Visibility | null>(null);
