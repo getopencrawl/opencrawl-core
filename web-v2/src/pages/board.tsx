@@ -13,10 +13,11 @@ export {topicHref,messageHref} from './board-navigation.ts';
 const day = (timestamp: number) => new Date(timestamp).toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'});
 const time = (timestamp: number) => new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
 const authorName = (post: BoardMessage) => post.name || post.agent;
-function MessageText({text, messages}: {text: string; messages: ReadonlyArray<BoardMessage>}) {
+function MessageText({post, messages}: {post: BoardMessage; messages: ReadonlyArray<BoardMessage>}) {
   const links=useBoardLinks();
+  const text=post.text;
   const parts: ReactNode[] = [];
-  const pattern = /https?:\/\/[^\s<>]+|@[a-zA-Z0-9][a-zA-Z0-9:_.-]*|(?:message\s+|#)\d{3,}/g;
+  const pattern = /https?:\/\/[^\s<>]+|@[a-zA-Z0-9][a-zA-Z0-9:_.-]*|(?:message\s+|#)\d+/g;
   let at = 0;
   for (const match of text.matchAll(pattern)) {
     parts.push(text.slice(at, match.index));
@@ -26,7 +27,10 @@ function MessageText({text, messages}: {text: string; messages: ReadonlyArray<Bo
       let safe = false;
       try {const url = new URL(clean); safe = !url.username && !url.password;} catch { /* Preserve malformed source text. */ }
       parts.push(safe ? <a key={match.index} href={clean} target="_blank" rel="noopener noreferrer">{clean}</a> : clean, value.slice(clean.length));
-    } else if (value.startsWith('@') && links.scope) parts.push(<Link key={match.index} className="oc-board-mention" to={links.agent(value)!}>{value}</Link>);
+    } else if (value.startsWith('@') && links.scope) {
+      const index = post.mentionNames?.findIndex(name => name.toLowerCase() === value.slice(1).toLowerCase()) ?? -1;
+      parts.push(<Link key={match.index} className="oc-board-mention" to={links.agent(post.mentions?.[index] ?? value)!}>{value}</Link>);
+    }
     else if (value.startsWith('@')) parts.push(<span key={match.index} className="oc-board-mention">{value}</span>);
     else {
       const id = Number(value.match(/\d+/)?.[0]);
@@ -94,7 +98,7 @@ export function BoardContent({report, stream, message, inThread=false, channel='
         {group.map((post, offset) => <article key={post.id} className={`oc-board-post${offset ? ' continued' : ''}${message === post.id || selectedThread === post.id ? ' selected' : ''}`} data-board-anchor={'post:' + post.id} tabIndex={-1} aria-label={`${authorName(post)}, ${time(post.timestamp)}`}>
           {offset>0 && !inThread && <Link className="oc-board-time" to={threadHref(channel,post.id)} aria-label={'Show thread for message #'+post.id}>{time(post.timestamp)}</Link>}
           <Link className="oc-board-post-id" to={messageHref(post.topic, post.id, post.threadId)} aria-label={'Permalink to message #' + post.id}>#{post.id}</Link>
-          <p className="oc-board-post-body"><MessageText text={post.text} messages={report.messages}/></p>
+          <p className="oc-board-post-body"><MessageText post={post} messages={report.messages}/></p>
           {!inThread && Boolean(post.replyCount) && <Link className="oc-board-replies" to={threadHref(channel,post.id)} aria-controls="board-thread" aria-expanded={selectedThread===post.id}>{post.replyNames?.length ? <span className="oc-board-reply-faces">{post.replyNames.map(name=><AgentAvatar key={name} name={name}/>)}</span> : <Icon name="diagnostics"/>}<span>{post.replyCount} {post.replyCount===1?'reply':'replies'}</span></Link>}
         </article>)}
       </div>

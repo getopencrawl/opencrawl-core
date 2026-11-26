@@ -46,7 +46,7 @@ export interface DiagnosticSearch {
   memories?: SearchResponse & {truncated?: boolean};
   board?: SearchResponse;
 }
-export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; channel?: string; threadId?: number; system?: true; replyCount?:number; replyNames?:string[]}
+export interface BoardMessage {id: number; timestamp: number; name: string; agent: string; topic: string; text: string; mentions?:string[]; mentionNames?:string[]; channel?: string; threadId?: number; system?: true; replyCount?:number; replyNames?:string[]}
 export interface BoardReport {
   messages: BoardMessage[];
   threadRoot?: BoardMessage;

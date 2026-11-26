@@ -170,6 +170,11 @@ export function createPostgresBoardState(database:ApplicationDatabase) {
         const rows=await query(`SELECT agent, name, record->>'task' AS task, record->>'harness' AS harness
           FROM opencrawl_board_participants WHERE namespace=$1 AND tenant_hash=$2 AND ${handle?'lower(name)=lower($3)':'agent=$3'}
           LIMIT 2`,[handle?value.slice(1):value]);
+        if(!handle && !rows.rows.length){
+          if((await blockedPublications([value])).length)return null;
+          const prior=await query('SELECT name FROM opencrawl_board_messages WHERE namespace=$1 AND tenant_hash=$2 AND agent=$3 ORDER BY id DESC LIMIT 1',[value]);
+          return prior.rows.length?{id:value,name:prior.rows[0].name}:null;
+        }
         if(rows.rows.length!==1)return null;
         const row=rows.rows[0];
         if((await blockedPublications([row.agent])).length)return null;
