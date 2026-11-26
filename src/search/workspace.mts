@@ -7,6 +7,7 @@ import type {SearchAdapter, Passage} from './types.mjs';
 import type {WorkspaceHit} from './presentation.mjs';
 import {attachCaptureLinks,type CaptureLinks} from '../state/capture-links.mjs';
 import {capturePage} from '../application/capture-links.mjs';
+import {transcriptFragment} from '../application/transcript-links.mjs';
 interface WorkspaceOptions {currentCapture?:CurrentCaptureLookup;capturePairs?:CaptureLookup;sessions?: SearchAdapter & {memories?: SearchAdapter;captureFingerprints?:CaptureFingerprints;readableHits?:(principal:Principal,docs:Passage[])=>Promise<boolean[]>}; connectors?: SearchAdapter; memories?: SearchAdapter; cursorKey?: string | Uint8Array; now?: () => number}
 interface SearchCursor {fingerprint?: string; expires: number; offset: number}
 import {serviceError} from '../sessions/types.mjs';
@@ -75,7 +76,20 @@ const WINDOW = 100, TTL = 5 * 60_000;
  * recognized machine approval records after evidence, unless approvals are queried.
  * Cursors are bounded live windows, not snapshots or a claim of exhaustive recall.
  */
-export function createWorkspaceSearch({links,currentCapture,capturePairs,sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions & {links?:CaptureLinks} = {}) {
+export function createWorkspaceSearch({links,publicUrl,currentCapture,capturePairs,sessions, connectors,memories=sessions?.memories, cursorKey = randomBytes(32), now = Date.now}: WorkspaceOptions & {links?:CaptureLinks;publicUrl?:string} = {}) {
+  async function linkResults(principal:Principal,hits:WorkspaceHit[]) {
+    if (!links) return;
+    await Promise.all((['sessions','memories'] as const).map(async collection=>{
+      const rows=hits.filter(hit=>hit.source===collection);
+      const documents=rows.map(hit=>hit.provenance as typeof hit.provenance & {permalinkId?:string});
+      await attachCaptureLinks(links,principal.tenantId,collection,documents);
+      for (const [index, doc] of documents.entries()) {
+        if (!doc.permalinkId) continue;
+        const path='/'+collection+'/'+doc.permalinkId+(collection==='sessions' && doc.eventId ? transcriptFragment({eventId:doc.eventId,installationId:doc.installationId}) : '');
+        rows[index]!.url=publicUrl ? new URL(path,publicUrl).href : path;
+      }
+    }));
+  }
   function sign(value: string) {return createHmac('sha256', cursorKey).update(value).digest('base64url');}
   function encode(payload: SearchCursor) {const data = Buffer.from(JSON.stringify(payload)).toString('base64url'); return data + '.' + sign(data);}
   function decode(cursor: string, fingerprint: string): SearchCursor {
@@ -141,8 +155,7 @@ export function createWorkspaceSearch({links,currentCapture,capturePairs,session
     const deduped = query.dedupe ? groupDuplicates(prioritized.results,captures?.messages) : {results: prioritized.results, suppressed: 0};
     const grouped=groupResources(deduped.results,query.groupBy,captures?.sessions);
     const visiblePage=grouped.results.slice(page.offset,page.offset+query.limit);
-    if (links && query.select.includes('provenance')) await Promise.all((['sessions','memories'] as const).map(collection=>
-      attachCaptureLinks(links,principal.tenantId,collection,visiblePage.filter(hit=>hit.source===collection).map(hit=>hit.provenance))));
+    if (query.select.includes('provenance') || query.select.includes('url')) await linkResults(principal,visiblePage);
     const results = visiblePage.map(hit => {
       const {text,...rest}=hit, fields={...rest,...(query.select.includes('text')?excerpt(text,query.query,query.excerptChars):{})};
       return Object.fromEntries(Object.entries(fields).filter(([key])=>!['title','text','url','provenance'].includes(key)||query.select.includes(key as 'title'|'text'|'url'|'provenance')));
@@ -219,6 +232,7 @@ export function createWorkspaceSearch({links,currentCapture,capturePairs,session
           ...(unclassifiedEvents && !input.includeToolOutputs ? {warning: 'Some neighboring events predate tool-output classification and may contain embedded tool output.'} : {}),
           pagination: 'live', maxCharsPerEvent: 2000};
       }
+      await linkResults(principal,[hit,...context?.before??[],...context?.after??[]]);
       return {...hit, text: hit.text.slice(offset, end), offset, totalChars: hit.text.length, nextOffset: end < hit.text.length ? end : null, version: currentVersion,...neighbors,...(context ? {context} : {})};
     },
   };

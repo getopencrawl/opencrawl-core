@@ -8,6 +8,7 @@ import {MetaList, OwnerControls, VisibilityBadge, When, authorName, byDay, harne
 import {failureMessage, failureStatus, useLibraryMutation, useResource} from './use-resource.js';
 import {consoleResourceKey, useConsoleAccessFailure, useConsoleModel} from '../data.tsx';
 import {isSessionHarness} from '../../../src/sessions/types.mjs';
+import {transcriptCitation, transcriptFragment, type TranscriptCitation} from '../../../src/application/transcript-links.mjs';
 
 const PAGE = 50, MAX = 500;
 export const sessionHarness = (value: string | null): SessionHarness | null => isSessionHarness(value) ? value : null;
@@ -44,9 +45,11 @@ function CapturedTokens({value}: {value?: number | null}) {
 export function SessionsPage({adapter}: {adapter: LibraryAdapter}) {
   const [params] = useSearchParams();
   const {permalinkId}=useParams();
-  if (permalinkId) return <SessionViewer key={consoleResourceKey(adapter,permalinkId).join(':')} adapter={adapter} reference={{permalinkId}}/>;
+  const citation = transcriptCitation(useLocation().hash);
+  const fragment = citation ? transcriptFragment(citation) : '';
+  if (permalinkId) return <SessionViewer key={consoleResourceKey(adapter,permalinkId+fragment).join(':')} adapter={adapter} reference={{permalinkId}} citation={citation}/>;
   const userId = params.get('user'), harness = sessionHarness(params.get('harness')), sessionId = params.get('id');
-  if (userId && harness && sessionId) return <SessionViewer key={consoleResourceKey(adapter).join(':') + sessionPath({userId, harness, sessionId})} adapter={adapter} reference={{userId, harness, sessionId}}/>;
+  if (userId && harness && sessionId) return <SessionViewer key={consoleResourceKey(adapter).join(':') + sessionPath({userId, harness, sessionId}) + fragment} adapter={adapter} reference={{userId, harness, sessionId}} citation={citation}/>;
   return <SessionList adapter={adapter}/>;
 }
 
@@ -154,26 +157,27 @@ function SessionList({adapter}: {adapter: LibraryAdapter}) {
 }
 
 type Activity = Exclude<TranscriptEntry, {type: 'message'}>;
-interface ActivityEvent {eventId: string; kind: string; timestamp: string | null; entries: Activity[];raw?:unknown}
-type Block = {kind: 'message'; key: string; role: 'user' | 'assistant'; text: string; timestamp: string | null; actor?: TranscriptEvent['actor']}
+interface ActivityEvent extends TranscriptCitation {firstEntry: number; kind: string; timestamp: string | null; entries: Activity[];raw?:unknown}
+type Block = {kind: 'message'; key: string; citation: TranscriptCitation; role: 'user' | 'assistant'; text: string; timestamp: string | null; actor?: TranscriptEvent['actor']}
   | {kind: 'activity'; key: string; events: ActivityEvent[]};
 /** Keep source events, including empty records, while rendering normalized entries. */
 export function transcriptBlocks(events: ReadonlyArray<TranscriptEvent>): Block[] {
   const blocks: Block[] = [];
-  const activity = (event: TranscriptEvent, entries: Activity[], key: string) => {
+  const activity = (event: TranscriptEvent, entries: Activity[], key: string, firstEntry: number) => {
     let block = blocks.at(-1);
     if (block?.kind !== 'activity') {block = {kind: 'activity', key, events: []}; blocks.push(block);}
     const previous = block.events.at(-1);
-    if (previous?.eventId === event.eventId) previous.entries.push(...entries);
-    else block.events.push({eventId: event.eventId, kind: event.kind, timestamp: event.timestamp, entries: [...entries],...(event.raw!==undefined?{raw:event.raw}:{})});
+    if (previous?.eventId === event.eventId && previous.installationId === event.installationId) previous.entries.push(...entries);
+    else block.events.push({eventId: event.eventId, installationId: event.installationId, firstEntry, kind: event.kind, timestamp: event.timestamp, entries: [...entries],...(event.raw!==undefined?{raw:event.raw}:{})});
   };
   for (const event of events) {
-    if (!event.entries.length) activity(event, [], event.eventId);
+    const eventKey = transcriptFragment(event);
+    if (!event.entries.length) activity(event, [], eventKey, 0);
     event.entries.forEach((entry, index) => {
-      const key = `${event.eventId}:${index}`;
-      if (entry.type === 'message') blocks.push({kind: 'message', key, role: entry.role, text: entry.text, timestamp: event.timestamp,
+      const key = `${eventKey}:${index}`;
+      if (entry.type === 'message') blocks.push({kind: 'message', key, citation:{eventId:event.eventId, installationId:event.installationId, entry:index}, role: entry.role, text: entry.text, timestamp: event.timestamp,
         ...(entry.role === 'user' && event.actor ? {actor: event.actor} : {})});
-      else activity(event, [entry], key);
+      else activity(event, [entry], key, index);
     });
   }
   return blocks;
@@ -186,37 +190,39 @@ export function capturedSender(actor: TranscriptEvent['actor'], fallback: string
 const dateLabel = (value: string | null, long = false) => value ? new Date(value).toLocaleDateString(undefined, {month: long ? 'long' : 'short', day: 'numeric', year: 'numeric'}) : '';
 const timeLabel = (value: string | null) => value ? new Date(value).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'}) : '';
 const fullTime = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded';
-function ActivityDetail({entry}: {entry: Activity}) {
+function ActivityDetail({entry, href, selected}: {entry: Activity; href: string; selected:boolean}) {
   const label = entry.type === 'tool_call' ? <>Call <code>{entry.name}</code></> : entry.type === 'tool_result' ? 'Result' : entry.label;
-  return <div className="oc-session-entry"><span>{label}</span><pre className="code-block">{entry.type === 'tool_call' ? entry.input : entry.text}</pre>
+  return <div className="oc-session-entry" data-cited={selected || undefined} tabIndex={-1}><Link to={href} aria-label={'Permalink to '+(entry.type==='tool_result'?'tool result':entry.type==='tool_call'?'tool call':'note')}>{label}</Link><pre className="code-block">{entry.type === 'tool_call' ? entry.input : entry.text}</pre>
     {entry.truncated && <p className="muted">This entry was truncated by the transcript API.</p>}</div>;
 }
-function TranscriptBlock({block, agent, user}: {block: Block; agent: string; user: string}) {
+function TranscriptBlock({block, agent, user, path, citation}: {block: Block; agent: string; user: string; path:string; citation:TranscriptCitation|null}) {
   const [copyState, setCopyState] = useState('');
   useEffect(() => {if (copyState) {const timer = setTimeout(() => setCopyState(''), 1800); return () => clearTimeout(timer);}}, [copyState]);
   if (block.kind === 'activity') {
     const count = new Set(block.events.map(event => event.eventId)).size;
-    return <li className="oc-log-activity"><details className="oc-log-tools"><summary><Icon name="chevron-right" size={14}/>{count} {count === 1 ? 'event' : 'events'}</summary>
-      <ol>{block.events.map(event => <li key={event.eventId}><details className="oc-log-tool"><summary><Icon name="chevron-right" size={12}/><code>{event.kind}</code>{event.timestamp && <time dateTime={event.timestamp}>{timeLabel(event.timestamp)}</time>}</summary>
-        {event.entries.length ? event.entries.map((entry, index) => <ActivityDetail key={index} entry={entry}/>) : <p className="muted">No displayable content in this event.</p>}
+    return <li className="oc-log-activity"><details className="oc-log-tools" open={citation ? true : undefined}><summary><Icon name="chevron-right" size={14}/>{count} {count === 1 ? 'event' : 'events'}</summary>
+      <ol>{block.events.map(event => <li key={transcriptFragment(event)} tabIndex={-1} data-cited={citation?.eventId===event.eventId && citation.entry===undefined || undefined}><details className="oc-log-tool" open={citation ? true : undefined}><summary><Icon name="chevron-right" size={12}/><code>{event.kind}</code>{event.timestamp && <time dateTime={event.timestamp}>{timeLabel(event.timestamp)}</time>}</summary>
+        <Link to={path+transcriptFragment(event)}>Link to event</Link>
+        {event.entries.length ? event.entries.map((entry, index) => <ActivityDetail key={index} entry={entry} href={path+transcriptFragment({...event,entry:event.firstEntry+index})} selected={citation?.eventId===event.eventId && citation.entry===event.firstEntry+index}/>) : <p className="muted">No displayable content in this event.</p>}
         {event.raw!==undefined&&<details><summary>Original Replicas record</summary><pre className="code-block">{JSON.stringify(event.raw,null,2)}</pre></details>}
       </details></li>)}</ol></details></li>;
   }
   const name = block.role === 'assistant' ? agent : capturedSender(block.actor, user);
   const meta = <div className="oc-log-gutter"><strong title={block.actor ? `Replicas sender reported by capture${block.actor.email ? ': ' + block.actor.email : ''}` : undefined}>{name}</strong>
-    {block.timestamp && <time dateTime={block.timestamp} title={fullTime(block.timestamp)}>{timeLabel(block.timestamp)}</time>}
+    <Link to={path+transcriptFragment(block.citation)} aria-label="Permalink to message">{block.timestamp ? <time dateTime={block.timestamp} title={fullTime(block.timestamp)}>{timeLabel(block.timestamp)}</time> : 'Link'}</Link>
     <Button variant="quiet" className="oc-icon-button oc-session-copy" title={copyState || 'Copy message'} aria-label={copyState || 'Copy message'} onClick={async () => {
       try {await navigator.clipboard.writeText(block.text); setCopyState('Copied message');} catch {setCopyState('Could not copy message');}
     }}><Icon name={copyState === 'Copied message' ? 'check' : 'copy'} size={13}/></Button></div>;
-  return <li className={`oc-log-${block.role}`} aria-label={`${name} message`}>
+  return <li className={`oc-log-${block.role}`} aria-label={`${name} message`} tabIndex={-1} data-cited={citation?.eventId===block.citation.eventId && (citation.entry===undefined || citation.entry===block.citation.entry) || undefined}>
     {block.role === 'user' && meta}<div className="oc-log-body"><Markdown mode="transcript">{block.text}</Markdown></div>{block.role === 'assistant' && meta}
   </li>;
 }
 
-function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference: SessionLocation}) {
+function SessionViewer({adapter, reference, citation}: {adapter: LibraryAdapter; reference: SessionLocation; citation:TranscriptCitation|null}) {
   const navigate = useNavigate(), deny = useConsoleAccessFailure();
-  const readPage = (signal: AbortSignal, cursor?: string) => adapter('sessions/read', {...reference, direction: 'backward', cursor}, signal);
-  const {data: loaded, error, loading, retry, replace} = useResource(adapter, 'sessions/read', sessionPath(reference), 0, readPage, 'This session could not load. Try again.');
+  const readPage = (signal: AbortSignal, cursor?: string) => adapter('sessions/read', {...reference, direction: 'backward', cursor,
+    ...(citation ? {event:{eventId:citation.eventId,installationId:citation.installationId}} : {})}, signal);
+  const {data: loaded, error, loading, retry, replace} = useResource(adapter, 'sessions/read', sessionPath(reference)+(citation ? transcriptFragment(citation) : ''), 0, readPage, 'This session could not load. Try again.');
   const location=useLocation(), canonical=loaded?.session.permalinkId;
   useEffect(()=>{
     if (canonical && !reference.permalinkId) void navigate('/sessions/'+canonical+location.hash,{replace:true});
@@ -232,12 +238,18 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {if (details) panelHeading.current?.focus();}, [details]);
   const data = readFailure ? null : loaded;
-  const events = [...new Map([...(data && older ? older.events : []), ...(data?.events ?? [])].map(event => [event.eventId, event])).values()];
+  const events = [...new Map([...(data && older ? older.events : []), ...(data?.events ?? [])].map(event => [transcriptFragment(event), event])).values()];
   const next = data ? older ? older.next : data.next : null;
   const transcriptVisible = Boolean(data);
   useLayoutEffect(() => {
     const viewport = reader.current;
     if (!viewport) return;
+    if (citation) {
+      const target=viewport.querySelector<HTMLElement>('[data-cited]');
+      target?.focus({preventScroll:true});
+      target?.scrollIntoView({block:'center'});
+      return;
+    }
     viewport.scrollTop = viewport.scrollHeight;
     const initial = viewport.scrollTop;
     let active = true;
@@ -245,7 +257,7 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
       if (active && viewport.scrollTop === initial) viewport.scrollTop = viewport.scrollHeight;
     });
     return () => {active = false;};
-  }, [transcriptVisible]);
+  }, [transcriptVisible, citation?.eventId, citation?.installationId, citation?.entry]);
   useLayoutEffect(() => {
     const viewport = reader.current, content = transcript.current;
     if (viewport && content && bottomOffset.current !== null) viewport.scrollTop = content.offsetHeight - bottomOffset.current;
@@ -299,8 +311,9 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
   }
   const closeDetails = () => {setDetails(false); info.current?.focus();};
   const back = <Link to="/sessions" className="oc-session-back" aria-label="Back to sessions" title="Back to sessions"><Icon name="arrow-left" size={18}/></Link>;
+  const full = citation && <Link to={sessionPath(reference)}>Open full transcript</Link>;
   if (!data) return <div className="oc-session-viewer"><header className="oc-session-header">{back}<PageHeader title="Session"/></header><div className="oc-session-loading">{loading ? <LoadingState label="Loading session" spinner/> : <>
-    <Notice tone="danger">{readFailure || error}</Notice>{<div className="actions"><Button busy={moreState.busy} onClick={readFailure ? () => void retryTranscript() : retry}>Try again</Button></div>}</>}</div></div>;
+    <Notice tone="danger">{readFailure || error}</Notice>{<div className="actions"><Button busy={moreState.busy} onClick={readFailure ? () => void retryTranscript() : retry}>Try again</Button>{full}</div>}</>}</div></div>;
   const {session} = data, current: Visibility = visibility ?? (session.private ? 'private' : 'team');
   const first = events.find(event => event.timestamp)?.timestamp ?? null, last = events.findLast(event => event.timestamp)?.timestamp ?? null;
   const replicas = session.userId.startsWith('workload_replicas_') || events.some(event => event.actor?.provider === 'replicas');
@@ -316,7 +329,9 @@ function SessionViewer({adapter, reference}: {adapter: LibraryAdapter; reference
           {next && <div className="oc-session-pagination"><ScrollControl direction="up" aria-disabled={moreState.busy} onClick={() => void loadOlder()}>Load older events</ScrollControl></div>}
           {moreState.error && <Notice tone="danger">{moreState.error}</Notice>}
           {first && <p className="oc-session-day">{dateLabel(first, true)}</p>}
-          {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map(block => <TranscriptBlock key={block.key} block={block} agent={harnessName(session.harness)} user={replicas ? 'Unknown sender' : authorName(session.userId, session.mine, data.authors)}/>)}</ol>
+          {full}
+          {citation?.entry!==undefined && !events[0]?.entries[citation.entry] && <Notice>This entry is unavailable in the cited event.</Notice>}
+          {blocks.length ? <ol className="oc-log" aria-label="Transcript">{blocks.map(block => <TranscriptBlock key={block.key} block={block} path={sessionPath(session)} citation={citation} agent={harnessName(session.harness)} user={replicas ? 'Unknown sender' : authorName(session.userId, session.mine, data.authors)}/>)}</ol>
             : <EmptyState title="No readable messages yet" description="This page contains only capture metadata."/>}
           <p className="oc-session-count" role="status">Showing {events.length.toLocaleString()} of {total.toLocaleString()} captured events.</p>
           <div className="oc-session-end" aria-hidden="true"/>

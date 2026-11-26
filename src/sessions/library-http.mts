@@ -21,7 +21,8 @@ const path = z.string().min(4).max(2048);
 const visibility = z.enum(['team', 'private']);
 const scope = z.enum(['all', 'mine']).default('all');
 const byPermalink = z.strictObject({permalinkId:z.string().regex(captureIdPattern)});
-const pageFields = {cursor:z.string().max(2048).nullish(),limit:z.number().int().min(1).max(200).default(100),direction:z.enum(['forward','backward']).optional()};
+const pageFields = {cursor:z.string().max(2048).nullish(),limit:z.number().int().min(1).max(200).default(100),direction:z.enum(['forward','backward']).optional(),
+  event:z.strictObject({eventId:id,installationId:id.optional()}).optional()};
 export const libraryOperations = {
   'privacy/status':z.strictObject({}),
   'privacy/change':z.strictObject({enabled:z.boolean(),rules:z.string().max(1500),revision:z.string().max(40),subject:z.string().max(160)}),
