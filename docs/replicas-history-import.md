@@ -104,12 +104,7 @@ References: [organization export](https://docs.replicas.dev/api-reference/replic
 
 ## Live events
 
-The worker can subscribe to active workspaces within one explicitly configured
-Replicas organization. Self-host operators can set
-`OPENCRAWL_REPLICAS_LIVE_ORGANIZATION_ID` on the worker after connecting that
-organization's history import. The worker checks both the local tenant binding
-and the key's Replicas organization before discovering any workspaces. Stopping
-the connection withdraws its authority to capture new events.
+Connecting an organization API key starts live capture for its active workspaces as well as retained history sync. Workers discover active connections from the installation database, including keys connected before an upgrade. Self-host workers use their configured OpenCrawl tenant. The worker verifies the provider organization before reading its inventory and checks the stored binding before every durable write. Stopping the connection withdraws its authority to capture new events.
 
 Live agent events use the same session and immutable event identities as
 retained history. The worker saves its replay cursor after ingest. If the engine
@@ -128,20 +123,4 @@ The workflow closes when its queue drains. PostgreSQL keeps pending work and
 page checkpoints. Temporal history contains the tenant, organization and import
 identifiers, with no API key, transcript or provider cursor.
 
-During a rolling worker update, an activity picked up by a worker without the
-matching live capture configuration reports `ReplicasRepairScopeUnavailable`
-and retries in one minute. For an intentionally retired binding, first verify
-its collector configuration has been withdrawn on every worker. In the
-installation's Temporal namespace, identify the exact execution using its deterministic workflow ID. The prefix
-`replicas-live-repair-` is followed by the lowercase SHA-256 of
-`JSON.stringify([sourceId, tenantId, organizationId, importId])`. Use the
-session indexer's configured source ID. Describe that execution and confirm its
-type and run ID. An already closed execution requires no action. To park an
-outstanding repair, use its workflow and run IDs together.
-
-```sh
-temporal workflow cancel --namespace "$namespace" --workflow-id "$workflow_id" --run-id "$run_id"
-```
-
-The scoped checkpoint survives cancellation. If that binding is enabled again,
-the collector starts a new run for pending work.
+Any worker serving the installation can process a repair after verifying the current tenant, organization and import ID against the stored connection. Disconnecting or replacing the connection finishes outstanding repairs for the retired import. A collector that reconnects resumes pending work from the stored checkpoints.

@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
+import {createApplicationDatabase} from '../dist/src/state/postgres.mjs';
+import {applicationDatabaseFixture,postgresUrl} from './fixtures/application-database.mjs';
 import {ReplicasProviderError} from '../dist/src/integrations/replicas-api.mjs';
 import {MockActivityEnvironment,TestWorkflowEnvironment} from '@temporalio/testing';
 import {Worker} from '@temporalio/worker';
@@ -72,18 +73,14 @@ test('Replicas streams share the history identity, resume after storage, repair 
     }});
   await service.action(owner,{action:'connect',apiKey:'fixture-org-key'});
   const baseline=requests.length;
-  await assert.rejects(service.repairLiveCapture({kind:'live-repair',tenantId:'unbound',organizationId:org,id:randomUUID()},new AbortController().signal),/does not serve/);
-  for(const scope of [{tenantId:'other',organizationId:org},{tenantId:owner.tenantId,organizationId:otherOrg}]){
-    const stop=new AbortController();const done=service.runLiveCapture(scope,stop.signal);
-    await delay(100);stop.abort();await done;
-  }
+  assert.equal(await service.repairLiveCapture({kind:'live-repair',tenantId:'unbound',organizationId:org,id:randomUUID()},new AbortController().signal),null);
   assert.equal(requests.length,baseline);
   reportedOrg=otherOrg;
-  const denied=new AbortController(),rejecting=service.runLiveCapture({tenantId:owner.tenantId,organizationId:org},denied.signal);
+  const denied=new AbortController(),rejecting=service.runConnectedLiveCapture(denied.signal);
   await until(()=>requests.length>baseline);denied.abort();await rejecting;
   assert.deepEqual(requests.slice(baseline).map(r=>r.path),['/v1/whoami']);
   reportedOrg=org;
-  const stop=new AbortController(),running=service.runLiveCapture({tenantId:owner.tenantId,organizationId:org},stop.signal);
+  const stop=new AbortController(),running=service.runConnectedLiveCapture(stop.signal);
   t.after(async()=>{stop.abort();await running;});
   await until(()=>streams.length===1);
   streams[0].send(packet('engine:10','engine.stream.opened',{resumed:true}));
@@ -175,7 +172,7 @@ test('retained history storage cannot hold a new live message behind its thread 
     }
   }});
   await service.action(owner,{action:'connect',apiKey:'fixture-org-key'});
-  const stop=new AbortController(),running=service.runLiveCapture({tenantId:owner.tenantId,organizationId:org},stop.signal);
+  const stop=new AbortController(),running=service.runConnectedLiveCapture(stop.signal);
   try{
     const send=await connected.promise;
     send('engine:1','engine.stream.opened',{resumed:false});
@@ -257,7 +254,7 @@ test('repair resumes a committed page and fences newer gap and tail intents',asy
   },ingest:async(_p,b)=>{written.push(...b.events.map(e=>e.id));}});
   const connect=async service=>{
     submitted.length=0;
-    const before=discovered,stop=new AbortController(),running=service.runLiveCapture(scope,stop.signal);
+    const before=discovered,stop=new AbortController(),running=service.runConnectedLiveCapture(stop.signal);
     await until(()=>discovered>before);
     return async()=>{stop.abort();await running;};
   };
@@ -267,7 +264,7 @@ test('repair resumes a committed page and fences newer gap and tail intents',asy
   const job={...scope,id,kind:'live-repair'},signal=new AbortController().signal;
   try{
     assert.equal(await service.repairLiveCapture({...job,id:randomUUID()},signal),null);
-    await assert.rejects(service.repairLiveCapture({...job,tenantId:'other'},signal),/does not serve/);
+    assert.equal(await service.repairLiveCapture({...job,tenantId:'other'},signal),null);
     assert.deepEqual(submitted,[],'an idle collector starts no workflow');
     await database.pool.query(`INSERT INTO opencrawl_replicas_live_workspaces(namespace,tenant,organization,workspace,gap_since,gap_generation)
       VALUES($1,$2,$3,$4,now()-interval '1 hour',1)`,binding);
@@ -311,9 +308,6 @@ test('repair resumes a committed page and fences newer gap and tail intents',asy
 test('provider rate limits tell Temporal when the repair may run again',async()=>{
   const activity=new MockActivityEnvironment();
   const job={kind:'live-repair',tenantId:'fixture',organizationId:org,id:randomUUID()};
-  const {ReplicasRepairScopeUnavailable}=await import('../dist/src/integrations/replicas-live.mjs');
-  const unconfigured=replicasActivities({repairLiveCapture:async()=>{throw new ReplicasRepairScopeUnavailable();}});
-  await assert.rejects(activity.run(unconfigured.repairReplicasLivePage,job),{type:'ReplicasRepairScopeUnavailable',nextRetryDelay:'1 minute'});
   for(const operation of ['identity','history']){
     const activities=replicasActivities({repairLiveCapture:async()=>{
       throw new ReplicasProviderError('private provider response',429,operation,undefined,120000);
@@ -324,5 +318,67 @@ test('provider rate limits tell Temporal when the repair may run again',async()=
       assert.equal(error.message,'Replicas live repair rate limited');
       return true;
     });
+  }
+});
+
+test('workers discover existing and new API-key bindings, share locks, and capture for each tenant',async t=>{
+  // More organizations than database connections must still be able to ingest.
+  const database=await applicationDatabaseFixture(t,{max:4}),key=randomBytes(32);
+  const accounts=Array.from({length:6},(_,i)=>({tenantId:'customer-'+i,userId:'admin',organizationId:randomUUID(),workspaceId:randomUUID(),key:'fixture-'+i}));
+  const streams=new Map(),writes=[],duplicates=[];
+  const request=async(input,options)=>{
+    const path=new URL(input).pathname,headers=new Headers(options.headers);
+    const account=accounts.find(item=>headers.get('authorization')==='Bearer '+item.key);
+    assert.ok(account);
+    if(path.endsWith('/whoami'))return Response.json({caller:'organization_api_key',organization:{id:account.organizationId,name:'Customer'}});
+    if(path.endsWith('/conversations'))return Response.json({conversations:[],total:0,next_cursor:null});
+    assert.equal(headers.get('replicas-org-id'),account.organizationId);
+    if(path==='/v1/replica')return Response.json({page:1,total_pages:1,replicas:[{id:account.workspaceId,status:'active'}]});
+    assert.equal(path,'/v1/replica/'+account.workspaceId+'/events');
+    if(streams.has(account.tenantId))duplicates.push(account.tenantId);
+    return new Response(new ReadableStream({start(controller){
+      streams.set(account.tenantId,controller);
+      options.signal.addEventListener('abort',()=>{streams.delete(account.tenantId);controller.close();},{once:true});
+    }}),{headers:{'content-type':'text/event-stream'}});
+  };
+  const peer=createApplicationDatabase({connectionString:postgresUrl,namespace:database.namespace,max:4,connectionTimeoutMillis:1500});
+  const service=(db,tenantId)=>createReplicasImport({database:db,key,request,tenantId,schedule:async()=>{},ingest:async(p,b)=>{
+    // Hosted storage checks resource access while the binding transaction is open.
+    await db.pool.query('SELECT 1');
+    writes.push([p.tenantId,b.owner.userId,b.events[0].id]);
+  }});
+  const first=service(database),second=service(peer),single=service(database,accounts[0].tenantId);
+  const connect=account=>first.action(account,{action:'connect',apiKey:account.key});
+  for(const account of accounts.slice(0,-1))await connect(account);
+  const one=new AbortController(),two=new AbortController(),local=new AbortController();
+  const localRun=single.runConnectedLiveCapture(local.signal);
+  let firstRun,secondRun;
+  try{
+    await until(()=>streams.size>0);
+    assert.deepEqual([...streams.keys()],[accounts[0].tenantId]);
+    local.abort();await localRun;
+    firstRun=first.runConnectedLiveCapture(one.signal);
+    await until(()=>streams.size===accounts.length-1);
+    secondRun=second.runConnectedLiveCapture(two.signal);
+    await connect(accounts.at(-1));
+    await until(()=>streams.size===accounts.length);
+    for(const account of accounts){
+      streams.get(account.tenantId).enqueue(new TextEncoder().encode(packet('engine:1','chat.turn.delta',{chatId,event:live})));
+    }
+    await until(()=>writes.length===accounts.length);
+    assert.deepEqual(writes.sort(),accounts.map(account=>[account.tenantId,
+      replicasSession(account.tenantId,account.organizationId,account.workspaceId,chatId).owner.userId,
+      replicasEvents(chat,{events:[live]})[1].id]).sort());
+    const retiring=accounts[0],status=await first.status(retiring);
+    await first.action(retiring,{action:'stop',id:status.id});
+    await until(()=>!streams.has(retiring.tenantId));
+    one.abort();await firstRun;
+    await until(()=>streams.size===accounts.length-1);
+    assert.deepEqual(duplicates,[]);
+    assert.equal(streams.has(retiring.tenantId),false);
+  }finally{
+    one.abort();two.abort();local.abort();
+    await Promise.all([firstRun,secondRun,localRun]);
+    await peer.close();
   }
 });

@@ -34,13 +34,13 @@ export function ReplicasConnectDialog({history, issue, onClose, onConnected}: {
       if (!request.signal.aborted) setBusy(false);
     }
   }
-  return <Dialog open onClose={onClose} title={history ? 'Connect Replicas' : 'Set up Replicas capture'} actions={history && <>
+  return <Dialog open onClose={onClose} title={history ? 'Connect Replicas' : 'Set up Replicas agents'} actions={history && <>
     <Button onClick={onClose}>Cancel</Button>
     <Button type="submit" form={formId} variant="primary" disabled={busy || !key.trim()}>{busy ? 'Connecting…' : 'Connect'}</Button>
   </>}>
     <div className="stack">
       {history && <form id={formId} className="stack-sm" onSubmit={connect}>
-        <p>To import session history, enter an organization key from <ExternalLink href="https://app.replicas.dev/dashboard/settings?tab=api-keys">Replicas API Keys</ExternalLink>.</p>
+        <p>To sync your organization’s chats, enter a key from <ExternalLink href="https://app.replicas.dev/dashboard/settings?tab=api-keys">Replicas API Keys</ExternalLink>.</p>
         <Field label="Organization API key"><Input type="password" autoComplete="off" spellCheck={false} value={key} onChange={event => setKey(event.target.value)} required/></Field>
         {error && <Notice tone="danger">{error}</Notice>}
       </form>}

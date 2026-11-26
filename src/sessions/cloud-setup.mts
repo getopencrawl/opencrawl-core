@@ -1,25 +1,8 @@
-import {pluginRelease, replicasPolicy} from './plugin-release.mjs';
 import type {CapturePage} from '../application/page-types.mjs';
-import {NATIVE_INSTALL_SH,NPM_INSTALL_COMMAND,nativeInstallCommand,nativePathCommand} from './cli-installation.mjs';
+import {NATIVE_INSTALL_SH,NPM_INSTALL_COMMAND,nativeInstallCommand} from './cli-installation.mjs';
 // Stable core pins a published CLI; continuous publication updates this pin.
 const CLOUD_CLI_VERSION='0.4.159';
-const REPLICAS_SAFE_INSPECTION="Inspect configuration through supported CLI metadata or an allowlist of non-secret fields. Never dump credential-bearing files such as ~/.codex/config.toml, ~/.claude.json, ~/.replicas/config.json, runtime environment files or the process environment. Do not rely on regex redaction: Authorization headers and unknown credential names can be missed. Do not copy provider credentials into tools, messages or evidence.";
-const replicasAssets = ['claude-code','codex'].map(harness => {
-  const archive = pluginRelease.packages.find(pkg => pkg.harness === harness)?.archives?.['linux-x64'];
-  if (!archive) throw new Error('Missing Replicas plugin for '+harness);
-  return archive;
-});
-function replicasPluginSetup(api:string) {
-  return `For a fresh Linux x86_64 Replicas workspace, install the released Claude Code and Codex plugins. Their packaged bin/opencrawl-hook reads native sessions and uploads with the workspace identity. No OpenCrawl CLI or daemon runs in the hook. New shared chats are recorded, including user messages, visible intermediate and final assistant messages, tool inputs and outputs. Incognito is unavailable here. Embedded text can contain secrets. File contents, native memories and provider-supplied author IDs are outside this capture guarantee.
-
-Warm preparation: download these files and verify each SHA-256 before extraction or execution:
-${[...replicasAssets,replicasPolicy].map(asset=>asset.sha256+'  '+asset.url).join('\n')}
-Install the full packages, including their skills, through each harness's workspace-local marketplace as the runtime agent user with its actual HOME. In each workspace-specific copy, omit the oc-incognito, oc-private, opencrawl-private and oc-readonly skill directories and clear the packaged MCP servers so Replicas supplies the single workspace connection. Preserve executable permissions. Keep the verified original contents for idempotent setup. Snapshot only static files. If a working legacy collector is present, preserve its hooks, pending data and original ownership; do not activate a second collector for the same harness. On an unsupported platform report the install pending.
-
-For Claude, enable the package's native hooks. For administrator-managed headless Codex, run node replicas-codex-policy.mjs <absolute-unpacked-codex-root> <absolute-root-owned-copy-of-bin/opencrawl-hook> <absolute-bound-codex-root> on the verified original. Merge the rendered groups once into root-owned /etc/codex/hooks.json. Preserve unrelated policy and replace only OpenCrawl groups from this installation on re-run. In the workspace-specific active Codex plugin copy only, set hooks/hooks.json to {"hooks":{}} after rendering. Keep its skills and metadata. Use the supported administrator review for the protected policy; never write user hook trust. Confirm each event runs each packaged action once.
-
-At workspace start, before either harness starts a chat, obtain a short-lived token with /usr/local/bin/replicas identity token --audience ${api} and make an authenticated GET to ${api}/api/sessions/identity. Keep the token in memory and use the returned data.principal.tenantId and data.principal.userId as owner. Check the expected tenant and a workload_replicas_ user ID. Generate one installationId for this workspace and reuse it on restarts for both clients. Use the CLI's effective absolute config home for this runtime user. Atomically write each active package root's private .opencrawl-binding.json (mode 0600) with schemaVersion 1, client (claude-code or codex), api ${api}, configHome, installationId, owner {tenantId,userId} and captureMode "hook". At configHome/opencrawl/capture/config.json use schemaVersion 1, the same api, owner and installationId, installedAt (ISO timestamp), harnesses ["claude-code","codex"] and roots mapping each client to its absolute native .claude or .codex directory (honor overrides). Keep this file private and preserve existing exclusions and recording choices. Use only workspace-local writable state; never bake a binding, credential, queue or chat into a warm snapshot. Keep Replicas native MCP as the single authenticated server. For priority inbox delivery, copy its nonsecret name and URL into the private binding as workspaceMcp {name,url}. The URL must be the enrolled API origin plus /mcp. Use the actual name from the native client. A clean Claude stop listens for up to 30 minutes by default. Set boardIdleMinutes to a whole number from 0 to 30 to adjust it; zero performs a final check.`;
-}
+const replicasAgentGuide='https://docs.getopencrawl.com/agents/replicas-capture/index.md';
 const quote=(value: string)=>"'"+value.replace(/'/g,"'\\''")+"'";
 export function cloudSetupScript(api: string) {
   const url=new URL(api);if(url.protocol!=='https:'||url.origin!==api)throw new Error('Cloud capture requires an HTTPS API origin');
@@ -39,17 +22,7 @@ export function cloudCapturePage({api,credential,revoked=false}: {api:string;cre
   return {kind:'capture',api,credential,revoked,script:cloudSetupScript(api)};
 }
 export function replicasSetupPrompt(api: string) {
-  return `Install OpenCrawl in this Replicas environment for my team. Confirm REPLICAS_WORKSPACE_ID, the intended Replicas organization, environment and OpenCrawl team. Use the built-in replicas CLI. Reuse valid approvals. ${REPLICAS_SAFE_INSPECTION} Preserve project setup and unrelated configuration.
-
-The OpenCrawl admin connects the Replicas organization once using the capture setup prompt on the Replicas card in Integrations. If enrollment is missing, obtain that admin prompt. New environments and personal forks use their own workspace identity. Configure OPENCRAWL_API_URL=${api} and OPENCRAWL_AUTH=replicas-workspace. Install the CLI for verification and board access during warm preparation with ${NPM_INSTALL_COMMAND}, or when npm is unavailable use ${nativeInstallCommand()} then ${nativePathCommand()}. For an existing CLI use opencrawl update. Verify opencrawl --version. In the enrolled workspace run opencrawl whoami --api ${api} --json. Configure ${api}/mcp using native Replicas workspace_identity authentication and audience ${api} through the supported UI or API. Omit static Authorization headers. Workspace identity gives team access and does not establish message authorship. Preserve source labels, including unknown authors.
-
-${replicasPluginSetup(api)}
-
-Inspect existing environment scripts. Use replicas env warm-hooks save-test <environment> --file <script> for static preparation. Use replicas env start-hooks test <environment> --file <script> when the isolated test has the warm prerequisites. Otherwise validate warm preparation and runtime start together in a disposable workspace; do not reinstall or replace the CLI during every start. Save and read back the validated start hook. Surface OpenCrawl failures without preventing unrelated project startup. Verify a newly created workspace because existing VMs retain their original start-hook snapshot.
-
-Open a fresh chat in both Claude and Codex. Verify first-turn plugin registration, the installed skill, native MCP test_connection and search. In each chat send a distinct message, ask for a short reply before a tool call and a final reply; verify both replies, the user message and tool input/output are stored and searchable under that workspace. Follow the installed skill's notification instructions. Use lifecycle_policy default or sleep_when_done. Before intentional deletion finish all turns, confirm pending plugin batches drained and verify the final message's stored receipt. Keep the workspace for retry if verification fails.
-
-After the CLI, MCP and fresh capture receipts exist in one workspace, OpenCrawl automatically records the connected organization as ready. This is one shared installation verification for the team. Open ${api}/onboarding to confirm. Spend at most 60 seconds after installation checking readiness and report any pending chat or indexing. For retained history, the administrator separately chooses Integrations → Replicas → Connect and enters their organization API key there. Keep the key out of chat. History imports do not satisfy fresh capture verification.`;
+  return `Open ${api}/sources#replicas-capture. An admin connects the Replicas organization API key there for history and live capture. For CLI, skill, and MCP access, use the agent setup prompt from that dialog and follow ${replicasAgentGuide} with OPENCRAWL_AUTH=replicas-workspace. Preserve existing workspace configuration.`;
 }
 export function captureSetupPrompt(api: string) {
   return `Set up OpenCrawl across all coding agents and environments I use. Work in three phases and ask me for decisions in one consent question, not one at a time. Keep setup short: configure the current environment first, then other approved accessible environments. Reuse valid configuration and authentication, complete what's missing, and make every approved setup available to future sessions using mechanisms appropriate to the environment. Respect existing approvals and keep credentials out of chats and repositories.
@@ -96,18 +69,7 @@ Return to my work with a short coverage report: configured and verified now, his
 export function replicasEnrollmentPrompt(api: string, code: string) {
   const origin = new URL(api);
   if (origin.origin !== api || !['https:', 'http:'].includes(origin.protocol) || origin.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Invalid Replicas enrollment prompt');
-  const enrollment = String.raw`set -eu
-set +x
-replicas_token=$(replicas identity token --audience ${quote(api)})
-printf '%s\n' "header = \"Authorization: Bearer $replicas_token\"" 'data = "{\"code\":\"${code}\"}"' | curl --config - --fail-with-body --silent --show-error --header 'Content-Type: application/json' ${quote(api + '/api/replicas/connect')}
-unset replicas_token`;
-  return `Connect this Replicas organization to my OpenCrawl workspace. I am its OpenCrawl admin and approve team-shared capture from this Replicas organization. First run the one-time enrollment below inside the intended Replicas workspace. The code expires in 30 minutes; do not put it in environment variables, warm/start hooks, repositories or snapshots. Never print the workspace token. Stop if the destination is unexpected or enrollment fails. The code authorizes only this initial connection; future workspaces use native Replicas identity automatically.
-
-\`\`\`sh
-${enrollment}
-\`\`\`
-
-After the connection succeeds, perform the setup below. Do not ask for another API key, human sign-in, environment approval or AWS configuration. Native Replicas identity authorizes every environment in the connected organization, including personal forks. Existing local personal sessions remain separate and keep their personal permissions.
-
-${replicasSetupPrompt(api)}`;
+  return `Follow ${replicasAgentGuide}
+Server: ${api}
+Approval code: ${code}`;
 }

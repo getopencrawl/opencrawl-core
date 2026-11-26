@@ -30,7 +30,7 @@ async function request<T>(path: string, signal: AbortSignal, body?: unknown): Pr
   return value as T;
 }
 const adapter: OnboardingAdapter = {
-  replicasSetup: async () => ({prompt:'Install OpenCrawl in this Replicas environment for my team. Use workspace_identity and verify shared capture.',expiresAt:new Date(Date.now()+1800000).toISOString()}),
+  replicasSetup: async () => ({prompt:'Follow the Replicas agent setup guide with the one-time fixture approval code.',expiresAt:new Date(Date.now()+1800000).toISOString()}),
   status: signal => request('/api/onboarding', signal),
   sources: signal => request('/api/onboarding/sources', signal),
   connectSource: (id, body, signal) => request(`/api/integrations/${encodeURIComponent(id)}/connect`, signal, body),

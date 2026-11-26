@@ -2,10 +2,8 @@ import {boardStateFixture} from './fixtures/board-state.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {promisify} from 'node:util';
-import {execFile} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {selfhostTeamWrites} from '../dist/src/selfhost/team-writes.mjs';
@@ -503,8 +501,8 @@ test('shared installation admits real local members without personal setup or ho
  assert.deepEqual(boot.onboarding,{completed:true,next:'/'});
  assert.equal(boot.replicasSetupPrompt,undefined);
  const adminBoot=await(await f.request('/api/console/bootstrap','admin')).json();
- assert.match(adminBoot.replicasSetupPrompt,/Install OpenCrawl in this Replicas environment/);
- assert.ok(adminBoot.replicasSetupPrompt.includes(adminBoot.mcpUrl));
+ assert.equal(adminBoot.canInstallReplicas,true);
+ assert.equal(adminBoot.replicasSetupPrompt,undefined);
  assert.equal((await f.request('/','member')).status,200);
  const {data:setup}=await(await f.request('/api/onboarding','member')).json();
  assert.equal(setup.shared.owner,'shared');assert.equal(setup.cli,null);assert.equal(setup.completed,null);
@@ -523,7 +521,10 @@ test('admin connects Replicas through the product before onboarding; native fork
  const setup=await send('admin');assert.equal(setup.status,200);
  const {prompt,expiresAt}=await setup.json();assert.ok(Date.parse(expiresAt)>Date.now());
  const code=prompt.match(/[a-f0-9]{64}/)?.[0];assert.ok(code);
- assert.doesNotMatch(prompt,/must approve the exact|must bind that exact|ask the operator to bind/);
+ assert.ok(prompt.includes(f.origin));
+ assert.ok(prompt.includes('https://docs.getopencrawl.com/agents/replicas-capture/index.md'));
+ assert.doesNotMatch(prompt,/opencrawl collect|curl /);
+ assert.ok(prompt.length < f.origin.length + 280,'the admin prompt is a short guide reference');
  const boot=await (await f.request('/api/console/bootstrap','admin')).json();assert.equal(boot.canInstallReplicas,true);assert.ok(!JSON.stringify(boot).includes(code));
  const memberBoot=await (await f.request('/api/console/bootstrap','bob')).json();assert.equal(memberBoot.canInstallReplicas,undefined);
  const replicasOrg='11111111-1111-4111-8111-111111111111',environment='22222222-2222-4222-8222-222222222222',workspace='33333333-3333-4333-8333-333333333333',fork='44444444-4444-4444-8444-444444444444';
@@ -534,14 +535,6 @@ test('admin connects Replicas through the product before onboarding; native fork
  assert.equal((await connect({code},{origin:f.origin})).status,403);
  assert.equal((await connect({code},{authorization:'Bearer forged'})).status,401);
  const connected=await connect({code});assert.equal(connected.status,200);assert.equal((await connected.json()).tenantId,org);
- const helper=await mkdtemp(join(tmpdir(),'replicas-enrollment-helper-'));
- t.after(()=>rm(helper,{recursive:true,force:true}));
- await writeFile(join(helper,'replicas'),"#!/bin/sh\nprintf '%s' '"+token+"'\n",{mode:0o700});
- const script=prompt.match(/```sh\n([\s\S]*?)```/)[1];
- const executed=await promisify(execFile)('sh',['-c',script],{env:{...process.env,PATH:helper+':'+process.env.PATH}});
- assert.equal(JSON.parse(executed.stdout).tenantId,org);
- assert.ok(!executed.stdout.includes(token)&&!executed.stderr.includes(token),'the generated setup never prints the token');
-
  for(const env of [environment,fork]){
   const me=await f.request('/api/cli/me',null,{headers:{authorization:'Bearer '+await mint(replicasOrg,env)}});
   assert.equal(me.status,200);const data=(await me.json()).data;assert.equal(data.workspace.id,org);assert.equal(data.credential,'workspace-identity');assert.equal(data.workload.environmentId,env);
