@@ -8,14 +8,14 @@ import type {IncomingMessage} from 'node:http';
 import {privacyPrompt, type PrivacyPreferences} from './privacy.mjs';
 // Older clients check this list before enabling their bundled capture adapters.
 const legacyHarnessCapabilities = ['claude-code', 'codex', 'cursor', 'grok-bot', 'antigravity', 'devin', 'replicas'];
-export interface SessionIngestOptions {privacy?:PrivacyPreferences; store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
+export interface SessionIngestOptions {controls?: ResourceControls; privacy?:PrivacyPreferences; store: ObjectStore; eventIdentities?: EventIdentityStore; prefix?: string; scheduleIndexing?: (key: string) => Promise<unknown>; onStored?: (principal: Principal,batch: SessionBatch) => Promise<unknown> | undefined; onMemoryStored?: (principal: Principal,receipt: {harness: string; files: number; snapshotId: string}) => Promise<unknown>}
 export interface SessionBatchReceipt {harness: string; installationId: string; sessionId: string; batchId: string; userId?: string}
 import {serviceError} from './types.mjs';
 import {gzipSync, gunzipSync, gunzip} from 'node:zlib';
 import {promisify} from 'node:util';
 import {digest,sessionScope,reserveSessionEvents} from './event-identity.mjs';
 import {createMemoryIngest,MAX_MEMORY_BYTES} from '../memories/snapshot.mjs';
-import {createControls} from './controls.mjs';
+import {createControls, type ResourceControls} from './controls.mjs';
 import {sessionWriteBarrier, sessionWriteStore} from './write-barrier.mjs';
 import {fail} from '../errors.mjs';
 import {expandReplicasPayload} from './replicas-payload.mjs';
@@ -38,12 +38,11 @@ function checkNativeSession(principal:Principal,session:{harness:string;sessionI
     fail(403,'Capture must belong to the authenticated Devin session');
 }
 
-export function createSessionIngest({store, privacy, eventIdentities, prefix = 'capture-v1', scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
+export function createSessionIngest({store, privacy, eventIdentities, prefix = 'capture-v1', controls = createControls({store, prefix}), scheduleIndexing=undefined, onStored=undefined,onMemoryStored=undefined}: SessionIngestOptions) {
   if (!store?.put || !store?.get) throw new Error('A durable object store is required');
   const scope = (principal: Principal) => `${prefix}/${sessionScope(principal)}`;
   // Existence checks must not download attachment bodies on every batch retry.
   const exists = (key: string, maxBytes: number) => store.has ? store.has(key, {maxBytes}) : store.get(key, {maxBytes}).then(Boolean);
-  const controls = createControls({store, prefix});
   return {
     async putMemorySnapshot(principal: Principal,snapshot: MemorySnapshot, gate:WriteGate=directWrite) {
       if(principal.owner?.provider==='devin')fail(403,'Devin Cloud does not supply memory snapshots');

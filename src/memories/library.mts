@@ -3,7 +3,7 @@ import type {RealmOptions, QueryBody} from '../search/types.mjs';
 import type {StoredMemorySnapshot} from './types.mjs';
 import {createRealmResolver, realmField} from '../search/realm.mjs';
 import {sessionScope} from '../sessions/event-identity.mjs';
-import {createControls, visibleTo} from '../sessions/controls.mjs';
+import {createControls, visibleTo, type ResourceControls} from '../sessions/controls.mjs';
 import {memoryTitle} from './titles.mjs';
 import {activeMemoryProjectionFilter,MEMORY_HEAD_FIELDS} from './projection.mjs';
 import {authorizedMemoryDocuments} from './access.mjs';
@@ -30,14 +30,14 @@ export function memoryDescription(text: string) {
   return line.length > 240 ? line.slice(0, 239) + '…' : line;
 }
 /** Controls the indexer applies to a newly received snapshot. */
-export function memoryControls(controls: ReturnType<typeof createControls>, owner: Principal, snapshot: StoredMemorySnapshot) {
+export function memoryControls(controls: ResourceControls, owner: Principal, snapshot: StoredMemorySnapshot) {
   return controls.list(owner, 'memories', snapshot.harness);
 }
 
 /** Current captured memory files. Readable by the team unless private to their
  * owner; only the owner changes visibility or deletes. */
-export function createMemoryLibrary({store, prefix, ...options}: RealmOptions & {store: ObjectStore; prefix: string}) {
-  const resolve = createRealmResolver(options), controls = createControls({store, prefix});
+export function createMemoryLibrary({store, prefix, controls = createControls({store, prefix}), ...options}: RealmOptions & {store: ObjectStore; prefix: string; controls?: ResourceControls}) {
+  const resolve = createRealmResolver(options);
   const reader = (principal: Principal) => {
     sessionScope(principal);
     if (principal.captureAccess !== undefined) fail(403, 'Memory read access required');

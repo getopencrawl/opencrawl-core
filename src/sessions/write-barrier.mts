@@ -3,7 +3,7 @@ import {createConnectorWriteBarrier} from '../connectors/write-barrier.mjs';
 import {digest, sessionScope} from './event-identity.mjs';
 import {isSessionHarness} from './types.mjs';
 import type {DocumentItem} from '../search/types.mjs';
-import {createControls} from './controls.mjs';
+import {createControls, type ResourceControls} from './controls.mjs';
 
 /** Reuse the durable CAS fence. Only hashes and write receipts are retained;
  * the fence is outside raw capture prefixes and never expires or reopens. */
@@ -27,11 +27,11 @@ export function sessionWriteStore(store: ObjectStore, prefix: string, owner: Pri
 
 /** A migration may copy several sessions in one remote write. Acquire every
  * affected session's fence before invoking it, including backup writes. */
-export async function withSessionDocumentWrites<T>({store,prefix,tenantId,documents}: {
-  store:ObjectStore;prefix:string;tenantId:string;documents:DocumentItem[];
+export async function withSessionDocumentWrites<T>({store,prefix, controls = createControls({store, prefix}),tenantId,documents}: {
+  store:ObjectStore;prefix:string;controls?:ResourceControls;tenantId:string;documents:DocumentItem[];
 },write:()=>Promise<T>):Promise<T> {
   if(!store||!prefix)throw new Error('Session migrations require authoritative deletion controls');
-  const controls=createControls({store,prefix}),identities=new Map<string,{owner:Principal;harness:string;sessionId:string}>();
+  const identities=new Map<string,{owner:Principal;harness:string;sessionId:string}>();
   for(const {document:d} of documents){
     if(d.tenantId!==tenantId||typeof d.userId!=='string'||typeof d.harness!=='string'||typeof d.sessionId!=='string')throw new Error('Invalid migration session identity');
     const owner={tenantId,userId:d.userId};sessionScope(owner);

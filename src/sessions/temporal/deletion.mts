@@ -1,6 +1,7 @@
 import type {SessionLibraryOptions} from '../library.mjs';
 import type {createPostgresBoardState} from '../../state/board.mjs';
 import type {ObjectStore} from '../types.mjs';
+import type {ResourceControls} from '../controls.mjs';
 import {createSessionLibrary} from '../library.mjs';
 import {createSessionDeletionRequests} from '../deletion-requests.mjs';
 import {Context, heartbeat} from '@temporalio/activity';
@@ -41,7 +42,18 @@ export function sessionDeletionActivities(resolve: SessionDeletionResolver) {
           });
         }} : {}),
       };
-      const result = await action({...binding, store}); check(); return result;
+      const authority = binding.controls;
+      const controls: ResourceControls | undefined = authority && {
+        read: (...args) => {check(); return authority.read(...args);},
+        readSource: (...args) => {check(); return authority.readSource(...args);},
+        list: (...args) => {check(); return authority.list(...args);},
+        pendingDeletions: owner => {check(); return authority.pendingDeletions(owner);},
+        update: (owner, kind, harness, name, change) => {
+          check();
+          return authority.update(owner, kind, harness, name, current => {check(); return change(current);});
+        },
+      };
+      const result = await action({...binding, store, controls}); check(); return result;
     } catch (caught) {
       if (Context.current().cancellationSignal.aborted) throw Context.current().cancellationSignal.reason;
       const error = caught as {permanent?: boolean; type?: string};

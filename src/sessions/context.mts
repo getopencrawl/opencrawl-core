@@ -1,6 +1,6 @@
 import type {Principal} from './types.mjs';
 import type {Passage, SearchCollection, SessionContextInput, SessionContextResult} from '../search/types.mjs';
-import type {createControls} from './controls.mjs';
+import type {ResourceControls} from './controls.mjs';
 import {visibleTo} from './controls.mjs';
 import {sessionScope} from './ingest.mjs';
 import {realmField} from '../search/realm-format.mjs';
@@ -32,7 +32,7 @@ function boundary(anchor: Passage, reverse: boolean) {
  * The selected passage remains the anchor, including matches deep in a long
  * event. Both directions use the same freshly read anchor and explicit keysets.
  */
-export async function sessionContext(collection: SearchCollection, controls: ReturnType<typeof createControls> | null, principal: Principal,
+export async function sessionContext(collection: SearchCollection, controls: ResourceControls | null, principal: Principal,
   anchor: Passage, input: SessionContextInput): Promise<SessionContextResult> {
   sessionScope(principal);
   if (principal.captureAccess !== undefined) fail(403, 'Session read access required');

@@ -2,7 +2,7 @@ import type {Principal} from './types.mjs';
 import {isSessionHarness} from './types.mjs';
 import {digest, sessionScope} from './event-identity.mjs';
 import {visibleTo} from './controls.mjs';
-import type {createControls} from './controls.mjs';
+import type {ResourceControls} from './controls.mjs';
 import type {SearchCollection, QueryBody} from '../search/types.mjs';
 import type {DailyOverlap, SessionOverlap} from '../application/reports.mjs';
 import {errorInfo} from '../errors.mjs';
@@ -48,7 +48,7 @@ const MAX_GROUPS = 50_000;
 /** One bounded aggregation keeps every interval on the same search read view.
  * Never restrict event time to the displayed window: a span may begin earlier.
  * Bounds fail closed instead of turning a partial scan into low concurrency. */
-export async function sessionOverlap(collection: SearchCollection, controls: ReturnType<typeof createControls> | null,
+export async function sessionOverlap(collection: SearchCollection, controls: ResourceControls | null,
   principal: Principal, {days = 30, now = Date.now()}: {days?: number; now?: number} = {}): Promise<SessionOverlap> {
   sessionScope(principal);
   if (principal.captureAccess !== undefined) throw Object.assign(new Error('Session read access required'), {status: 403});
