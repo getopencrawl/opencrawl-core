@@ -1,5 +1,5 @@
 /** Browser-test fixture only. It is never a product entrypoint or published asset. */
-import {apiKeyExtensions} from '../../src/selfhost/api-keys.tsx';
+import {apiKeyExtensions} from '../../src/application/api-keys.tsx';
 import {OpenCrawlApp} from '../../src/application/app.tsx';
 import {useEffect} from 'react';
 import {createRoot} from 'react-dom/client';

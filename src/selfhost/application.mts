@@ -35,6 +35,7 @@ import {createOnboardingStatus,type OnboardingRepository} from '../onboarding-st
 import {deriveOnboarding,hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {createOnboardingObserver} from '../application/onboarding-observer.mjs';
 import {createGuidedOnboarding} from '../application/onboarding.mjs';
+import {manageMachineKeys} from '../identity/machine-keys.mjs';
 import {smallJson} from '../application/http.mjs';
 import {createConsoleApi,consoleDocument,consolePages} from '../application/console.mjs';
 import {productRoute,type Route} from '../application/routes.mjs';
@@ -311,17 +312,8 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
         if(url.pathname==='/settings/machine-keys')return redirect('/settings/api-keys');
       }
       if(keyApi){
-        try {
-          const revoke=url.pathname.endsWith('/revoke');
-          if(req.method==='GET'&&!revoke)return json(200,{keys:await machines.list()});
-          if(req.method!=='POST')return respond(405,'Method not allowed');
-          const input=await smallJson(req);
-          if(revoke){await machines.revoke(input.id);return json(200,{ok:true});}
-          return json(201,await machines.create(input.name));
-        } catch(error) {
-          const info=errorInfo(error);
-          return info.expose?json(info.status??400,{error:info.message}):json(503,{error:'API keys are temporarily unavailable.'});
-        }
+        const result = await manageMachineKeys(req, url.pathname.endsWith('/revoke'), isAdmin(member), machines);
+        return json(result.status, result.body);
       }
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};

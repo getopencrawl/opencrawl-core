@@ -5,6 +5,7 @@ export const SECRET_MASK = '[REDACTED]';
 // public client IDs and generic hexadecimal strings: UUIDs and hashes are useful.
 // No network verification, model, environment lookup or runtime rule download.
 const credentials:RegExp[] = [
+  /\bocm1_[A-Za-z0-9_.~-]+/g,
   /-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----|$)/gi,
   /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{82})\b/g,
   /\bglpat-[A-Za-z0-9_-]{20,255}/g,
