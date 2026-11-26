@@ -1,4 +1,4 @@
-import {useEffect, useRef} from 'react';
+import {useEffect, useLayoutEffect, useRef} from 'react';
 import {ProactiveTab, scoped} from './search-activity.tsx';
 import type {ActivityAdapter, MemberNames} from './search-activity.tsx';
 import {consoleResourceKey, useConsoleQueryClient, useConsoleResource} from '../data.tsx';
@@ -187,16 +187,18 @@ export function UsagePage({adapter, setupPrompt, reportScope, showActivity}: Pag
   const selectedRange = params.get('range');
   const range: UsageRange = selectedRange === '7d' || selectedRange === 'all' ? selectedRange : '30d';
   const period: OverviewPeriod = selectedRange === '90d' ? '90d' : range;
-  function openReport(report: Tab, nextRange: OverviewPeriod) {
+  function openReport(report: Tab, nextRange: OverviewPeriod, focusTab=false) {
     const next = new URLSearchParams(params);
     if (nextRange === '30d') next.delete('range');
     else next.set('range', nextRange);
-    void navigate({pathname: usagePath(report), search:next.toString()});
+    void navigate({pathname: usagePath(report), search:next.toString()},{state:{focusUsageTab:focusTab}});
   }
   const toolbar = useRef<HTMLDivElement>(null);
+  useLayoutEffect(()=>{
+    if (location.state?.focusUsageTab) toolbar.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus();
+  },[location.key,location.state]);
   function viewAllSearches(queryRange: QueryRange) {
-    openReport('searches', queryRange);
-    requestAnimationFrame(() => toolbar.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus());
+    openReport('searches', queryRange,true);
   }
   const queryRange = range === '7d' ? '7d' : '30d';
   const scope = reportScope ?? showActivity;
