@@ -634,7 +634,9 @@ test('self-host machine keys reach the board and capture as a service and cannot
   await f.join('member','member@example.com');
   const path='/api/keys';
   const write=(suffix,who,input,origin=f.origin)=>f.request(path+suffix,who,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(input)});
-  assert.equal((await f.request('/settings/machine-keys','admin')).headers.get('location'),'/setup#api-key');
+  assert.equal((await f.request('/settings/machine-keys','admin')).headers.get('location'),'/settings/api-keys');
+  assert.equal((await f.request('/settings/api-keys','admin')).status,200);
+  assert.equal((await f.request('/settings/api-keys','member')).status,403);
   assert.equal((await f.request('/settings/machine-keys','member')).status,403);
   assert.equal((await f.request(path,'member')).status,403);
   assert.notEqual((await f.request(path)).status,200);

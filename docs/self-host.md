@@ -145,7 +145,7 @@ For Codex, use `--harness codex`. Start a new chat and look for it in **Sessions
 To let Claude Code search through MCP, run
 `claude mcp add --scope user selfhost -- opencrawl mcp --api "$OPENCRAWL_API_URL"`.
 
-To disconnect a service, select **Revoke** next to its name in **API key**.
+To disconnect a service, select **Revoke** next to its name in **Settings → API keys**.
 Revocation takes effect on the next request. Each newly created key has its own
 recording identity.
 

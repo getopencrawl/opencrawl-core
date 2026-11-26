@@ -122,7 +122,7 @@ export function SetupPage({status, error, mcpUrl, apiKeys}: {apiKeys?: ReactNode
       </header>
       <AgentInstructions mcpUrl={mcpUrl} first/>
     </div> : <details className={'oc-host-start oc-host-add' + (apiKeys ? ' oc-host-add-keys' : '')} open={apiKeys && (first || location.hash === '#api-key') ? true : undefined}>
-      <summary><img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>{apiKeys ? 'Add a computer' : 'Connect another computer'}<Icon name="chevron-down" size={16}/></summary>
+      <summary>{apiKeys && 'Add a computer'}<img src="/assets/setup-first-host.png" alt="" width="68" height="32"/>{!apiKeys && 'Connect another computer'}<Icon name="chevron-down" size={16}/></summary>
       <AgentInstructions mcpUrl={mcpUrl} first={false} apiKeys={apiKeys}/>
     </details>}
     <Section className="oc-hosts-section" title="Your computers">
