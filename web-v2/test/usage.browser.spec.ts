@@ -166,7 +166,8 @@ test('Overview shows the three observed metrics, both UTC charts and five search
   await page.getByRole('button',{name:'Cumulative',exact:true}).click();
   await expect(page.getByRole('img',{name:'Cumulative indexed session tokens'}).locator('polyline')).toBeVisible();
   await page.getByRole('button', {name: 'View all searches'}).click();
-  await expect(page.getByLabel('Date range')).toHaveValue('7d');
+  await expect(page).toHaveURL(/\/usage\/searches\?range=7d$/);
+  await expect(page.getByRole('combobox',{name:'Date range'})).toHaveValue('7d');
   expect(receipts.tokens).toEqual(['all']);
   expect(history).toContainEqual({kind:'agent',range:'30d',basis:'events',withQuery:true,before:page2});
 });
