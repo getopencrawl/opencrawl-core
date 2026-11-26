@@ -1109,8 +1109,14 @@ img { max-width: 100%; }
 .oc-host-add-keys .oc-tabs { margin-bottom: var(--space-5); }
 .oc-key-setup .oc-management-form { grid-template-columns: minmax(0, 1fr) max-content; }
 .oc-key-roster { list-style: none; margin: 0; padding: 0; }
-.oc-key-roster li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); padding-block: var(--space-3); border-top: 1px solid var(--line); }
+.oc-key-roster li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(max-content, .5fr) auto; align-items: baseline; column-gap: var(--space-4); padding-block: var(--space-3); border-top: 1px solid var(--line); }
 .oc-key-roster li:last-child { padding-bottom: 0; }
+.oc-key-date { color: var(--muted); font-size: var(--text-ui); }
+@container (max-width: 36rem) {
+  .oc-key-roster li { grid-template-columns: minmax(0, 1fr) auto; }
+  .oc-key-roster .oc-key-date { grid-column: 1; grid-row: 2; font-size: var(--text-sm); }
+  .oc-key-roster .oc-button { grid-column: 2; grid-row: 1; }
+}
 @container (max-width: 400px) {
   .oc-key-setup .oc-management-form { grid-template-columns: minmax(0, 1fr); }
   .oc-host-add-keys .oc-tabs > .oc-button { padding-inline: var(--space-2); }

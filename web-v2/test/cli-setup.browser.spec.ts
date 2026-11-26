@@ -317,6 +317,17 @@ test('self-host API keys share the Add a computer panel and fit desktop and mobi
   for(const width of [1280,390,320]){
     await page.setViewportSize({width,height:850});
     await expect(revoke).toBeInViewport();
+    const textTops=await revoke.evaluate(button=>{
+      const row=button.closest('li')!;
+      function firstTextTop(node:Element){
+        const range=document.createRange();
+        range.selectNodeContents(node.firstChild!);
+        return range.getClientRects()[0].top;
+      }
+      return {name:firstTextTop(row.children[0]),date:firstTextTop(row.children[1]),action:firstTextTop(button)};
+    });
+    expect(Math.abs(textTops.name-textTops.action)).toBeLessThan(1);
+    if(width===1280)expect(Math.abs(textTops.name-textTops.date)).toBeLessThan(1);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   }
   await revoke.click();

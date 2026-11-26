@@ -83,7 +83,8 @@ function ApiKeySettings() {
       {error && <Notice tone="danger" actions={<Button onClick={() => void reload()}>Retry</Button>}>{error}</Notice>}
       {data && (data.keys.length ? <ul className="oc-key-roster" aria-label="Active API keys">{data.keys.map(key =>
         <li key={key.id}>
-          <div><span className="oc-member-name">{key.name}</span><span className="oc-member-email">Created <time dateTime={key.createdAt}>{new Date(key.createdAt).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})}</time></span></div>
+          <span className="oc-member-name">{key.name}</span>
+          <span className="oc-key-date">Created <time dateTime={key.createdAt}>{new Date(key.createdAt).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})}</time></span>
           <Button variant="danger-quiet" aria-label={'Revoke ' + key.name} onClick={() => {mutation.clearError(); setSelected(key);}}>Revoke</Button>
         </li>)}</ul> : <p className="muted">No active API keys.</p>)}
     </Section>
