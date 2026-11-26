@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {groundIntentCorpus} from '../dist/src/intents/corpus.mjs';
-import {createIntentCorpusStore} from '../dist/src/intents/postgres.mjs';
-import {applicationDatabaseFixture, postgresUrl} from './fixtures/application-database.mjs';
 
 const origin = 'https://workspace.example';
 const url = '/sessions/oc_' + 'x'.repeat(32) + '#event=message-7&installation=laptop';
@@ -14,7 +11,7 @@ const draft = {
   intents:[{id:'82ac71be',path:['Lanterns','Appearance'],statement:passage.text,sources:[citation],terms:['lamp.lantern']}],
   terms:[{name:'lamp.lantern',label:'Lantern',definition:'An owner-configurable light.',aliases:[],sources:[citation]}],
 };
-const publication = {runId:randomUUID(),from:'2026-03-10T00:00:00Z',until:'2026-03-17T00:00:00Z'};
+const publication = {from:'2026-03-10T00:00:00Z',until:'2026-03-17T00:00:00Z'};
 
 test('references resolve to original session events and exact dialogue', () => {
   assert.equal(groundIntentCorpus(draft,[passage],origin).sources[0].url,url);
@@ -23,21 +20,6 @@ test('references resolve to original session events and exact dialogue', () => {
     assert.throws(()=>groundIntentCorpus(draft,[bad],origin));
   }
   assert.throws(()=>groundIntentCorpus({...draft,terms:[]},[passage],origin));
-});
-
-test('initial publication is atomic, retryable, tenant-scoped and follows source visibility', {skip:!postgresUrl}, async t => {
-  const db=await applicationDatabaseFixture(t), a={tenantId:'alpha',userId:'alice'}, b={tenantId:'beta',userId:'bob'};
-  let visible=true;
-  const store=createIntentCorpusStore(db,origin,async (tenant,sources)=>new Set(visible && tenant==='alpha'?sources.map(s=>s.id):[]));
-  await assert.rejects(store.publishInitial(b,publication,draft,[passage]),{status:403});
-  assert.equal(await store.read(b),null);
-  await Promise.all([1,2].map(()=>store.publishInitial(a,publication,draft,[passage])));
-  assert.deepEqual((await store.read(a)).intents[0],draft.intents[0]);
-  await assert.rejects(store.publishInitial(a,{...publication,runId:randomUUID()},draft,[passage]),{status:409});
-  assert.equal(await store.read(b),null);
-  await assert.rejects(store.read({...a,captureAccess:'write'}),{status:403});
-  visible=false;
-  assert.deepEqual(await store.read(a),{intents:[],sources:[],terms:[],conflicts:[]});
 });
 
 test('history pagination crosses private sessions without returning them even to the owner', async () => {

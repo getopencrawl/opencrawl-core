@@ -131,7 +131,6 @@
     "./state/types": "./dist/src/state/types.mjs",
     "./state/privacy-preferences": "./dist/src/state/privacy-preferences.mjs",
     "./intents/history": "./dist/src/intents/history.mjs",
-    "./intents/postgres": "./dist/src/intents/postgres.mjs",
     "./intents/corpus": "./dist/src/intents/corpus.mjs",
     "./state/postgres": "./dist/src/state/postgres.mjs",
     "./state/board": "./dist/src/state/board.mjs",
