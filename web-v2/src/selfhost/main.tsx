@@ -1,7 +1,7 @@
 import {createRoot} from 'react-dom/client';
 import {OpenCrawlApp} from '../application/app.tsx';
 import {createProductApi} from '../application/client.ts';
-import {apiKeyExtensions} from './api-keys.tsx';
+import {apiKeyExtensions} from '../application/api-keys.tsx';
 import '../styles.css';
 
 const root = document.getElementById('root');

@@ -6,6 +6,10 @@ import {createLocalIdentity} from '../dist/src/identity/better-auth.mjs';
 import {maskPatterns} from '../dist/src/sessions/credential-patterns.mjs';
 import {applicationDatabaseFixture} from './fixtures/application-database.mjs';
 
+test('hosted machine bearer values are masked in captured text', () => {
+  assert.equal(maskPatterns('key ocm1_fake_provider_value123456789'), 'key [REDACTED]');
+});
+
 test('machine keys store only a verifier and authorize each installation and request independently', async t => {
   const database = await applicationDatabaseFixture(t);
   const org = 'org_selfhost';

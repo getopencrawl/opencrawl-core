@@ -1,8 +1,8 @@
 import {useEffect, useRef, useState} from 'react';
-import type {ConsoleExtensions} from '../application/app.tsx';
-import type {Bootstrap} from '../application/api.ts';
-import {useResource} from '../application/resource.ts';
-import {machineKeyApi, type MachineKey} from '../application/transport.ts';
+import type {ConsoleExtensions} from './app.tsx';
+import type {Bootstrap} from './api.ts';
+import {useResource} from './resource.ts';
+import {machineKeyApi, type MachineKey} from './transport.ts';
 import {Button, CopyField, Dialog, Field, Input, LinkButton, LoadingState, Notice, Section, Table} from '../design/components.tsx';
 import {Link} from '../router.tsx';
 
