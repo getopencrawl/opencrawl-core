@@ -128,3 +128,21 @@ test('explicit contradictory Compose build flags fail before any build',t=>{
   const result=f.deploy(['--build','--no-build']);assert.notEqual(result.status,0);assert.match(result.stderr,/incompatible/);
   assert.deepEqual(f.commands(),[]);
 });
+
+test('headless installation starts a fresh workspace in one invocation and reuses the private first-admin password on retry', t => {
+  const f = fixture(t);
+  const install = () => {
+    const result = f.deploy(['--headless']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /setup|first-run/i);
+    assert.deepEqual(f.commands().at(-1), ['compose', 'exec', '-T', 'app', 'node', 'deploy/first-admin.mjs']);
+    return readFileSync(join(f.root, 'deploy/.state/first-admin-password'), 'utf8');
+  };
+  const password = install();
+  assert.match(password,/^[a-f0-9]{48}$/);
+  const config = readFileSync(join(f.root, 'deploy/.env'),'utf8');
+  assert.match(config,/^OPENCRAWL_URL=http:\/\/localhost:8092$/m);
+  assert.match(config,/^OPENCRAWL_AIRBYTE_ENABLED=false$/m);
+  assert.equal(install(),password);
+  assert.ok(!f.log().includes(password));
+});

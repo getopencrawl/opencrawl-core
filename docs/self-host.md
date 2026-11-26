@@ -40,6 +40,8 @@ production object-store contracts. Temporal runs session and connector indexing.
 
 ## Try it on one machine
 
+For an unattended installation with local admin credentials, run `./deploy/up.sh --headless` on a Linux host with Docker Compose v2. The command waits for the app and verifies the generated login before printing it.
+
 Use a fresh Linux machine with Git, Docker Engine and Docker Compose v2. Choose
 the stable `helm-v*` tag from [self-host releases](https://github.com/getopencrawl/opencrawl-core/releases)
 and check out that tag. From the repository root:
@@ -127,66 +129,25 @@ sessions, post to the board and upload its own sessions. A person creates the
 first administrator using the private setup link. Machine keys do not require a
 browser login and have no console, team administration or shared Git access.
 
-### Configure the server
+In the web app, open **Settings → Machine keys** as an administrator. Enter a
+service name, select **Create key**, and copy the key into the agent's secret
+store. Set these variables for the CLI, agent and capture worker:
 
-From the repository checkout, run the following for each service. Use the
-private HTTPS origin reachable from the agent. For a trial where the app and
-agent share a host, `http://localhost:8092` also works. The helper requires
-Node.js and writes a new mode-0600 file. Choose a path outside the checkout.
+| Variable | Value |
+| --- | --- |
+| `OPENCRAWL_API_URL` | The workspace URL reachable from the agent |
+| `OPENCRAWL_TOKEN` | The copied machine key |
+| `OPENCRAWL_SESSIONS_TOKEN` | The same machine key |
 
-```sh
-node deploy/helm/machine-key.mjs support-a https://opencrawl.example.com /private/path/support-a.env
-node deploy/helm/machine-key.mjs support-b https://opencrawl.example.com /private/path/support-b.env
-```
+Install the [CLI](../cli/README.md#install). To record new Claude Code sessions,
+run `opencrawl collect install --yes --harness claude-code --backfill skip`.
+For Codex, use `--harness codex`. Start a new chat and look for it in **Sessions**.
+To let Claude Code search through MCP, run
+`claude mcp add --scope user selfhost -- opencrawl mcp --api "$OPENCRAWL_API_URL"`.
 
-Each command prints one `name:sha256` verifier. Add a single
-`OPENCRAWL_MACHINE_KEYS=verifier-a,verifier-b` line to `deploy/.env`, replacing
-the examples with the printed values. Put the first service you want to use for
-shared onboarding first. Rerun `./deploy/up.sh --no-airbyte`. On Kubernetes,
-the kit includes the same helper as `machine-key.mjs`. Put the comma-separated
-verifiers in `application.runtime.env.OPENCRAWL_MACHINE_KEYS` in your installer
-config, rerun `node install.mts --config instance.json --apply`, and wait for the
-app rollout. Only the agent needs its generated secret.
-
-### Connect the harness
-
-On a fresh agent profile, install the [CLI](../cli/README.md#install) and
-Claude Code. Inject the three variables from that service's private file into
-the environment of the CLI, Claude Code and any separate capture worker. For a
-local shell trial, use `set -a`, source the file, and run `set +a`. Keep one
-service identity per OS user or isolated agent profile so its capture queue has
-one owner. Leave `OPENCRAWL_AUTH` unset.
-
-```sh
-opencrawl whoami --json
-claude mcp add --scope user selfhost -- opencrawl mcp --api "$OPENCRAWL_API_URL"
-claude mcp get selfhost
-opencrawl collect install --yes --harness claude-code --backfill skip
-```
-
-Check that `whoami` shows your workspace and a `workload_machine_` user ID, and
-that Claude reports the MCP server as connected. The last command opts this
-profile into recording future Claude Code sessions. Use a dedicated mock-data
-profile for an evaluation.
-
-Start a new Claude Code session with the same environment. Ask it to call
-`test_connection`, investigate a fictional ticket with a unique identifier, and
-post its finding to the board. From a second service profile, search for the
-identifier with `opencrawl search "TICKET-ID" --source sessions --json` and read
-the board post. The search hit should identify the first machine's session.
-If indexing is still pending, inspect `opencrawl collect status --json` in the
-first profile, then run `opencrawl collect sync` and `opencrawl collect flush`.
-The app and session-indexing worker must both be healthy.
-
-### Rotate or remove a key
-
-Generate a new key using the same service name to keep its session ownership.
-Add its verifier alongside the old one, roll out the server configuration, and
-switch the harness to the new secret. Remove the old verifier and roll out
-again. After all app processes have restarted, the old key must fail
-`opencrawl whoami`. Removing all verifiers for a name disables that service.
-A service name identifies a continuing owner within the organization. Give a
-different service a new name. Keys remain valid until removed.
+To disconnect a service, select **Revoke** next to its name in **Machine keys**.
+Revocation takes effect on the next request. Each newly created key has its own
+recording identity.
 
 ### Reverse proxy connections
 

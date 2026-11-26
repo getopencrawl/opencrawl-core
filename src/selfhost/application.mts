@@ -22,7 +22,6 @@ import type {Integrations} from '../integrations/service.mjs';
 import type {ProviderCatalog} from '../integrations/types.mjs';
 import type {createConnectorResolver} from '../integrations/resolver.mjs';
 import type {LocalIdentity} from '../identity/better-auth.mjs';
-import {machineIdentities} from './machine-identity.mjs';
 import {localAuth} from './local-auth.mjs';
 import {Readable} from 'node:stream';
 import {readFile} from 'node:fs/promises';
@@ -107,7 +106,7 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
 }:SelfhostApplicationOptions) {
   const reloadCache = createConsoleReloadCache();
   const directory=identity.directory;
-  const machines=machineIdentities(settings.organizationId,settings.machineKeys);
+  const machines=identity.machines;
   const canManageWorkloads=async (principal:Principal)=>{
       if(principal.tenantId!==settings.organizationId)return false;
       const current=await currentVerifiedUser(directory,principal.userId);
@@ -143,14 +142,14 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       return {principal:result.principal,member:members[0]!};
     }});
   function identifyWorkload(token:string|undefined){
-    if(token?.startsWith('oca1_'))return Promise.resolve(machines.identify(token));
+    if(token?.startsWith('oca1_'))return machines.identify(token);
     if(devin && isDevinToken(token))return devin.workloads.identify(token);
     if(isReplicasToken(token))return workloads.identify(token);
     return null;
   }
   const onboarding=createOnboardingStatus({...(onboardingRepository?{repository:onboardingRepository}:{store,prefix}),
     onSharedReady:async p=>{if(p.owner?.provider==='devin')await devin?.connections.confirmInstallation(p);else if(p.owner?.provider==='replicas')await replicas.confirmInstallation(p);},
-    sharedInstallations:async p=>(await Promise.all([machines.sharedInstallations,replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
+    sharedInstallations:async p=>(await Promise.all([machines.sharedInstallations(),replicas.sharedInstallations(p,settings.replicasBindings??[]),devin?.connections.sharedInstallations(p)??[]])).flat()}),observe=createOnboardingObserver(onboarding);
   const search=createSessionSearch({...settings.search,store,prefix});
   async function authorize(principal:Principal,requested?:unknown) {
     if(principal?.tenantId!==settings.organizationId || principal.captureAccess!==undefined || requested!=null&&requested!==settings.organizationId)throw Object.assign(new Error('Workspace access denied'),{status:403});
@@ -294,7 +293,9 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       if(req.method==='GET'&&url.pathname==='/signed-out')return message(200,'You’re signed out','You have signed out of OpenCrawl.');
       if(await accounts.route(req,res,url))return;
       const oauthCallback=url.pathname==='/oauth/connectors/slack/callback'&&req.method==='GET';
-      const route=oauthCallback?{name:'connector-oauth-callback'}:productRoute(req.method||'',url.pathname);
+      const keyPage=url.pathname==='/settings/machine-keys';
+      const keyApi=url.pathname==='/api/settings/machine-keys' || url.pathname==='/api/settings/machine-keys/revoke';
+      const route=keyPage||keyApi?{name:url.pathname}:oauthCallback?{name:'connector-oauth-callback'}:productRoute(req.method||'',url.pathname);
       if(!route)return respond(404,'Not found');
       if(route.status)return respond(route.status,'Method not allowed');
       if(req.method==='POST'&&req.headers.origin!==settings.url)return respond(403,'Invalid request origin');
@@ -303,6 +304,22 @@ export function selfhostApplication({settings,store,teamWrite,boardState,setupSt
       const current=await admit(browser);
       if(current.status!==200)return respond(current.status,current.status===503?'Sign-in is temporarily unavailable.':'Workspace access denied');
       const {principal,user,member,cacheScope}=current,activeIdentity=browser;
+      if(keyPage || keyApi){
+        res.setHeader('Cache-Control','no-store');
+        if(!isAdmin(member))return json(403,{error:'Workspace administrator access required.'});
+        if(keyPage)return req.method==='GET'?respond(200,consoleDocument(undefined,{machineSetup:Boolean(setup),showIntegrations:true}),'text/html; charset=utf-8'):respond(405,'Method not allowed');
+        try {
+          const revoke=url.pathname.endsWith('/revoke');
+          if(req.method==='GET'&&!revoke)return json(200,{keys:await machines.list()});
+          if(req.method!=='POST')return respond(405,'Method not allowed');
+          const input=await smallJson(req);
+          if(revoke){await machines.revoke(input.id);return json(200,{ok:true});}
+          return json(201,await machines.create(input.name));
+        } catch(error) {
+          const info=errorInfo(error);
+          return info.expose?json(info.status??400,{error:info.message}):json(503,{error:'Machine keys are temporarily unavailable.'});
+        }
+      }
       if(oauthCallback)return oauth?redirect(await oauth.complete(principal,url.searchParams)):respond(404,'Connector not configured');
       const revalidate=async()=>{const next=await admit(activeIdentity);return next.status===200&&(!isAdmin(member)||isAdmin(next.member));};
       const sources=async(p:Principal)=>[...await (integrations?.list(p)??Promise.resolve([])),...replicasImport?[await replicasImport.source(p)]:[],

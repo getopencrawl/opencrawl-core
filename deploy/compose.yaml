@@ -50,7 +50,7 @@ services:
   app:
     <<: *runtime
     command: ["node", "dist/src/selfhost/server.mjs"]
-    environment: {<<: *env, HOST: 0.0.0.0, PORT: "8092", OPENCRAWL_MACHINE_KEYS: "${OPENCRAWL_MACHINE_KEYS:-}"}
+    environment: {<<: *env, HOST: 0.0.0.0, PORT: "8092"}
     ports: ["${OPENCRAWL_APP_BIND:-127.0.0.1}:${OPENCRAWL_APP_PORT:-8092}:8092"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8092/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

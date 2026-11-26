@@ -19,7 +19,7 @@ import {postgresSharedFiles} from '../dist/src/files/store.mjs';
 import {createOnboardingStatus} from '../dist/src/onboarding-status.mjs';
 const org='org_selfhost',setup='setup-token-for-tests';
 async function fixture(t,options={}){
-  const {search:searchOptions,replicasBindings,machineKeys,cliSetup,files,publicOrigin,...appOptions}=options;
+  const {search:searchOptions,replicasBindings,cliSetup,files,publicOrigin,...appOptions}=options;
   const dir=await mkdtemp(join(tmpdir(),'opencrawl-selfhost-app-'));
   const bucket='selfhost-fixture',store={...createLocalSessionStore(dir),bucket},prefix='sessions/selfhost/v1';
   let app;const server=createServer((req,res)=>app(req,res));
@@ -29,7 +29,7 @@ async function fixture(t,options={}){
   const setupState=cliSetup?createSetupState(database):undefined;await setupState?.ready();
   const identity=await createLocalIdentity({url:origin,secret:randomBytes(32).toString('hex'),database,organizationId:org});
   await identity.ready();t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await identity.close();await rm(dir,{recursive:true,force:true});});
-  const settings={machineKeys,sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
+  const settings={sharedFilesAccess:files===true?'read-write':files,replicasBindings,organizationId:org,url:origin,authOrigin:origin+'/api/auth',clientId:'opencrawl-cli',authSecret:'x'.repeat(32),setupToken:setup,search:{endpoint:'http://127.0.0.1:1',environment:'selfhost',tenantId:org,...searchOptions}};
   const sharedFiles=files?postgresSharedFiles(database,join(dir,'repositories')):undefined;await sharedFiles?.ready();
   const credentialState=createCredentialState(database,store,prefix),captureCredentials=credentialState.credentials('capture');
   await credentialState.ready();
@@ -629,9 +629,25 @@ test('self-host keeps provisioned Git endpoints hidden when access is disabled',
 });
 
 test('self-host machine keys reach the board and capture as a service and cannot authorize human actions', async t => {
-  const key = 'oca1_' + randomBytes(32).toString('hex');
-  const verifier = createHash('sha256').update(key).digest('hex');
-  const f = await fixture(t, {machineKeys: 'support:' + verifier, cliSetup: true, files: true});
+  const f = await fixture(t, {cliSetup:true, files:true});
+  await f.admin();
+  await f.join('member','member@example.com');
+  const path='/api/settings/machine-keys';
+  const write=(suffix,who,input,origin=f.origin)=>f.request(path+suffix,who,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(input)});
+  assert.equal((await f.request('/settings/machine-keys','admin')).status,200);
+  assert.equal((await f.request('/settings/machine-keys','member')).status,403);
+  assert.equal((await f.request(path,'member')).status,403);
+  assert.notEqual((await f.request(path)).status,200);
+  assert.equal((await write('','member',{name:'support'})).status,403);
+  assert.equal((await write('','admin',{name:'support'},'https://unrelated.invalid')).status,403);
+  const created=await write('','admin',{name:'support'});
+  assert.equal(created.status,201);
+  assert.match(created.headers.get('cache-control'),/no-store/);
+  const {key:metadata,secret:key}=await created.json();
+  const listed=await (await f.request(path,'admin')).json();
+  assert.deepEqual(listed.keys,[metadata]);
+  assert.deepEqual(Object.keys(metadata).sort(),['createdAt','id','name']);
+  assert.equal((await write('','admin',{name:'support'})).status,409);
   const headers = {authorization: 'Bearer ' + key, 'content-type': 'application/json'};
   const request = (path, body) => f.request(path, null, {headers, ...(body && {method:'POST', body:JSON.stringify(body)})});
   const identity = await request('/api/cli/me');
@@ -649,4 +665,10 @@ test('self-host machine keys reach the board and capture as a service and cannot
   assert.equal((await request('/api/files')).status, 403);
   assert.equal((await request('/api/board/register', {session:'mock-ticket',name:'triage',task:'mock ticket',harness:'claude-code'})).status, 200);
   assert.equal((await request('/api/board/fetch', {workspace:'org_other',id:'message:1'})).status, 403);
+  assert.notEqual((await request(path)).status,200);
+  assert.equal((await write('/revoke','member',{id:metadata.id})).status,403);
+  assert.equal((await write('/revoke','admin',{id:metadata.id})).status,200);
+  assert.equal((await request('/api/cli/me')).status,401);
+  assert.equal((await request('/api/sessions/identity')).status,401);
+  assert.deepEqual((await (await f.request(path,'admin')).json()).keys,[]);
 });
